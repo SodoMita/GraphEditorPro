@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "none",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "outFile": ".build/app.js",
+    "noEmitOnError": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "noImplicitThis": false,
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "removeComments": false,
+    "sourceMap": false
+  },
+  "files": [
+    "src/app/types.d.ts",
+    "src/app/00-i18n.ts",
+    "src/app/10-core.ts",
+    "src/app/20-rendering.ts",
+    "src/app/30-graph-editing.ts",
+    "src/app/40-interactions.ts",
+    "src/app/50-import-export.ts",
+    "src/app/60-algorithms.ts",
+    "src/app/70-controls.ts",
+    "src/app/80-ui.ts",
+    "src/app/90-bootstrap.ts"
+  ]
+}

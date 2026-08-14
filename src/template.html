@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graph Editor Pro</title>
+  <!-- INLINE_STYLES -->
+</head>
+<body>
+  <div class="app">
+    <aside class="panel sidebar">
+      <nav class="tabs" aria-label="Tool panels">
+        <button class="tab active" data-tab="edit" title="Editor"><span>✏️</span><span class="wide" data-i18n="tab_edit">Edit</span></button>
+        <button class="tab" data-tab="style" title="Default styles"><span>🎨</span><span class="wide" data-i18n="tab_style">Style</span></button>
+        <button class="tab" data-tab="algo" title="Algorithms"><span>🧠</span><span class="wide" data-i18n="tab_algo">Algo</span></button>
+        <button class="tab" data-tab="data" title="Data and export"><span>📦</span><span class="wide" data-i18n="tab_data">Data</span></button>
+        <button class="tab" data-tab="help" title="Help"><span>?</span><span class="wide" data-i18n="tab_help">Help</span></button>
+      </nav>
+      <div class="tab-panels thin-scroll">
+        <section id="panel-edit" class="tab-panel active">
+          <div class="section">
+            <div class="section-title" data-i18n="mode_title">Mode</div>
+            <div class="grid2">
+              <button id="modeSelect" class="btn active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" data-i18n="mode_select">↖ Select</button>
+              <button id="modeMove" class="btn" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" data-i18n="mode_move">✋ Move</button>
+              <button id="modeNode" class="btn" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" data-i18n="mode_node">＋ Node</button>
+              <button id="modeEdge" class="btn" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" data-i18n="mode_edge">↔ Edge</button>
+            </div>
+            <p class="tiny muted"><span data-i18n="mode_tip">Tip: use Move mode or hold Space to pan. Pinch the canvas to zoom/pan on touch screens.</span></p>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="canvas_selection">Canvas selection</div>
+            <div class="grid2">
+              <button class="btn active" data-selecttool="single" title="Single select" data-i18n="sel_single">Single</button>
+              <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n="sel_rect">Rect</button>
+              <button class="btn" data-selecttool="brush" title="Brush over items" data-i18n="sel_brush">Brush</button>
+              <button class="btn" data-selecttool="lasso" title="Freehand lasso" data-i18n="sel_lasso">Lasso</button>
+              <button class="btn" data-selecttool="line" title="Select near a line" data-i18n="sel_line">Line</button>
+              <button class="btn" data-selecttool="polygon" title="Polygon-style drag selection" data-i18n="sel_polygon">Polygon</button>
+              <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n="sel_adjacent">Adjacent</button>
+              <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n="sel_directed_adj">Directed adjacent</button>
+            </div>
+            <div class="section-title" style="margin-top:10px" data-i18n="sel_result">Selection result</div>
+            <div class="grid3">
+              <button class="btn active" data-selectcombine="replace" title="Replace current selection" data-i18n="sel_override">Override</button>
+              <button class="btn" data-selectcombine="add" title="Add to current selection" data-i18n="sel_add">Add</button>
+              <button class="btn" data-selectcombine="subtract" title="Remove from current selection" data-i18n="sel_subtract">Subtract</button>
+            </div>
+            <label class="field" for="optBrushDiameter" style="margin-top:8px"><span data-i18n="brush_diameter">Brush diameter</span>
+              <input id="optBrushDiameter" type="number" min="10" max="400" step="5" value="80" />
+            </label>
+            <p class="tiny muted"><span data-i18n="sel_tip">Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.</span></p>
+          </div>
+
+          <div class="section">
+            <div class="section-title"><span data-i18n="node_placement">Node placement</span> <span class="tiny muted" data-i18n="node_placement_sub">(values for newly added nodes)</span></div>
+            <div class="grid2">
+              <label class="field" for="nodeShape"><span data-i18n="shape">Shape</span>
+                <select id="nodeShape">
+                  <option value="circle" data-i18n="circle">Circle</option>
+                  <option value="square" data-i18n="shape_square">Square</option>
+                  <option value="diamond" data-i18n="shape_diamond">Diamond</option>
+                  <option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option>
+                  <option value="triangleDown" data-i18n="shape_triangleDown">Triangle Down</option>
+                  <option value="hexagon" data-i18n="shape_hexagon">Hexagon</option>
+                </select>
+              </label>
+              <label class="field" for="nodeColor"><span data-i18n="color">Color</span>
+                <input id="nodeColor" type="color" value="#0ea5e9" />
+              </label>
+              <label class="field" for="nodeWidth"><span data-i18n="width">Width</span>
+                <input id="nodeWidth" type="number" min="10" max="300" step="1" value="50" inputmode="decimal" />
+              </label>
+              <label class="field" for="nodeHeight"><span data-i18n="height">Height</span>
+                <input id="nodeHeight" type="number" min="10" max="300" step="1" value="50" inputmode="decimal" />
+              </label>
+              <label class="field" for="nodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span>
+                <input id="nodeStrokeColor" type="color" value="#e2e8f0" />
+              </label>
+              <label class="field" for="nodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span>
+                <input id="nodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal" />
+              </label>
+              <label class="field" for="nodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span>
+                <select id="nodeStrokeStyle">
+                  <option value="solid" data-i18n="stroke_solid">Solid</option>
+                  <option value="dashed" data-i18n="stroke_dashed">Dashed</option>
+                  <option value="dotted" data-i18n="stroke_dotted">Dotted</option>
+                </select>
+              </label>
+              <label class="field" for="nodeType"><span data-i18n="type">Type</span>
+                <input id="nodeType" type="text" list="nodeTypeListEdit" placeholder="none" data-i18n-placeholder="none_placeholder" />
+                <datalist id="nodeTypeListEdit"></datalist>
+              </label>
+            </div>
+            <label class="field" for="nodeLabel"><span data-i18n="label_prefix">Label prefix / exact label</span>
+              <input id="nodeLabel" type="text" placeholder="Auto: A, B, C..." />
+            </label>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="nodeLabelColor"><span data-i18n="label_color">Label color</span>
+                <input id="nodeLabelColor" type="color" value="#f8fafc" />
+              </label>
+              <label class="field" for="nodeLabelFont"><span data-i18n="label_font">Label font</span>
+                <input id="nodeLabelFont" type="text" list="fontList" placeholder="Inter" />
+              </label>
+              <label class="field" for="nodeLabelSize"><span data-i18n="label_size">Label size</span>
+                <input id="nodeLabelSize" type="number" min="4" max="72" step="1" value="13" inputmode="decimal" />
+              </label>
+              <label class="field" for="nodeLabelPos"><span data-i18n="label_pos">Label position</span>
+                <select id="nodeLabelPos">
+                  <option value="center" data-i18n="pos_center">Center</option>
+                  <option value="top" data-i18n="pos_top">Top</option>
+                  <option value="bottom" data-i18n="pos_bottom">Bottom</option>
+                  <option value="left" data-i18n="pos_left">Left</option>
+                  <option value="right" data-i18n="pos_right">Right</option>
+                </select>
+              </label>
+            </div>
+            <div style="height:8px"></div>
+            <label class="row tiny muted" for="optInheritDefaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">New nodes inherit Style-tab defaults (unset visual properties)</span></label>
+            <p class="tiny muted" style="margin-top:4px"><span data-i18n="inherit_defaults_desc">When on, new nodes have unset visual properties and follow Style-tab defaults dynamically. Turn off to bake the values above into each new node.</span></p>
+            <div style="height:6px"></div>
+            <label class="row tiny muted" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">Create nodes with no label (empty label — no text shown on canvas)</span></label>
+            <label class="row tiny muted" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap nodes to grid</span></label>
+            <label class="row tiny muted" for="optSnapX"><input id="optSnapX" type="checkbox" /> <span data-i18n="snap_x">Snap X to other nodes</span></label>
+            <label class="row tiny muted" for="optSnapY"><input id="optSnapY" type="checkbox" /> <span data-i18n="snap_y">Snap Y to other nodes</span></label>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="optGridX"><span data-i18n="grid_width">Grid width</span>
+                <input id="optGridX" type="number" min="5" max="300" step="5" value="40" />
+              </label>
+              <label class="field" for="optGridY"><span data-i18n="grid_height">Grid height</span>
+                <input id="optGridY" type="number" min="5" max="300" step="5" value="40" />
+              </label>
+            </div>
+            <p class="tiny muted"><span data-i18n="grid_desc">The visual grid uses these dimensions, and grid snap follows them.</span></p>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="edge_defaults">New edge defaults</div>
+            <div class="grid2">
+              <label class="field" for="edgeWeight"><span data-i18n="weight">Weight</span>
+                <input id="edgeWeight" type="text" value="1" inputmode="decimal" />
+              </label>
+              <label class="field" for="edgeLabel"><span data-i18n="label">Label</span>
+                <input id="edgeLabel" type="text" placeholder="Optional" />
+              </label>
+              <label class="field" for="edgeType"><span data-i18n="type">Type</span>
+                <input id="edgeType" type="text" list="edgeTypeListEdit" placeholder="none" data-i18n-placeholder="none_placeholder" />
+                <datalist id="edgeTypeListEdit"></datalist>
+              </label>
+              <label class="field" for="edgeColor"><span data-i18n="color">Color</span>
+                <input id="edgeColor" type="color" value="#94a3b8" />
+              </label>
+              <label class="field" for="edgeStrokeSize"><span data-i18n="stroke_size">Stroke size</span>
+                <input id="edgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal" />
+              </label>
+              <label class="field" for="edgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span>
+                <select id="edgeStrokeStyle">
+                  <option value="solid" data-i18n="stroke_solid">Solid</option>
+                  <option value="dashed" data-i18n="stroke_dashed">Dashed</option>
+                  <option value="dotted" data-i18n="stroke_dotted">Dotted</option>
+                </select>
+              </label>
+              <label class="field" for="edgeLabelColor"><span data-i18n="label_color">Label color</span>
+                <input id="edgeLabelColor" type="color" value="#dbeafe" />
+              </label>
+              <label class="field" for="edgeLabelFont"><span data-i18n="label_font">Label font</span>
+                <input id="edgeLabelFont" type="text" list="fontList" placeholder="Inter" />
+              </label>
+              <label class="field" for="edgeLabelSize"><span data-i18n="label_size">Label size</span>
+                <input id="edgeLabelSize" type="number" min="4" max="72" step="1" value="12" inputmode="decimal" />
+              </label>
+            </div>
+            <label class="row tiny muted" for="edgeDirected" style="margin-top:8px"><input id="edgeDirected" type="checkbox" checked /> <span data-i18n="directed_edge">Directed edge</span></label>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="selection">Selection</div>
+            <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
+          </div>
+        </section>
+
+        <section id="panel-style" class="tab-panel">
+          <div class="section">
+            <div class="section-title" data-i18n="graph_defaults">Graph defaults</div>
+            <label class="field" for="defLabelsPolicy"><span data-i18n="labels_policy">Labels policy</span>
+              <select id="defLabelsPolicy">
+                <option value="auto" data-i18n="labels_auto">Auto (hide when many nodes)</option>
+                <option value="on" data-i18n="labels_on">On (always show)</option>
+                <option value="off" data-i18n="labels_off">Off (never show)</option>
+              </select>
+            </label>
+            <p class="tiny muted"><span data-i18n="labels_policy_desc">Auto hides labels when more than 30 nodes exist. Imported QVGE graphs with no labels stay unlabeled.</span></p>
+            <label class="field" for="defEdgeWeightMode" style="margin-top:8px"><span data-i18n="edge_weight_viz">Edge weight visualization</span>
+              <select id="defEdgeWeightMode">
+                <option value="number" data-i18n="ew_number">Show weight as number</option>
+                <option value="color" data-i18n="ew_color">Color gradient by weight</option>
+                <option value="width" data-i18n="ew_width">Edge width by weight</option>
+                <option value="none" data-i18n="ew_none">No weight visualization</option>
+              </select>
+            </label>
+            <div id="edgeWeightRangeSection" class="grid2" style="margin-top:8px">
+              <label class="field" for="defEdgeWeightMin">Weight range min <input id="defEdgeWeightMin" type="number" step="any" inputmode="decimal"></label>
+              <label class="field" for="defEdgeWeightMax">Weight range max <input id="defEdgeWeightMax" type="number" step="any" inputmode="decimal"></label>
+            </div>
+            <p class="tiny muted" style="margin-top:4px">Min &gt; max is valid — inverts the mapping (lower values give higher width/color).</p>
+            <label class="field" for="defEdgeWeightCorr" style="margin-top:6px">Correlation function
+              <select id="defEdgeWeightCorr">
+                <option value="linear" data-i18n="corr_linear">Linear</option>
+                <option value="log" data-i18n="corr_log">Logarithmic</option>
+                <option value="exp" data-i18n="corr_exp">Exponential</option>
+                <option value="sqrt" data-i18n="corr_sqrt">Square root</option>
+              </select>
+            </label>
+            <div id="edgeWidthSection" class="grid2" style="margin-top:8px">
+              <label class="field" for="defEdgeWidthMin">Edge width min <input id="defEdgeWidthMin" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
+              <label class="field" for="defEdgeWidthMax">Edge width max <input id="defEdgeWidthMax" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
+            </div>
+            <div id="edgeColorSection" class="grid2" style="margin-top:8px">
+              <label class="field" for="defEdgeWeightColorLow">Gradient low color <input id="defEdgeWeightColorLow" type="color"></label>
+              <label class="field" for="defEdgeWeightColorHigh">Gradient high color <input id="defEdgeWeightColorHigh" type="color"></label>
+            </div>
+            <p class="tiny muted" style="margin-top:4px"><span data-i18n="range_clamp_note">In color/width mode, weights outside the range are clamped; the number is shown as text fallback.</span></p>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="canvasBgColor"><span data-i18n="canvas_bg">Canvas background</span> <input id="canvasBgColor" type="color" value="#020617"></label>
+              <label class="field" for="gridMinorColor"><span data-i18n="grid_minor_color">Grid minor color</span> <input id="gridMinorColor" type="color" value="#94a3b8"></label>
+              <label class="field" for="gridMinorAlpha"><span data-i18n="grid_minor_alpha">Grid minor alpha</span> <input id="gridMinorAlpha" type="number" min="0" max="1" step="0.01" value="0.105" inputmode="decimal"></label>
+              <label class="field" for="gridMajorColor"><span data-i18n="grid_major_color">Grid major color</span> <input id="gridMajorColor" type="color" value="#94a3b8"></label>
+              <label class="field" for="gridMajorAlpha"><span data-i18n="grid_major_alpha">Grid major alpha</span> <input id="gridMajorAlpha" type="number" min="0" max="1" step="0.01" value="0.16" inputmode="decimal"></label>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="node_defaults">Node defaults</div>
+            <div class="grid2">
+              <label class="field" for="defNodeType"><span data-i18n="type">Type</span> <input id="defNodeType" list="defNodeTypeList" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="defNodeTypeList"></datalist></label>
+              <label class="field" for="defNodeShape"><span data-i18n="shape">Shape</span> <select id="defNodeShape"></select></label>
+              <label class="field" for="defNodeColor"><span data-i18n="color">Color</span> <input id="defNodeColor" type="color"></label>
+              <label class="field" for="defNodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span> <input id="defNodeStrokeColor" type="color"></label>
+              <label class="field" for="defNodeWidth"><span data-i18n="width">Width</span> <input id="defNodeWidth" type="number" min="10" max="300" step="1" inputmode="decimal"></label>
+              <label class="field" for="defNodeHeight"><span data-i18n="height">Height</span> <input id="defNodeHeight" type="number" min="10" max="300" step="1" inputmode="decimal"></label>
+              <label class="field" for="defNodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="defNodeStrokeSize" type="number" min="0" max="20" step="0.1" inputmode="decimal"></label>
+              <label class="field" for="defNodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="defNodeStrokeStyle"><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option></select></label>
+            </div>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="defNodeLabelColor"><span data-i18n="label_color">Label color</span> <input id="defNodeLabelColor" type="color"></label>
+              <label class="field" for="defNodeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defNodeLabelFont" list="fontList" type="text" placeholder="Inter"><datalist id="fontList"></datalist></label>
+              <label class="field" for="defNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defNodeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
+              <label class="field" for="defNodeLabelPos"><span data-i18n="label_pos">Label position</span> <select id="defNodeLabelPos"><option value="center" data-i18n="pos_center">Center</option><option value="top" data-i18n="pos_top">Top</option><option value="bottom" data-i18n="pos_bottom">Bottom</option><option value="left" data-i18n="pos_left">Left</option><option value="right" data-i18n="pos_right">Right</option></select></label>
+            </div>
+            <button id="btnApplyNodeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_nodes">Apply defaults to all nodes</button>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="edge_defaults_style">Edge defaults</div>
+            <div class="grid2">
+              <label class="field" for="defEdgeType"><span data-i18n="type">Type</span> <input id="defEdgeType" list="defEdgeTypeList" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="defEdgeTypeList"></datalist></label>
+              <label class="field" for="defEdgeColor"><span data-i18n="color">Color</span> <input id="defEdgeColor" type="color"></label>
+              <label class="field" for="defEdgeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="defEdgeStrokeSize" type="number" min="0" max="20" step="0.1" inputmode="decimal"></label>
+              <label class="field" for="defEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="defEdgeStrokeStyle"><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option></select></label>
+            </div>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="defEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="defEdgeLabelColor" type="color"></label>
+              <label class="field" for="defEdgeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defEdgeLabelFont" list="fontList" type="text" placeholder="Inter"></label>
+              <label class="field" for="defEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defEdgeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
+            </div>
+            <button id="btnApplyEdgeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_edges">Apply defaults to all edges</button>
+          </div>
+
+          <div class="section">
+            <div class="section-title"><span data-i18n="node_type_styles">Node type styles</span> <span class="tiny muted" data-i18n="type_styles_sub">(per-type overrides)</span></div>
+            <p class="tiny muted"><span data-i18n="type_styles_desc">Type a name, set style, then Save. Nodes with this type (and no per-node override) will use these visuals. Use "Clear per-node" to force type style to take effect.</span></p>
+            <label class="field" for="nodeTypeStyleInput"><span data-i18n="type">Type</span>
+              <input id="nodeTypeStyleInput" list="nodeTypeStyleList" placeholder="enter type name" data-i18n-placeholder="enter_type_placeholder"><datalist id="nodeTypeStyleList"></datalist>
+            </label>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="ntsColor"><span data-i18n="color">Color</span> <input id="ntsColor" type="color" value="#0ea5e9"></label>
+              <label class="field" for="ntsShape"><span data-i18n="shape">Shape</span> <select id="ntsShape"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="circle" data-i18n="circle">Circle</option><option value="square" data-i18n="shape_square">Square</option><option value="diamond" data-i18n="shape_diamond">Diamond</option><option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option><option value="triangleDown" data-i18n="shape_triangleDown">Triangle Down</option><option value="hexagon" data-i18n="shape_hexagon">Hexagon</option></select></label>
+              <label class="field" for="ntsWidth"><span data-i18n="width">Width</span> <input id="ntsWidth" type="number" min="10" max="300" step="1" value="50"></label>
+              <label class="field" for="ntsHeight"><span data-i18n="height">Height</span> <input id="ntsHeight" type="number" min="10" max="300" step="1" value="50"></label>
+              <label class="field" for="ntsStrokeColor"><span data-i18n="stroke_color">Stroke color</span> <input id="ntsStrokeColor" type="color" value="#e2e8f0"></label>
+              <label class="field" for="ntsStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="ntsStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2"></label>
+              <label class="field" for="ntsStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="ntsStrokeStyle"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option></select></label>
+              <label class="field" for="ntsLabelColor"><span data-i18n="label_color">Label color</span> <input id="ntsLabelColor" type="color" value="#f8fafc"></label>
+              <label class="field" for="ntsLabelSize"><span data-i18n="label_size">Label size</span> <input id="ntsLabelSize" type="number" min="4" max="72" step="1" value="13"></label>
+              <label class="field" for="ntsLabelPos"><span data-i18n="label_pos">Label position</span> <select id="ntsLabelPos"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="center" data-i18n="pos_center">Center</option><option value="top" data-i18n="pos_top">Top</option><option value="bottom" data-i18n="pos_bottom">Bottom</option><option value="left" data-i18n="pos_left">Left</option><option value="right" data-i18n="pos_right">Right</option></select></label>
+              <label class="field" for="ntsLabelFont"><span data-i18n="label_font">Label font</span> <input id="ntsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <button id="btnSaveNodeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
+              <button id="btnDelNodeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
+              <button id="btnClearNodeOverrides" class="btn small warn" style="flex:1" title="Clear per-node color/shape overrides so type style takes effect" data-i18n-title="clear_per_node_title" data-i18n="clear_per_node">Clear per-node</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title"><span data-i18n="edge_type_styles">Edge type styles</span> <span class="tiny muted" data-i18n="type_styles_sub">(per-type overrides)</span></div>
+            <p class="tiny muted"><span data-i18n="type_styles_desc_edge">Type a name, set style, then Save. Edges with this type (and no per-edge override) will use these visuals.</span></p>
+            <label class="field" for="edgeTypeStyleInput"><span data-i18n="type">Type</span>
+              <input id="edgeTypeStyleInput" list="edgeTypeStyleList" placeholder="enter type name" data-i18n-placeholder="enter_type_placeholder"><datalist id="edgeTypeStyleList"></datalist>
+            </label>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="etsColor"><span data-i18n="color">Color</span> <input id="etsColor" type="color" value="#94a3b8"></label>
+              <label class="field" for="etsStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="etsStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4"></label>
+              <label class="field" for="etsStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="etsStrokeStyle"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option></select></label>
+              <label class="field" for="etsLabelColor"><span data-i18n="label_color">Label color</span> <input id="etsLabelColor" type="color" value="#dbeafe"></label>
+              <label class="field" for="etsLabelSize"><span data-i18n="label_size">Label size</span> <input id="etsLabelSize" type="number" min="4" max="72" step="1" value="12"></label>
+              <label class="field" for="etsLabelFont"><span data-i18n="label_font">Label font</span> <input id="etsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <button id="btnSaveEdgeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
+              <button id="btnDelEdgeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
+              <button id="btnClearEdgeOverrides" class="btn small warn" style="flex:1" title="Clear per-edge color overrides so type style takes effect" data-i18n-title="clear_per_edge_title" data-i18n="clear_per_edge">Clear per-edge</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-algo" class="tab-panel">
+          <div class="section">
+            <div class="section-title" data-i18n="run_algorithms">Run algorithms</div>
+            <label class="field" for="algoStart"><span data-i18n="start_node">Start node</span>
+              <select id="algoStart"></select>
+            </label>
+            <div class="grid2" style="margin-top:8px">
+              <button id="btnBfs" class="btn">BFS</button>
+              <button id="btnDfs" class="btn">DFS</button>
+              <button id="btnDijkstra" class="btn">Dijkstra</button>
+              <button id="btnComponents" class="btn">Components</button>
+              <button id="btnTopo" class="btn">Topological</button>
+              <button id="btnStats" class="btn">Stats</button>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title"><span data-i18n="results">Results</span> <button id="btnCopyResults" class="btn small" data-i18n="copy">Copy</button></div>
+            <div id="algoOutput" class="result-box" data-i18n="algo_output_init">Create a graph, choose a start node, then run an algorithm.</div>
+          </div>
+        </section>
+
+        <section id="panel-data" class="tab-panel">
+          <div class="section">
+            <div class="section-title" data-i18n="import_export">Import / export</div>
+            <label class="row tiny muted" style="margin-bottom:6px"><input id="optImportAppend" type="checkbox" /> <span data-i18n="append_mode">Append to current graph (keep existing nodes/edges, styles, and background)</span></label>
+            <div class="grid2">
+              <button id="btnExportJson" class="btn good" data-i18n="export_json">Export JSON</button>
+              <button id="btnCopyJson" class="btn" data-i18n="copy_json">Copy JSON</button>
+              <button id="btnPasteJson" class="btn" data-i18n="paste_json">Paste JSON</button>
+              <button id="btnImportJson" class="btn" data-i18n="import_json">Import JSON</button>
+              <button id="btnExportDot" class="btn good" data-i18n="export_dot">Export DOT</button>
+              <button id="btnCopyDot" class="btn" data-i18n="copy_dot">Copy DOT</button>
+              <button id="btnPasteDot" class="btn" data-i18n="paste_dot">Paste DOT</button>
+              <button id="btnImportDot" class="btn" data-i18n="import_dot">Import DOT</button>
+              <button id="btnExportGraphml" class="btn good" data-i18n="graphml">GraphML</button>
+              <button id="btnCopyGraphml" class="btn" data-i18n="copy_graphml">Copy GraphML</button>
+              <button id="btnPasteGraphml" class="btn" data-i18n="paste_graphml">Paste GraphML</button>
+              <button id="btnImportGraphml" class="btn" data-i18n="import_graphml">Import GraphML</button>
+              <button id="btnExportEdgesCsv" class="btn good" data-i18n="export_edges_csv">Edges CSV</button>
+              <button id="btnCopyEdgeCsv" class="btn" data-i18n="copy_edges">Copy Edges</button>
+              <button id="btnPasteEdgesCsv" class="btn" data-i18n="paste_edges">Paste Edges</button>
+              <button id="btnExportMatrixCsv" class="btn good" data-i18n="export_matrix_csv">Matrix CSV</button>
+              <button id="btnCopyMatrixCsv" class="btn" data-i18n="copy_matrix">Copy Matrix</button>
+              <button id="btnPasteMatrixCsv" class="btn" data-i18n="paste_matrix">Paste Matrix</button>
+              <button id="btnExportNodesCsv" class="btn good" data-i18n="export_nodes_csv">Nodes CSV</button>
+              <button id="btnCopyNodesCsv" class="btn" data-i18n="copy_nodes">Copy Nodes</button>
+              <button id="btnPasteNodesCsv" class="btn" data-i18n="paste_nodes">Paste Nodes</button>
+            </div>
+            <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml" hidden />
+            <p class="tiny muted"><span data-i18n="import_export_desc">Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.</span></p>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="layout_view">Layout and view</div>
+            <div class="grid2">
+              <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
+              <button id="btnLayoutGrid" class="btn" data-i18n="grid">Grid</button>
+              <button id="btnLayoutForce" class="btn" data-i18n="relax">Relax</button>
+              <button id="btnFit" class="btn" data-i18n="fit_view">Fit view</button>
+              <button id="btnCenterSelection" class="btn" title="Center the view on the single selected node" data-i18n-title="center_on_sel_title" data-i18n="center_on_sel">Center on sel.</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title"><span data-i18n="camera_position">Camera position</span> <span id="cameraReadout" class="tiny muted"></span></div>
+            <div class="camera-grid">
+              <label class="field" for="cameraX"><span data-i18n="center_x">Center X</span> <input id="cameraX" type="number" step="1" inputmode="decimal"></label>
+              <label class="field" for="cameraY"><span data-i18n="center_y">Center Y</span> <input id="cameraY" type="number" step="1" inputmode="decimal"></label>
+              <label class="field" for="cameraW"><span data-i18n="width">Width</span> <input id="cameraW" type="number" step="10" min="100" inputmode="decimal"></label>
+              <label class="field" for="cameraH"><span data-i18n="height">Height</span> <input id="cameraH" type="number" step="10" min="100" inputmode="decimal"></label>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <button id="btnCameraSet" class="btn small good" data-i18n="apply">Apply</button>
+              <button id="btnCameraFit" class="btn small" data-i18n="fit">Fit</button>
+              <button id="btnCameraReset" class="btn small" data-i18n="reset_100">Reset 100%</button>
+            </div>
+            <p class="drag-hint"><span data-i18n="camera_hint">Width/Height control zoom (smaller = zoomed in). Apply pans and zooms precisely.</span></p>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="reliability_options">Reliability options</div>
+            <label class="row tiny muted" for="optAutosave"><input id="optAutosave" type="checkbox" checked /> <span data-i18n="autosave">Autosave to this browser</span></label>
+            <div class="grid2" style="margin-top:8px">
+              <label class="field" for="optMatrixLimit"><span data-i18n="matrix_limit">Matrix limit</span>
+                <input id="optMatrixLimit" type="number" min="10" max="300" step="10" value="90" />
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-help" class="tab-panel">
+          <div class="section">
+            <div class="section-title" data-i18n="quick_help">Quick help</div>
+            <p class="tiny muted"><span data-i18n-html="help_node"><b>Node:</b> choose Node mode, then click the canvas. In Node mode you can also drag existing nodes to reposition them (Blender-style).</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_edge"><b>Edge:</b> choose Edge mode, then drag from a source node to a target node. On touch screens, tap a source node, then tap a target node.</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_move_nodes"><b>Move nodes:</b> choose Select or Node mode and drag nodes.</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_move_canvas"><b>Move canvas:</b> choose Move mode, hold <span class="kbd">Space</span>, or drag with <span class="kbd">RMB</span>/<span class="kbd">MMB</span> in any mode. On touch screens, pinch to zoom and pan.</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_center_edge"><b>Center on edge:</b> in Move mode, click an edge — the view centers on whichever endpoint is further from the current view center.</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_adjust_numbers"><b>Adjust numbers:</b> hover any numeric field with a ⇆ handle and drag horizontally to change the value (Shift = fine). Type directly to enter an exact value.</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
+            <p class="tiny muted"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
+          </div>
+          <div class="section">
+            <div class="section-title"><span data-i18n="hotkeys">Hotkeys</span> <button id="btnResetHotkeys" class="btn small" data-i18n="reset_defaults">Reset to defaults</button></div>
+            <p class="tiny muted"><span data-i18n="hotkeys_desc">Click a key field, then press any key. Backspace/Delete clears. Escape cancels. Undo/Redo are prefixed with Ctrl/⌘ automatically.</span></p>
+            <div class="hotkey-grid">
+              <div class="hotkey-row"><label for="hk-select"><span data-i18n="hk_select">Select mode</span></label><input id="hk-select" class="hotkey-input" data-hotkey="select" readonly placeholder="S"></div>
+              <div class="hotkey-row"><label for="hk-move"><span data-i18n="hk_move">Move mode</span></label><input id="hk-move" class="hotkey-input" data-hotkey="move" readonly placeholder="M"></div>
+              <div class="hotkey-row"><label for="hk-node"><span data-i18n="hk_node">Node mode</span></label><input id="hk-node" class="hotkey-input" data-hotkey="node" readonly placeholder="N"></div>
+              <div class="hotkey-row"><label for="hk-edge"><span data-i18n="hk_edge">Edge mode</span></label><input id="hk-edge" class="hotkey-input" data-hotkey="edge" readonly placeholder="E"></div>
+              <div class="hotkey-row"><label for="hk-delete"><span data-i18n="hk_delete">Delete selection</span></label><input id="hk-delete" class="hotkey-input" data-hotkey="delete" readonly placeholder="Delete"></div>
+              <div class="hotkey-row"><label for="hk-pan"><span data-i18n="hk_pan">Pan (hold)</span></label><input id="hk-pan" class="hotkey-input" data-hotkey="pan" readonly placeholder="Space"></div>
+              <div class="hotkey-row"><label for="hk-undo"><span data-i18n="hk_undo">Undo (Ctrl+)</span></label><input id="hk-undo" class="hotkey-input" data-hotkey="undo" readonly placeholder="Z"></div>
+              <div class="hotkey-row"><label for="hk-redo"><span data-i18n="hk_redo">Redo (Ctrl+)</span></label><input id="hk-redo" class="hotkey-input" data-hotkey="redo" readonly placeholder="Y"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="panel topbar">
+        <div class="brand"><div class="brand-badge">G</div><span data-i18n="brand_name">Graph Editor Pro</span></div>
+        <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
+        <div class="view-toggle" role="group" aria-label="View switcher">
+          <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
+          <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
+          <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
+        </div>
+        <div class="toolbar">
+          <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
+          <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open">★</button>
+          <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
+          <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
+          <button id="btnSample" class="btn" title="Add sample graph" data-i18n-title="add_sample" data-i18n="sample">Sample</button>
+          <button id="btnDelete" class="btn danger" title="Delete selected" data-i18n-title="delete_selected" data-i18n="delete_btn">Delete</button>
+          <button id="btnClear" class="btn danger" title="Clear graph" data-i18n-title="clear_graph" data-i18n="clear_sel">Clear</button>
+          <button id="btnLang" class="btn small" title="Switch language / Сменить язык" data-i18n-title="lang_switch">🌐 EN</button>
+        </div>
+      </header>
+
+      <section id="canvasWrap" class="panel canvas-wrap empty">
+        <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor">
+          <defs>
+            <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
+              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(148,163,184,.12)" stroke-width="1" />
+              <path d="M 200 0 L 0 0 0 200" fill="none" stroke="rgba(148,163,184,.19)" stroke-width="1.3" />
+            </pattern>
+            <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+              <path d="M 1 1 L 11 6 L 1 11 z" fill="#94a3b8"></path>
+            </marker>
+            <marker id="arrowSelected" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+              <path d="M 1 1 L 11 6 L 1 11 z" fill="#22d3ee"></path>
+            </marker>
+          </defs>
+          <rect id="gridRect" x="-100000" y="-100000" width="200000" height="200000" fill="url(#gridPattern)"></rect>
+          <g id="edgesLayer"></g>
+          <path id="dragLine" class="drag-line" d="" style="display:none"></path>
+          <g id="selectionOverlayLayer"></g>
+          <g id="nodesLayer"></g>
+        </svg>
+        <div class="canvas-hud"><div id="statusPill" class="status-pill" data-i18n="ready">Ready</div><div id="statsPill" class="status-pill">0 nodes · 0 edges</div></div>
+        <div class="mobile-modebar" aria-label="Quick edit modes">
+          <button class="btn active" data-mode="select" title="Select/move nodes">↖</button>
+          <button class="btn" data-mode="move" title="Move canvas">✋</button>
+          <button class="btn" data-mode="node" title="Add node">＋</button>
+          <button class="btn" data-mode="edge" title="Add edge">↔</button>
+        </div>
+        <div class="zoom-controls">
+          <button id="btnZoomIn" class="btn icon" title="Zoom in" data-i18n-title="zoom_in">＋</button>
+          <button id="btnZoomOut" class="btn icon" title="Zoom out" data-i18n-title="zoom_out">−</button>
+          <button id="btnZoomReset" class="btn" title="Reset zoom" data-i18n-title="reset_zoom">100%</button>
+        </div>
+        <div class="empty-hint" data-i18n="empty_hint">Start by selecting Node mode and clicking the canvas, or press Sample.</div>
+        <!-- Style presets overlay -->
+        <div id="presetsOverlay" class="presets-overlay">
+          <div class="presets-header">
+            <h3 data-i18n="style_presets">Style presets</h3>
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+              <button id="btnPresetSave" class="btn small good" title="Save current selection's style as a new preset" data-i18n="save_from_sel">Save from selection</button>
+              <button id="btnPresetClose" class="btn small danger" data-i18n="close">Close</button>
+            </div>
+          </div>
+          <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
+          <div id="presetsGrid" class="presets-grid"></div>
+        </div>
+      </section>
+
+      <section class="panel bottom">
+        <div class="bottom-pane thin-scroll">
+          <div class="section-title"><span data-i18n="adjacency_matrix">Adjacency matrix</span> <span id="matrixNote" class="tiny muted"></span></div>
+          <div class="matrix-controls tiny muted">
+            <label class="field" for="matrixSize"><span data-i18n="matrix_view">Matrix view</span> <input id="matrixSize" class="matrix-input" type="number" min="0" max="300" value="0" title="Set visible matrix dimension. Smaller values do not delete graph nodes." data-i18n-title="matrix_view_title"></label>
+            <button id="btnMatrixResize" class="btn small" title="Resize matrix view without deleting or rearranging existing graph" data-i18n-title="set_dim_title" data-i18n="set_dimensions">Set dimensions</button>
+            <button id="btnMatrixAddNode" class="btn small" data-i18n="add_node">Add node</button>
+            <button id="btnMatrixInsertNode" class="btn small" title="Insert a new node before each selected node" data-i18n-title="insert_title" data-i18n="insert_before_sel">Insert before selected</button>
+            <button id="btnSortNodeId" class="btn small" title="Sort nodes by ID" data-i18n-title="sort_by_id_title" data-i18n="sort_by_id">Sort by ID</button>
+            <button id="btnSortNodeLabel" class="btn small" title="Sort nodes by label" data-i18n-title="sort_by_label_title" data-i18n="sort_by_label">Sort by label</button>
+            <button id="btnSortNodeOrder" class="btn small" title="Renumber node order sequentially (0,1,2,...) by current position" data-i18n-title="renumber_title" data-i18n="renumber_order">Renumber order</button>
+            <button id="btnMatrixClear" class="btn small danger" data-i18n="clear_edges">Clear edges</button>
+          </div>
+          <div class="matrix-controls tiny muted">
+            <span class="tiny muted" data-i18n="visible_range">Visible range (by order):</span>
+            <label class="field" for="visRangeStart"><span data-i18n="range_start">Start</span> <input id="visRangeStart" class="matrix-input" type="number" min="0" placeholder="0" title="Start of visible node order range" data-i18n-title="range_start_title"></label>
+            <label class="field" for="visRangeEnd"><span data-i18n="range_end">End</span> <input id="visRangeEnd" class="matrix-input" type="number" min="0" placeholder="end" title="End of visible node order range (inclusive)" data-i18n-title="range_end_title"></label>
+            <button id="btnVisRangeApply" class="btn small good" title="Apply visible range filter to matrix, edge list, and graph" data-i18n-title="apply_range_title" data-i18n="apply">Apply</button>
+            <button id="btnVisRangeAll" class="btn small" title="Show all nodes (clear visible range)" data-i18n-title="show_all_title" data-i18n="show_all">Show all</button>
+            <span id="visRangeNote" class="tiny muted"></span>
+          </div>
+          <div id="matrixHost" class="table-scroll thin-scroll"></div>
+        </div>
+        <div class="bottom-pane thin-scroll">
+          <div class="section-title"><span data-i18n="edge_list">Edge list</span> <span class="tiny muted" id="edgeListNote"></span></div>
+          <div class="matrix-controls tiny muted">
+            <button id="btnSortEdgeId" class="btn small" title="Sort edges by ID" data-i18n-title="sort_edge_id_title" data-i18n="sort_by_id">Sort by ID</button>
+            <button id="btnSortEdgeFrom" class="btn small" title="Sort edges by source node order" data-i18n-title="sort_edge_from_title" data-i18n="sort_edge_from">Sort by from</button>
+            <button id="btnSortEdgeTo" class="btn small" title="Sort edges by target node order" data-i18n-title="sort_edge_to_title" data-i18n="sort_edge_to">Sort by to</button>
+          </div>
+          <div id="edgeListHost" class="table-scroll thin-scroll"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+  <!-- INLINE_SCRIPT -->
+
+</body>
+</html>
