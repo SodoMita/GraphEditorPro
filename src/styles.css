@@ -1,0 +1,231 @@
+    :root{
+      --bg:#06101f; --panel:#0f172a; --panel-2:#0b1220; --panel-3:#111c33;
+      --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b; --line:#334155;
+      --accent:#22d3ee; --accent-2:#0ea5e9; --good:#34d399; --warn:#fbbf24; --bad:#fb7185;
+      --shadow: 0 18px 60px rgba(0,0,0,.32);
+      --radius:16px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; color:var(--text); background:
+        radial-gradient(900px 500px at 20% -10%, rgba(14,165,233,.20), transparent 60%),
+        radial-gradient(700px 420px at 95% 0%, rgba(34,211,238,.14), transparent 55%),
+        linear-gradient(135deg,#060b16 0%,#0b1220 45%,#060b16 100%);
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      overflow:hidden;
+    }
+    button,input,select,textarea{font:inherit}
+    button{cursor:pointer}
+    .app{height:100vh; height:100svh; display:grid; grid-template-columns:310px minmax(0,1fr); grid-template-rows:minmax(0,1fr); grid-template-areas:"sidebar main"; gap:10px; padding:10px; overflow:hidden;}
+    .panel{background:linear-gradient(145deg,rgba(15,23,42,.96),rgba(8,14,27,.98)); border:1px solid rgba(51,65,85,.85); border-radius:var(--radius); box-shadow:var(--shadow)}
+    .sidebar{grid-area:sidebar; min-width:0; min-height:0; overflow:hidden; display:flex; flex-direction:column}
+    .sidebar .tab-panels{flex:1; min-height:0; overflow-y:auto; overflow-x:hidden}
+    .main{grid-area:main; min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr) minmax(155px,28vh); gap:10px; overflow:hidden;}
+    .topbar{display:flex; align-items:center; gap:10px; padding:10px 12px; min-width:0}
+    .brand{display:flex; align-items:center; gap:10px; min-width:0; font-weight:800; letter-spacing:.2px}
+    .brand-badge{width:34px;height:34px; border-radius:11px; display:grid; place-items:center; color:#06101f; background:linear-gradient(135deg,var(--accent),#a7f3d0); font-weight:900; flex:0 0 auto}
+    .title-input{min-width:120px; max-width:340px; width:28vw; border:1px solid transparent; border-radius:10px; background:rgba(2,6,23,.38); color:var(--text); padding:8px 10px; outline:none; font-weight:650}
+    .title-input:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.14)}
+    .toolbar{margin-left:auto; display:flex; align-items:center; gap:7px; flex-wrap:wrap; justify-content:flex-end}
+    .btn,.tab,.chip{
+      border:1px solid rgba(51,65,85,.9); background:linear-gradient(135deg,#0f172a,#111c33); color:var(--text);
+      border-radius:12px; min-height:38px; padding:0 11px; display:inline-flex; align-items:center; justify-content:center; gap:7px;
+      transition:transform .08s ease, filter .15s ease, border-color .15s ease, box-shadow .15s ease; user-select:none; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+    }
+    .btn.icon,.tab.icon{width:40px; padding:0; font-size:17px}
+    .btn.small{min-height:32px; padding:0 9px; border-radius:10px; font-size:13px}
+    .btn:hover,.tab:hover{filter:brightness(1.08)}
+    .btn:active,.tab:active{transform:translateY(1px)}
+    .btn.active,.tab.active{border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.13) inset, 0 0 16px rgba(34,211,238,.16)}
+    .btn.danger{border-color:rgba(251,113,133,.5)} .btn.good{border-color:rgba(52,211,153,.45)} .btn.warn{border-color:rgba(251,191,36,.45)}
+    .btn:disabled{opacity:.42; cursor:not-allowed; filter:none}
+    .tabs{display:flex; gap:8px; padding:10px 10px 0}
+    .tab{flex:1; font-size:13px; min-width:0}
+    .tab .wide{display:inline}
+    .tab-panels{padding:10px; overflow:auto; min-height:0}
+    .tab-panel{display:none}.tab-panel.active{display:block}
+    .section{border:1px solid rgba(51,65,85,.72); border-radius:14px; padding:10px; margin-bottom:10px; background:rgba(2,6,23,.22)}
+    .section-title{font-size:12px; color:#cbd5e1; letter-spacing:.08em; text-transform:uppercase; font-weight:800; margin:0 0 9px; display:flex; align-items:center; justify-content:space-between; gap:8px}
+    .muted{color:var(--muted)} .dim{color:var(--dim)} .tiny{font-size:12px} .nowrap{white-space:nowrap}
+    .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}.row + .row{margin-top:8px}
+    .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px}.grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
+    label.field{display:block; font-size:12px; color:var(--muted)}
+    .field input,.field select,.field textarea,.input,.select{
+      width:100%; margin-top:4px; background:rgba(2,6,23,.44); border:1px solid rgba(51,65,85,.85); color:var(--text);
+      border-radius:10px; padding:8px 9px; outline:none; min-height:36px;
+    }
+    .field input:focus,.field select:focus,.field textarea:focus,.input:focus,.select:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.12)}
+    input[type="checkbox"]{accent-color:var(--accent)} input[type="color"]{padding:2px; height:36px}
+    .canvas-wrap{position:relative; overflow:hidden; min-height:0}
+    #graphCanvas{--grid:40px; --major-grid:200px; --grid-minor-color:rgba(148,163,184,.105); --grid-major-color:rgba(148,163,184,.16); width:100%; height:100%; display:block; border-radius:var(--radius); background-color:#020617; background-image:linear-gradient(var(--grid-minor-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor-color) 1px,transparent 1px),linear-gradient(var(--grid-major-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-major-color) 1px,transparent 1px); background-size:var(--grid-px,var(--grid)) var(--grid-py,var(--grid)),var(--grid-px,var(--grid)) var(--grid-py,var(--grid)),var(--major-grid-px,var(--major-grid)) var(--major-grid-py,var(--major-grid)),var(--major-grid-px,var(--major-grid)) var(--major-grid-py,var(--major-grid)); background-position:var(--grid-pos-x,0px) var(--grid-pos-y,0px),var(--grid-pos-x,0px) var(--grid-pos-y,0px),var(--major-grid-pos-x,0px) var(--major-grid-pos-y,0px),var(--major-grid-pos-x,0px) var(--major-grid-pos-y,0px); touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; overscroll-behavior:none}
+    #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
+    #gridRect{display:none}#edgesLayer,#nodesLayer,#selectionOverlayLayer,#dragLine{will-change:transform}
+    .canvas-hud{position:absolute; left:12px; top:12px; display:flex; gap:8px; flex-wrap:wrap; pointer-events:none}.canvas-hud>*{pointer-events:auto}
+    .status-pill{background:rgba(2,6,23,.78); border:1px solid rgba(51,65,85,.8); border-radius:999px; padding:7px 10px; font-size:12px; color:#cbd5e1; backdrop-filter:blur(8px)}
+    .zoom-controls{position:absolute; right:12px; top:12px; display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
+    .mobile-modebar{position:absolute; left:8px; top:8px; display:none; gap:6px; z-index:4}
+    .empty-hint{position:absolute; inset:auto 18px 18px 18px; padding:12px 14px; border:1px dashed rgba(148,163,184,.38); border-radius:14px; background:rgba(2,6,23,.70); color:#cbd5e1; font-size:13px; pointer-events:none; display:none}
+    .empty .empty-hint{display:block}
+    .bottom{overflow:hidden; display:grid; grid-template-columns:1.05fr .95fr; min-height:0}
+    .bottom-pane{min-width:0; padding:10px; overflow:auto}.bottom-pane + .bottom-pane{border-left:1px solid rgba(51,65,85,.65)}
+    /* View toggle — hidden on desktop, shown in landscape */
+    .view-toggle{display:none; align-items:center; gap:4px; flex:0 0 auto; flex-wrap:wrap}
+    .view-toggle .btn.small{min-height:30px; padding:0 8px; font-size:11px}
+    .view-toggle .btn.small.active{border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.13) inset, 0 0 16px rgba(34,211,238,.16)}
+    /* Orientation toggle — always visible in toolbar */
+    #btnViewOrient{display:inline-flex}
+    /* Presets overlay — inventory grid of style cards over the canvas */
+    .presets-overlay{position:absolute; inset:0; z-index:30; background:rgba(2,6,23,.88); backdrop-filter:blur(6px); display:none; flex-direction:column; padding:10px; overflow:auto}
+    .presets-overlay.open{display:flex}
+    .presets-header{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap}
+    .presets-header h3{margin:0; font-size:14px; font-weight:800; color:#e2e8f0}
+    .presets-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px; align-content:start}
+    .preset-card{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); border-radius:10px; padding:8px; cursor:pointer; transition:border-color .15s, transform .08s; display:flex; flex-direction:column; gap:6px; min-height:90px}
+    .preset-card:hover{border-color:var(--accent); transform:translateY(-2px)}
+    .preset-card:active{transform:translateY(0)}
+    .preset-preview{height:48px; display:flex; align-items:center; justify-content:center; gap:8px; background:rgba(2,6,23,.5); border-radius:6px}
+    .preset-name{font-size:11px; color:#cbd5e1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600}
+    .preset-delete{position:absolute; top:2px; right:4px; background:rgba(251,113,133,.2); border:none; color:#fb7185; cursor:pointer; font-size:14px; padding:0 4px; border-radius:4px; line-height:1}
+    .preset-delete:hover{background:rgba(251,113,133,.4)}
+    .preset-card-wrap{position:relative}
+    /* View-based layout switching (controlled via data-view / data-orient on .main).
+       Canvas height is FIXED at 50dvh regardless of view — switching views only
+       shows/hides the bottom panel, never resizes the canvas. */
+    .main[data-view="graph"] .bottom{display:none}
+    .main[data-view="matrix"] .bottom-pane:nth-child(2),.main[data-view="edges"] .bottom-pane:nth-child(1){display:none}
+    .main[data-view="matrix"] .bottom,.main[data-view="edges"] .bottom{grid-template-columns:1fr}
+    .main[data-view="matrix"] .bottom-pane + .bottom-pane,.main[data-view="edges"] .bottom-pane + .bottom-pane{border-left:0; border-top:0}
+    /* Horizontal split: canvas left, data panel right — side by side */
+    .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"]{
+      grid-template-rows:auto minmax(0,1fr);
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      grid-template-areas:"topbar topbar" "canvas bottom";
+    }
+    .main[data-orient="h"][data-view="matrix"] .topbar,.main[data-orient="h"][data-view="edges"] .topbar{grid-area:topbar}
+    .main[data-orient="h"][data-view="matrix"] .canvas-wrap,.main[data-orient="h"][data-view="edges"] .canvas-wrap{grid-area:canvas}
+    .main[data-orient="h"][data-view="matrix"] .bottom,.main[data-orient="h"][data-view="edges"] .bottom{grid-area:bottom}
+    table{border-collapse:separate; border-spacing:0; width:100%; font-size:12px; color:#dbeafe}
+    th,td{border:1px solid rgba(51,65,85,.65); padding:6px 8px; background:rgba(2,6,23,.32); white-space:nowrap; text-align:center}
+    th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}.row-head{position:sticky; left:0; z-index:3; text-align:left}
+    .table-scroll{overflow:auto; max-height:calc(28vh - 50px); border-radius:10px}
+    .result-box{border:1px solid rgba(51,65,85,.7); border-radius:12px; background:rgba(2,6,23,.34); padding:10px; color:#dbeafe; min-height:80px; white-space:pre-wrap; overflow:auto; max-height:260px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px}.matrix-input{width:64px; min-width:48px; background:rgba(2,6,23,.55); border:1px solid rgba(51,65,85,.8); color:#dbeafe; border-radius:7px; padding:4px 6px; text-align:center}.matrix-input:focus{outline:none;border-color:var(--accent)}.matrix-input.matrix-selected,.matrix-label-input.matrix-selected{border-color:var(--accent)!important; box-shadow:0 0 0 2px rgba(34,211,238,.16)}.matrix-label-input{width:82px; background:transparent; border:1px solid transparent; color:#bfdbfe; text-align:center; border-radius:6px; padding:3px}.matrix-label-input:focus{background:rgba(2,6,23,.55);border-color:var(--accent);outline:none}.matrix-controls{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px}.coord-slider{width:100%; accent-color:var(--accent); margin-top:6px}
+    .toast-stack{position:fixed; right:12px; bottom:12px; z-index:20; display:grid; gap:8px; max-width:min(420px,calc(100vw - 24px))}
+    .toast{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); box-shadow:var(--shadow); border-radius:14px; padding:10px 12px; color:#e2e8f0; animation:pop .18s ease-out}
+    @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
+    .node-shape{filter:drop-shadow(0 8px 14px rgba(0,0,0,.28))}.node.selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}.node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}.node{cursor:grab}.node.dragging{cursor:grabbing}.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}.canvas-wrap.panning #graphCanvas,.canvas-wrap.panning .node{cursor:grabbing}.edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}.edge-line{fill:none}.edge-arrow{pointer-events:none}.edge.selected .edge-line{stroke:var(--accent)}.edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}.selection-draft{fill:rgba(34,211,238,.12);stroke:#22d3ee;stroke-width:2;stroke-dasharray:6 5;pointer-events:none}.selection-draft.fill-soft{fill:rgba(34,211,238,.08)}.node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
+    .kbd{border:1px solid rgba(148,163,184,.35); border-bottom-width:2px; border-radius:6px; padding:1px 5px; background:#0f172a; font-size:11px; color:#cbd5e1}
+    .thin-scroll::-webkit-scrollbar{width:9px;height:9px}.thin-scroll::-webkit-scrollbar-thumb{background:#334155;border-radius:999px}.thin-scroll::-webkit-scrollbar-track{background:transparent}
+    @media (max-width:950px){body{overflow:auto}.app{height:auto; min-height:100svh; grid-template-columns:1fr; grid-template-areas:"main" "sidebar"}.sidebar{max-height:none}.main{grid-template-rows:auto 64svh auto}.bottom{grid-template-columns:1fr}.bottom-pane + .bottom-pane{border-left:0;border-top:1px solid rgba(51,65,85,.65)}.tab .wide{display:none}.title-input{width:42vw}.canvas-hud{display:none}.mobile-modebar{display:flex}.table-scroll{max-height:280px}}
+    @media (max-width:560px){.app{padding:6px max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left)); gap:6px}.panel{border-radius:13px}.topbar{align-items:stretch; flex-direction:column; gap:8px; padding:8px}.toolbar{margin-left:0; justify-content:stretch; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px}.toolbar .btn{min-width:0; padding:0 6px}.brand-badge{width:30px;height:30px}.title-input{width:100%; max-width:none}.btn,.tab{min-height:44px}.grid2,.grid3{grid-template-columns:1fr}.main{grid-template-rows:auto 58svh auto}.canvas-hud{display:none}.mobile-modebar{display:flex}.zoom-controls{right:8px;top:8px;gap:5px}.zoom-controls .btn,.mobile-modebar .btn{min-height:38px; width:38px; padding:0}.empty-hint{font-size:12px; inset:auto 10px 10px 10px}.bottom-pane{padding:8px}.field input,.field select,.field textarea,.input,.select,.title-input{font-size:16px}.tabs{position:sticky; top:0; z-index:5; background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(8,14,27,.98)); padding-bottom:8px}}
+    /* === New UI: drag-handle (Blender-style number drag) === */
+    .drag-number-wrap{display:flex; align-items:stretch; gap:0; margin-top:4px}
+    .drag-number-wrap input[type="number"]{flex:1; min-width:0; margin-top:0; border-top-right-radius:0; border-bottom-right-radius:0}
+    .drag-handle{display:inline-flex; align-items:center; justify-content:center; padding:0 9px; min-width:30px; background:rgba(34,211,238,.12); border:1px solid rgba(51,65,85,.85); border-left:0; border-radius:0 10px 10px 0; cursor:ew-resize; color:var(--accent); font-size:14px; font-weight:800; user-select:none; touch-action:none; -webkit-tap-highlight-color:transparent}
+    .drag-handle:hover{background:rgba(34,211,238,.22)}
+    .drag-handle:active{background:rgba(34,211,238,.32); transform:translateY(1px)}
+    .drag-hint{font-size:10px; color:var(--dim); margin-top:3px; line-height:1.3}
+    /* === Hotkey configuration UI === */
+    .hotkey-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px}
+    .hotkey-row{display:flex; align-items:center; gap:6px; padding:5px 7px; background:rgba(2,6,23,.32); border:1px solid rgba(51,65,85,.6); border-radius:10px; min-width:0}
+    .hotkey-row label{flex:1; font-size:11px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+    .hotkey-input{width:74px; min-width:50px; text-align:center; background:rgba(2,6,23,.55); border:1px solid rgba(51,65,85,.85); color:var(--text); border-radius:7px; padding:5px 4px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px; cursor:pointer; flex:0 0 auto}
+    .hotkey-input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.16)}
+    .hotkey-input::placeholder{color:var(--dim)}
+    /* === Camera position controls === */
+    .camera-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+    /* === Width confinement chain ===
+       Ensures flex/grid children respect their container bounds so that
+       long-text buttons in Algo/Data tabs can never bleed outside .sidebar. */
+    .sidebar{min-width:0; overflow-x:hidden}
+    .tab-panels{min-width:0; overflow-x:hidden}
+    .tab-panel{min-width:0; overflow-x:hidden}
+    .section{min-width:0; overflow-x:hidden}
+    .row{min-width:0; overflow-x:hidden}
+    .grid2{min-width:0; overflow-x:hidden}
+    .grid3{min-width:0; overflow-x:hidden}
+    .grid2 > *, .grid3 > *{min-width:0}
+    .btn,.tab,.chip{min-width:0; max-width:100%; overflow:hidden}
+    .btn:not(.icon):not([class*="small"]){white-space:nowrap; text-overflow:ellipsis}
+    .topbar{flex-wrap:wrap; overflow-x:hidden; min-width:0}
+    .toolbar{flex-wrap:wrap; min-width:0}
+    /* === Sticky-header hardening for matrix === */
+    .table-scroll{contain:layout; transform:translateZ(0)}
+    table thead th{transform:translateZ(0)}
+    /* === Landscape: scrollable page with sticky topbar + view toggle ===
+       The whole page scrolls naturally. The topbar uses position:sticky
+       so it always stays visible. View toggle buttons control whether
+       the bottom panel (matrix/edges) is shown alongside the canvas. */
+    @media (max-width:950px) and (orientation:landscape){
+      html,body{overflow-y:auto; overflow-x:hidden; height:auto; min-height:100dvh; position:static}
+      .app{height:auto; min-height:100dvh; max-height:none; grid-template-rows:auto auto; grid-template-areas:"main" "sidebar"; gap:4px; padding:4px; overflow:visible}
+      /* Canvas height is FIXED at 50dvh — same in all views. Switching views
+         only shows/hides the bottom panel below the canvas. */
+      .main{grid-template-rows:auto 50dvh auto; gap:4px; overflow:visible; height:auto}
+      .main[data-view="graph"]{grid-template-rows:auto 50dvh 0}
+      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:auto 50dvh auto}
+      /* Horizontal split: canvas and bottom share the same row, 50/50 */
+      .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"]{grid-template-rows:auto minmax(0,70dvh)}
+      /* Sticky topbar — allows wrapping so all buttons stay visible */
+      .topbar{position:sticky; top:0; z-index:50; flex-direction:row !important; align-items:center; gap:6px; padding:4px 6px; min-height:40px; flex:0 0 auto; flex-wrap:wrap !important; overflow:visible; backdrop-filter:blur(8px)}
+      .brand span{display:none}
+      .title-input{width:auto; max-width:24vw; min-height:34px; padding:4px 8px}
+      .toolbar{flex-wrap:wrap !important; gap:4px; overflow:visible}
+      .toolbar .btn{min-height:32px; padding:0 6px; font-size:12px}
+      /* Show view toggle in landscape — wraps below if needed */
+      .view-toggle{display:flex !important}
+      .tab{flex:1 1 0; min-width:0; padding:0 6px; min-height:34px}
+      .tab .wide{display:none}
+      .grid2{grid-template-columns:1fr 1fr; min-width:0; gap:4px}
+      .grid3{grid-template-columns:1fr 1fr 1fr; min-width:0; gap:4px}
+      .btn{min-width:0; padding:0 8px; font-size:12px; min-height:32px}
+      .btn.small{font-size:11px; padding:0 6px; min-height:28px}
+      .btn.icon{width:34px; min-height:32px; padding:0}
+      /* Sidebar: no internal scroll, content flows with the page */
+      .sidebar{min-height:0; max-height:none; overflow:visible; display:flex; flex-direction:column}
+      .sidebar .tabs{flex:0 0 auto; position:sticky; top:0; z-index:40; background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(8,14,27,.98)); padding:6px 6px 0; border-radius:12px 12px 0 0}
+      .sidebar .tab-panels{flex:none; min-height:0; max-height:none; overflow:visible; overflow-y:visible; padding:6px}
+      .section{padding:6px; margin-bottom:6px}
+      .matrix-controls{flex-wrap:wrap; min-width:0; gap:4px}
+      .matrix-controls .btn,.matrix-controls input,.matrix-controls label{flex:1 1 auto; min-width:0}
+      /* Bottom panel: shown only when data-view is matrix/edges */
+      .bottom{overflow:auto; min-height:0; max-height:40dvh}
+      .bottom-pane{padding:6px}
+      .table-scroll{max-height:none; flex:1}
+      .canvas-hud{display:none}
+      .mobile-modebar{display:flex}
+      .zoom-controls{right:6px; top:6px; gap:4px}
+      .zoom-controls .btn,.mobile-modebar .btn{min-height:32px; width:32px; padding:0; font-size:14px}
+      .field input,.field select,.field textarea,.input,.select{min-height:32px; padding:5px 7px}
+      .empty-hint{font-size:11px; inset:auto 8px 8px 8px; padding:6px 8px}
+    }
+    /* === Extra-tight landscape on very small screens === */
+    @media (max-width:560px) and (orientation:landscape){
+      html,body{overflow-y:auto; overflow-x:hidden; height:auto; min-height:100dvh; position:static}
+      .app{padding:4px max(4px,env(safe-area-inset-right)) max(4px,env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left)); gap:4px; height:auto; min-height:100dvh; max-height:none; overflow:visible}
+      .panel{border-radius:11px}
+      .topbar{padding:3px 5px; min-height:36px; gap:4px; flex-wrap:wrap !important; overflow:visible; position:sticky; top:0; z-index:50; backdrop-filter:blur(8px)}
+      .brand-badge{width:26px; height:26px; font-size:13px}
+      .title-input{max-width:18vw; min-height:30px; padding:3px 6px; font-size:14px}
+      .toolbar{flex-wrap:wrap !important; gap:4px; overflow:visible}
+      .toolbar .btn{min-height:30px; font-size:11px; padding:0 5px}
+      .view-toggle{display:flex !important}
+      .view-toggle .btn.small{min-height:26px; font-size:10px; padding:0 5px}
+      .view-toggle .btn.small.icon{width:30px; min-height:26px; padding:0; font-size:13px}
+      .tab{min-height:32px; padding:0 4px; font-size:14px}
+      .btn{min-height:30px; font-size:11px; padding:0 6px}
+      .btn.small{min-height:26px; font-size:10px; padding:0 4px}
+      .btn.icon{width:30px; min-height:30px}
+      .sidebar{min-height:0; overflow:visible; display:flex; flex-direction:column}
+      .sidebar .tabs{position:sticky; top:0; z-index:40; background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(8,14,27,.98)); padding:5px 5px 0; border-radius:11px 11px 0 0}
+      .sidebar .tab-panels{overflow:visible; overflow-y:visible; min-height:0; max-height:none; padding:5px}
+      .section{padding:5px; margin-bottom:5px}
+      .field input,.field select,.field textarea,.input,.select{min-height:30px; padding:4px 6px; font-size:13px}
+      .main{grid-template-rows:auto 45dvh auto; overflow:visible; min-height:0; height:auto}
+      .main[data-view="graph"]{grid-template-rows:auto 45dvh 0}
+      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:auto 45dvh auto}
+      .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"]{grid-template-rows:auto minmax(0,60dvh)}
+      .bottom-pane{padding:5px}
+      .table-scroll{max-height:none}
+      .bottom{max-height:35dvh}
+    }
