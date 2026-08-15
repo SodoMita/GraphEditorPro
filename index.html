@@ -108,7 +108,7 @@
     input[type="checkbox"]{accent-color:var(--accent)} input[type="color"]{padding:1px; height:var(--ctrl-h-sm)}
     label.field + label.field{margin-top:5px}
     .field.inline{display:inline-flex; align-items:center; gap:4px}
-    .field.inline input{width:auto; margin-top:0}
+    .field.inline input{width:56px; margin-top:0}
 
     /* Import/export compact grid: one row per format */
     .io-grid{display:grid; grid-template-columns:minmax(52px,auto) 1fr 1fr 1fr 1fr; gap:4px; align-items:center; margin-top:6px}
@@ -254,6 +254,7 @@
       .sidebar .tab-panels{overflow:visible}
       .main{grid-template-rows:auto 60svh auto}
       .main[data-view="graph"]{grid-template-rows:auto 60svh}
+      .main[data-view="matrix"],.main[data-view="edges"],.main[data-view="split"]{grid-template-rows:auto 60svh auto}
       .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"],.main[data-orient="h"][data-view="split"]{grid-template-rows:auto minmax(0,72svh); grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
       .bottom{grid-template-columns:1fr; max-height:44svh; overflow:auto}
       .bottom-pane{overflow:visible}
