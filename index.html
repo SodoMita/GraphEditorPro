@@ -307,7 +307,7 @@
     .main.v-matrix .bottom-pane:nth-child(1),.main.v-edges .bottom-pane:nth-child(2){display:block}
     .main.v-matrix.v-edges .bottom{grid-template-rows:1fr 1fr; grid-template-columns:1fr}
     .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:0; border-top:1px solid var(--line-2)}
-    .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,42vh); grid-template-areas:"canvas" "bottom"}
+    .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,50%); grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
     .bottom-pane{min-width:0; padding:9px 10px; overflow:auto; -webkit-overflow-scrolling:touch}
     .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2)}
@@ -339,7 +339,7 @@
     th,td{border:1px solid rgba(51,65,85,.55); padding:5px 7px; background:rgba(2,6,23,.3); white-space:nowrap; text-align:center}
     th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
     .row-head{position:sticky; left:0; z-index:3; text-align:left}
-    .table-scroll{overflow:auto; max-height:calc(42vh - 60px); border-radius:8px; contain:layout; transform:translateZ(0); -webkit-overflow-scrolling:touch}
+    .table-scroll{overflow:auto; max-height:calc(50vh - 130px); border-radius:8px; contain:layout; transform:translateZ(0); -webkit-overflow-scrolling:touch}
     table thead th{transform:translateZ(0)}
 
     /* ---------- Results / output ---------- */
@@ -447,36 +447,14 @@
       .tabbar{display:none}
       .toast-stack{bottom:calc(72px + var(--sa-bottom))}
     }
-    /* Portrait phones: hide the orientation toggle. Panels are sized by
-       their content but capped at ~30% of the screen — a short matrix or
-       edge list never leaves a blank half-screen block, and big ones
-       scroll inside instead of eating the viewport. */
+    /* Portrait: canvas on top, panels below at 50% height — the panels
+       are stacked full-width. The ↔ toggle switches matrix + edge list
+       to side-by-side (and back). */
     @media (max-width:950px) and (orientation:portrait){
-      #btnViewOrient{display:none}
-      .appbar .toolbar{grid-template-columns:repeat(7,minmax(0,1fr))}
-      .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(auto,30vh); grid-template-areas:"canvas" "bottom"}
-      .main.v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1fr 1fr}
-      .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
-      /* Pane is a flex column: title + controls fixed, table fills and
-         scrolls inside the capped height — no dead space */
-      .main.v-matrix .bottom-pane:nth-child(1),
-      .main.v-edges .bottom-pane:nth-child(2){
-        display:flex; flex-direction:column; min-height:0; container-type:inline-size;
-      }
-      .table-scroll{flex:1 1 auto; min-height:0; max-height:none}
-      /* Keep control bars compact */
-      .matrix-controls{gap:4px; margin-bottom:5px}
-      .matrix-controls .btn{min-height:25px; padding:0 7px; font-size:10.5px}
-      .matrix-controls .field{font-size:10.5px}
-      .matrix-controls .range-label{display:none}
-      /* Compact table rows on phones */
-      th,td{padding:3px 5px}
-      td .matrix-input, th .matrix-label-input{min-height:24px; font-size:12px; padding:2px 4px}
-      /* Narrow panes (side-by-side): single scrollable control row */
-      @container (max-width:300px){
-        .matrix-controls{flex-wrap:nowrap; overflow-x:auto; padding-bottom:2px}
-        .matrix-controls .btn, .matrix-controls .field{flex:0 0 auto}
-      }
+      .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,50%); grid-template-areas:"canvas" "bottom"}
+      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1fr 1fr}
+      .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      .table-scroll{max-height:calc(50vh - 130px)}
     }
 
     /* =====================================================================
