@@ -163,6 +163,28 @@
       box-shadow:0 3px 12px rgba(34,211,238,.4);
     }
 
+    /* ---------- Floating selection tools (Select mode only) ---------- */
+    .sel-tools{
+      position:absolute; left:50%; transform:translateX(-50%); bottom:72px; z-index:11;
+      display:none; align-items:center; gap:2px; padding:4px;
+      background:rgba(10,16,29,.94); border:1px solid var(--line-2); border-radius:999px;
+      box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.05) inset;
+      backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    }
+    .canvas-wrap.select-mode .sel-tools{display:flex}
+    .canvas-wrap.select-mode .empty-hint{bottom:132px}
+    .sel-tools .btn{
+      width:38px; min-height:38px; padding:0; border:none; border-radius:999px;
+      background:transparent; color:var(--muted); box-shadow:none;
+    }
+    .sel-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
+    .sel-tools .btn:active{transform:translateY(1px)}
+    .sel-tools .btn.active{
+      color:var(--accent); background:rgba(34,211,238,.16);
+      box-shadow:0 0 10px rgba(34,211,238,.22) inset;
+    }
+    .sel-tools svg{width:17px; height:17px; display:block}
+
     /* ---------- Bottom tab bar ---------- */
     .tabbar{
       grid-area:tabbar; display:flex; align-items:stretch; justify-content:space-around;
@@ -430,6 +452,8 @@
       .tab-panels{padding-top:6px}
       .mode-fab{left:12px; right:auto; transform:none; bottom:10px}
       .mode-fab .seg{min-height:34px; min-width:46px; padding:0 10px; font-size:11.5px}
+      .sel-tools{left:12px; right:auto; transform:none; bottom:64px}
+      .canvas-wrap.select-mode .empty-hint{bottom:110px}
       .empty-hint{inset:auto 14px 76px 14px}
       .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,44%)}
       .table-scroll{max-height:calc(44% - 60px)}
@@ -456,7 +480,9 @@
       .workspace{gap:8px}
       .canvas-wrap{border-radius:var(--radius); border-width:1px}
       .mode-fab{bottom:20px}
+      .sel-tools{bottom:82px}
       .empty-hint{inset:auto 26px 110px 26px}
+      .canvas-wrap.select-mode .empty-hint{bottom:136px}
       /* Default (no data-view): both panes shown side by side */
       .main{grid-template-rows:minmax(0,1fr) minmax(0,26vh); grid-template-areas:"canvas" "bottom"}
       .main .bottom{display:grid; grid-template-columns:1.05fr .95fr}
@@ -489,6 +515,8 @@
       .tab{padding:2px}
       .mode-fab .seg{min-height:34px; min-width:44px; padding:0 9px; font-size:11.5px}
       .mode-fab{bottom:8px}
+      .sel-tools{bottom:58px}
+      .canvas-wrap.select-mode .empty-hint{bottom:104px}
       .empty-hint{inset:auto 14px 76px 14px}
       .field input:not([type="checkbox"]),.field select,.field textarea{font-size:14px; min-height:30px; padding:5px 8px}
     }

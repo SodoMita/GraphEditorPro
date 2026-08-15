@@ -3,6 +3,8 @@
     state.mode = mode;
     $$('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     $('#canvasWrap').classList.toggle('move-mode', mode === 'move');
+    // Selection tools float over the canvas only while Select mode is active
+    $('#canvasWrap').classList.toggle('select-mode', mode === 'select');
     if(render) { setStatusOnly(); saveSoon(); }
   }
   function setSelectTool(tool, render=true){

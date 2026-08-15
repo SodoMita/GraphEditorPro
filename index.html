@@ -170,6 +170,28 @@
       box-shadow:0 3px 12px rgba(34,211,238,.4);
     }
 
+    /* ---------- Floating selection tools (Select mode only) ---------- */
+    .sel-tools{
+      position:absolute; left:50%; transform:translateX(-50%); bottom:72px; z-index:11;
+      display:none; align-items:center; gap:2px; padding:4px;
+      background:rgba(10,16,29,.94); border:1px solid var(--line-2); border-radius:999px;
+      box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.05) inset;
+      backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    }
+    .canvas-wrap.select-mode .sel-tools{display:flex}
+    .canvas-wrap.select-mode .empty-hint{bottom:132px}
+    .sel-tools .btn{
+      width:38px; min-height:38px; padding:0; border:none; border-radius:999px;
+      background:transparent; color:var(--muted); box-shadow:none;
+    }
+    .sel-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
+    .sel-tools .btn:active{transform:translateY(1px)}
+    .sel-tools .btn.active{
+      color:var(--accent); background:rgba(34,211,238,.16);
+      box-shadow:0 0 10px rgba(34,211,238,.22) inset;
+    }
+    .sel-tools svg{width:17px; height:17px; display:block}
+
     /* ---------- Bottom tab bar ---------- */
     .tabbar{
       grid-area:tabbar; display:flex; align-items:stretch; justify-content:space-around;
@@ -437,6 +459,8 @@
       .tab-panels{padding-top:6px}
       .mode-fab{left:12px; right:auto; transform:none; bottom:10px}
       .mode-fab .seg{min-height:34px; min-width:46px; padding:0 10px; font-size:11.5px}
+      .sel-tools{left:12px; right:auto; transform:none; bottom:64px}
+      .canvas-wrap.select-mode .empty-hint{bottom:110px}
       .empty-hint{inset:auto 14px 76px 14px}
       .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,44%)}
       .table-scroll{max-height:calc(44% - 60px)}
@@ -463,7 +487,9 @@
       .workspace{gap:8px}
       .canvas-wrap{border-radius:var(--radius); border-width:1px}
       .mode-fab{bottom:20px}
+      .sel-tools{bottom:82px}
       .empty-hint{inset:auto 26px 110px 26px}
+      .canvas-wrap.select-mode .empty-hint{bottom:136px}
       /* Default (no data-view): both panes shown side by side */
       .main{grid-template-rows:minmax(0,1fr) minmax(0,26vh); grid-template-areas:"canvas" "bottom"}
       .main .bottom{display:grid; grid-template-columns:1.05fr .95fr}
@@ -496,6 +522,8 @@
       .tab{padding:2px}
       .mode-fab .seg{min-height:34px; min-width:44px; padding:0 9px; font-size:11.5px}
       .mode-fab{bottom:8px}
+      .sel-tools{bottom:58px}
+      .canvas-wrap.select-mode .empty-hint{bottom:104px}
       .empty-hint{inset:auto 14px 76px 14px}
       .field input:not([type="checkbox"]),.field select,.field textarea{font-size:14px; min-height:30px; padding:5px 8px}
     }
@@ -683,16 +711,7 @@
                 <span data-i18n="canvas_selection">Canvas selection</span>
               </summary>
               <div class="sec-body">
-                <div class="grid4">
-                  <button class="btn active" data-selecttool="single" title="Single select" data-i18n="sel_single">Single</button>
-                  <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n="sel_rect">Rect</button>
-                  <button class="btn" data-selecttool="brush" title="Brush over items" data-i18n="sel_brush">Brush</button>
-                  <button class="btn" data-selecttool="lasso" title="Freehand lasso" data-i18n="sel_lasso">Lasso</button>
-                  <button class="btn" data-selecttool="line" title="Select near a line" data-i18n="sel_line">Line</button>
-                  <button class="btn" data-selecttool="polygon" title="Polygon-style drag selection" data-i18n="sel_polygon">Polygon</button>
-                  <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n="sel_adjacent">Adjacent</button>
-                  <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n="sel_directed_adj">Dir. adj.</button>
-                </div>
+                <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="sel_tip">Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection.</span></p>
                 <div class="section-title" style="margin-top:8px" data-i18n="sel_result">Selection result</div>
                 <div class="grid3">
                   <button class="btn active" data-selectcombine="replace" title="Replace current selection" data-i18n="sel_override">Override</button>
@@ -1071,6 +1090,34 @@
             <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" data-i18n="mode_move">✋ Move</button>
             <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" data-i18n="mode_node">＋ Node</button>
             <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" data-i18n="mode_edge">↔ Edge</button>
+          </div>
+
+          <!-- Floating selection tools — icon-only, visible in Select mode -->
+          <div class="sel-tools" role="group" aria-label="Selection tools">
+            <button class="btn" data-selecttool="single" title="Single select" data-i18n-title="sel_single">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3.5 2.5v11.2l3.4-2.9 2.2 4.4 1.9-.9-2.2-4.4H13z" fill="currentColor"/></svg>
+            </button>
+            <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n-title="sel_rect">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3.2 2.2"/></svg>
+            </button>
+            <button class="btn" data-selecttool="brush" title="Brush over items" data-i18n-title="sel_brush">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="5.5" cy="13.5" r="2.1" fill="currentColor"/><circle cx="9.8" cy="9.6" r="2.7" fill="currentColor" opacity=".72"/><circle cx="13.6" cy="5.4" r="1.7" fill="currentColor" opacity=".45"/></svg>
+            </button>
+            <button class="btn" data-selecttool="lasso" title="Freehand lasso" data-i18n-title="sel_lasso">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M5 12.5c-.6-3.6 1.2-7 4.4-7 2.8 0 4.8 2 4.6 4.4-.2 2.4-2.4 3.6-4.4 3.2-1.3-.3-1.8-1.2-1.6-2.2.2-1 1.2-1.5 2.1-1.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+            <button class="btn" data-selecttool="line" title="Select near a line" data-i18n-title="sel_line">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 14L14 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="4" cy="14" r="1.7" fill="currentColor"/><circle cx="14" cy="4" r="1.7" fill="currentColor"/></svg>
+            </button>
+            <button class="btn" data-selecttool="polygon" title="Polygon-style drag selection" data-i18n-title="sel_polygon">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2.6l6.4 3.9-2.4 7.4H5L2.6 6.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n-title="sel_adjacent">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.1" fill="currentColor"/><path d="M9 11.1v3.2M9 6.9V3.7M11.1 9h3.2M6.9 9H3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="9" cy="14.3" r="1.15" fill="currentColor"/><circle cx="9" cy="3.7" r="1.15" fill="currentColor"/><circle cx="14.3" cy="9" r="1.15" fill="currentColor"/><circle cx="3.7" cy="9" r="1.15" fill="currentColor"/></svg>
+            </button>
+            <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n-title="sel_directed_adj">
+              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.1" fill="currentColor"/><path d="M9 11.1v2.4M9 6.9V4.5M11.1 9h2.4M6.9 9H4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M9 14.6l-1.7-1.9h3.4z" fill="currentColor"/><path d="M9 3.4l1.7 1.9H7.3z" fill="currentColor"/><path d="M14.6 9l-1.9 1.7V7.3z" fill="currentColor"/><path d="M3.4 9l1.9-1.7v3.4z" fill="currentColor"/></svg>
+            </button>
           </div>
 
           <div class="empty-hint" data-i18n="empty_hint">Start by selecting Node mode and clicking the canvas, or press Sample.</div>
@@ -3494,6 +3541,8 @@ function setMode(mode, render = true) {
     state.mode = mode;
     $$('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     $('#canvasWrap').classList.toggle('move-mode', mode === 'move');
+    // Selection tools float over the canvas only while Select mode is active
+    $('#canvasWrap').classList.toggle('select-mode', mode === 'select');
     if (render) {
         setStatusOnly();
         saveSoon();
