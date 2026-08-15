@@ -51,3 +51,9 @@ The build fails if any of these guarantees are broken:
 - Static markup contains duplicate element IDs.
 
 Runtime data is also validated before use. Imported graph state is size-limited, malformed records and dangling edges are discarded, IDs are normalized and deduplicated, numeric/style values are clamped, unsafe map keys are isolated in prototype-free records, and required DOM elements fail with a descriptive error instead of causing a later null dereference.
+
+## Performance design
+
+Navigation keeps the logical SVG `viewBox` frozen during a gesture and applies one compositor-backed CSS transform to the complete SVG image. The grid is an oversized cached layer transformed alongside it, avoiding per-frame gradient repainting. The crisp vector `viewBox` is committed once when navigation ends.
+
+Large supporting views are bounded independently of graph data: the editable edge table renders 250-row pages, and the interactive adjacency matrix is capped at 100×100 cells. Full graph data remains available through paging and CSV export.

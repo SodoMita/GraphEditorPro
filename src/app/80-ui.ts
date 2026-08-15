@@ -108,6 +108,7 @@
     if(edgeListHost){
       edgeListHost.addEventListener('click', ev => {
         const t = ev.target;
+        if(t.matches('#btnEdgeListMore')){ showMoreEdgeRows(); return; }
         if(t.matches('.edge-up')){ moveEdge(t.dataset.edgeId, -1); return; }
         if(t.matches('.edge-down')){ moveEdge(t.dataset.edgeId, 1); return; }
       });

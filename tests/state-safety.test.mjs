@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const compiled = await readFile('.build/app.js', 'utf8');
 const instrumented = compiled.replace(
   /\ninit\(\);\s*$/,
-  '\nglobalThis.__graphEditorTests = { sanitizeState, defaultState, I18N };',
+  '\nglobalThis.__graphEditorTests = { sanitizeState, defaultState, I18N, matrixFor(input) { state = sanitizeState(input); return adjacencyMatrixData(state.nodes); }, matrixCsvFor(input) { state = sanitizeState(input); return matrixCsv(); } };',
 );
 assert.notEqual(instrumented, compiled, 'test instrumentation must replace the init call');
 
@@ -27,7 +27,7 @@ const context = vm.createContext({
   window: {},
 });
 vm.runInContext(instrumented, context, { filename: '.build/app.js' });
-const { sanitizeState } = context.__graphEditorTests;
+const { sanitizeState, matrixFor, matrixCsvFor } = context.__graphEditorTests;
 
 test('invalid root values safely fall back to defaults', () => {
   for (const value of [null, undefined, false, 42, 'graph', []]) {
@@ -70,6 +70,26 @@ test('sanitizer clamps unsafe settings and rejects non-numeric ranges', () => {
   assert.equal(result.settings.canvasBgColor, '#020617');
   assert.equal(Object.getPrototypeOf(result.settings.nodeTypeStyles), null);
   assert.equal(result.settings.nodeTypeStyles.safe.color, '#112233');
+});
+
+test('matrix values, edge IDs, and sparse CSV stay consistent', () => {
+  const graph = {
+    nodes: [
+      { id: 'a', label: 'A', x: 0, y: 0 },
+      { id: 'b', label: 'B', x: 1, y: 1 },
+    ],
+    edges: [
+      { id: 'directed', from: 'a', to: 'b', directed: true, weight: '2' },
+      { id: 'undirected', from: 'a', to: 'b', directed: false, weight: '3' },
+    ],
+  };
+  const matrix = matrixFor(graph);
+
+  assert.deepEqual(Array.from(matrix.values[0][1]), ['2', '3']);
+  assert.deepEqual(Array.from(matrix.edgeIds[0][1]), ['directed', 'undirected']);
+  assert.deepEqual(Array.from(matrix.values[1][0]), ['3']);
+  assert.deepEqual(Array.from(matrix.edgeIds[1][0]), ['undirected']);
+  assert.equal(matrixCsvFor(graph), '\ufeff,A,B\r\nA,,2;3\r\nB,3,\r\n');
 });
 
 test('sanitizer enforces graph size limits', () => {

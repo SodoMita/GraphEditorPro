@@ -19,10 +19,26 @@
   }
   function matrixCsv(){
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    const m = adjacencyMatrix(sorted);
-    const rows: unknown[][] = [['', ...sorted.map(n => n.label)]];
-    sorted.forEach((n,i) => rows.push([n.label, ...m[i].map(cell => cell.join(';') || '')]));
-    return rowsToCsv(rows);
+    const index = new Map(sorted.map((node, position) => [node.id, position]));
+    const sparseRows = Array.from({length:sorted.length}, () => new Map());
+    for(const edge of state.edges){
+      const from = index.get(edge.from), to = index.get(edge.to); if(from == null || to == null) continue;
+      const weight = (edge.weight != null && edge.weight !== '') ? edge.weight : '';
+      if(!sparseRows[from].has(to)) sparseRows[from].set(to, []);
+      sparseRows[from].get(to).push(weight);
+      if(!edge.directed && from !== to){
+        if(!sparseRows[to].has(from)) sparseRows[to].set(from, []);
+        sparseRows[to].get(from).push(weight);
+      }
+    }
+    const lines = [['', ...sorted.map(node => node.label)].map(csvCell).join(',')];
+    sorted.forEach((node, rowIndex) => {
+      const row = Array.from({length:sorted.length + 1}, () => '');
+      row[0] = node.label;
+      for(const [column, weights] of sparseRows[rowIndex]) row[column + 1] = weights.join(';');
+      lines.push(row.map(csvCell).join(','));
+    });
+    return '\ufeff' + lines.join('\r\n') + '\r\n';
   }
   function downloadBlob(name, content, type='application/octet-stream'){
     const blob = new Blob([content], {type}); const url = URL.createObjectURL(blob);

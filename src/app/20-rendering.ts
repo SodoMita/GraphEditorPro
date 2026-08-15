@@ -199,19 +199,27 @@
     updateGridBackground(state.viewBox);
     syncCameraInputs();
   }
-  function setSceneMatrix(scale, tx, ty){
-    // One transform on a promoted parent is substantially cheaper than changing
-    // the root viewBox (which makes the browser rerasterize every SVG child).
-    sceneLayer.setAttribute('transform', `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`);
-  }
   function applyPreviewViewBox(preview, base=state.viewBox, rect=null){
+    const viewport = rect || svg.getBoundingClientRect();
     const scale = base.w / preview.w;
     const tx = base.x - scale * preview.x;
     const ty = base.y - scale * preview.y;
-    setSceneMatrix(scale, tx, ty);
-    updateGridBackground(preview, rect, false);
+
+    // The oversized grid is rasterized once, then moved/scaled by the compositor.
+    // Repainting four CSS gradients every frame was the largest navigation cost.
+    const pixelScale = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const offsetX = (viewport.width - base.w * pixelScale) / 2;
+    const offsetY = (viewport.height - base.h * pixelScale) / 2;
+    const screenX = (1 - scale) * offsetX + pixelScale * (tx + (scale - 1) * base.x);
+    const screenY = (1 - scale) * offsetY + pixelScale * (ty + (scale - 1) * base.y);
+    const transform = `matrix(${scale},0,0,${scale},${screenX},${screenY})`;
+    svg.style.transform = transform;
+    gridLayer.style.transform = transform;
   }
-  function clearFastPanTransform(){ sceneLayer.removeAttribute('transform'); }
+  function clearFastPanTransform(){
+    svg.style.transform = '';
+    gridLayer.style.transform = '';
+  }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
     if(h.length !== 6) return `rgba(148,163,184,${alpha})`;
@@ -221,7 +229,7 @@
   function setStyleIfChanged(style, property, value){
     if(style[property] !== value) style[property] = value;
   }
-  function updateGridBackground(vb=state.viewBox, cachedRect=null, refreshColors=true){
+  function updateGridBackground(vb=state.viewBox, cachedRect=null){
     const rect = cachedRect || svg.getBoundingClientRect();
     if(!rect.width || !rect.height) return;
     const settings = state.settings;
@@ -230,13 +238,11 @@
 
     // The grid is a sibling layer, so repainting it does not invalidate the
     // potentially thousands of vector elements in the SVG scene.
-    if(refreshColors){
-      setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
-      const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
-      const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-      if(gridLayer.style.getPropertyValue('--grid-minor-color') !== minorColor) gridLayer.style.setProperty('--grid-minor-color', minorColor);
-      if(gridLayer.style.getPropertyValue('--grid-major-color') !== majorColor) gridLayer.style.setProperty('--grid-major-color', majorColor);
-    }
+    setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
+    const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
+    const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
+    if(gridLayer.style.getPropertyValue('--grid-minor-color') !== minorColor) gridLayer.style.setProperty('--grid-minor-color', minorColor);
+    if(gridLayer.style.getPropertyValue('--grid-major-color') !== majorColor) gridLayer.style.setProperty('--grid-major-color', majorColor);
 
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
@@ -245,12 +251,15 @@
     const cellX = Math.max(4, gx * scale), cellY = Math.max(4, gy * scale);
     const majorXSize = cellX * 5, majorYSize = cellY * 5;
     const mod = (value, size) => ((value % size) + size) % size;
-    const minorX = mod(offsetX - vb.x * scale, cellX);
-    const minorY = mod(offsetY - vb.y * scale, cellY);
-    const majorX = mod(offsetX - vb.x * scale, majorXSize);
-    const majorY = mod(offsetY - vb.y * scale, majorYSize);
+    const extensionX = rect.width;
+    const extensionY = rect.height;
+    const minorX = mod(offsetX - vb.x * scale, cellX) + extensionX;
+    const minorY = mod(offsetY - vb.y * scale, cellY) + extensionY;
+    const majorX = mod(offsetX - vb.x * scale, majorXSize) + extensionX;
+    const majorY = mod(offsetY - vb.y * scale, majorYSize) + extensionY;
     const size = `${cellX}px ${cellY}px,${cellX}px ${cellY}px,${majorXSize}px ${majorYSize}px,${majorXSize}px ${majorYSize}px`;
     const position = `${minorX}px ${minorY}px,${minorX}px ${minorY}px,${majorX}px ${majorY}px,${majorX}px ${majorY}px`;
+    setStyleIfChanged(gridLayer.style, 'transformOrigin', `${extensionX}px ${extensionY}px`);
     setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
   }
@@ -319,6 +328,8 @@
   function renderEdges(){
     buildEdgeOffsetCache();
     const showLabels = shouldShowLabels();
+    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
+    const selectedEdges = selectedEdgeIds();
     const existing = new Map();
     for(const el of [...edgesLayer.children]){
       if(el.dataset?.id) existing.set(el.dataset.id, el);
@@ -329,7 +340,7 @@
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
     for(const e of state.edges){
-      const a = nodeById(e.from), b = nodeById(e.to);
+      const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
       if(!a || !b){
         // Edge has dangling endpoint — remove from DOM if present
         if(existing.has(e.id)) existing.get(e.id).remove();
@@ -338,7 +349,7 @@
       // Skip edges touching non-visible nodes entirely — real performance gain, not just dimming
       if(rangeActive && (!visIds.has(e.from) || !visIds.has(e.to))) continue;
       seen.add(e.id);
-      const selected = isEdgeSelected(e.id);
+      const selected = selectedEdges.has(e.id);
       const v = edgeRenderStyle(e);
       const d = edgePath(a,b,e);
       let g = existing.get(e.id);
@@ -533,6 +544,7 @@
   }
   function renderNodes(){
     const showLabels = shouldShowLabels();
+    const selectedNodes = selectedNodeIds();
     const existing = new Map();
     // Index existing node elements by id, collect for removal
     for(const el of [...nodesLayer.children]){
@@ -548,7 +560,7 @@
       // This gives real performance: fewer SVG elements, fewer attribute patches, less paint.
       if(rangeActive && !visIds.has(n.id)) continue;
       seen.add(n.id);
-      const selected = isNodeSelected(n.id);
+      const selected = selectedNodes.has(n.id);
       const v = nodeVisual(n);
       let g = existing.get(n.id);
       if(!g){
@@ -885,13 +897,15 @@
     const sorted = visibleNodes();
     return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted;
   }
-  // Hard cap on rendered matrix cells — 150×150 = 22,500 cells is the safe ceiling
-  // before browsers freeze on a single innerHTML call. 300×300 = 90,000 cells would lock the UI.
-  const MATRIX_RENDER_CAP = 150;
+  // Profiling shows form-control tables become multi-second work above ~10k cells.
+  // Keep the interactive matrix at 100×100; CSV export still includes the full graph.
+  const MATRIX_RENDER_CAP = 100;
+  const EDGE_LIST_PAGE_SIZE = 250;
+  let edgeListRenderLimit = EDGE_LIST_PAGE_SIZE;
   function renderMatrixAndList(){
+    edgeListRenderLimit = EDGE_LIST_PAGE_SIZE;
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
-    const renderCap = Math.min(limit, MATRIX_RENDER_CAP);
     const sizeInput = $('#matrixSize'); if(sizeInput) sizeInput.value = state.settings.matrixDimension || total;
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || {start:-1, end:-1};
@@ -899,7 +913,7 @@
     if(total === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>'; $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; note.textContent=''; return; }
     if(n === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>'; note.textContent = `0 / ${total}`; }
     else if(n > MATRIX_RENDER_CAP){
-      // Above 150×150 — never render the grid (would create >22k elements and freeze the UI)
+      // Above the hard cap, do not create a multi-second form-control table.
       $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n}×${n} = ${n*n} ячеек).<br>Используйте экспорт <b>Matrix CSV</b> во вкладке Данные для просмотра полной матрицы, или сузьте видимый диапазон до ≤${MATRIX_RENDER_CAP} узлов.` : `Matrix hidden for performance (${n}×${n} = ${n*n} cells).<br>Use <b>Matrix CSV</b> export in the Data tab to view the full matrix, or narrow the visible range to ≤${MATRIX_RENDER_CAP} nodes.`) + '</div>';
       note.textContent = I18N.current === 'ru' ? `скрыто (${n}×${n} > лимит ${MATRIX_RENDER_CAP}²)` : `hidden (${n}×${n} > ${MATRIX_RENDER_CAP}² cap)`;
     }
@@ -912,32 +926,40 @@
     }
     $('#edgeListHost').innerHTML = edgeListHtml();
   }
-  function adjacencyMatrix(nodes=state.nodes){
-    const index = new Map(nodes.map((n,i) => [n.id,i]));
-    const m = Array.from({length:nodes.length}, () => Array.from({length:nodes.length}, () => []));
-    for(const e of state.edges){
-      const i=index.get(e.from), j=index.get(e.to); if(i == null || j == null) continue;
-      const w = (e.weight != null && e.weight !== '') ? e.weight : '';
-      m[i][j].push(w);
-      if(!e.directed && i !== j) m[j][i].push(w);
+  function adjacencyMatrixData(nodes=state.nodes, includeEdgeIds=true){
+    const index = new Map(nodes.map((node,i) => [node.id,i]));
+    const values = Array.from({length:nodes.length}, () => Array.from({length:nodes.length}, () => []));
+    const edgeIds = includeEdgeIds
+      ? Array.from({length:nodes.length}, () => Array.from({length:nodes.length}, () => []))
+      : null;
+    for(const edge of state.edges){
+      const from=index.get(edge.from), to=index.get(edge.to); if(from == null || to == null) continue;
+      const weight = (edge.weight != null && edge.weight !== '') ? edge.weight : '';
+      values[from][to].push(weight);
+      if(edgeIds) edgeIds[from][to].push(edge.id);
+      if(!edge.directed && from !== to){
+        values[to][from].push(weight);
+        if(edgeIds) edgeIds[to][from].push(edge.id);
+      }
     }
-    return m;
+    return {values, edgeIds};
   }
+  function adjacencyMatrix(nodes=state.nodes){ return adjacencyMatrixData(nodes, false).values; }
   function matrixCellEdgeIds(from, to){
     return state.edges
       .filter(e => (e.from === from && e.to === to) || (!e.directed && e.from === to && e.to === from))
       .map(e => e.id);
   }
   function adjacencyMatrixHtml(nodes=matrixNodes()){
-    const m = adjacencyMatrix(nodes);
+    const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
     const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly title="Click to select node; click again to rename"></th>`).join('');
     let html = '<table><thead><tr><th></th>' + header + '</tr></thead><tbody>';
     nodes.forEach((row,i) => {
       html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly title="Click to select node; click again to rename"></th>` +
-        m[i].map((cell,j) => {
+        values[i].map((cell,j) => {
           const to = nodes[j].id;
-          const ids = matrixCellEdgeIds(row.id, to);
+          const ids = edgeIds[i][j];
           const selected = ids.some(id => edgeSel.has(id));
           return `<td><input class="matrix-input${selected?' matrix-selected':''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly title="Click to select edge(s); click again to edit weights"></td>`;
         }).join('') + '</tr>';
@@ -953,17 +975,27 @@
     const filteredEdges = rangeActive
       ? state.edges.filter(e => visIds.has(e.from) && visIds.has(e.to))
       : state.edges;
+    if(!filteredEdges.length){
+      if($('#edgeListNote')) $('#edgeListNote').textContent = '';
+      return '<div class="tiny muted">' + I18N.t('no_edges_range') + '</div>';
+    }
+    const renderedEdges = filteredEdges.slice(0, edgeListRenderLimit);
     if($('#edgeListNote')){
-      const total = state.edges.length, shown = filteredEdges.length;
-      $('#edgeListNote').textContent = rangeActive
+      const total = state.edges.length, shown = filteredEdges.length, rendered = renderedEdges.length;
+      const filterNote = rangeActive
         ? I18N.t('n_edges_filtered', {n: shown, m: total})
         : I18N.t('n_edges', {n: total});
+      const pageNote = rendered < shown
+        ? (I18N.current === 'ru' ? ` · показано ${rendered}` : ` · showing ${rendered}`)
+        : '';
+      $('#edgeListNote').textContent = filterNote + pageNote;
     }
-    if(!filteredEdges.length) return '<div class="tiny muted">' + I18N.t('no_edges_range') + '</div>';
+    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
+    const selectedEdges = selectedEdgeIds();
     let html = '<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>';
-    filteredEdges.forEach((e,i) => {
-      const a = nodeById(e.from), b = nodeById(e.to);
-      const sel = isEdgeSelected(e.id) ? ' matrix-selected' : '';
+    renderedEdges.forEach((e,i) => {
+      const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+      const sel = selectedEdges.has(e.id) ? ' matrix-selected' : '';
       const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle===s?' selected':''}>${I18N.t('stroke_' + s)}</option>`).join('');
       html += `<tr>
         <td style="white-space:nowrap">
@@ -982,5 +1014,17 @@
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" style="width:68px">${strokeOpts}</select></td>
       </tr>`;
     });
-    return html + '</tbody></table>';
+    html += '</tbody></table>';
+    if(renderedEdges.length < filteredEdges.length){
+      const remaining = filteredEdges.length - renderedEdges.length;
+      const label = I18N.current === 'ru'
+        ? `Показать ещё ${Math.min(EDGE_LIST_PAGE_SIZE, remaining)}`
+        : `Show ${Math.min(EDGE_LIST_PAGE_SIZE, remaining)} more`;
+      html += `<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`;
+    }
+    return html;
+  }
+  function showMoreEdgeRows(){
+    edgeListRenderLimit += EDGE_LIST_PAGE_SIZE;
+    $('#edgeListHost').innerHTML = edgeListHtml();
   }

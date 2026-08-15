@@ -5,11 +5,14 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 
 const html = await readFile('index.html', 'utf8');
 
-function createEditorDom() {
+function createEditorDom(savedGraph = null) {
   const errors = [];
+  const documentHtml = savedGraph
+    ? html.replace('<script>', `<script>localStorage.setItem('graph-editor-pro-v2', ${JSON.stringify(JSON.stringify(savedGraph))});</script><script>`)
+    : html;
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
-  const dom = new JSDOM(html, {
+  const dom = new JSDOM(documentHtml, {
     runScripts: 'dangerously',
     pretendToBeVisual: true,
     url: 'https://offline.test/',
@@ -75,11 +78,32 @@ test('generated page initializes without runtime errors', async () => {
   dom.window.close();
 });
 
+test('large edge lists render in bounded pages', async () => {
+  const nodeCount = 300;
+  const edgeCount = 600;
+  const graph = {
+    nodes: Array.from({ length: nodeCount }, (_, index) => ({
+      id: `n${index}`, label: `N${index}`, x: index % 30, y: Math.floor(index / 30), order: index,
+    })),
+    edges: Array.from({ length: edgeCount }, (_, index) => ({
+      id: `e${index}`, from: `n${index % nodeCount}`, to: `n${(index + 1) % nodeCount}`, directed: true,
+    })),
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await new Promise(resolve => dom.window.setTimeout(resolve, 150));
+
+  assert.equal(dom.window.document.querySelectorAll('#edgeListHost tbody tr').length, 250);
+  assert.ok(dom.window.document.querySelector('#btnEdgeListMore'));
+  dom.window.document.querySelector('#btnEdgeListMore').click();
+  assert.equal(dom.window.document.querySelectorAll('#edgeListHost tbody tr').length, 500);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
 test('pan uses a scene preview and commits the viewBox only once', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
-  const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
   dom.window.document.querySelector('#modeMove').click();
 
@@ -95,11 +119,11 @@ test('pan uses a scene preview and commits the viewBox only once', async () => {
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pan');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/);
+  assert.match(svg.style.transform, /^matrix\(/);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(scene.hasAttribute('transform'), false);
+  assert.equal(svg.style.transform, '');
   assert.equal(svg.getAttribute('viewBox'), '-580 -370 1000 660');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
@@ -109,7 +133,6 @@ test('pinch also keeps the root viewBox frozen until gesture end', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
-  const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
 
   let viewBoxWrites = 0;
@@ -125,11 +148,11 @@ test('pinch also keeps the root viewBox frozen until gesture end', async () => {
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pinch');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/);
+  assert.match(svg.style.transform, /^matrix\(/);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(scene.hasAttribute('transform'), false);
+  assert.equal(svg.style.transform, '');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
