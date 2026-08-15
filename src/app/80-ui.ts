@@ -1,16 +1,169 @@
+  // === Compact shell: rail tabs, collapsible sidebar, overflow menu, settings filter ===
+  const SHELL_KEY = 'graph-editor-pro-shell';
+  type ShellPrefs = { tab?: string; sideCollapsed?: boolean; closed?: string[] };
+
+  function readShellPrefs(): ShellPrefs {
+    try {
+      const raw = localStorage.getItem(SHELL_KEY);
+      if(!raw) return {};
+      const parsed = JSON.parse(raw);
+      if(!parsed || typeof parsed !== 'object') return {};
+      return {
+        tab: typeof parsed.tab === 'string' ? parsed.tab : undefined,
+        sideCollapsed: parsed.sideCollapsed === true,
+        closed: Array.isArray(parsed.closed) ? parsed.closed.filter(v => typeof v === 'string').slice(0, 64) : undefined,
+      };
+    } catch { return {}; }
+  }
+  function writeShellPrefs(patch: ShellPrefs){
+    try {
+      localStorage.setItem(SHELL_KEY, JSON.stringify({...readShellPrefs(), ...patch}));
+    } catch {}
+  }
+
+  /** Switch the visible tool panel. */
+  function activateTab(name: string){
+    const panel = document.getElementById(`panel-${name}`);
+    if(!panel) return;
+    $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    $$('.tab-panel').forEach(p => p.classList.toggle('active', p === panel));
+    writeShellPrefs({tab: name});
+  }
+
+  function wireShell(){
+    const app = document.querySelector<HTMLElement>('.app');
+    const prefs = readShellPrefs();
+
+    // --- Rail tabs ---
+    $$('.tab').forEach(btn => btn.addEventListener('click', () => {
+      // Clicking the active tab while the sidebar is hidden reopens it.
+      if(app?.classList.contains('side-collapsed')) setSidebarCollapsed(false);
+      activateTab(btn.dataset.tab);
+    }));
+    if(prefs.tab) activateTab(prefs.tab);
+
+    // --- Sidebar collapse ---
+    const collapseBtn = document.getElementById('btnRailCollapse');
+    function setSidebarCollapsed(collapsed: boolean){
+      if(!app) return;
+      app.classList.toggle('side-collapsed', collapsed);
+      if(collapseBtn){
+        collapseBtn.textContent = collapsed ? '›' : '‹';
+        collapseBtn.setAttribute('aria-expanded', String(!collapsed));
+        collapseBtn.title = I18N.t(collapsed ? 'panel_show' : 'panel_hide');
+      }
+      writeShellPrefs({sideCollapsed: collapsed});
+      // The canvas gained or lost horizontal space.
+      setTimeout(() => queueRender(false), 0);
+    }
+    collapseBtn?.addEventListener('click', () => setSidebarCollapsed(!app?.classList.contains('side-collapsed')));
+    if(prefs.sideCollapsed) setSidebarCollapsed(true);
+
+    // --- Overflow menu ---
+    const menuBtn = document.getElementById('btnMoreMenu');
+    const menu = document.getElementById('moreMenu');
+    function setMenuOpen(open: boolean){
+      if(!menu || !menuBtn) return;
+      menu.hidden = !open;
+      menuBtn.setAttribute('aria-expanded', String(open));
+    }
+    menuBtn?.addEventListener('click', ev => { ev.stopPropagation(); setMenuOpen(menu?.hidden === true); });
+    menu?.addEventListener('click', ev => { if((ev.target as HTMLElement).closest('.menu-item')) setMenuOpen(false); });
+    document.addEventListener('click', ev => {
+      if(menu && !menu.hidden && !menu.contains(ev.target as Node) && ev.target !== menuBtn) setMenuOpen(false);
+    });
+    document.addEventListener('keydown', ev => { if(ev.key === 'Escape' && menu && !menu.hidden) setMenuOpen(false); });
+
+    // --- Remember which sections the user collapsed ---
+    const sections = $$('details.section');
+    const closed = new Set(prefs.closed || []);
+    sections.forEach(sect => {
+      const key = sect.dataset.sect;
+      if(key && closed.has(key)) sect.open = false;
+      sect.addEventListener('toggle', () => {
+        if(filtering) return; // filtering opens/closes sections programmatically
+        const next = $$('details.section').filter(s => !s.open).map(s => s.dataset.sect).filter(Boolean);
+        writeShellPrefs({closed: next});
+      });
+    });
+
+    // Buttons living inside a <summary> must act, not toggle the section.
+    $$('.section-title button').forEach(btn => btn.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); }));
+
+    // --- Expand / collapse all ---
+    const sectionsToggle = document.getElementById('btnSectionsToggle');
+    sectionsToggle?.addEventListener('click', () => {
+      const visible = $$('details.section').filter(s => s.offsetParent !== null);
+      const anyClosed = visible.some(s => !s.open);
+      visible.forEach(s => { s.open = anyClosed; });
+      sectionsToggle.textContent = anyClosed ? '⌃' : '⌄';
+    });
+
+    // --- Settings filter ---
+    // Matches section titles and individual control labels across every tab, so
+    // users can find a setting without knowing which tab holds it.
+    let filtering = false;
+    const filterInput = document.getElementById('panelFilter') as HTMLInputElement | null;
+    const filterEmpty = document.getElementById('panelFilterEmpty');
+    const railTabs = $$('.tab');
+
+    function clearFilter(){
+      filtering = true;
+      $$('.tab-panel').forEach(p => { p.classList.remove('filtered'); p.style.display = ''; });
+      $$('[data-filter-hidden]').forEach(el => { el.style.display = ''; el.removeAttribute('data-filter-hidden'); });
+      const restore = new Set(readShellPrefs().closed || []);
+      $$('details.section').forEach(s => { s.open = !(s.dataset.sect && restore.has(s.dataset.sect)); });
+      railTabs.forEach(b => b.classList.remove('rail-dim'));
+      if(filterEmpty) filterEmpty.hidden = true;
+      filtering = false;
+    }
+
+    function applyFilter(raw: string){
+      const query = raw.trim().toLowerCase();
+      if(!query){ clearFilter(); return; }
+      filtering = true;
+      let totalHits = 0;
+      // Show every panel at once so results across tabs are visible together.
+      $$('.tab-panel').forEach(panel => {
+        panel.classList.add('filtered');
+        let panelHits = 0;
+        $$('details.section', panel).forEach(sect => {
+          const title = (sect.querySelector('.section-title')?.textContent || '').toLowerCase();
+          const titleHit = title.includes(query);
+          // Candidate rows inside the section body.
+          const rows = $$(':scope > *:not(.section-title)', sect);
+          let rowHits = 0;
+          rows.forEach(row => {
+            const hit = titleHit || (row.textContent || '').toLowerCase().includes(query);
+            if(hit){ row.style.display = ''; row.removeAttribute('data-filter-hidden'); rowHits++; }
+            else { row.style.display = 'none'; row.setAttribute('data-filter-hidden', '1'); }
+          });
+          const sectHit = titleHit || rowHits > 0;
+          sect.style.display = sectHit ? '' : 'none';
+          if(sectHit){ sect.setAttribute('data-filter-hidden', ''); sect.removeAttribute('data-filter-hidden'); sect.open = true; panelHits++; }
+          else sect.setAttribute('data-filter-hidden', '1');
+        });
+        panel.style.display = panelHits > 0 ? 'block' : 'none';
+        if(panelHits > 0) totalHits += panelHits;
+        const tab = railTabs.find(b => `panel-${b.dataset.tab}` === panel.id);
+        tab?.classList.toggle('rail-dim', panelHits === 0);
+      });
+      if(filterEmpty) filterEmpty.hidden = totalHits > 0;
+      filtering = false;
+    }
+
+    filterInput?.addEventListener('input', () => applyFilter(filterInput.value));
+    filterInput?.addEventListener('keydown', ev => {
+      if(ev.key === 'Escape'){ filterInput.value = ''; applyFilter(''); filterInput.blur(); }
+    });
+    // Re-run the filter after a language switch so translated labels match.
+    window.addEventListener('i18n-change', () => { if(filterInput?.value) applyFilter(filterInput.value); });
+  }
   function wireUi(){
     svg.addEventListener('selectstart', ev => ev.preventDefault());
     svg.addEventListener('contextmenu', ev => ev.preventDefault());
     svg.addEventListener('auxclick', ev => ev.preventDefault());
-    $$('.tab').forEach(btn => btn.addEventListener('click', () => { $$('.tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); $$('.tab-panel').forEach(p=>p.classList.remove('active')); $(`#panel-${btn.dataset.tab}`).classList.add('active'); }));
-    // Collapsible sections
-    $$('.section.collapsible').forEach(sec => {
-      const title = sec.querySelector(':scope > .section-title');
-      if(!title) return;
-      // Apply initial collapsed state from data-collapsed attribute
-      if(sec.dataset.collapsed === 'true') sec.classList.add('collapsed');
-      title.addEventListener('click', () => sec.classList.toggle('collapsed'));
-    });
+    wireShell();
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));

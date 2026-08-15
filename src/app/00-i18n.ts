@@ -21,6 +21,13 @@ const I18N: I18nService = {
     'clear_graph': { en: 'Clear graph', ru: 'Очистить граф' },
     'add_sample': { en: 'Add sample graph', ru: 'Добавить пример графа' },
 
+    'more_actions': { en: 'More actions', ru: 'Ещё действия' },
+    'panel_hide': { en: 'Hide panel', ru: 'Скрыть панель' },
+    'panel_show': { en: 'Show panel', ru: 'Показать панель' },
+    'filter_settings': { en: 'Filter settings…', ru: 'Поиск настроек…' },
+    'filter_no_match': { en: 'No matching settings.', ru: 'Ничего не найдено.' },
+    'sections_toggle': { en: 'Expand or collapse all sections', ru: 'Развернуть или свернуть все разделы' },
+
     // --- Tabs ---
     'tab_edit': { en: 'Edit', ru: 'Правка' },
     'tab_style': { en: 'Style', ru: 'Стиль' },
