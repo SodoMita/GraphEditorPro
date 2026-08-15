@@ -315,44 +315,46 @@
     $('#btnDelEdgeTypeStyle').addEventListener('click', delEdgeTypeStyle);
     $('#btnClearNodeOverrides').addEventListener('click', clearNodeOverridesForType);
     $('#btnClearEdgeOverrides').addEventListener('click', clearEdgeOverridesForType);
-    // View toggle controls — work on every screen size.
-    // data-view: graph | matrix | edges | split; data-orient: v | h.
-    // Persisted in localStorage so the workspace layout survives reloads.
+    // View tabs — Graph map, Adjacency matrix, and Edge list are mutually
+    // exclusive full-area views. Persisted so the workspace survives reloads.
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
-      const VIEWS = ['graph','matrix','edges','split'];
-      let savedView = '', savedOrient = '';
-      try {
-        savedView = localStorage.getItem('graph-editor-view') || '';
-        savedOrient = localStorage.getItem('graph-editor-orient') || '';
-      } catch {}
-      const orientBtn = $('#btnViewOrient');
-      const syncOrientBtn = () => {
-        if(!orientBtn) return;
-        orientBtn.textContent = mainEl.dataset.orient === 'h' ? '↕' : '↔';
-        orientBtn.title = mainEl.dataset.orient === 'h' ? 'Switch to vertical split' : 'Switch to horizontal split';
-      };
+      const VIEWS = ['graph','matrix','edges'];
+      let savedView = '';
+      try { savedView = localStorage.getItem('graph-editor-view') || ''; } catch {}
       const setView = view => {
-        if(!VIEWS.includes(view)) view = 'split';
+        if(!VIEWS.includes(view)) view = 'graph';
         mainEl.dataset.view = view;
         document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === view));
         try { localStorage.setItem('graph-editor-view', view); } catch {}
-        // Trigger a render to resize the canvas to its new container
+        // Trigger a render to (re)measure the canvas once it is visible again
         setTimeout(() => queueRender(true), 0);
       };
-      mainEl.dataset.orient = savedOrient === 'h' ? 'h' : 'v';
-      syncOrientBtn();
-      setView(savedView || 'split');
+      setView(savedView || 'graph');
       document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(btn => {
         btn.addEventListener('click', () => setView(btn.dataset.viewBtn));
       });
-      if(orientBtn){
-        orientBtn.addEventListener('click', () => {
-          mainEl.dataset.orient = (mainEl.dataset.orient || 'v') === 'v' ? 'h' : 'v';
-          syncOrientBtn();
-          try { localStorage.setItem('graph-editor-orient', mainEl.dataset.orient); } catch {}
-          setTimeout(() => queueRender(true), 0);
-        });
+    }
+    // Tools drawer toggle (☰) — the sidebar can be hidden to give the graph
+    // map the full width; on phones it overlays the content with a scrim.
+    {
+      const appEl = document.querySelector<HTMLElement>('.app');
+      const sidebarBtn = $('#btnSidebar');
+      const scrim = document.querySelector<HTMLElement>('.sidebar-scrim');
+      if(appEl && sidebarBtn){
+        const narrow = () => window.matchMedia('(max-width:820px)').matches;
+        let savedOpen = '';
+        try { savedOpen = localStorage.getItem('graph-editor-sidebar') || ''; } catch {}
+        // Default: open on desktop, closed on phones.
+        const initialOpen = savedOpen === '' ? !narrow() : savedOpen === '1';
+        appEl.classList.toggle('sidebar-open', initialOpen);
+        const setOpen = open => {
+          appEl.classList.toggle('sidebar-open', open);
+          try { localStorage.setItem('graph-editor-sidebar', open ? '1' : '0'); } catch {}
+          setTimeout(() => queueRender(false), 180);
+        };
+        sidebarBtn.addEventListener('click', () => setOpen(!appEl.classList.contains('sidebar-open')));
+        if(scrim) scrim.addEventListener('click', () => setOpen(false));
       }
     }
     $('#btnBfs').addEventListener('click', runBfs); $('#btnDfs').addEventListener('click', runDfs); $('#btnDijkstra').addEventListener('click', runDijkstra); $('#btnComponents').addEventListener('click', runComponents); $('#btnTopo').addEventListener('click', runTopo); $('#btnStats').addEventListener('click', runStats);

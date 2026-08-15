@@ -10,6 +10,7 @@ const I18N: I18nService = {
     'view_matrix': { en: 'Matrix', ru: 'Матрица' },
     'view_edges': { en: 'Edges', ru: 'Рёбра' },
     'view_split': { en: 'Split', ru: 'Всё' },
+    'tools_open': { en: 'Show/hide tools panel', ru: 'Показать/скрыть панель инструментов' },
     'orient_toggle': { en: 'Toggle split orientation (vertical/horizontal)', ru: 'Переключить ориентацию разделения (вертикально/горизонтально)' },
     'presets_open': { en: 'Open style presets overlay', ru: 'Открыть пресеты стилей' },
     'undo': { en: 'Undo', ru: 'Отменить' },

@@ -7,7 +7,8 @@
   <!-- INLINE_STYLES -->
 </head>
 <body>
-  <div class="app">
+  <div class="app sidebar-open">
+    <button class="sidebar-scrim" aria-label="Close tools panel" tabindex="-1"></button>
     <aside class="panel sidebar">
       <nav class="tabs" aria-label="Tool panels">
         <button class="tab active" data-tab="edit" title="Editor"><span>✏️</span><span class="wide" data-i18n="tab_edit">Edit</span></button>
@@ -459,15 +460,9 @@
 
     <main class="main">
       <header class="panel topbar">
+        <button id="btnSidebar" class="btn icon tools-toggle" title="Open tools panel" data-i18n-title="tools_open">☰</button>
         <div class="brand" title="Graph Editor Pro"><div class="brand-badge">G</div><span data-i18n="brand_name">Graph Editor Pro</span></div>
         <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
-        <div class="view-toggle" role="group" aria-label="View switcher">
-          <button class="btn small" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
-          <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
-          <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
-          <button class="btn small active" data-view-btn="split" title="Show graph + matrix + edge list" data-i18n="view_split">Split</button>
-          <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
-        </div>
         <div class="toolbar">
           <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
           <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
@@ -477,6 +472,12 @@
           <button id="btnClear" class="btn danger" title="Clear graph" data-i18n-title="clear_graph" data-i18n="clear_sel">Clear</button>
           <button id="btnLang" class="btn small" title="Switch language / Сменить язык" data-i18n-title="lang_switch">🌐 EN</button>
         </div>
+        <nav class="view-toggle" role="tablist" aria-label="View switcher">
+          <button class="btn small active" data-view-btn="graph" role="tab" title="Graph map" data-i18n="view_graph">Graph</button>
+          <button class="btn small" data-view-btn="matrix" role="tab" title="Adjacency matrix" data-i18n="view_matrix">Matrix</button>
+          <button class="btn small" data-view-btn="edges" role="tab" title="Edge list" data-i18n="view_edges">Edges</button>
+          <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle" hidden>↔</button>
+        </nav>
       </header>
 
       <section id="canvasWrap" class="panel canvas-wrap empty">
