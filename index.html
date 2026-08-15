@@ -295,13 +295,20 @@
     .io-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; min-width:0}
     .io-grid .btn{min-height:44px; padding:4px 4px; font-size:11.5px; line-height:1.2; text-align:center; white-space:normal; word-break:normal}
 
-    /* ---------- Bottom view: matrix / edge list ---------- */
-    .bottom{grid-area:bottom; display:none; overflow:hidden; grid-template-columns:1fr; min-height:0; border-width:1px 0 0; border-radius:0}
-    .main[data-view="matrix"] .bottom,.main[data-view="edges"] .bottom,.main[data-view="data"] .bottom{display:grid}
-    .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,42vh); grid-template-areas:"canvas" "bottom"}
-    /* Data view: panels only, canvas hidden */
-    .main[data-view="data"]{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
-    .main[data-view="data"] .canvas-wrap{display:none}
+    /* ---------- View toggles ----------
+       Each view button shows/hides its own panel independently via a
+       class on .main (v-canvas / v-matrix / v-edges). At least one is
+       kept visible by the UI. */
+    .main .canvas-wrap{display:block}
+    .main:not(.v-canvas) .canvas-wrap{display:none}
+    .main .bottom{display:none}
+    .bottom-pane{display:none}
+    .main.v-matrix .bottom,.main.v-edges .bottom{display:grid}
+    .main.v-matrix .bottom-pane:nth-child(1),.main.v-edges .bottom-pane:nth-child(2){display:block}
+    .main.v-matrix.v-edges .bottom{grid-template-rows:1fr 1fr; grid-template-columns:1fr}
+    .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:0; border-top:1px solid var(--line-2)}
+    .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,42vh); grid-template-areas:"canvas" "bottom"}
+    .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
     .bottom-pane{min-width:0; padding:9px 10px; overflow:auto; -webkit-overflow-scrolling:touch}
     .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2)}
     .matrix-controls{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px}
@@ -476,17 +483,14 @@
       .canvas-wrap.select-mode .empty-hint{bottom:110px}
       .empty-hint{inset:auto 14px 76px 14px}
       /* Vertical split: panels get a comfortable share of the short height */
-      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,55%)}
+      .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,55%)}
+      .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
       .table-scroll{max-height:calc(55% - 60px)}
-      /* Data view: panels only, canvas hidden */
-      .main[data-view="data"]{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
-      .main[data-view="data"] .canvas-wrap{display:none}
-      .main[data-view="data"] .bottom{display:grid}
       /* Horizontal split (↔): canvas left, panels right, full height — the
          best use of a short wide screen */
       .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
-      .main[data-orient="h"][data-view="graph"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
-      .main[data-orient="h"][data-view="data"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
+      .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
+      .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .table-scroll{max-height:none}
       .toast-stack{bottom:calc(12px + var(--sa-bottom))}
     }
@@ -514,23 +518,16 @@
       .sel-tools{bottom:82px}
       .empty-hint{inset:auto 26px 110px 26px}
       .canvas-wrap.select-mode .empty-hint{bottom:136px}
-      /* Default (no data-view): both panes shown side by side */
-      .main{grid-template-rows:minmax(0,1fr) minmax(0,26vh); grid-template-areas:"canvas" "bottom"}
-      .main .bottom{display:grid; grid-template-columns:1.05fr .95fr}
-      .main[data-view="graph"]{grid-template-rows:minmax(0,1fr)}
-      .main[data-view="graph"] .bottom{display:none}
-      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,26vh)}
-      .main[data-view="matrix"] .bottom,.main[data-view="edges"] .bottom{display:grid; grid-template-columns:1fr}
-      .main[data-view="matrix"] .bottom-pane:nth-child(2),.main[data-view="edges"] .bottom-pane:nth-child(1){display:none}
-      .main[data-view="matrix"] .bottom-pane + .bottom-pane,.main[data-view="edges"] .bottom-pane + .bottom-pane{border-left:0; border-top:0}
-      /* Data view: panels only, canvas hidden */
-      .main[data-view="data"]{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
-      .main[data-view="data"] .canvas-wrap{display:none}
-      .main[data-view="data"] .bottom{display:grid; grid-template-columns:1.05fr .95fr}
+      /* Default: canvas + both panels visible (all three v-* classes) */
+      .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,26vh); grid-template-areas:"canvas" "bottom"}
+      .main:not(.v-matrix):not(.v-edges){grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas"}
+      .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
+      .main.v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1.05fr .95fr}
+      .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
       /* Horizontal split (↔): canvas left, panels right for every view */
       .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
-      .main[data-orient="h"][data-view="graph"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
-      .main[data-orient="h"][data-view="data"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
+      .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
+      .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .table-scroll{max-height:none}
       .table-scroll{max-height:calc(26vh - 58px)}
     }
@@ -571,10 +568,9 @@
 
       <div class="toolbar">
         <div class="view-toggle" role="group" aria-label="View switcher">
-          <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
-          <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
-          <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
-          <button class="btn small" data-view-btn="data" title="Show matrix and edge list, hide canvas" data-i18n="view_data">Data</button>
+          <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
+          <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
+          <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
         </div>
         <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
         <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
@@ -976,10 +972,9 @@
               </summary>
               <div class="sec-body">
                 <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher">
-                  <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
-                  <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
-                  <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
-                  <button class="btn small" data-view-btn="data" title="Show matrix and edge list, hide canvas" data-i18n="view_data">Data</button>
+                  <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
+                  <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
+                  <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
                 </div>
                 <div class="grid2" style="margin-top:8px">
                   <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
@@ -1071,7 +1066,7 @@
       </aside>
 
       <!-- ================= Main: canvas + data views ================= -->
-      <main class="main">
+      <main class="main v-canvas">
         <section id="canvasWrap" class="panel canvas-wrap empty">
           <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
           <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor">
@@ -1229,7 +1224,10 @@ const I18N = {
         'view_graph': { en: 'Graph', ru: 'Граф' },
         'view_matrix': { en: 'Matrix', ru: 'Матрица' },
         'view_edges': { en: 'Edges', ru: 'Рёбра' },
-        'view_data': { en: 'Data', ru: 'Данные' },
+        'view_graph_title': { en: 'Show/hide graph canvas', ru: 'Показать/скрыть холст' },
+        'view_matrix_title': { en: 'Show/hide adjacency matrix', ru: 'Показать/скрыть матрицу смежности' },
+        'view_edges_title': { en: 'Show/hide edge list', ru: 'Показать/скрыть список рёбер' },
+        'view_keep_last': { en: 'At least one view must stay visible', ru: 'Хотя бы один вид должен оставаться видимым' },
         'orient_toggle': { en: 'Toggle split orientation (vertical/horizontal)', ru: 'Переключить ориентацию разделения (вертикально/горизонтально)' },
         'orient_to_h': { en: 'Switch to horizontal split (canvas left, panels right)', ru: 'Горизонтальное разделение (холст слева, панели справа)' },
         'orient_to_v': { en: 'Switch to vertical split (canvas on top, panels below)', ru: 'Вертикальное разделение (холст сверху, панели снизу)' },
@@ -7460,26 +7458,38 @@ function wireUi() {
     // View toggle controls
     const mainEl = document.querySelector('.main');
     if (mainEl) {
-        // Default to graph view in landscape; on desktop the data-view attribute is absent so all panels show.
-        // Landscape defaults to the horizontal split (canvas left, panels right) —
-        // panels get full height on the short wide screen.
+        // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
+        // classes on .main). At least one view must stay visible.
         const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
+        const isDesktop = window.matchMedia('(min-width:951px)').matches;
         if (isLandscape) {
-            mainEl.dataset.view = 'graph';
             mainEl.dataset.orient = 'h';
         }
-        const syncViewButtons = (view) => {
-            document.querySelectorAll('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === view));
+        if (isDesktop) {
+            mainEl.classList.add('v-matrix', 'v-edges');
+        }
+        const VIEW_CLASS = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
+        const syncViewButtons = () => {
+            document.querySelectorAll('[data-view-btn]').forEach(b => {
+                b.classList.toggle('active', mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || ''));
+            });
         };
+        const visibleViewCount = () => ['graph', 'matrix', 'edges'].filter(v => mainEl.classList.contains(VIEW_CLASS[v])).length;
         document.querySelectorAll('[data-view-btn]').forEach(btn => {
             btn.addEventListener('click', () => {
-                const view = btn.dataset.viewBtn;
-                mainEl.dataset.view = view;
-                syncViewButtons(view);
+                const cls = VIEW_CLASS[btn.dataset.viewBtn];
+                const turningOff = mainEl.classList.contains(cls);
+                if (turningOff && visibleViewCount() <= 1) {
+                    toast(I18N.t('view_keep_last'));
+                    return;
+                }
+                mainEl.classList.toggle(cls);
+                syncViewButtons();
                 // Trigger a render to resize the canvas to its new container
                 setTimeout(() => queueRender(true), 0);
             });
         });
+        syncViewButtons();
         const orientBtn = $('#btnViewOrient');
         let syncOrientBtn = null;
         if (orientBtn) {
@@ -7498,21 +7508,21 @@ function wireUi() {
             if (mainEl.dataset.orient)
                 syncOrientBtn();
         }
-        // Update view when orientation changes (e.g. rotating device)
+        // Update layout when orientation changes (e.g. rotating device)
         window.matchMedia('(max-width:950px) and (orientation:landscape)').addEventListener('change', e => {
             if (e.matches) {
-                if (!mainEl.dataset.view)
-                    mainEl.dataset.view = 'graph';
                 if (!mainEl.dataset.orient)
                     mainEl.dataset.orient = 'h';
                 if (syncOrientBtn)
                     syncOrientBtn();
             }
             else {
-                // Leaving landscape — clear view attributes so desktop layout applies
-                delete mainEl.dataset.view;
                 delete mainEl.dataset.orient;
-                syncViewButtons('graph');
+                // Back to desktop width: show all panels by default
+                if (window.matchMedia('(min-width:951px)').matches) {
+                    mainEl.classList.add('v-matrix', 'v-edges');
+                    syncViewButtons();
+                }
                 if (syncOrientBtn)
                     syncOrientBtn();
             }

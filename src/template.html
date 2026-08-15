@@ -20,10 +20,9 @@
 
       <div class="toolbar">
         <div class="view-toggle" role="group" aria-label="View switcher">
-          <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
-          <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
-          <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
-          <button class="btn small" data-view-btn="data" title="Show matrix and edge list, hide canvas" data-i18n="view_data">Data</button>
+          <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
+          <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
+          <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
         </div>
         <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
         <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
@@ -425,10 +424,9 @@
               </summary>
               <div class="sec-body">
                 <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher">
-                  <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
-                  <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
-                  <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
-                  <button class="btn small" data-view-btn="data" title="Show matrix and edge list, hide canvas" data-i18n="view_data">Data</button>
+                  <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
+                  <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
+                  <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
                 </div>
                 <div class="grid2" style="margin-top:8px">
                   <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
@@ -520,7 +518,7 @@
       </aside>
 
       <!-- ================= Main: canvas + data views ================= -->
-      <main class="main">
+      <main class="main v-canvas">
         <section id="canvasWrap" class="panel canvas-wrap empty">
           <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
           <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor">

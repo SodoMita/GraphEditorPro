@@ -325,23 +325,32 @@
     // View toggle controls
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
-      // Default to graph view in landscape; on desktop the data-view attribute is absent so all panels show.
-      // Landscape defaults to the horizontal split (canvas left, panels right) —
-      // panels get full height on the short wide screen.
+      // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
+      // classes on .main). At least one view must stay visible.
       const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
-      if(isLandscape){ mainEl.dataset.view = 'graph'; mainEl.dataset.orient = 'h'; }
-      const syncViewButtons = (view: string) => {
-        document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === view));
+      const isDesktop = window.matchMedia('(min-width:951px)').matches;
+      if(isLandscape){ mainEl.dataset.orient = 'h'; }
+      if(isDesktop){ mainEl.classList.add('v-matrix', 'v-edges'); }
+      const VIEW_CLASS: Record<string, string> = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
+      const syncViewButtons = () => {
+        document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => {
+          b.classList.toggle('active', mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || ''));
+        });
       };
+      const visibleViewCount = () =>
+        ['graph','matrix','edges'].filter(v => mainEl.classList.contains(VIEW_CLASS[v])).length;
       document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(btn => {
         btn.addEventListener('click', () => {
-          const view = btn.dataset.viewBtn;
-          mainEl.dataset.view = view;
-          syncViewButtons(view);
+          const cls = VIEW_CLASS[btn.dataset.viewBtn];
+          const turningOff = mainEl.classList.contains(cls);
+          if(turningOff && visibleViewCount() <= 1){ toast(I18N.t('view_keep_last')); return; }
+          mainEl.classList.toggle(cls);
+          syncViewButtons();
           // Trigger a render to resize the canvas to its new container
           setTimeout(() => queueRender(true), 0);
         });
       });
+      syncViewButtons();
       const orientBtn = $('#btnViewOrient');
       let syncOrientBtn: (() => void) | null = null;
       if(orientBtn){
@@ -358,17 +367,18 @@
         });
         if(mainEl.dataset.orient) syncOrientBtn();
       }
-      // Update view when orientation changes (e.g. rotating device)
+      // Update layout when orientation changes (e.g. rotating device)
       window.matchMedia('(max-width:950px) and (orientation:landscape)').addEventListener('change', e => {
         if(e.matches){
-          if(!mainEl.dataset.view) mainEl.dataset.view = 'graph';
           if(!mainEl.dataset.orient) mainEl.dataset.orient = 'h';
           if(syncOrientBtn) syncOrientBtn();
         } else {
-          // Leaving landscape — clear view attributes so desktop layout applies
-          delete mainEl.dataset.view;
           delete mainEl.dataset.orient;
-          syncViewButtons('graph');
+          // Back to desktop width: show all panels by default
+          if(window.matchMedia('(min-width:951px)').matches){
+            mainEl.classList.add('v-matrix', 'v-edges');
+            syncViewButtons();
+          }
           if(syncOrientBtn) syncOrientBtn();
         }
         setTimeout(() => queueRender(true), 50);
