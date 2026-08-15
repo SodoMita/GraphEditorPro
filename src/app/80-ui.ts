@@ -2,7 +2,19 @@
     svg.addEventListener('selectstart', ev => ev.preventDefault());
     svg.addEventListener('contextmenu', ev => ev.preventDefault());
     svg.addEventListener('auxclick', ev => ev.preventDefault());
-    $$('.tab').forEach(btn => btn.addEventListener('click', () => { $$('.tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); $$('.tab-panel').forEach(p=>p.classList.remove('active')); $(`#panel-${btn.dataset.tab}`).classList.add('active'); }));
+    $$('.tab').forEach(btn => btn.addEventListener('click', () => {
+      // Mobile-app style: tapping a tab opens its panel as a bottom sheet;
+      // tapping the active tab again closes the sheet. Both the bottom tab
+      // bar and the sheet-header tabs share this handler and stay in sync.
+      const target = btn.dataset.tab;
+      const panel = $(`#panel-${target}`);
+      const opening = !panel.classList.contains('active');
+      $$('.tab-panel').forEach(p => p.classList.remove('active'));
+      $$('.tab').forEach(b => b.classList.toggle('active', opening && b.dataset.tab === target));
+      if(opening) panel.classList.add('active');
+      const sidebarEl = document.querySelector('.sidebar');
+      if(sidebarEl) sidebarEl.classList.toggle('open', opening);
+    }));
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));

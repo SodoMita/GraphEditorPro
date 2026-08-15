@@ -17,13 +17,6 @@
       </div>
       <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
 
-      <div class="mode-seg" role="group" aria-label="Edit modes">
-        <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" data-i18n="mode_select">↖ Select</button>
-        <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" data-i18n="mode_move">✋ Move</button>
-        <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" data-i18n="mode_node">＋ Node</button>
-        <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" data-i18n="mode_edge">↔ Edge</button>
-      </div>
-
       <div class="toolbar">
         <div class="view-toggle" role="group" aria-label="View switcher">
           <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
@@ -45,7 +38,7 @@
       <!-- ================= Sidebar: compact collapsible panels ================= -->
       <aside class="panel sidebar">
         <nav class="tabs" aria-label="Tool panels">
-          <button class="tab active" data-tab="edit" title="Editor"><span class="tab-ico">✏️</span><span class="wide" data-i18n="tab_edit">Edit</span></button>
+          <button class="tab" data-tab="edit" title="Editor"><span class="tab-ico">✏️</span><span class="wide" data-i18n="tab_edit">Edit</span></button>
           <button class="tab" data-tab="style" title="Default styles"><span class="tab-ico">🎨</span><span class="wide" data-i18n="tab_style">Style</span></button>
           <button class="tab" data-tab="algo" title="Algorithms"><span class="tab-ico">🧠</span><span class="wide" data-i18n="tab_algo">Algo</span></button>
           <button class="tab" data-tab="data" title="Data and export"><span class="tab-ico">📦</span><span class="wide" data-i18n="tab_data">Data</span></button>
@@ -54,7 +47,7 @@
 
         <div class="tab-panels thin-scroll">
           <!-- ================= EDIT ================= -->
-          <section id="panel-edit" class="tab-panel active">
+          <section id="panel-edit" class="tab-panel">
 
             <details class="section" open>
               <summary class="section-title">
@@ -566,20 +559,15 @@
             <button id="btnZoomReset" class="btn" title="Reset zoom" data-i18n-title="reset_zoom">100%</button>
           </div>
 
-          <div class="empty-hint" data-i18n="empty_hint">Start by selecting Node mode and clicking the canvas, or press Sample.</div>
-
-          <!-- Style presets overlay -->
-          <div id="presetsOverlay" class="presets-overlay">
-            <div class="presets-header">
-              <h3 data-i18n="style_presets">Style presets</h3>
-              <div style="display:flex; gap:6px; flex-wrap:wrap">
-                <button id="btnPresetSave" class="btn small good" title="Save current selection's style as a new preset" data-i18n="save_from_sel">Save from selection</button>
-                <button id="btnPresetClose" class="btn small danger" data-i18n="close">Close</button>
-              </div>
-            </div>
-            <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
-            <div id="presetsGrid" class="presets-grid"></div>
+          <!-- Floating tool switcher — always thumb-reachable above the tab bar -->
+          <div class="mode-fab" role="group" aria-label="Edit modes">
+            <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" data-i18n="mode_select">↖ Select</button>
+            <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" data-i18n="mode_move">✋ Move</button>
+            <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" data-i18n="mode_node">＋ Node</button>
+            <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" data-i18n="mode_edge">↔ Edge</button>
           </div>
+
+          <div class="empty-hint" data-i18n="empty_hint">Start by selecting Node mode and clicking the canvas, or press Sample.</div>
         </section>
 
         <section class="panel bottom">
@@ -617,6 +605,28 @@
           </div>
         </section>
       </main>
+    </div>
+
+    <!-- Bottom tab bar — always visible; tap to slide up a panel sheet -->
+    <nav class="tabbar panel" aria-label="Tool panels">
+      <button class="tab" data-tab="edit" title="Editor"><span class="tab-ico">✏️</span><span data-i18n="tab_edit">Edit</span></button>
+      <button class="tab" data-tab="style" title="Default styles"><span class="tab-ico">🎨</span><span data-i18n="tab_style">Style</span></button>
+      <button class="tab" data-tab="algo" title="Algorithms"><span class="tab-ico">🧠</span><span data-i18n="tab_algo">Algo</span></button>
+      <button class="tab" data-tab="data" title="Data and export"><span class="tab-ico">📦</span><span data-i18n="tab_data">Data</span></button>
+      <button class="tab" data-tab="help" title="Help"><span class="tab-ico">?</span><span data-i18n="tab_help">Help</span></button>
+    </nav>
+
+    <!-- Style presets overlay — covers the whole app -->
+    <div id="presetsOverlay" class="presets-overlay">
+      <div class="presets-header">
+        <h3 data-i18n="style_presets">Style presets</h3>
+        <div style="display:flex; gap:6px; flex-wrap:wrap">
+          <button id="btnPresetSave" class="btn small good" title="Save current selection's style as a new preset" data-i18n="save_from_sel">Save from selection</button>
+          <button id="btnPresetClose" class="btn small danger" data-i18n="close">Close</button>
+        </div>
+      </div>
+      <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
+      <div id="presetsGrid" class="presets-grid"></div>
     </div>
   </div>
 
