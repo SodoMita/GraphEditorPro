@@ -70,6 +70,11 @@
       border-color:rgba(34,211,238,.4); color:var(--accent);
       background:rgba(34,211,238,.10);
     }
+    /* Orientation toggle: highlight when horizontal split is active */
+    #btnViewOrient.active{
+      border-color:var(--accent); color:var(--accent);
+      box-shadow:0 0 0 1px rgba(34,211,238,.35) inset, 0 0 12px rgba(34,211,238,.18);
+    }
 
     /* ---------- Buttons ---------- */
     .btn{
@@ -285,8 +290,11 @@
 
     /* ---------- Bottom view: matrix / edge list ---------- */
     .bottom{grid-area:bottom; display:none; overflow:hidden; grid-template-columns:1fr; min-height:0; border-width:1px 0 0; border-radius:0}
-    .main[data-view="matrix"] .bottom,.main[data-view="edges"] .bottom{display:grid}
+    .main[data-view="matrix"] .bottom,.main[data-view="edges"] .bottom,.main[data-view="data"] .bottom{display:grid}
     .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,42vh); grid-template-areas:"canvas" "bottom"}
+    /* Data view: panels only, canvas hidden */
+    .main[data-view="data"]{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
+    .main[data-view="data"] .canvas-wrap{display:none}
     .bottom-pane{min-width:0; padding:9px 10px; overflow:auto; -webkit-overflow-scrolling:touch}
     .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2)}
     .matrix-controls{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px}
@@ -417,6 +425,11 @@
       .tabbar{display:none}
       .toast-stack{bottom:calc(72px + var(--sa-bottom))}
     }
+    /* Portrait phones: side-by-side split is unusable, hide the toggle */
+    @media (max-width:950px) and (orientation:portrait){
+      #btnViewOrient{display:none}
+      .appbar .toolbar{grid-template-columns:repeat(7,minmax(0,1fr))}
+    }
 
     /* =====================================================================
        Small phones
@@ -455,8 +468,19 @@
       .sel-tools{left:12px; right:auto; transform:none; bottom:64px}
       .canvas-wrap.select-mode .empty-hint{bottom:110px}
       .empty-hint{inset:auto 14px 76px 14px}
-      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,44%)}
-      .table-scroll{max-height:calc(44% - 60px)}
+      /* Vertical split: panels get a comfortable share of the short height */
+      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,55%)}
+      .table-scroll{max-height:calc(55% - 60px)}
+      /* Data view: panels only, canvas hidden */
+      .main[data-view="data"]{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
+      .main[data-view="data"] .canvas-wrap{display:none}
+      .main[data-view="data"] .bottom{display:grid}
+      /* Horizontal split (↔): canvas left, panels right, full height — the
+         best use of a short wide screen */
+      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
+      .main[data-orient="h"][data-view="graph"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
+      .main[data-orient="h"][data-view="data"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
+      .main[data-orient="h"] .table-scroll{max-height:none}
       .toast-stack{bottom:calc(12px + var(--sa-bottom))}
     }
 
@@ -492,11 +516,15 @@
       .main[data-view="matrix"] .bottom,.main[data-view="edges"] .bottom{display:grid; grid-template-columns:1fr}
       .main[data-view="matrix"] .bottom-pane:nth-child(2),.main[data-view="edges"] .bottom-pane:nth-child(1){display:none}
       .main[data-view="matrix"] .bottom-pane + .bottom-pane,.main[data-view="edges"] .bottom-pane + .bottom-pane{border-left:0; border-top:0}
-      .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"]{
-        grid-template-rows:minmax(0,1fr);
-        grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-        grid-template-areas:"canvas bottom";
-      }
+      /* Data view: panels only, canvas hidden */
+      .main[data-view="data"]{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
+      .main[data-view="data"] .canvas-wrap{display:none}
+      .main[data-view="data"] .bottom{display:grid; grid-template-columns:1.05fr .95fr}
+      /* Horizontal split (↔): canvas left, panels right for every view */
+      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
+      .main[data-orient="h"][data-view="graph"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
+      .main[data-orient="h"][data-view="data"]{grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
+      .main[data-orient="h"] .table-scroll{max-height:none}
       .table-scroll{max-height:calc(26vh - 58px)}
     }
 

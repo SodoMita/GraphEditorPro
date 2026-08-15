@@ -325,39 +325,51 @@
     // View toggle controls
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
-      // Default to graph view in landscape; on desktop the data-view attribute is absent so all panels show
+      // Default to graph view in landscape; on desktop the data-view attribute is absent so all panels show.
+      // Landscape defaults to the horizontal split (canvas left, panels right) —
+      // panels get full height on the short wide screen.
       const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
-      if(isLandscape){ mainEl.dataset.view = 'graph'; mainEl.dataset.orient = 'v'; }
+      if(isLandscape){ mainEl.dataset.view = 'graph'; mainEl.dataset.orient = 'h'; }
+      const syncViewButtons = (view: string) => {
+        document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === view));
+      };
       document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(btn => {
         btn.addEventListener('click', () => {
           const view = btn.dataset.viewBtn;
           mainEl.dataset.view = view;
-          document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b === btn));
+          syncViewButtons(view);
           // Trigger a render to resize the canvas to its new container
           setTimeout(() => queueRender(true), 0);
         });
       });
       const orientBtn = $('#btnViewOrient');
+      let syncOrientBtn: (() => void) | null = null;
       if(orientBtn){
+        syncOrientBtn = () => {
+          orientBtn.textContent = mainEl.dataset.orient === 'h' ? '↕' : '↔';
+          orientBtn.classList.toggle('active', mainEl.dataset.orient === 'h');
+          orientBtn.title = I18N.t(mainEl.dataset.orient === 'h' ? 'orient_to_v' : 'orient_to_h');
+        };
         orientBtn.addEventListener('click', () => {
           const cur = mainEl.dataset.orient || 'v';
           mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
-          orientBtn.textContent = mainEl.dataset.orient === 'v' ? '↔' : '↕';
-          orientBtn.title = mainEl.dataset.orient === 'v' ? 'Switch to horizontal split' : 'Switch to vertical split';
+          if(syncOrientBtn) syncOrientBtn();
           setTimeout(() => queueRender(true), 0);
         });
+        if(mainEl.dataset.orient) syncOrientBtn();
       }
       // Update view when orientation changes (e.g. rotating device)
       window.matchMedia('(max-width:950px) and (orientation:landscape)').addEventListener('change', e => {
         if(e.matches){
           if(!mainEl.dataset.view) mainEl.dataset.view = 'graph';
-          if(!mainEl.dataset.orient) mainEl.dataset.orient = 'v';
+          if(!mainEl.dataset.orient) mainEl.dataset.orient = 'h';
+          if(syncOrientBtn) syncOrientBtn();
         } else {
           // Leaving landscape — clear view attributes so desktop layout applies
           delete mainEl.dataset.view;
           delete mainEl.dataset.orient;
-          document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === 'graph'));
-          if(orientBtn){ orientBtn.textContent = '↔'; }
+          syncViewButtons('graph');
+          if(syncOrientBtn) syncOrientBtn();
         }
         setTimeout(() => queueRender(true), 50);
       });
