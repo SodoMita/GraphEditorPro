@@ -125,7 +125,11 @@
     .canvas-hud{position:absolute; left:8px; top:8px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none}.canvas-hud>*{pointer-events:auto}
     .status-pill{background:rgba(2,6,23,.78); border:1px solid rgba(51,65,85,.8); border-radius:999px; padding:4px 9px; font-size:11px; color:#cbd5e1; backdrop-filter:blur(8px)}
     .zoom-controls{position:absolute; right:8px; top:8px; display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end}
-    .mobile-modebar{position:absolute; left:8px; bottom:8px; display:none; gap:5px; z-index:4}
+    /* Quick mode bar — always visible on the canvas so switching modes never
+       requires opening the Edit tab (shortest possible distance to goal). */
+    .mobile-modebar{position:absolute; left:50%; transform:translateX(-50%); top:8px; display:flex; gap:4px; z-index:4; padding:3px; border:1px solid rgba(51,65,85,.7); border-radius:10px; background:rgba(2,6,23,.72); backdrop-filter:blur(8px)}
+    .mobile-modebar .btn{min-height:28px; width:32px; padding:0; font-size:14px; border-color:transparent; background:transparent}
+    .mobile-modebar .btn.active{border-color:var(--accent); background:rgba(34,211,238,.10)}
     .empty-hint{position:absolute; inset:auto 14px 14px 14px; padding:8px 12px; border:1px dashed rgba(148,163,184,.38); border-radius:10px; background:rgba(2,6,23,.70); color:#cbd5e1; font-size:12px; pointer-events:none; display:none}
     .empty .empty-hint{display:block}
 
