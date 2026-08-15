@@ -28,6 +28,10 @@ const I18N: I18nService = {
     'tab_data': { en: 'Data', ru: 'Данные' },
     'tab_help': { en: 'Help', ru: 'Справка' },
 
+    // --- Navigation ---
+    'menu_open': { en: 'Open panels', ru: 'Открыть панели' },
+    'behavior_grid': { en: 'Behavior & grid', ru: 'Поведение и сетка' },
+
     // --- Edit tab: Mode ---
     'mode_title': { en: 'Mode', ru: 'Режим' },
     'mode_select': { en: '↖ Select', ru: '↖ Выбор' },

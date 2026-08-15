@@ -71,6 +71,13 @@
     }
     .title-input:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.14)}
 
+    /* Hamburger menu button (mobile) — opens the panel sheet */
+    .menu-btn{
+      flex:0 0 auto; min-height:34px; width:38px; border-radius:9px; font-size:17px;
+      border-color:rgba(34,211,238,.4); color:var(--accent);
+      background:rgba(34,211,238,.10);
+    }
+
     /* ---------- Buttons ---------- */
     .btn{
       border:1px solid var(--line-2); background:linear-gradient(180deg,var(--panel-2),var(--panel-3));
@@ -388,6 +395,15 @@
     *{scrollbar-width:thin; scrollbar-color:#24334d transparent}
 
     /* =====================================================================
+       Mobile (≤950px): tabs live behind the hamburger; the bottom tab bar
+       is hidden to give the canvas full height.
+       ===================================================================== */
+    @media (max-width:950px){
+      .tabbar{display:none}
+      .toast-stack{bottom:calc(72px + var(--sa-bottom))}
+    }
+
+    /* =====================================================================
        Small phones
        ===================================================================== */
     @media (max-width:360px){
@@ -405,12 +421,36 @@
     }
 
     /* =====================================================================
+       Landscape phones/tablets: the sheet becomes a right-side drawer so
+       the canvas stays visible; the mode switcher docks bottom-left; the
+       matrix/edge split shares the short height proportionally.
+       ===================================================================== */
+    @media (max-width:950px) and (orientation:landscape){
+      .sidebar{
+        left:auto; right:0; top:0; bottom:0;
+        width:min(430px, 94vw); max-height:none; height:100%;
+        border-radius:0; border-width:1px 0 0 1px;
+        transform:translateX(105%); box-shadow:-16px 0 40px rgba(0,0,0,.5);
+      }
+      .sidebar.open{transform:translateX(0)}
+      .sheet-grabber{display:none}
+      .tab-panels{padding-top:6px}
+      .mode-fab{left:12px; right:auto; transform:none; bottom:10px}
+      .mode-fab .seg{min-height:34px; min-width:46px; padding:0 10px; font-size:11.5px}
+      .empty-hint{inset:auto 14px 76px 14px}
+      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:minmax(0,1fr) minmax(0,44%)}
+      .table-scroll{max-height:calc(44% - 60px)}
+      .toast-stack{bottom:calc(12px + var(--sa-bottom))}
+    }
+
+    /* =====================================================================
        Desktop (≥951px): single-row app bar with everything, split views,
        matrix/edge list visible by default, canvas gets margins.
        ===================================================================== */
     @media (min-width:951px){
       .app{gap:8px; padding:8px}
       .appbar{flex-wrap:nowrap; gap:10px; padding:7px 10px; border-width:1px; border-radius:var(--radius)}
+      .menu-btn{display:none}
       .brand{font-size:13px}
       .brand-name{display:inline}
       .title-input{flex:0 1 220px; width:min(220px,26vw); min-width:120px}
@@ -445,15 +485,18 @@
        Short / landscape screens: tighter bars so the canvas stays usable.
        ===================================================================== */
     @media (max-height:560px){
-      .appbar{padding-top:calc(3px + var(--sa-top)); padding-bottom:3px}
+      .appbar{flex-wrap:nowrap; padding-top:calc(3px + var(--sa-top)); padding-bottom:3px; gap:6px}
       .brand-name{display:none}
-      .title-input{min-width:80px; max-width:150px}
+      .title-input{flex:0 1 150px; min-width:80px; max-width:150px}
+      .toolbar{display:flex; flex:0 0 auto; grid-template-columns:none; gap:4px; margin-left:auto}
+      .toolbar .btn{min-height:30px; font-size:11px; padding:0 6px}
+      .toolbar .btn.icon{width:32px}
       .tabbar{padding-top:3px}
       .tab-ico{font-size:17px}
       .tab{padding:2px}
       .mode-fab .seg{min-height:34px; min-width:44px; padding:0 9px; font-size:11.5px}
       .mode-fab{bottom:8px}
-      .empty-hint{inset:auto 14px 82px 14px}
+      .empty-hint{inset:auto 14px 76px 14px}
       .field input:not([type="checkbox"]),.field select,.field textarea{font-size:14px; min-height:30px; padding:5px 8px}
     }
   </style>
@@ -468,6 +511,7 @@
         <span class="brand-name" data-i18n="brand_name">Graph Editor Pro</span>
       </div>
       <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
+      <button id="btnMenu" class="btn icon menu-btn" title="Open panels" data-i18n-title="menu_open" aria-label="Open panels">☰</button>
 
       <div class="toolbar">
         <div class="view-toggle" role="group" aria-label="View switcher">
@@ -475,13 +519,13 @@
           <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
           <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
         </div>
-        <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
-        <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open">★</button>
         <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
         <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
-        <button id="btnSample" class="btn" title="Add sample graph" data-i18n-title="add_sample" data-i18n="sample">Sample</button>
         <button id="btnDelete" class="btn danger" title="Delete selected" data-i18n-title="delete_selected" data-i18n="delete_btn">Delete</button>
+        <button id="btnSample" class="btn" title="Add sample graph" data-i18n-title="add_sample" data-i18n="sample">Sample</button>
         <button id="btnClear" class="btn danger" title="Clear graph" data-i18n-title="clear_graph" data-i18n="clear_sel">Clear</button>
+        <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open">★</button>
+        <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
         <button id="btnLang" class="btn small" title="Switch language / Сменить язык" data-i18n-title="lang_switch">🌐 EN</button>
       </div>
     </header>
@@ -507,7 +551,13 @@
                 <span class="tiny muted" data-i18n="node_placement_sub">(values for newly added nodes)</span>
               </summary>
               <div class="sec-body">
-                <div class="grid2">
+                <label class="field col" for="nodeLabel"><span data-i18n="label_prefix">Label prefix / exact label</span>
+                  <input id="nodeLabel" type="text" placeholder="Auto: A, B, C..." />
+                </label>
+                <div class="grid2" style="margin-top:6px">
+                  <label class="field" for="nodeColor"><span data-i18n="color">Color</span>
+                    <input id="nodeColor" type="color" value="#0ea5e9" />
+                  </label>
                   <label class="field" for="nodeShape"><span data-i18n="shape">Shape</span>
                     <select id="nodeShape">
                       <option value="circle" data-i18n="circle">Circle</option>
@@ -518,42 +568,11 @@
                       <option value="hexagon" data-i18n="shape_hexagon">Hexagon</option>
                     </select>
                   </label>
-                  <label class="field" for="nodeType"><span data-i18n="type">Type</span>
-                    <input id="nodeType" type="text" list="nodeTypeListEdit" placeholder="none" data-i18n-placeholder="none_placeholder" />
-                    <datalist id="nodeTypeListEdit"></datalist>
-                  </label>
-                  <label class="field" for="nodeColor"><span data-i18n="color">Color</span>
-                    <input id="nodeColor" type="color" value="#0ea5e9" />
-                  </label>
-                  <label class="field" for="nodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span>
-                    <input id="nodeStrokeColor" type="color" value="#e2e8f0" />
-                  </label>
                   <label class="field" for="nodeWidth"><span data-i18n="width">Width</span>
                     <input id="nodeWidth" type="number" min="10" max="300" step="1" value="50" inputmode="decimal" />
                   </label>
                   <label class="field" for="nodeHeight"><span data-i18n="height">Height</span>
                     <input id="nodeHeight" type="number" min="10" max="300" step="1" value="50" inputmode="decimal" />
-                  </label>
-                  <label class="field" for="nodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span>
-                    <input id="nodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal" />
-                  </label>
-                  <label class="field" for="nodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span>
-                    <select id="nodeStrokeStyle">
-                      <option value="solid" data-i18n="stroke_solid">Solid</option>
-                      <option value="dashed" data-i18n="stroke_dashed">Dashed</option>
-                      <option value="dotted" data-i18n="stroke_dotted">Dotted</option>
-                    </select>
-                  </label>
-                </div>
-                <label class="field col" for="nodeLabel" style="margin-top:6px"><span data-i18n="label_prefix">Label prefix / exact label</span>
-                  <input id="nodeLabel" type="text" placeholder="Auto: A, B, C..." />
-                </label>
-                <div class="grid2" style="margin-top:6px">
-                  <label class="field" for="nodeLabelColor"><span data-i18n="label_color">Label color</span>
-                    <input id="nodeLabelColor" type="color" value="#f8fafc" />
-                  </label>
-                  <label class="field" for="nodeLabelFont"><span data-i18n="label_font">Label font</span>
-                    <input id="nodeLabelFont" type="text" list="fontList" placeholder="Inter" />
                   </label>
                   <label class="field" for="nodeLabelSize"><span data-i18n="label_size">Label size</span>
                     <input id="nodeLabelSize" type="number" min="4" max="72" step="1" value="13" inputmode="decimal" />
@@ -567,14 +586,44 @@
                       <option value="right" data-i18n="pos_right">Right</option>
                     </select>
                   </label>
+                  <label class="field" for="nodeType"><span data-i18n="type">Type</span>
+                    <input id="nodeType" type="text" list="nodeTypeListEdit" placeholder="none" data-i18n-placeholder="none_placeholder" />
+                    <datalist id="nodeTypeListEdit"></datalist>
+                  </label>
+                  <label class="field" for="nodeLabelFont"><span data-i18n="label_font">Label font</span>
+                    <input id="nodeLabelFont" type="text" list="fontList" placeholder="Inter" />
+                  </label>
+                  <label class="field" for="nodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span>
+                    <input id="nodeStrokeColor" type="color" value="#e2e8f0" />
+                  </label>
+                  <label class="field" for="nodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span>
+                    <input id="nodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal" />
+                  </label>
+                  <label class="field" for="nodeLabelColor"><span data-i18n="label_color">Label color</span>
+                    <input id="nodeLabelColor" type="color" value="#f8fafc" />
+                  </label>
+                  <label class="field" for="nodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span>
+                    <select id="nodeStrokeStyle">
+                      <option value="solid" data-i18n="stroke_solid">Solid</option>
+                      <option value="dashed" data-i18n="stroke_dashed">Dashed</option>
+                      <option value="dotted" data-i18n="stroke_dotted">Dotted</option>
+                    </select>
+                  </label>
                 </div>
-                <div class="chk-grid" style="margin-top:6px">
-                  <label class="chk" for="optInheritDefaults" title="New nodes inherit Style-tab defaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">Inherit defaults</span></label>
-                  <label class="chk" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">No label</span></label>
-                  <label class="chk" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap grid</span></label>
-                  <label class="chk" for="optSnapX"><input id="optSnapX" type="checkbox" /> <span data-i18n="snap_x">Snap X</span></label>
-                  <label class="chk" for="optSnapY"><input id="optSnapY" type="checkbox" /> <span data-i18n="snap_y">Snap Y</span></label>
-                </div>
+              </div>
+            </details>
+
+            <details class="section">
+              <summary class="section-title">
+                <span data-i18n="behavior_grid">Behavior &amp; grid</span>
+              </summary>
+              <div class="sec-body">
+                <label class="chk" for="optInheritDefaults" title="New nodes inherit Style-tab defaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">Inherit defaults</span></label>
+                <p class="tiny muted" style="margin:2px 0 6px"><span data-i18n="inherit_defaults_desc">When on, new nodes have unset visual properties and follow Style-tab defaults dynamically.</span></p>
+                <label class="chk" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">No label</span></label>
+                <label class="chk" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap grid</span></label>
+                <label class="chk" for="optSnapX"><input id="optSnapX" type="checkbox" /> <span data-i18n="snap_x">Snap X</span></label>
+                <label class="chk" for="optSnapY"><input id="optSnapY" type="checkbox" /> <span data-i18n="snap_y">Snap Y</span></label>
                 <div class="grid2" style="margin-top:6px">
                   <label class="field" for="optGridX"><span data-i18n="grid_width">Grid width</span>
                     <input id="optGridX" type="number" min="5" max="300" step="5" value="40" />
@@ -1120,6 +1169,9 @@ const I18N = {
         'tab_algo': { en: 'Algo', ru: 'Алго' },
         'tab_data': { en: 'Data', ru: 'Данные' },
         'tab_help': { en: 'Help', ru: 'Справка' },
+        // --- Navigation ---
+        'menu_open': { en: 'Open panels', ru: 'Открыть панели' },
+        'behavior_grid': { en: 'Behavior & grid', ru: 'Поведение и сетка' },
         // --- Edit tab: Mode ---
         'mode_title': { en: 'Mode', ru: 'Режим' },
         'mode_select': { en: '↖ Select', ru: '↖ Выбор' },
@@ -6901,6 +6953,17 @@ function wireUi() {
         if (sidebarEl)
             sidebarEl.classList.toggle('open', opening);
     }));
+    // Hamburger menu: opens/closes the panel sheet (tabs live in the sheet
+    // header, so the menu button just re-triggers the active tab).
+    const menuBtn = $('#btnMenu');
+    if (menuBtn) {
+        menuBtn.addEventListener('click', () => {
+            const tab = document.querySelector('.sidebar .tabs .tab.active')
+                || document.querySelector('.sidebar .tabs .tab[data-tab="edit"]');
+            if (tab)
+                tab.click();
+        });
+    }
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));

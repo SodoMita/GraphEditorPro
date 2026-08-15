@@ -15,6 +15,16 @@
       const sidebarEl = document.querySelector('.sidebar');
       if(sidebarEl) sidebarEl.classList.toggle('open', opening);
     }));
+    // Hamburger menu: opens/closes the panel sheet (tabs live in the sheet
+    // header, so the menu button just re-triggers the active tab).
+    const menuBtn = $('#btnMenu');
+    if(menuBtn){
+      menuBtn.addEventListener('click', () => {
+        const tab = document.querySelector<HTMLElement>('.sidebar .tabs .tab.active')
+          || document.querySelector<HTMLElement>('.sidebar .tabs .tab[data-tab="edit"]');
+        if(tab) tab.click();
+      });
+    }
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
