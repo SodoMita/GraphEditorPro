@@ -300,45 +300,45 @@
     $('#btnDelEdgeTypeStyle').addEventListener('click', delEdgeTypeStyle);
     $('#btnClearNodeOverrides').addEventListener('click', clearNodeOverridesForType);
     $('#btnClearEdgeOverrides').addEventListener('click', clearEdgeOverridesForType);
-    // View toggle controls
+    // View toggle controls — work on every screen size.
+    // data-view: graph | matrix | edges | split; data-orient: v | h.
+    // Persisted in localStorage so the workspace layout survives reloads.
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
-      // Default to graph view in landscape; on desktop the data-view attribute is absent so all panels show
-      const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
-      if(isLandscape){ mainEl.dataset.view = 'graph'; mainEl.dataset.orient = 'v'; }
-      document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const view = btn.dataset.viewBtn;
-          mainEl.dataset.view = view;
-          document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b === btn));
-          // Trigger a render to resize the canvas to its new container
-          setTimeout(() => queueRender(true), 0);
-        });
-      });
+      const VIEWS = ['graph','matrix','edges','split'];
+      let savedView = '', savedOrient = '';
+      try {
+        savedView = localStorage.getItem('graph-editor-view') || '';
+        savedOrient = localStorage.getItem('graph-editor-orient') || '';
+      } catch {}
       const orientBtn = $('#btnViewOrient');
+      const syncOrientBtn = () => {
+        if(!orientBtn) return;
+        orientBtn.textContent = mainEl.dataset.orient === 'h' ? '↕' : '↔';
+        orientBtn.title = mainEl.dataset.orient === 'h' ? 'Switch to vertical split' : 'Switch to horizontal split';
+      };
+      const setView = view => {
+        if(!VIEWS.includes(view)) view = 'split';
+        mainEl.dataset.view = view;
+        document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === view));
+        try { localStorage.setItem('graph-editor-view', view); } catch {}
+        // Trigger a render to resize the canvas to its new container
+        setTimeout(() => queueRender(true), 0);
+      };
+      mainEl.dataset.orient = savedOrient === 'h' ? 'h' : 'v';
+      syncOrientBtn();
+      setView(savedView || 'split');
+      document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(btn => {
+        btn.addEventListener('click', () => setView(btn.dataset.viewBtn));
+      });
       if(orientBtn){
         orientBtn.addEventListener('click', () => {
-          const cur = mainEl.dataset.orient || 'v';
-          mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
-          orientBtn.textContent = mainEl.dataset.orient === 'v' ? '↔' : '↕';
-          orientBtn.title = mainEl.dataset.orient === 'v' ? 'Switch to horizontal split' : 'Switch to vertical split';
+          mainEl.dataset.orient = (mainEl.dataset.orient || 'v') === 'v' ? 'h' : 'v';
+          syncOrientBtn();
+          try { localStorage.setItem('graph-editor-orient', mainEl.dataset.orient); } catch {}
           setTimeout(() => queueRender(true), 0);
         });
       }
-      // Update view when orientation changes (e.g. rotating device)
-      window.matchMedia('(max-width:950px) and (orientation:landscape)').addEventListener('change', e => {
-        if(e.matches){
-          if(!mainEl.dataset.view) mainEl.dataset.view = 'graph';
-          if(!mainEl.dataset.orient) mainEl.dataset.orient = 'v';
-        } else {
-          // Leaving landscape — clear view attributes so desktop layout applies
-          delete mainEl.dataset.view;
-          delete mainEl.dataset.orient;
-          document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === 'graph'));
-          if(orientBtn){ orientBtn.textContent = '↔'; }
-        }
-        setTimeout(() => queueRender(true), 50);
-      });
     }
     $('#btnBfs').addEventListener('click', runBfs); $('#btnDfs').addEventListener('click', runDfs); $('#btnDijkstra').addEventListener('click', runDijkstra); $('#btnComponents').addEventListener('click', runComponents); $('#btnTopo').addEventListener('click', runTopo); $('#btnStats').addEventListener('click', runStats);
     $('#btnCopyResults').addEventListener('click', () => copyText($('#algoOutput').textContent));

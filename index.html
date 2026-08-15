@@ -9,233 +9,291 @@
       --bg:#06101f; --panel:#0f172a; --panel-2:#0b1220; --panel-3:#111c33;
       --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b; --line:#334155;
       --accent:#22d3ee; --accent-2:#0ea5e9; --good:#34d399; --warn:#fbbf24; --bad:#fb7185;
-      --shadow: 0 18px 60px rgba(0,0,0,.32);
-      --radius:16px;
+      --shadow:0 10px 34px rgba(0,0,0,.30);
+      --radius:10px;
+      --ctrl-h:30px; --ctrl-h-sm:26px;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
       margin:0; color:var(--text); background:
-        radial-gradient(900px 500px at 20% -10%, rgba(14,165,233,.20), transparent 60%),
-        radial-gradient(700px 420px at 95% 0%, rgba(34,211,238,.14), transparent 55%),
+        radial-gradient(900px 500px at 20% -10%, rgba(14,165,233,.16), transparent 60%),
         linear-gradient(135deg,#060b16 0%,#0b1220 45%,#060b16 100%);
       font-family:Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-size:13px;
       overflow:hidden;
     }
     button,input,select,textarea{font:inherit}
     button{cursor:pointer}
-    .app{height:100vh; height:100svh; display:grid; grid-template-columns:310px minmax(0,1fr); grid-template-rows:minmax(0,1fr); grid-template-areas:"sidebar main"; gap:10px; padding:10px; overflow:hidden;}
-    .panel{background:linear-gradient(145deg,rgba(15,23,42,.96),rgba(8,14,27,.98)); border:1px solid rgba(51,65,85,.85); border-radius:var(--radius); box-shadow:var(--shadow)}
+
+    /* ============ App frame ============ */
+    .app{height:100vh; height:100svh; display:grid; grid-template-columns:280px minmax(0,1fr); grid-template-rows:minmax(0,1fr); grid-template-areas:"sidebar main"; gap:6px; padding:6px; overflow:hidden}
+    .panel{background:linear-gradient(150deg,rgba(15,23,42,.97),rgba(8,14,27,.98)); border:1px solid rgba(51,65,85,.8); border-radius:var(--radius); box-shadow:var(--shadow)}
     .sidebar{grid-area:sidebar; min-width:0; min-height:0; overflow:hidden; display:flex; flex-direction:column}
     .sidebar .tab-panels{flex:1; min-height:0; overflow-y:auto; overflow-x:hidden}
-    .main{grid-area:main; min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr) minmax(155px,28vh); gap:10px; overflow:hidden;}
-    .topbar{display:flex; align-items:center; gap:10px; padding:10px 12px; min-width:0}
-    .brand{display:flex; align-items:center; gap:10px; min-width:0; font-weight:800; letter-spacing:.2px}
-    .brand-badge{width:34px;height:34px; border-radius:11px; display:grid; place-items:center; color:#06101f; background:linear-gradient(135deg,var(--accent),#a7f3d0); font-weight:900; flex:0 0 auto}
-    .title-input{min-width:120px; max-width:340px; width:28vw; border:1px solid transparent; border-radius:10px; background:rgba(2,6,23,.38); color:var(--text); padding:8px 10px; outline:none; font-weight:650}
+    .main{grid-area:main; min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr) minmax(130px,26vh); gap:6px; overflow:hidden}
+
+    /* ============ Topbar ============ */
+    .topbar{display:flex; align-items:center; gap:6px; padding:5px 8px; min-width:0; flex-wrap:wrap; overflow-x:hidden}
+    .brand{display:flex; align-items:center; gap:7px; min-width:0; font-weight:800; letter-spacing:.2px; flex:0 0 auto}
+    .brand-badge{width:26px;height:26px; border-radius:8px; display:grid; place-items:center; color:#06101f; background:linear-gradient(135deg,var(--accent),#a7f3d0); font-weight:900; flex:0 0 auto; font-size:14px}
+    .title-input{min-width:80px; max-width:200px; width:16vw; border:1px solid transparent; border-radius:8px; background:rgba(2,6,23,.38); color:var(--text); padding:4px 8px; outline:none; font-weight:650; min-height:var(--ctrl-h)}
     .title-input:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.14)}
-    .toolbar{margin-left:auto; display:flex; align-items:center; gap:7px; flex-wrap:wrap; justify-content:flex-end}
+    .toolbar{margin-left:auto; display:flex; align-items:center; gap:5px; flex-wrap:wrap; justify-content:flex-end; min-width:0}
+
+    /* View toggle — always visible, next to the title */
+    .view-toggle{display:flex; align-items:center; gap:3px; flex:0 0 auto; flex-wrap:wrap; padding:2px; border:1px solid rgba(51,65,85,.6); border-radius:9px; background:rgba(2,6,23,.35)}
+    .view-toggle .btn.small{min-height:24px; padding:0 8px; font-size:11px; border-color:transparent; background:transparent}
+    .view-toggle .btn.small.active{border-color:var(--accent); background:rgba(34,211,238,.10); box-shadow:none}
+    .view-toggle .btn.small.icon{width:26px; padding:0}
+    #btnViewOrient{display:inline-flex}
+
+    /* ============ Buttons / controls ============ */
     .btn,.tab,.chip{
       border:1px solid rgba(51,65,85,.9); background:linear-gradient(135deg,#0f172a,#111c33); color:var(--text);
-      border-radius:12px; min-height:38px; padding:0 11px; display:inline-flex; align-items:center; justify-content:center; gap:7px;
-      transition:transform .08s ease, filter .15s ease, border-color .15s ease, box-shadow .15s ease; user-select:none; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+      border-radius:8px; min-height:var(--ctrl-h); padding:0 9px; display:inline-flex; align-items:center; justify-content:center; gap:6px;
+      transition:filter .12s ease, border-color .12s ease, box-shadow .12s ease; user-select:none; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+      font-size:12px;
     }
-    .btn.icon,.tab.icon{width:40px; padding:0; font-size:17px}
-    .btn.small{min-height:32px; padding:0 9px; border-radius:10px; font-size:13px}
-    .btn:hover,.tab:hover{filter:brightness(1.08)}
+    .btn.icon,.tab.icon{width:32px; padding:0; font-size:15px}
+    .btn.small{min-height:var(--ctrl-h-sm); padding:0 7px; border-radius:7px; font-size:11px}
+    .btn.wfull{width:100%; margin-top:6px}
+    .btn:hover,.tab:hover{filter:brightness(1.10)}
     .btn:active,.tab:active{transform:translateY(1px)}
-    .btn.active,.tab.active{border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.13) inset, 0 0 16px rgba(34,211,238,.16)}
+    .btn.active,.tab.active{border-color:var(--accent); box-shadow:0 0 0 1px rgba(34,211,238,.16) inset, 0 0 10px rgba(34,211,238,.14)}
     .btn.danger{border-color:rgba(251,113,133,.5)} .btn.good{border-color:rgba(52,211,153,.45)} .btn.warn{border-color:rgba(251,191,36,.45)}
     .btn:disabled{opacity:.42; cursor:not-allowed; filter:none}
-    .tabs{display:flex; gap:8px; padding:10px 10px 0}
-    .tab{flex:1; font-size:13px; min-width:0}
+
+    /* ============ Sidebar tabs ============ */
+    .tabs{display:flex; gap:4px; padding:6px 6px 0}
+    .tab{flex:1; font-size:12px; min-width:0; padding:0 4px}
     .tab .wide{display:inline}
-    .tab-panels{padding:10px; overflow:auto; min-height:0}
+    .tab-panels{padding:6px; overflow:auto; min-height:0}
     .tab-panel{display:none}.tab-panel.active{display:block}
-    .section{border:1px solid rgba(51,65,85,.72); border-radius:14px; padding:10px; margin-bottom:10px; background:rgba(2,6,23,.22)}
-    .section-title{font-size:12px; color:#cbd5e1; letter-spacing:.08em; text-transform:uppercase; font-weight:800; margin:0 0 9px; display:flex; align-items:center; justify-content:space-between; gap:8px}
-    .muted{color:var(--muted)} .dim{color:var(--dim)} .tiny{font-size:12px} .nowrap{white-space:nowrap}
-    .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}.row + .row{margin-top:8px}
-    .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px}.grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
-    label.field{display:block; font-size:12px; color:var(--muted)}
+
+    /* ============ Sections (collapsible) ============ */
+    .section{border:1px solid rgba(51,65,85,.65); border-radius:9px; padding:7px 8px; margin-bottom:6px; background:rgba(2,6,23,.22); min-width:0; overflow-x:hidden}
+    .section-title{font-size:11px; color:#cbd5e1; letter-spacing:.07em; text-transform:uppercase; font-weight:800; margin:0 0 7px; display:flex; align-items:center; justify-content:space-between; gap:6px}
+    details.section{padding:0}
+    details.section > *{margin-left:8px; margin-right:8px}
+    details.section > :last-child{margin-bottom:8px}
+    details.section > summary{margin:0; padding:7px 8px; cursor:pointer; list-style:none; border-radius:9px; position:relative; padding-left:22px; user-select:none}
+    details.section > summary::-webkit-details-marker{display:none}
+    details.section > summary::before{content:"▸"; position:absolute; left:8px; top:50%; transform:translateY(-50%); color:var(--accent); font-size:10px; transition:transform .12s ease}
+    details.section[open] > summary::before{transform:translateY(-50%) rotate(90deg)}
+    details.section > summary:hover{background:rgba(34,211,238,.05)}
+    .section-title .sub,.subhead .sub,.sub{font-size:10px; color:var(--dim); text-transform:none; letter-spacing:0; font-weight:600}
+    .subhead{font-size:11px; color:#cbd5e1; letter-spacing:.07em; text-transform:uppercase; font-weight:800; margin:8px 0 5px}
+
+    .muted{color:var(--muted)} .dim{color:var(--dim)} .tiny{font-size:11px} .nowrap{white-space:nowrap}
+    .hint{font-size:10.5px; color:var(--dim); margin:5px 0 2px; line-height:1.35}
+    .hint.help{color:var(--muted); margin:4px 0}
+    .row{display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0}.row + .row{margin-top:6px}
+    .row.stretch > *{flex:1}
+    .row.stretch{margin-top:6px}
+    .row.spread{justify-content:space-between; margin-bottom:6px}
+    .row.check{font-size:11px; color:var(--muted); margin-top:5px; gap:6px; align-items:flex-start}
+    .row.check input{margin-top:1px}
+    .grid2{display:grid; grid-template-columns:1fr 1fr; gap:5px; min-width:0}
+    .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; min-width:0}
+    .grid2 > *, .grid3 > *{min-width:0}
+    .grid2 + .grid2,.grid2 + .grid3,.grid3 + .grid2,.grid2 + .field,.field + .grid2,.grid3 + .grid3{margin-top:5px}
+
+    label.field{display:block; font-size:10.5px; color:var(--muted)}
     .field input,.field select,.field textarea,.input,.select{
-      width:100%; margin-top:4px; background:rgba(2,6,23,.44); border:1px solid rgba(51,65,85,.85); color:var(--text);
-      border-radius:10px; padding:8px 9px; outline:none; min-height:36px;
+      width:100%; margin-top:2px; background:rgba(2,6,23,.44); border:1px solid rgba(51,65,85,.85); color:var(--text);
+      border-radius:7px; padding:4px 7px; outline:none; min-height:var(--ctrl-h-sm); font-size:12px;
     }
-    .field input:focus,.field select:focus,.field textarea:focus,.input:focus,.select:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.12)}
-    input[type="checkbox"]{accent-color:var(--accent)} input[type="color"]{padding:2px; height:36px}
+    .field input:focus,.field select:focus,.field textarea:focus,.input:focus,.select:focus{border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.12)}
+    input[type="checkbox"]{accent-color:var(--accent)} input[type="color"]{padding:1px; height:var(--ctrl-h-sm)}
+    label.field + label.field{margin-top:5px}
+    .field.inline{display:inline-flex; align-items:center; gap:4px}
+    .field.inline input{width:auto; margin-top:0}
+
+    /* Import/export compact grid: one row per format */
+    .io-grid{display:grid; grid-template-columns:minmax(52px,auto) 1fr 1fr 1fr 1fr; gap:4px; align-items:center; margin-top:6px}
+    .io-label{font-size:11px; font-weight:700; color:#bfdbfe; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:2px}
+    .io-grid .btn.small{padding:0 4px}
+    .io-empty{min-height:var(--ctrl-h-sm)}
+
+    /* ============ Canvas ============ */
     .canvas-wrap{position:relative; overflow:hidden; min-height:0}
     .grid-layer{--grid:40px; --major-grid:200px; --grid-minor-color:rgba(148,163,184,.105); --grid-major-color:rgba(148,163,184,.16); position:absolute; left:-100%; top:-100%; width:300%; height:300%; pointer-events:none; contain:strict; background-color:#020617; background-image:linear-gradient(var(--grid-minor-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor-color) 1px,transparent 1px),linear-gradient(var(--grid-major-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-major-color) 1px,transparent 1px); background-size:var(--grid) var(--grid),var(--grid) var(--grid),var(--major-grid) var(--major-grid),var(--major-grid) var(--major-grid); transform:translateZ(0); will-change:transform}
     #graphCanvas{position:relative; width:100%; height:100%; display:block; border-radius:var(--radius); background:transparent; touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; overscroll-behavior:none; overflow:visible; transform:translateZ(0); transform-origin:0 0; will-change:transform}
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     #gridRect{display:none}
-    .canvas-hud{position:absolute; left:12px; top:12px; display:flex; gap:8px; flex-wrap:wrap; pointer-events:none}.canvas-hud>*{pointer-events:auto}
-    .status-pill{background:rgba(2,6,23,.78); border:1px solid rgba(51,65,85,.8); border-radius:999px; padding:7px 10px; font-size:12px; color:#cbd5e1; backdrop-filter:blur(8px)}
-    .zoom-controls{position:absolute; right:12px; top:12px; display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
-    .mobile-modebar{position:absolute; left:8px; top:8px; display:none; gap:6px; z-index:4}
-    .empty-hint{position:absolute; inset:auto 18px 18px 18px; padding:12px 14px; border:1px dashed rgba(148,163,184,.38); border-radius:14px; background:rgba(2,6,23,.70); color:#cbd5e1; font-size:13px; pointer-events:none; display:none}
+    .canvas-hud{position:absolute; left:8px; top:8px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none}.canvas-hud>*{pointer-events:auto}
+    .status-pill{background:rgba(2,6,23,.78); border:1px solid rgba(51,65,85,.8); border-radius:999px; padding:4px 9px; font-size:11px; color:#cbd5e1; backdrop-filter:blur(8px)}
+    .zoom-controls{position:absolute; right:8px; top:8px; display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end}
+    .mobile-modebar{position:absolute; left:8px; bottom:8px; display:none; gap:5px; z-index:4}
+    .empty-hint{position:absolute; inset:auto 14px 14px 14px; padding:8px 12px; border:1px dashed rgba(148,163,184,.38); border-radius:10px; background:rgba(2,6,23,.70); color:#cbd5e1; font-size:12px; pointer-events:none; display:none}
     .empty .empty-hint{display:block}
+
+    /* ============ Bottom data panel ============ */
     .bottom{overflow:hidden; display:grid; grid-template-columns:1.05fr .95fr; min-height:0}
-    .bottom-pane{min-width:0; padding:10px; overflow:auto}.bottom-pane + .bottom-pane{border-left:1px solid rgba(51,65,85,.65)}
-    /* View toggle — hidden on desktop, shown in landscape */
-    .view-toggle{display:none; align-items:center; gap:4px; flex:0 0 auto; flex-wrap:wrap}
-    .view-toggle .btn.small{min-height:30px; padding:0 8px; font-size:11px}
-    .view-toggle .btn.small.active{border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.13) inset, 0 0 16px rgba(34,211,238,.16)}
-    /* Orientation toggle — always visible in toolbar */
-    #btnViewOrient{display:inline-flex}
-    /* Presets overlay — inventory grid of style cards over the canvas */
-    .presets-overlay{position:absolute; inset:0; z-index:30; background:rgba(2,6,23,.88); backdrop-filter:blur(6px); display:none; flex-direction:column; padding:10px; overflow:auto}
-    .presets-overlay.open{display:flex}
-    .presets-header{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap}
-    .presets-header h3{margin:0; font-size:14px; font-weight:800; color:#e2e8f0}
-    .presets-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px; align-content:start}
-    .preset-card{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); border-radius:10px; padding:8px; cursor:pointer; transition:border-color .15s, transform .08s; display:flex; flex-direction:column; gap:6px; min-height:90px}
-    .preset-card:hover{border-color:var(--accent); transform:translateY(-2px)}
-    .preset-card:active{transform:translateY(0)}
-    .preset-preview{height:48px; display:flex; align-items:center; justify-content:center; gap:8px; background:rgba(2,6,23,.5); border-radius:6px}
-    .preset-name{font-size:11px; color:#cbd5e1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600}
-    .preset-delete{position:absolute; top:2px; right:4px; background:rgba(251,113,133,.2); border:none; color:#fb7185; cursor:pointer; font-size:14px; padding:0 4px; border-radius:4px; line-height:1}
-    .preset-delete:hover{background:rgba(251,113,133,.4)}
-    .preset-card-wrap{position:relative}
-    /* View-based layout switching (controlled via data-view / data-orient on .main).
-       Canvas height is FIXED at 50dvh regardless of view — switching views only
-       shows/hides the bottom panel, never resizes the canvas. */
+    .bottom-pane{min-width:0; min-height:0; padding:7px 8px; overflow:hidden; display:flex; flex-direction:column}
+    .bottom-pane + .bottom-pane{border-left:1px solid rgba(51,65,85,.65)}
+    .bottom-pane .section-title{flex:0 0 auto; justify-content:flex-start; margin-bottom:5px}
+    .table-scroll{overflow:auto; flex:1; min-height:0; border-radius:8px}
+
+    /* ============ View switching ============
+       data-view on .main: graph | matrix | edges | split.
+       The canvas always keeps its row; views only show/hide data panes. */
+    .main[data-view="graph"]{grid-template-rows:auto minmax(0,1fr)}
     .main[data-view="graph"] .bottom{display:none}
-    .main[data-view="matrix"] .bottom-pane:nth-child(2),.main[data-view="edges"] .bottom-pane:nth-child(1){display:none}
+    .main[data-view="matrix"] .bottom-pane:nth-child(2){display:none}
+    .main[data-view="edges"] .bottom-pane:nth-child(1){display:none}
     .main[data-view="matrix"] .bottom,.main[data-view="edges"] .bottom{grid-template-columns:1fr}
-    .main[data-view="matrix"] .bottom-pane + .bottom-pane,.main[data-view="edges"] .bottom-pane + .bottom-pane{border-left:0; border-top:0}
-    /* Horizontal split: canvas left, data panel right — side by side */
-    .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"]{
+    .main[data-view="matrix"] .bottom-pane + .bottom-pane,.main[data-view="edges"] .bottom-pane + .bottom-pane{border-left:0}
+    /* Dedicated data views get a taller pane */
+    .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:auto minmax(0,1fr) minmax(160px,40vh)}
+    /* Horizontal split: canvas left, data right */
+    .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"],.main[data-orient="h"][data-view="split"]{
       grid-template-rows:auto minmax(0,1fr);
-      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);
       grid-template-areas:"topbar topbar" "canvas bottom";
     }
-    .main[data-orient="h"][data-view="matrix"] .topbar,.main[data-orient="h"][data-view="edges"] .topbar{grid-area:topbar}
-    .main[data-orient="h"][data-view="matrix"] .canvas-wrap,.main[data-orient="h"][data-view="edges"] .canvas-wrap{grid-area:canvas}
-    .main[data-orient="h"][data-view="matrix"] .bottom,.main[data-orient="h"][data-view="edges"] .bottom{grid-area:bottom}
-    table{border-collapse:separate; border-spacing:0; width:100%; font-size:12px; color:#dbeafe}
-    th,td{border:1px solid rgba(51,65,85,.65); padding:6px 8px; background:rgba(2,6,23,.32); white-space:nowrap; text-align:center}
-    th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}.row-head{position:sticky; left:0; z-index:3; text-align:left}
-    .table-scroll{overflow:auto; max-height:calc(28vh - 50px); border-radius:10px}
-    .result-box{border:1px solid rgba(51,65,85,.7); border-radius:12px; background:rgba(2,6,23,.34); padding:10px; color:#dbeafe; min-height:80px; white-space:pre-wrap; overflow:auto; max-height:260px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px}.matrix-input{width:64px; min-width:48px; background:rgba(2,6,23,.55); border:1px solid rgba(51,65,85,.8); color:#dbeafe; border-radius:7px; padding:4px 6px; text-align:center}.matrix-input:focus{outline:none;border-color:var(--accent)}.matrix-input.matrix-selected,.matrix-label-input.matrix-selected{border-color:var(--accent)!important; box-shadow:0 0 0 2px rgba(34,211,238,.16)}.matrix-label-input{width:82px; background:transparent; border:1px solid transparent; color:#bfdbfe; text-align:center; border-radius:6px; padding:3px}.matrix-label-input:focus{background:rgba(2,6,23,.55);border-color:var(--accent);outline:none}.matrix-controls{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px}.coord-slider{width:100%; accent-color:var(--accent); margin-top:6px}
-    .toast-stack{position:fixed; right:12px; bottom:12px; z-index:20; display:grid; gap:8px; max-width:min(420px,calc(100vw - 24px))}
-    .toast{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); box-shadow:var(--shadow); border-radius:14px; padding:10px 12px; color:#e2e8f0; animation:pop .18s ease-out}
+    .main[data-orient="h"][data-view="matrix"] .topbar,.main[data-orient="h"][data-view="edges"] .topbar,.main[data-orient="h"][data-view="split"] .topbar{grid-area:topbar}
+    .main[data-orient="h"][data-view="matrix"] .canvas-wrap,.main[data-orient="h"][data-view="edges"] .canvas-wrap,.main[data-orient="h"][data-view="split"] .canvas-wrap{grid-area:canvas}
+    .main[data-orient="h"][data-view="matrix"] .bottom,.main[data-orient="h"][data-view="edges"] .bottom,.main[data-orient="h"][data-view="split"] .bottom{grid-area:bottom}
+    .main[data-orient="h"][data-view="split"] .bottom{grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+    .main[data-orient="h"][data-view="split"] .bottom-pane + .bottom-pane{border-left:0; border-top:1px solid rgba(51,65,85,.65)}
+
+    /* ============ Tables ============ */
+    table{border-collapse:separate; border-spacing:0; width:100%; font-size:11.5px; color:#dbeafe}
+    th,td{border:1px solid rgba(51,65,85,.6); padding:3px 5px; background:rgba(2,6,23,.32); white-space:nowrap; text-align:center}
+    th{background:rgba(15,23,42,.97); color:#bfdbfe; position:sticky; top:0; z-index:2}
+    .row-head{position:sticky; left:0; z-index:3; text-align:left}
+    .table-scroll{contain:layout; transform:translateZ(0)}
+    table thead th{transform:translateZ(0)}
+
+    .result-box{border:1px solid rgba(51,65,85,.7); border-radius:9px; background:rgba(2,6,23,.34); padding:8px; color:#dbeafe; min-height:70px; white-space:pre-wrap; overflow:auto; max-height:300px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px}
+    .matrix-input{width:56px; min-width:44px; background:rgba(2,6,23,.55); border:1px solid rgba(51,65,85,.8); color:#dbeafe; border-radius:6px; padding:2px 5px; text-align:center; min-height:24px; font-size:11.5px}
+    .matrix-input:focus{outline:none;border-color:var(--accent)}
+    .matrix-input.matrix-selected,.matrix-label-input.matrix-selected{border-color:var(--accent)!important; box-shadow:0 0 0 2px rgba(34,211,238,.16)}
+    .matrix-label-input{width:76px; background:transparent; border:1px solid transparent; color:#bfdbfe; text-align:center; border-radius:5px; padding:2px; font-size:11.5px}
+    .matrix-label-input:focus{background:rgba(2,6,23,.55);border-color:var(--accent);outline:none}
+    .matrix-controls{display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-bottom:5px; flex:0 0 auto}
+    .coord-slider{width:100%; accent-color:var(--accent); margin-top:4px}
+
+    /* ============ Toasts ============ */
+    .toast-stack{position:fixed; right:10px; bottom:10px; z-index:20; display:grid; gap:6px; max-width:min(380px,calc(100vw - 20px))}
+    .toast{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); box-shadow:var(--shadow); border-radius:10px; padding:8px 11px; color:#e2e8f0; font-size:12px; animation:pop .18s ease-out}
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
-    .node-shape{filter:drop-shadow(0 8px 14px rgba(0,0,0,.28))}.node.selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}.node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}.node{cursor:grab}.node.dragging{cursor:grabbing}.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}.canvas-wrap.panning #graphCanvas{cursor:grabbing}.edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}.edge-line{fill:none}.edge-arrow{pointer-events:none}.edge.selected .edge-line{stroke:var(--accent)}.edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}.selection-draft{fill:rgba(34,211,238,.12);stroke:#22d3ee;stroke-width:2;stroke-dasharray:6 5;pointer-events:none}.selection-draft.fill-soft{fill:rgba(34,211,238,.08)}.node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
-    .kbd{border:1px solid rgba(148,163,184,.35); border-bottom-width:2px; border-radius:6px; padding:1px 5px; background:#0f172a; font-size:11px; color:#cbd5e1}
-    .thin-scroll::-webkit-scrollbar{width:9px;height:9px}.thin-scroll::-webkit-scrollbar-thumb{background:#334155;border-radius:999px}.thin-scroll::-webkit-scrollbar-track{background:transparent}
-    @media (max-width:950px){body{overflow:auto}.app{height:auto; min-height:100svh; grid-template-columns:1fr; grid-template-areas:"main" "sidebar"}.sidebar{max-height:none}.main{grid-template-rows:auto 64svh auto}.bottom{grid-template-columns:1fr}.bottom-pane + .bottom-pane{border-left:0;border-top:1px solid rgba(51,65,85,.65)}.tab .wide{display:none}.title-input{width:42vw}.canvas-hud{display:none}.mobile-modebar{display:flex}.table-scroll{max-height:280px}}
-    @media (max-width:560px){.app{padding:6px max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left)); gap:6px}.panel{border-radius:13px}.topbar{align-items:stretch; flex-direction:column; gap:8px; padding:8px}.toolbar{margin-left:0; justify-content:stretch; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px}.toolbar .btn{min-width:0; padding:0 6px}.brand-badge{width:30px;height:30px}.title-input{width:100%; max-width:none}.btn,.tab{min-height:44px}.grid2,.grid3{grid-template-columns:1fr}.main{grid-template-rows:auto 58svh auto}.canvas-hud{display:none}.mobile-modebar{display:flex}.zoom-controls{right:8px;top:8px;gap:5px}.zoom-controls .btn,.mobile-modebar .btn{min-height:38px; width:38px; padding:0}.empty-hint{font-size:12px; inset:auto 10px 10px 10px}.bottom-pane{padding:8px}.field input,.field select,.field textarea,.input,.select,.title-input{font-size:16px}.tabs{position:sticky; top:0; z-index:5; background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(8,14,27,.98)); padding-bottom:8px}}
-    /* === New UI: drag-handle (Blender-style number drag) === */
-    .drag-number-wrap{display:flex; align-items:stretch; gap:0; margin-top:4px}
+
+    /* ============ SVG scene ============ */
+    .node-shape{filter:drop-shadow(0 6px 10px rgba(0,0,0,.28))}
+    .node.selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
+    .node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}
+    .node{cursor:grab}.node.dragging{cursor:grabbing}
+    .canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
+    .canvas-wrap.panning #graphCanvas{cursor:grabbing}
+    .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
+    .edge-line{fill:none}
+    .edge-arrow{pointer-events:none}
+    .edge.selected .edge-line{stroke:var(--accent)}
+    .edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
+    .edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
+    .drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}
+    .selection-draft{fill:rgba(34,211,238,.12);stroke:#22d3ee;stroke-width:2;stroke-dasharray:6 5;pointer-events:none}
+    .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
+    .node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
+
+    .kbd{border:1px solid rgba(148,163,184,.35); border-bottom-width:2px; border-radius:5px; padding:0 4px; background:#0f172a; font-size:10px; color:#cbd5e1}
+    .thin-scroll::-webkit-scrollbar{width:8px;height:8px}.thin-scroll::-webkit-scrollbar-thumb{background:#334155;border-radius:999px}.thin-scroll::-webkit-scrollbar-track{background:transparent}
+
+    /* ============ Presets overlay ============ */
+    .presets-overlay{position:absolute; inset:0; z-index:30; background:rgba(2,6,23,.88); backdrop-filter:blur(6px); display:none; flex-direction:column; padding:10px; overflow:auto}
+    .presets-overlay.open{display:flex}
+    .presets-header{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap}
+    .presets-header h3{margin:0; font-size:13px; font-weight:800; color:#e2e8f0}
+    .presets-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:7px; align-content:start}
+    .preset-card{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); border-radius:9px; padding:7px; cursor:pointer; transition:border-color .12s, transform .08s; display:flex; flex-direction:column; gap:5px; min-height:80px}
+    .preset-card:hover{border-color:var(--accent); transform:translateY(-2px)}
+    .preset-card:active{transform:translateY(0)}
+    .preset-preview{height:42px; display:flex; align-items:center; justify-content:center; gap:7px; background:rgba(2,6,23,.5); border-radius:6px}
+    .preset-name{font-size:10.5px; color:#cbd5e1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600}
+    .preset-delete{position:absolute; top:2px; right:4px; background:rgba(251,113,133,.2); border:none; color:#fb7185; cursor:pointer; font-size:13px; padding:0 4px; border-radius:4px; line-height:1}
+    .preset-delete:hover{background:rgba(251,113,133,.4)}
+    .preset-card-wrap{position:relative}
+
+    /* ============ Drag-handle (Blender-style number drag) ============ */
+    .drag-number-wrap{display:flex; align-items:stretch; gap:0; margin-top:2px}
     .drag-number-wrap input[type="number"]{flex:1; min-width:0; margin-top:0; border-top-right-radius:0; border-bottom-right-radius:0}
-    .drag-handle{display:inline-flex; align-items:center; justify-content:center; padding:0 9px; min-width:30px; background:rgba(34,211,238,.12); border:1px solid rgba(51,65,85,.85); border-left:0; border-radius:0 10px 10px 0; cursor:ew-resize; color:var(--accent); font-size:14px; font-weight:800; user-select:none; touch-action:none; -webkit-tap-highlight-color:transparent}
+    .drag-handle{display:inline-flex; align-items:center; justify-content:center; padding:0 7px; min-width:24px; background:rgba(34,211,238,.12); border:1px solid rgba(51,65,85,.85); border-left:0; border-radius:0 7px 7px 0; cursor:ew-resize; color:var(--accent); font-size:12px; font-weight:800; user-select:none; touch-action:none; -webkit-tap-highlight-color:transparent}
     .drag-handle:hover{background:rgba(34,211,238,.22)}
     .drag-handle:active{background:rgba(34,211,238,.32); transform:translateY(1px)}
     .drag-hint{font-size:10px; color:var(--dim); margin-top:3px; line-height:1.3}
-    /* === Hotkey configuration UI === */
-    .hotkey-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px}
-    .hotkey-row{display:flex; align-items:center; gap:6px; padding:5px 7px; background:rgba(2,6,23,.32); border:1px solid rgba(51,65,85,.6); border-radius:10px; min-width:0}
-    .hotkey-row label{flex:1; font-size:11px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-    .hotkey-input{width:74px; min-width:50px; text-align:center; background:rgba(2,6,23,.55); border:1px solid rgba(51,65,85,.85); color:var(--text); border-radius:7px; padding:5px 4px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px; cursor:pointer; flex:0 0 auto}
+
+    /* ============ Hotkeys ============ */
+    .hotkey-grid{display:grid; grid-template-columns:1fr 1fr; gap:4px}
+    .hotkey-row{display:flex; align-items:center; gap:5px; padding:3px 6px; background:rgba(2,6,23,.32); border:1px solid rgba(51,65,85,.6); border-radius:8px; min-width:0}
+    .hotkey-row label{flex:1; font-size:10.5px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+    .hotkey-input{width:64px; min-width:44px; text-align:center; background:rgba(2,6,23,.55); border:1px solid rgba(51,65,85,.85); color:var(--text); border-radius:6px; padding:3px 3px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:10.5px; cursor:pointer; flex:0 0 auto}
     .hotkey-input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.16)}
     .hotkey-input::placeholder{color:var(--dim)}
-    /* === Camera position controls === */
-    .camera-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
-    /* === Width confinement chain ===
-       Ensures flex/grid children respect their container bounds so that
-       long-text buttons in Algo/Data tabs can never bleed outside .sidebar. */
-    .sidebar{min-width:0; overflow-x:hidden}
-    .tab-panels{min-width:0; overflow-x:hidden}
-    .tab-panel{min-width:0; overflow-x:hidden}
-    .section{min-width:0; overflow-x:hidden}
-    .row{min-width:0; overflow-x:hidden}
-    .grid2{min-width:0; overflow-x:hidden}
-    .grid3{min-width:0; overflow-x:hidden}
-    .grid2 > *, .grid3 > *{min-width:0}
+
+    /* ============ Camera ============ */
+    .camera-grid{display:grid; grid-template-columns:1fr 1fr; gap:5px}
+
+    /* ============ Width confinement chain ============ */
+    .sidebar,.tab-panels,.tab-panel,.section,.row,.grid2,.grid3{min-width:0; overflow-x:hidden}
     .btn,.tab,.chip{min-width:0; max-width:100%; overflow:hidden}
     .btn:not(.icon):not([class*="small"]){white-space:nowrap; text-overflow:ellipsis}
-    .topbar{flex-wrap:wrap; overflow-x:hidden; min-width:0}
-    .toolbar{flex-wrap:wrap; min-width:0}
-    /* === Sticky-header hardening for matrix === */
-    .table-scroll{contain:layout; transform:translateZ(0)}
-    table thead th{transform:translateZ(0)}
-    /* === Landscape: scrollable page with sticky topbar + view toggle ===
-       The whole page scrolls naturally. The topbar uses position:sticky
-       so it always stays visible. View toggle buttons control whether
-       the bottom panel (matrix/edges) is shown alongside the canvas. */
-    @media (max-width:950px) and (orientation:landscape){
-      html,body{overflow-y:auto; overflow-x:hidden; height:auto; min-height:100dvh; position:static}
-      .app{height:auto; min-height:100dvh; max-height:none; grid-template-rows:auto auto; grid-template-areas:"main" "sidebar"; gap:4px; padding:4px; overflow:visible}
-      /* Canvas height is FIXED at 50dvh — same in all views. Switching views
-         only shows/hides the bottom panel below the canvas. */
-      .main{grid-template-rows:auto 50dvh auto; gap:4px; overflow:visible; height:auto}
-      .main[data-view="graph"]{grid-template-rows:auto 50dvh 0}
-      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:auto 50dvh auto}
-      /* Horizontal split: canvas and bottom share the same row, 50/50 */
-      .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"]{grid-template-rows:auto minmax(0,70dvh)}
-      /* Sticky topbar — allows wrapping so all buttons stay visible */
-      .topbar{position:sticky; top:0; z-index:50; flex-direction:row !important; align-items:center; gap:6px; padding:4px 6px; min-height:40px; flex:0 0 auto; flex-wrap:wrap !important; overflow:visible; backdrop-filter:blur(8px)}
+    .topbar,.toolbar{min-width:0}
+
+    /* ============ Responsive: narrow screens ============ */
+    @media (max-width:1150px){
       .brand span{display:none}
-      .title-input{width:auto; max-width:24vw; min-height:34px; padding:4px 8px}
-      .toolbar{flex-wrap:wrap !important; gap:4px; overflow:visible}
-      .toolbar .btn{min-height:32px; padding:0 6px; font-size:12px}
-      /* Show view toggle in landscape — wraps below if needed */
-      .view-toggle{display:flex !important}
-      .tab{flex:1 1 0; min-width:0; padding:0 6px; min-height:34px}
+      .title-input{width:12vw; min-width:70px}
+    }
+    @media (max-width:950px){
+      body{overflow:auto}
+      .app{height:auto; min-height:100svh; grid-template-columns:1fr; grid-template-areas:"main" "sidebar"}
+      .sidebar{max-height:none}
+      .sidebar .tab-panels{overflow:visible}
+      .main{grid-template-rows:auto 60svh auto}
+      .main[data-view="graph"]{grid-template-rows:auto 60svh}
+      .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"],.main[data-orient="h"][data-view="split"]{grid-template-rows:auto minmax(0,72svh); grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+      .bottom{grid-template-columns:1fr; max-height:44svh; overflow:auto}
+      .bottom-pane{overflow:visible}
+      .bottom-pane + .bottom-pane{border-left:0;border-top:1px solid rgba(51,65,85,.65)}
+      .table-scroll{max-height:260px; flex:none}
       .tab .wide{display:none}
-      .grid2{grid-template-columns:1fr 1fr; min-width:0; gap:4px}
-      .grid3{grid-template-columns:1fr 1fr 1fr; min-width:0; gap:4px}
-      .btn{min-width:0; padding:0 8px; font-size:12px; min-height:32px}
-      .btn.small{font-size:11px; padding:0 6px; min-height:28px}
-      .btn.icon{width:34px; min-height:32px; padding:0}
-      /* Sidebar: no internal scroll, content flows with the page */
-      .sidebar{min-height:0; max-height:none; overflow:visible; display:flex; flex-direction:column}
-      .sidebar .tabs{flex:0 0 auto; position:sticky; top:0; z-index:40; background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(8,14,27,.98)); padding:6px 6px 0; border-radius:12px 12px 0 0}
-      .sidebar .tab-panels{flex:none; min-height:0; max-height:none; overflow:visible; overflow-y:visible; padding:6px}
-      .section{padding:6px; margin-bottom:6px}
-      .matrix-controls{flex-wrap:wrap; min-width:0; gap:4px}
-      .matrix-controls .btn,.matrix-controls input,.matrix-controls label{flex:1 1 auto; min-width:0}
-      /* Bottom panel: shown only when data-view is matrix/edges */
-      .bottom{overflow:auto; min-height:0; max-height:40dvh}
-      .bottom-pane{padding:6px}
-      .table-scroll{max-height:none; flex:1}
       .canvas-hud{display:none}
       .mobile-modebar{display:flex}
-      .zoom-controls{right:6px; top:6px; gap:4px}
-      .zoom-controls .btn,.mobile-modebar .btn{min-height:32px; width:32px; padding:0; font-size:14px}
-      .field input,.field select,.field textarea,.input,.select{min-height:32px; padding:5px 7px}
-      .empty-hint{font-size:11px; inset:auto 8px 8px 8px; padding:6px 8px}
+      .tabs{position:sticky; top:0; z-index:5; background:linear-gradient(150deg,rgba(15,23,42,.98),rgba(8,14,27,.98)); padding-bottom:6px}
+      .btn,.tab{min-height:38px}
+      .btn.small{min-height:30px}
+      .view-toggle .btn.small{min-height:28px}
     }
-    /* === Extra-tight landscape on very small screens === */
-    @media (max-width:560px) and (orientation:landscape){
-      html,body{overflow-y:auto; overflow-x:hidden; height:auto; min-height:100dvh; position:static}
-      .app{padding:4px max(4px,env(safe-area-inset-right)) max(4px,env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left)); gap:4px; height:auto; min-height:100dvh; max-height:none; overflow:visible}
-      .panel{border-radius:11px}
-      .topbar{padding:3px 5px; min-height:36px; gap:4px; flex-wrap:wrap !important; overflow:visible; position:sticky; top:0; z-index:50; backdrop-filter:blur(8px)}
-      .brand-badge{width:26px; height:26px; font-size:13px}
-      .title-input{max-width:18vw; min-height:30px; padding:3px 6px; font-size:14px}
-      .toolbar{flex-wrap:wrap !important; gap:4px; overflow:visible}
-      .toolbar .btn{min-height:30px; font-size:11px; padding:0 5px}
-      .view-toggle{display:flex !important}
-      .view-toggle .btn.small{min-height:26px; font-size:10px; padding:0 5px}
-      .view-toggle .btn.small.icon{width:30px; min-height:26px; padding:0; font-size:13px}
-      .tab{min-height:32px; padding:0 4px; font-size:14px}
-      .btn{min-height:30px; font-size:11px; padding:0 6px}
-      .btn.small{min-height:26px; font-size:10px; padding:0 4px}
-      .btn.icon{width:30px; min-height:30px}
-      .sidebar{min-height:0; overflow:visible; display:flex; flex-direction:column}
-      .sidebar .tabs{position:sticky; top:0; z-index:40; background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(8,14,27,.98)); padding:5px 5px 0; border-radius:11px 11px 0 0}
-      .sidebar .tab-panels{overflow:visible; overflow-y:visible; min-height:0; max-height:none; padding:5px}
-      .section{padding:5px; margin-bottom:5px}
-      .field input,.field select,.field textarea,.input,.select{min-height:30px; padding:4px 6px; font-size:13px}
-      .main{grid-template-rows:auto 45dvh auto; overflow:visible; min-height:0; height:auto}
-      .main[data-view="graph"]{grid-template-rows:auto 45dvh 0}
-      .main[data-view="matrix"],.main[data-view="edges"]{grid-template-rows:auto 45dvh auto}
-      .main[data-orient="h"][data-view="matrix"],.main[data-orient="h"][data-view="edges"]{grid-template-rows:auto minmax(0,60dvh)}
-      .bottom-pane{padding:5px}
-      .table-scroll{max-height:none}
-      .bottom{max-height:35dvh}
+    @media (max-width:560px){
+      .app{padding:4px max(4px,env(safe-area-inset-right)) max(4px,env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left)); gap:4px}
+      .topbar{align-items:stretch; gap:5px; padding:6px}
+      .toolbar{margin-left:0; justify-content:stretch; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px}
+      .toolbar .btn{min-width:0; padding:0 5px; width:auto}
+      .title-input{width:100%; max-width:none; flex:1 1 100%}
+      .view-toggle{width:100%; justify-content:stretch}
+      .view-toggle .btn.small{flex:1}
+      .btn,.tab{min-height:42px}
+      .grid2,.grid3{grid-template-columns:1fr 1fr}
+      .io-grid{grid-template-columns:minmax(46px,auto) 1fr 1fr 1fr 1fr}
+      .main{grid-template-rows:auto 56svh auto}
+      .main[data-view="graph"]{grid-template-rows:auto 56svh}
+      .zoom-controls{right:6px;top:6px;gap:4px}
+      .zoom-controls .btn,.mobile-modebar .btn{min-height:36px; width:36px; padding:0}
+      .empty-hint{font-size:11px; inset:auto 8px 8px 8px}
+      .field input,.field select,.field textarea,.input,.select,.title-input{font-size:16px; min-height:34px}
+      .hotkey-grid{grid-template-columns:1fr}
+    }
+    /* Landscape phones: keep everything reachable without page scroll where possible */
+    @media (max-width:950px) and (orientation:landscape){
+      .main{grid-template-rows:auto 52svh auto}
+      .main[data-view="graph"]{grid-template-rows:auto 78svh}
+      .topbar{position:sticky; top:0; z-index:50; backdrop-filter:blur(8px)}
+      .brand span{display:none}
+      .btn,.tab{min-height:32px}
+      .btn.small{min-height:26px}
     }
   </style>
 </head>
@@ -247,9 +305,11 @@
         <button class="tab" data-tab="style" title="Default styles"><span>🎨</span><span class="wide" data-i18n="tab_style">Style</span></button>
         <button class="tab" data-tab="algo" title="Algorithms"><span>🧠</span><span class="wide" data-i18n="tab_algo">Algo</span></button>
         <button class="tab" data-tab="data" title="Data and export"><span>📦</span><span class="wide" data-i18n="tab_data">Data</span></button>
-        <button class="tab" data-tab="help" title="Help"><span>?</span><span class="wide" data-i18n="tab_help">Help</span></button>
+        <button class="tab" data-tab="help" title="Help"><span>❔</span><span class="wide" data-i18n="tab_help">Help</span></button>
       </nav>
       <div class="tab-panels thin-scroll">
+
+        <!-- ======================= EDIT ======================= -->
         <section id="panel-edit" class="tab-panel active">
           <div class="section">
             <div class="section-title" data-i18n="mode_title">Mode</div>
@@ -259,11 +319,16 @@
               <button id="modeNode" class="btn" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" data-i18n="mode_node">＋ Node</button>
               <button id="modeEdge" class="btn" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" data-i18n="mode_edge">↔ Edge</button>
             </div>
-            <p class="tiny muted"><span data-i18n="mode_tip">Tip: use Move mode or hold Space to pan. Pinch the canvas to zoom/pan on touch screens.</span></p>
+            <p class="hint"><span data-i18n="mode_tip">Tip: use Move mode or hold Space to pan. Pinch the canvas to zoom/pan on touch screens.</span></p>
           </div>
 
           <div class="section">
-            <div class="section-title" data-i18n="canvas_selection">Canvas selection</div>
+            <div class="section-title" data-i18n="selection">Selection</div>
+            <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
+          </div>
+
+          <details class="section" open>
+            <summary class="section-title"><span data-i18n="canvas_selection">Canvas selection</span></summary>
             <div class="grid2">
               <button class="btn active" data-selecttool="single" title="Single select" data-i18n="sel_single">Single</button>
               <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n="sel_rect">Rect</button>
@@ -274,20 +339,20 @@
               <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n="sel_adjacent">Adjacent</button>
               <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n="sel_directed_adj">Directed adjacent</button>
             </div>
-            <div class="section-title" style="margin-top:10px" data-i18n="sel_result">Selection result</div>
+            <div class="subhead" data-i18n="sel_result">Selection result</div>
             <div class="grid3">
               <button class="btn active" data-selectcombine="replace" title="Replace current selection" data-i18n="sel_override">Override</button>
               <button class="btn" data-selectcombine="add" title="Add to current selection" data-i18n="sel_add">Add</button>
               <button class="btn" data-selectcombine="subtract" title="Remove from current selection" data-i18n="sel_subtract">Subtract</button>
             </div>
-            <label class="field" for="optBrushDiameter" style="margin-top:8px"><span data-i18n="brush_diameter">Brush diameter</span>
+            <label class="field" for="optBrushDiameter"><span data-i18n="brush_diameter">Brush diameter</span>
               <input id="optBrushDiameter" type="number" min="10" max="400" step="5" value="80" />
             </label>
-            <p class="tiny muted"><span data-i18n="sel_tip">Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.</span></p>
-          </div>
+            <p class="hint"><span data-i18n="sel_tip">Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.</span></p>
+          </details>
 
-          <div class="section">
-            <div class="section-title"><span data-i18n="node_placement">Node placement</span> <span class="tiny muted" data-i18n="node_placement_sub">(values for newly added nodes)</span></div>
+          <details class="section">
+            <summary class="section-title"><span data-i18n="node_placement">Node placement</span> <span class="sub" data-i18n="node_placement_sub">(values for newly added nodes)</span></summary>
             <div class="grid2">
               <label class="field" for="nodeShape"><span data-i18n="shape">Shape</span>
                 <select id="nodeShape">
@@ -329,7 +394,7 @@
             <label class="field" for="nodeLabel"><span data-i18n="label_prefix">Label prefix / exact label</span>
               <input id="nodeLabel" type="text" placeholder="Auto: A, B, C..." />
             </label>
-            <div class="grid2" style="margin-top:8px">
+            <div class="grid2">
               <label class="field" for="nodeLabelColor"><span data-i18n="label_color">Label color</span>
                 <input id="nodeLabelColor" type="color" value="#f8fafc" />
               </label>
@@ -349,15 +414,13 @@
                 </select>
               </label>
             </div>
-            <div style="height:8px"></div>
-            <label class="row tiny muted" for="optInheritDefaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">New nodes inherit Style-tab defaults (unset visual properties)</span></label>
-            <p class="tiny muted" style="margin-top:4px"><span data-i18n="inherit_defaults_desc">When on, new nodes have unset visual properties and follow Style-tab defaults dynamically. Turn off to bake the values above into each new node.</span></p>
-            <div style="height:6px"></div>
-            <label class="row tiny muted" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">Create nodes with no label (empty label — no text shown on canvas)</span></label>
-            <label class="row tiny muted" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap nodes to grid</span></label>
-            <label class="row tiny muted" for="optSnapX"><input id="optSnapX" type="checkbox" /> <span data-i18n="snap_x">Snap X to other nodes</span></label>
-            <label class="row tiny muted" for="optSnapY"><input id="optSnapY" type="checkbox" /> <span data-i18n="snap_y">Snap Y to other nodes</span></label>
-            <div class="grid2" style="margin-top:8px">
+            <label class="row check" for="optInheritDefaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">New nodes inherit Style-tab defaults (unset visual properties)</span></label>
+            <p class="hint"><span data-i18n="inherit_defaults_desc">When on, new nodes have unset visual properties and follow Style-tab defaults dynamically. Turn off to bake the values above into each new node.</span></p>
+            <label class="row check" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">Create nodes with no label (empty label — no text shown on canvas)</span></label>
+            <label class="row check" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap nodes to grid</span></label>
+            <label class="row check" for="optSnapX"><input id="optSnapX" type="checkbox" /> <span data-i18n="snap_x">Snap X to other nodes</span></label>
+            <label class="row check" for="optSnapY"><input id="optSnapY" type="checkbox" /> <span data-i18n="snap_y">Snap Y to other nodes</span></label>
+            <div class="grid2">
               <label class="field" for="optGridX"><span data-i18n="grid_width">Grid width</span>
                 <input id="optGridX" type="number" min="5" max="300" step="5" value="40" />
               </label>
@@ -365,11 +428,11 @@
                 <input id="optGridY" type="number" min="5" max="300" step="5" value="40" />
               </label>
             </div>
-            <p class="tiny muted"><span data-i18n="grid_desc">The visual grid uses these dimensions, and grid snap follows them.</span></p>
-          </div>
+            <p class="hint"><span data-i18n="grid_desc">The visual grid uses these dimensions, and grid snap follows them.</span></p>
+          </details>
 
-          <div class="section">
-            <div class="section-title" data-i18n="edge_defaults">New edge defaults</div>
+          <details class="section">
+            <summary class="section-title"><span data-i18n="edge_defaults">New edge defaults</span></summary>
             <div class="grid2">
               <label class="field" for="edgeWeight"><span data-i18n="weight">Weight</span>
                 <input id="edgeWeight" type="text" value="1" inputmode="decimal" />
@@ -404,18 +467,14 @@
                 <input id="edgeLabelSize" type="number" min="4" max="72" step="1" value="12" inputmode="decimal" />
               </label>
             </div>
-            <label class="row tiny muted" for="edgeDirected" style="margin-top:8px"><input id="edgeDirected" type="checkbox" checked /> <span data-i18n="directed_edge">Directed edge</span></label>
-          </div>
-
-          <div class="section">
-            <div class="section-title" data-i18n="selection">Selection</div>
-            <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
-          </div>
+            <label class="row check" for="edgeDirected"><input id="edgeDirected" type="checkbox" checked /> <span data-i18n="directed_edge">Directed edge</span></label>
+          </details>
         </section>
 
+        <!-- ======================= STYLE ======================= -->
         <section id="panel-style" class="tab-panel">
-          <div class="section">
-            <div class="section-title" data-i18n="graph_defaults">Graph defaults</div>
+          <details class="section" open>
+            <summary class="section-title"><span data-i18n="graph_defaults">Graph defaults</span></summary>
             <label class="field" for="defLabelsPolicy"><span data-i18n="labels_policy">Labels policy</span>
               <select id="defLabelsPolicy">
                 <option value="auto" data-i18n="labels_auto">Auto (hide when many nodes)</option>
@@ -423,8 +482,8 @@
                 <option value="off" data-i18n="labels_off">Off (never show)</option>
               </select>
             </label>
-            <p class="tiny muted"><span data-i18n="labels_policy_desc">Auto hides labels when more than 30 nodes exist. Imported QVGE graphs with no labels stay unlabeled.</span></p>
-            <label class="field" for="defEdgeWeightMode" style="margin-top:8px"><span data-i18n="edge_weight_viz">Edge weight visualization</span>
+            <p class="hint"><span data-i18n="labels_policy_desc">Auto hides labels when more than 30 nodes exist. Imported QVGE graphs with no labels stay unlabeled.</span></p>
+            <label class="field" for="defEdgeWeightMode"><span data-i18n="edge_weight_viz">Edge weight visualization</span>
               <select id="defEdgeWeightMode">
                 <option value="number" data-i18n="ew_number">Show weight as number</option>
                 <option value="color" data-i18n="ew_color">Color gradient by weight</option>
@@ -432,12 +491,11 @@
                 <option value="none" data-i18n="ew_none">No weight visualization</option>
               </select>
             </label>
-            <div id="edgeWeightRangeSection" class="grid2" style="margin-top:8px">
+            <div id="edgeWeightRangeSection" class="grid2">
               <label class="field" for="defEdgeWeightMin">Weight range min <input id="defEdgeWeightMin" type="number" step="any" inputmode="decimal"></label>
               <label class="field" for="defEdgeWeightMax">Weight range max <input id="defEdgeWeightMax" type="number" step="any" inputmode="decimal"></label>
             </div>
-            <p class="tiny muted" style="margin-top:4px">Min &gt; max is valid — inverts the mapping (lower values give higher width/color).</p>
-            <label class="field" for="defEdgeWeightCorr" style="margin-top:6px">Correlation function
+            <label class="field" for="defEdgeWeightCorr">Correlation function
               <select id="defEdgeWeightCorr">
                 <option value="linear" data-i18n="corr_linear">Linear</option>
                 <option value="log" data-i18n="corr_log">Logarithmic</option>
@@ -445,26 +503,26 @@
                 <option value="sqrt" data-i18n="corr_sqrt">Square root</option>
               </select>
             </label>
-            <div id="edgeWidthSection" class="grid2" style="margin-top:8px">
+            <div id="edgeWidthSection" class="grid2">
               <label class="field" for="defEdgeWidthMin">Edge width min <input id="defEdgeWidthMin" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
               <label class="field" for="defEdgeWidthMax">Edge width max <input id="defEdgeWidthMax" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
             </div>
-            <div id="edgeColorSection" class="grid2" style="margin-top:8px">
+            <div id="edgeColorSection" class="grid2">
               <label class="field" for="defEdgeWeightColorLow">Gradient low color <input id="defEdgeWeightColorLow" type="color"></label>
               <label class="field" for="defEdgeWeightColorHigh">Gradient high color <input id="defEdgeWeightColorHigh" type="color"></label>
             </div>
-            <p class="tiny muted" style="margin-top:4px"><span data-i18n="range_clamp_note">In color/width mode, weights outside the range are clamped; the number is shown as text fallback.</span></p>
-            <div class="grid2" style="margin-top:8px">
+            <p class="hint"><span data-i18n="range_clamp_note">In color/width mode, weights outside the range are clamped; the number is shown as text fallback.</span> Min &gt; max inverts the mapping.</p>
+            <div class="grid2">
               <label class="field" for="canvasBgColor"><span data-i18n="canvas_bg">Canvas background</span> <input id="canvasBgColor" type="color" value="#020617"></label>
               <label class="field" for="gridMinorColor"><span data-i18n="grid_minor_color">Grid minor color</span> <input id="gridMinorColor" type="color" value="#94a3b8"></label>
               <label class="field" for="gridMinorAlpha"><span data-i18n="grid_minor_alpha">Grid minor alpha</span> <input id="gridMinorAlpha" type="number" min="0" max="1" step="0.01" value="0.105" inputmode="decimal"></label>
               <label class="field" for="gridMajorColor"><span data-i18n="grid_major_color">Grid major color</span> <input id="gridMajorColor" type="color" value="#94a3b8"></label>
               <label class="field" for="gridMajorAlpha"><span data-i18n="grid_major_alpha">Grid major alpha</span> <input id="gridMajorAlpha" type="number" min="0" max="1" step="0.01" value="0.16" inputmode="decimal"></label>
             </div>
-          </div>
+          </details>
 
-          <div class="section">
-            <div class="section-title" data-i18n="node_defaults">Node defaults</div>
+          <details class="section">
+            <summary class="section-title"><span data-i18n="node_defaults">Node defaults</span></summary>
             <div class="grid2">
               <label class="field" for="defNodeType"><span data-i18n="type">Type</span> <input id="defNodeType" list="defNodeTypeList" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="defNodeTypeList"></datalist></label>
               <label class="field" for="defNodeShape"><span data-i18n="shape">Shape</span> <select id="defNodeShape"></select></label>
@@ -474,39 +532,35 @@
               <label class="field" for="defNodeHeight"><span data-i18n="height">Height</span> <input id="defNodeHeight" type="number" min="10" max="300" step="1" inputmode="decimal"></label>
               <label class="field" for="defNodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="defNodeStrokeSize" type="number" min="0" max="20" step="0.1" inputmode="decimal"></label>
               <label class="field" for="defNodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="defNodeStrokeStyle"><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option></select></label>
-            </div>
-            <div class="grid2" style="margin-top:8px">
               <label class="field" for="defNodeLabelColor"><span data-i18n="label_color">Label color</span> <input id="defNodeLabelColor" type="color"></label>
               <label class="field" for="defNodeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defNodeLabelFont" list="fontList" type="text" placeholder="Inter"><datalist id="fontList"></datalist></label>
               <label class="field" for="defNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defNodeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
               <label class="field" for="defNodeLabelPos"><span data-i18n="label_pos">Label position</span> <select id="defNodeLabelPos"><option value="center" data-i18n="pos_center">Center</option><option value="top" data-i18n="pos_top">Top</option><option value="bottom" data-i18n="pos_bottom">Bottom</option><option value="left" data-i18n="pos_left">Left</option><option value="right" data-i18n="pos_right">Right</option></select></label>
             </div>
-            <button id="btnApplyNodeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_nodes">Apply defaults to all nodes</button>
-          </div>
+            <button id="btnApplyNodeDefaults" class="btn small good wfull" data-i18n="apply_to_all_nodes">Apply defaults to all nodes</button>
+          </details>
 
-          <div class="section">
-            <div class="section-title" data-i18n="edge_defaults_style">Edge defaults</div>
+          <details class="section">
+            <summary class="section-title"><span data-i18n="edge_defaults_style">Edge defaults</span></summary>
             <div class="grid2">
               <label class="field" for="defEdgeType"><span data-i18n="type">Type</span> <input id="defEdgeType" list="defEdgeTypeList" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="defEdgeTypeList"></datalist></label>
               <label class="field" for="defEdgeColor"><span data-i18n="color">Color</span> <input id="defEdgeColor" type="color"></label>
               <label class="field" for="defEdgeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="defEdgeStrokeSize" type="number" min="0" max="20" step="0.1" inputmode="decimal"></label>
               <label class="field" for="defEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="defEdgeStrokeStyle"><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option></select></label>
-            </div>
-            <div class="grid2" style="margin-top:8px">
               <label class="field" for="defEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="defEdgeLabelColor" type="color"></label>
               <label class="field" for="defEdgeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defEdgeLabelFont" list="fontList" type="text" placeholder="Inter"></label>
               <label class="field" for="defEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defEdgeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
             </div>
-            <button id="btnApplyEdgeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_edges">Apply defaults to all edges</button>
-          </div>
+            <button id="btnApplyEdgeDefaults" class="btn small good wfull" data-i18n="apply_to_all_edges">Apply defaults to all edges</button>
+          </details>
 
-          <div class="section">
-            <div class="section-title"><span data-i18n="node_type_styles">Node type styles</span> <span class="tiny muted" data-i18n="type_styles_sub">(per-type overrides)</span></div>
-            <p class="tiny muted"><span data-i18n="type_styles_desc">Type a name, set style, then Save. Nodes with this type (and no per-node override) will use these visuals. Use "Clear per-node" to force type style to take effect.</span></p>
+          <details class="section">
+            <summary class="section-title"><span data-i18n="node_type_styles">Node type styles</span> <span class="sub" data-i18n="type_styles_sub">(per-type overrides)</span></summary>
+            <p class="hint"><span data-i18n="type_styles_desc">Type a name, set style, then Save. Nodes with this type (and no per-node override) will use these visuals. Use "Clear per-node" to force type style to take effect.</span></p>
             <label class="field" for="nodeTypeStyleInput"><span data-i18n="type">Type</span>
               <input id="nodeTypeStyleInput" list="nodeTypeStyleList" placeholder="enter type name" data-i18n-placeholder="enter_type_placeholder"><datalist id="nodeTypeStyleList"></datalist>
             </label>
-            <div class="grid2" style="margin-top:8px">
+            <div class="grid2">
               <label class="field" for="ntsColor"><span data-i18n="color">Color</span> <input id="ntsColor" type="color" value="#0ea5e9"></label>
               <label class="field" for="ntsShape"><span data-i18n="shape">Shape</span> <select id="ntsShape"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="circle" data-i18n="circle">Circle</option><option value="square" data-i18n="shape_square">Square</option><option value="diamond" data-i18n="shape_diamond">Diamond</option><option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option><option value="triangleDown" data-i18n="shape_triangleDown">Triangle Down</option><option value="hexagon" data-i18n="shape_hexagon">Hexagon</option></select></label>
               <label class="field" for="ntsWidth"><span data-i18n="width">Width</span> <input id="ntsWidth" type="number" min="10" max="300" step="1" value="50"></label>
@@ -519,20 +573,20 @@
               <label class="field" for="ntsLabelPos"><span data-i18n="label_pos">Label position</span> <select id="ntsLabelPos"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="center" data-i18n="pos_center">Center</option><option value="top" data-i18n="pos_top">Top</option><option value="bottom" data-i18n="pos_bottom">Bottom</option><option value="left" data-i18n="pos_left">Left</option><option value="right" data-i18n="pos_right">Right</option></select></label>
               <label class="field" for="ntsLabelFont"><span data-i18n="label_font">Label font</span> <input id="ntsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
             </div>
-            <div class="row" style="margin-top:8px">
-              <button id="btnSaveNodeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
-              <button id="btnDelNodeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
-              <button id="btnClearNodeOverrides" class="btn small warn" style="flex:1" title="Clear per-node color/shape overrides so type style takes effect" data-i18n-title="clear_per_node_title" data-i18n="clear_per_node">Clear per-node</button>
+            <div class="row stretch">
+              <button id="btnSaveNodeTypeStyle" class="btn small good" data-i18n="save">Save</button>
+              <button id="btnDelNodeTypeStyle" class="btn small danger" data-i18n="delete_btn">Delete</button>
+              <button id="btnClearNodeOverrides" class="btn small warn" title="Clear per-node color/shape overrides so type style takes effect" data-i18n-title="clear_per_node_title" data-i18n="clear_per_node">Clear per-node</button>
             </div>
-          </div>
+          </details>
 
-          <div class="section">
-            <div class="section-title"><span data-i18n="edge_type_styles">Edge type styles</span> <span class="tiny muted" data-i18n="type_styles_sub">(per-type overrides)</span></div>
-            <p class="tiny muted"><span data-i18n="type_styles_desc_edge">Type a name, set style, then Save. Edges with this type (and no per-edge override) will use these visuals.</span></p>
+          <details class="section">
+            <summary class="section-title"><span data-i18n="edge_type_styles">Edge type styles</span> <span class="sub" data-i18n="type_styles_sub">(per-type overrides)</span></summary>
+            <p class="hint"><span data-i18n="type_styles_desc_edge">Type a name, set style, then Save. Edges with this type (and no per-edge override) will use these visuals.</span></p>
             <label class="field" for="edgeTypeStyleInput"><span data-i18n="type">Type</span>
               <input id="edgeTypeStyleInput" list="edgeTypeStyleList" placeholder="enter type name" data-i18n-placeholder="enter_type_placeholder"><datalist id="edgeTypeStyleList"></datalist>
             </label>
-            <div class="grid2" style="margin-top:8px">
+            <div class="grid2">
               <label class="field" for="etsColor"><span data-i18n="color">Color</span> <input id="etsColor" type="color" value="#94a3b8"></label>
               <label class="field" for="etsStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="etsStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4"></label>
               <label class="field" for="etsStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="etsStrokeStyle"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option></select></label>
@@ -540,21 +594,22 @@
               <label class="field" for="etsLabelSize"><span data-i18n="label_size">Label size</span> <input id="etsLabelSize" type="number" min="4" max="72" step="1" value="12"></label>
               <label class="field" for="etsLabelFont"><span data-i18n="label_font">Label font</span> <input id="etsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
             </div>
-            <div class="row" style="margin-top:8px">
-              <button id="btnSaveEdgeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
-              <button id="btnDelEdgeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
-              <button id="btnClearEdgeOverrides" class="btn small warn" style="flex:1" title="Clear per-edge color overrides so type style takes effect" data-i18n-title="clear_per_edge_title" data-i18n="clear_per_edge">Clear per-edge</button>
+            <div class="row stretch">
+              <button id="btnSaveEdgeTypeStyle" class="btn small good" data-i18n="save">Save</button>
+              <button id="btnDelEdgeTypeStyle" class="btn small danger" data-i18n="delete_btn">Delete</button>
+              <button id="btnClearEdgeOverrides" class="btn small warn" title="Clear per-edge color overrides so type style takes effect" data-i18n-title="clear_per_edge_title" data-i18n="clear_per_edge">Clear per-edge</button>
             </div>
-          </div>
+          </details>
         </section>
 
+        <!-- ======================= ALGO ======================= -->
         <section id="panel-algo" class="tab-panel">
           <div class="section">
             <div class="section-title" data-i18n="run_algorithms">Run algorithms</div>
             <label class="field" for="algoStart"><span data-i18n="start_node">Start node</span>
               <select id="algoStart"></select>
             </label>
-            <div class="grid2" style="margin-top:8px">
+            <div class="grid3">
               <button id="btnBfs" class="btn">BFS</button>
               <button id="btnDfs" class="btn">DFS</button>
               <button id="btnDijkstra" class="btn">Dijkstra</button>
@@ -569,40 +624,55 @@
           </div>
         </section>
 
+        <!-- ======================= DATA ======================= -->
         <section id="panel-data" class="tab-panel">
           <div class="section">
             <div class="section-title" data-i18n="import_export">Import / export</div>
-            <label class="row tiny muted" style="margin-bottom:6px"><input id="optImportAppend" type="checkbox" /> <span data-i18n="append_mode">Append to current graph (keep existing nodes/edges, styles, and background)</span></label>
-            <div class="grid2">
-              <button id="btnExportJson" class="btn good" data-i18n="export_json">Export JSON</button>
-              <button id="btnCopyJson" class="btn" data-i18n="copy_json">Copy JSON</button>
-              <button id="btnPasteJson" class="btn" data-i18n="paste_json">Paste JSON</button>
-              <button id="btnImportJson" class="btn" data-i18n="import_json">Import JSON</button>
-              <button id="btnExportDot" class="btn good" data-i18n="export_dot">Export DOT</button>
-              <button id="btnCopyDot" class="btn" data-i18n="copy_dot">Copy DOT</button>
-              <button id="btnPasteDot" class="btn" data-i18n="paste_dot">Paste DOT</button>
-              <button id="btnImportDot" class="btn" data-i18n="import_dot">Import DOT</button>
-              <button id="btnExportGraphml" class="btn good" data-i18n="graphml">GraphML</button>
-              <button id="btnCopyGraphml" class="btn" data-i18n="copy_graphml">Copy GraphML</button>
-              <button id="btnPasteGraphml" class="btn" data-i18n="paste_graphml">Paste GraphML</button>
-              <button id="btnImportGraphml" class="btn" data-i18n="import_graphml">Import GraphML</button>
-              <button id="btnExportEdgesCsv" class="btn good" data-i18n="export_edges_csv">Edges CSV</button>
-              <button id="btnCopyEdgeCsv" class="btn" data-i18n="copy_edges">Copy Edges</button>
-              <button id="btnPasteEdgesCsv" class="btn" data-i18n="paste_edges">Paste Edges</button>
-              <button id="btnExportMatrixCsv" class="btn good" data-i18n="export_matrix_csv">Matrix CSV</button>
-              <button id="btnCopyMatrixCsv" class="btn" data-i18n="copy_matrix">Copy Matrix</button>
-              <button id="btnPasteMatrixCsv" class="btn" data-i18n="paste_matrix">Paste Matrix</button>
-              <button id="btnExportNodesCsv" class="btn good" data-i18n="export_nodes_csv">Nodes CSV</button>
-              <button id="btnCopyNodesCsv" class="btn" data-i18n="copy_nodes">Copy Nodes</button>
-              <button id="btnPasteNodesCsv" class="btn" data-i18n="paste_nodes">Paste Nodes</button>
+            <label class="row check" for="optImportAppend"><input id="optImportAppend" type="checkbox" /> <span data-i18n="append_mode">Append to current graph (keep existing nodes/edges, styles, and background)</span></label>
+            <div class="io-grid">
+              <span class="io-label">JSON</span>
+              <button id="btnExportJson" class="btn small good" title="Export JSON" data-i18n-title="export_json" data-i18n="io_export">Export</button>
+              <button id="btnCopyJson" class="btn small" title="Copy JSON" data-i18n-title="copy_json" data-i18n="io_copy">Copy</button>
+              <button id="btnPasteJson" class="btn small" title="Paste JSON" data-i18n-title="paste_json" data-i18n="io_paste">Paste</button>
+              <button id="btnImportJson" class="btn small" title="Import JSON" data-i18n-title="import_json" data-i18n="io_import">Import</button>
+
+              <span class="io-label">DOT</span>
+              <button id="btnExportDot" class="btn small good" title="Export DOT" data-i18n-title="export_dot" data-i18n="io_export">Export</button>
+              <button id="btnCopyDot" class="btn small" title="Copy DOT" data-i18n-title="copy_dot" data-i18n="io_copy">Copy</button>
+              <button id="btnPasteDot" class="btn small" title="Paste DOT" data-i18n-title="paste_dot" data-i18n="io_paste">Paste</button>
+              <button id="btnImportDot" class="btn small" title="Import DOT" data-i18n-title="import_dot" data-i18n="io_import">Import</button>
+
+              <span class="io-label" data-i18n="graphml">GraphML</span>
+              <button id="btnExportGraphml" class="btn small good" title="Export GraphML" data-i18n-title="graphml" data-i18n="io_export">Export</button>
+              <button id="btnCopyGraphml" class="btn small" title="Copy GraphML" data-i18n-title="copy_graphml" data-i18n="io_copy">Copy</button>
+              <button id="btnPasteGraphml" class="btn small" title="Paste GraphML" data-i18n-title="paste_graphml" data-i18n="io_paste">Paste</button>
+              <button id="btnImportGraphml" class="btn small" title="Import GraphML" data-i18n-title="import_graphml" data-i18n="io_import">Import</button>
+
+              <span class="io-label" data-i18n="io_edges">Edges</span>
+              <button id="btnExportEdgesCsv" class="btn small good" title="Edges CSV" data-i18n-title="export_edges_csv" data-i18n="io_export">Export</button>
+              <button id="btnCopyEdgeCsv" class="btn small" title="Copy Edges" data-i18n-title="copy_edges" data-i18n="io_copy">Copy</button>
+              <button id="btnPasteEdgesCsv" class="btn small" title="Paste Edges" data-i18n-title="paste_edges" data-i18n="io_paste">Paste</button>
+              <span class="io-empty" aria-hidden="true"></span>
+
+              <span class="io-label" data-i18n="io_matrix">Matrix</span>
+              <button id="btnExportMatrixCsv" class="btn small good" title="Matrix CSV" data-i18n-title="export_matrix_csv" data-i18n="io_export">Export</button>
+              <button id="btnCopyMatrixCsv" class="btn small" title="Copy Matrix" data-i18n-title="copy_matrix" data-i18n="io_copy">Copy</button>
+              <button id="btnPasteMatrixCsv" class="btn small" title="Paste Matrix" data-i18n-title="paste_matrix" data-i18n="io_paste">Paste</button>
+              <span class="io-empty" aria-hidden="true"></span>
+
+              <span class="io-label" data-i18n="io_nodes">Nodes</span>
+              <button id="btnExportNodesCsv" class="btn small good" title="Nodes CSV" data-i18n-title="export_nodes_csv" data-i18n="io_export">Export</button>
+              <button id="btnCopyNodesCsv" class="btn small" title="Copy Nodes" data-i18n-title="copy_nodes" data-i18n="io_copy">Copy</button>
+              <button id="btnPasteNodesCsv" class="btn small" title="Paste Nodes" data-i18n-title="paste_nodes" data-i18n="io_paste">Paste</button>
+              <span class="io-empty" aria-hidden="true"></span>
             </div>
             <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml" hidden />
-            <p class="tiny muted"><span data-i18n="import_export_desc">Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.</span></p>
+            <p class="hint"><span data-i18n="import_export_desc">Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.</span></p>
           </div>
 
           <div class="section">
             <div class="section-title" data-i18n="layout_view">Layout and view</div>
-            <div class="grid2">
+            <div class="grid3">
               <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
               <button id="btnLayoutGrid" class="btn" data-i18n="grid">Grid</button>
               <button id="btnLayoutForce" class="btn" data-i18n="relax">Relax</button>
@@ -611,26 +681,27 @@
             </div>
           </div>
 
-          <div class="section">
-            <div class="section-title"><span data-i18n="camera_position">Camera position</span> <span id="cameraReadout" class="tiny muted"></span></div>
+          <details class="section">
+            <summary class="section-title"><span data-i18n="camera_position">Camera position</span></summary>
+            <div class="subhead"><span id="cameraReadout" class="tiny muted"></span></div>
             <div class="camera-grid">
               <label class="field" for="cameraX"><span data-i18n="center_x">Center X</span> <input id="cameraX" type="number" step="1" inputmode="decimal"></label>
               <label class="field" for="cameraY"><span data-i18n="center_y">Center Y</span> <input id="cameraY" type="number" step="1" inputmode="decimal"></label>
               <label class="field" for="cameraW"><span data-i18n="width">Width</span> <input id="cameraW" type="number" step="10" min="100" inputmode="decimal"></label>
               <label class="field" for="cameraH"><span data-i18n="height">Height</span> <input id="cameraH" type="number" step="10" min="100" inputmode="decimal"></label>
             </div>
-            <div class="row" style="margin-top:8px">
+            <div class="row stretch">
               <button id="btnCameraSet" class="btn small good" data-i18n="apply">Apply</button>
               <button id="btnCameraFit" class="btn small" data-i18n="fit">Fit</button>
               <button id="btnCameraReset" class="btn small" data-i18n="reset_100">Reset 100%</button>
             </div>
-            <p class="drag-hint"><span data-i18n="camera_hint">Width/Height control zoom (smaller = zoomed in). Apply pans and zooms precisely.</span></p>
-          </div>
+            <p class="hint"><span data-i18n="camera_hint">Width/Height control zoom (smaller = zoomed in). Apply pans and zooms precisely.</span></p>
+          </details>
 
-          <div class="section">
-            <div class="section-title" data-i18n="reliability_options">Reliability options</div>
-            <label class="row tiny muted" for="optAutosave"><input id="optAutosave" type="checkbox" checked /> <span data-i18n="autosave">Autosave to this browser</span></label>
-            <div class="grid2" style="margin-top:8px">
+          <details class="section">
+            <summary class="section-title"><span data-i18n="reliability_options">Reliability options</span></summary>
+            <label class="row check" for="optAutosave"><input id="optAutosave" type="checkbox" checked /> <span data-i18n="autosave">Autosave to this browser</span></label>
+            <div class="grid2">
               <label class="field" for="optMatrixLimit"><span data-i18n="matrix_limit">Matrix render limit</span>
                 <input id="optMatrixLimit" type="number" min="1" step="1" value="90" />
               </label>
@@ -638,26 +709,30 @@
                 <input id="optEdgeListPageSize" type="number" min="1" step="1" value="250" />
               </label>
             </div>
-            <p class="tiny muted"><span data-i18n="performance_limits_desc">Raise these limits on faster computers. Large editable tables can temporarily block the browser.</span></p>
-          </div>
+            <p class="hint"><span data-i18n="performance_limits_desc">Raise these limits on faster computers. Large editable tables can temporarily block the browser.</span></p>
+          </details>
         </section>
 
+        <!-- ======================= HELP ======================= -->
         <section id="panel-help" class="tab-panel">
-          <div class="section">
-            <div class="section-title" data-i18n="quick_help">Quick help</div>
-            <p class="tiny muted"><span data-i18n-html="help_node"><b>Node:</b> choose Node mode, then click the canvas. In Node mode you can also drag existing nodes to reposition them (Blender-style).</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_edge"><b>Edge:</b> choose Edge mode, then drag from a source node to a target node. On touch screens, tap a source node, then tap a target node.</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_move_nodes"><b>Move nodes:</b> choose Select or Node mode and drag nodes.</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_move_canvas"><b>Move canvas:</b> choose Move mode, hold <span class="kbd">Space</span>, or drag with <span class="kbd">RMB</span>/<span class="kbd">MMB</span> in any mode. On touch screens, pinch to zoom and pan.</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_center_edge"><b>Center on edge:</b> in Move mode, click an edge — the view centers on whichever endpoint is further from the current view center.</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_adjust_numbers"><b>Adjust numbers:</b> hover any numeric field with a ⇆ handle and drag horizontally to change the value (Shift = fine). Type directly to enter an exact value.</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
-            <p class="tiny muted"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
-          </div>
-          <div class="section">
-            <div class="section-title"><span data-i18n="hotkeys">Hotkeys</span> <button id="btnResetHotkeys" class="btn small" data-i18n="reset_defaults">Reset to defaults</button></div>
-            <p class="tiny muted"><span data-i18n="hotkeys_desc">Click a key field, then press any key. Backspace/Delete clears. Escape cancels. Undo/Redo are prefixed with Ctrl/⌘ automatically.</span></p>
+          <details class="section" open>
+            <summary class="section-title"><span data-i18n="quick_help">Quick help</span></summary>
+            <p class="hint help"><span data-i18n-html="help_node"><b>Node:</b> choose Node mode, then click the canvas. In Node mode you can also drag existing nodes to reposition them (Blender-style).</span></p>
+            <p class="hint help"><span data-i18n-html="help_edge"><b>Edge:</b> choose Edge mode, then drag from a source node to a target node. On touch screens, tap a source node, then tap a target node.</span></p>
+            <p class="hint help"><span data-i18n-html="help_move_nodes"><b>Move nodes:</b> choose Select or Node mode and drag nodes.</span></p>
+            <p class="hint help"><span data-i18n-html="help_move_canvas"><b>Move canvas:</b> choose Move mode, hold <span class="kbd">Space</span>, or drag with <span class="kbd">RMB</span>/<span class="kbd">MMB</span> in any mode. On touch screens, pinch to zoom and pan.</span></p>
+            <p class="hint help"><span data-i18n-html="help_center_edge"><b>Center on edge:</b> in Move mode, click an edge — the view centers on whichever endpoint is further from the current view center.</span></p>
+            <p class="hint help"><span data-i18n-html="help_adjust_numbers"><b>Adjust numbers:</b> hover any numeric field with a ⇆ handle and drag horizontally to change the value (Shift = fine). Type directly to enter an exact value.</span></p>
+            <p class="hint help"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
+            <p class="hint help"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
+            <p class="hint help"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
+          </details>
+          <details class="section" open>
+            <summary class="section-title"><span data-i18n="hotkeys">Hotkeys</span></summary>
+            <div class="row spread">
+              <p class="hint" style="flex:1;margin:0"><span data-i18n="hotkeys_desc">Click a key field, then press any key. Backspace/Delete clears. Escape cancels. Undo/Redo are prefixed with Ctrl/⌘ automatically.</span></p>
+              <button id="btnResetHotkeys" class="btn small" data-i18n="reset_defaults">Reset to defaults</button>
+            </div>
             <div class="hotkey-grid">
               <div class="hotkey-row"><label for="hk-select"><span data-i18n="hk_select">Select mode</span></label><input id="hk-select" class="hotkey-input" data-hotkey="select" readonly placeholder="S"></div>
               <div class="hotkey-row"><label for="hk-move"><span data-i18n="hk_move">Move mode</span></label><input id="hk-move" class="hotkey-input" data-hotkey="move" readonly placeholder="M"></div>
@@ -668,25 +743,26 @@
               <div class="hotkey-row"><label for="hk-undo"><span data-i18n="hk_undo">Undo (Ctrl+)</span></label><input id="hk-undo" class="hotkey-input" data-hotkey="undo" readonly placeholder="Z"></div>
               <div class="hotkey-row"><label for="hk-redo"><span data-i18n="hk_redo">Redo (Ctrl+)</span></label><input id="hk-redo" class="hotkey-input" data-hotkey="redo" readonly placeholder="Y"></div>
             </div>
-          </div>
+          </details>
         </section>
       </div>
     </aside>
 
     <main class="main">
       <header class="panel topbar">
-        <div class="brand"><div class="brand-badge">G</div><span data-i18n="brand_name">Graph Editor Pro</span></div>
+        <div class="brand" title="Graph Editor Pro"><div class="brand-badge">G</div><span data-i18n="brand_name">Graph Editor Pro</span></div>
         <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
         <div class="view-toggle" role="group" aria-label="View switcher">
-          <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
+          <button class="btn small" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
           <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
           <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
+          <button class="btn small active" data-view-btn="split" title="Show graph + matrix + edge list" data-i18n="view_split">Split</button>
+          <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
         </div>
         <div class="toolbar">
-          <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
-          <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open">★</button>
           <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
           <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
+          <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open">★</button>
           <button id="btnSample" class="btn" title="Add sample graph" data-i18n-title="add_sample" data-i18n="sample">Sample</button>
           <button id="btnDelete" class="btn danger" title="Delete selected" data-i18n-title="delete_selected" data-i18n="delete_btn">Delete</button>
           <button id="btnClear" class="btn danger" title="Clear graph" data-i18n-title="clear_graph" data-i18n="clear_sel">Clear</button>
@@ -734,12 +810,12 @@
         <div id="presetsOverlay" class="presets-overlay">
           <div class="presets-header">
             <h3 data-i18n="style_presets">Style presets</h3>
-            <div style="display:flex; gap:6px; flex-wrap:wrap">
+            <div class="row">
               <button id="btnPresetSave" class="btn small good" title="Save current selection's style as a new preset" data-i18n="save_from_sel">Save from selection</button>
               <button id="btnPresetClose" class="btn small danger" data-i18n="close">Close</button>
             </div>
           </div>
-          <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
+          <p class="hint" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
           <div id="presetsGrid" class="presets-grid"></div>
         </div>
       </section>
@@ -748,7 +824,7 @@
         <div class="bottom-pane thin-scroll">
           <div class="section-title"><span data-i18n="adjacency_matrix">Adjacency matrix</span> <span id="matrixNote" class="tiny muted"></span></div>
           <div class="matrix-controls tiny muted">
-            <label class="field" for="matrixSize"><span data-i18n="matrix_view">Matrix view</span> <input id="matrixSize" class="matrix-input" type="number" min="0" max="300" value="0" title="Set visible matrix dimension. Smaller values do not delete graph nodes." data-i18n-title="matrix_view_title"></label>
+            <label class="field inline" for="matrixSize"><span data-i18n="matrix_view">Matrix view</span> <input id="matrixSize" class="matrix-input" type="number" min="0" max="300" value="0" title="Set visible matrix dimension. Smaller values do not delete graph nodes." data-i18n-title="matrix_view_title"></label>
             <button id="btnMatrixResize" class="btn small" title="Resize matrix view without deleting or rearranging existing graph" data-i18n-title="set_dim_title" data-i18n="set_dimensions">Set dimensions</button>
             <button id="btnMatrixAddNode" class="btn small" data-i18n="add_node">Add node</button>
             <button id="btnMatrixInsertNode" class="btn small" title="Insert a new node before each selected node" data-i18n-title="insert_title" data-i18n="insert_before_sel">Insert before selected</button>
@@ -759,8 +835,8 @@
           </div>
           <div class="matrix-controls tiny muted">
             <span class="tiny muted" data-i18n="visible_range">Visible range (by order):</span>
-            <label class="field" for="visRangeStart"><span data-i18n="range_start">Start</span> <input id="visRangeStart" class="matrix-input" type="number" min="0" placeholder="0" title="Start of visible node order range" data-i18n-title="range_start_title"></label>
-            <label class="field" for="visRangeEnd"><span data-i18n="range_end">End</span> <input id="visRangeEnd" class="matrix-input" type="number" min="0" placeholder="end" title="End of visible node order range (inclusive)" data-i18n-title="range_end_title"></label>
+            <label class="field inline" for="visRangeStart"><span data-i18n="range_start">Start</span> <input id="visRangeStart" class="matrix-input" type="number" min="0" placeholder="0" title="Start of visible node order range" data-i18n-title="range_start_title"></label>
+            <label class="field inline" for="visRangeEnd"><span data-i18n="range_end">End</span> <input id="visRangeEnd" class="matrix-input" type="number" min="0" placeholder="end" title="End of visible node order range (inclusive)" data-i18n-title="range_end_title"></label>
             <button id="btnVisRangeApply" class="btn small good" title="Apply visible range filter to matrix, edge list, and graph" data-i18n-title="apply_range_title" data-i18n="apply">Apply</button>
             <button id="btnVisRangeAll" class="btn small" title="Show all nodes (clear visible range)" data-i18n-title="show_all_title" data-i18n="show_all">Show all</button>
             <span id="visRangeNote" class="tiny muted"></span>
@@ -795,6 +871,7 @@ const I18N = {
         'view_graph': { en: 'Graph', ru: 'Граф' },
         'view_matrix': { en: 'Matrix', ru: 'Матрица' },
         'view_edges': { en: 'Edges', ru: 'Рёбра' },
+        'view_split': { en: 'Split', ru: 'Всё' },
         'orient_toggle': { en: 'Toggle split orientation (vertical/horizontal)', ru: 'Переключить ориентацию разделения (вертикально/горизонтально)' },
         'presets_open': { en: 'Open style presets overlay', ru: 'Открыть пресеты стилей' },
         'undo': { en: 'Undo', ru: 'Отменить' },
@@ -968,6 +1045,13 @@ const I18N = {
         // --- Data tab ---
         'import_export': { en: 'Import / export', ru: 'Импорт / экспорт' },
         'append_mode': { en: 'Append to current graph (keep existing nodes/edges, styles, and background)', ru: 'Добавить к текущему графу (сохранить узлы/рёбра, стили и фон)' },
+        'io_export': { en: 'Export', ru: 'Экспорт' },
+        'io_copy': { en: 'Copy', ru: 'Копир.' },
+        'io_paste': { en: 'Paste', ru: 'Вставить' },
+        'io_import': { en: 'Import', ru: 'Импорт' },
+        'io_edges': { en: 'Edges', ru: 'Рёбра' },
+        'io_matrix': { en: 'Matrix', ru: 'Матрица' },
+        'io_nodes': { en: 'Nodes', ru: 'Узлы' },
         'export_json': { en: 'Export JSON', ru: 'Экспорт JSON' },
         'copy_json': { en: 'Copy JSON', ru: 'Копировать JSON' },
         'paste_json': { en: 'Paste JSON', ru: 'Вставить JSON' },
@@ -6990,53 +7074,54 @@ function wireUi() {
     $('#btnDelEdgeTypeStyle').addEventListener('click', delEdgeTypeStyle);
     $('#btnClearNodeOverrides').addEventListener('click', clearNodeOverridesForType);
     $('#btnClearEdgeOverrides').addEventListener('click', clearEdgeOverridesForType);
-    // View toggle controls
+    // View toggle controls — work on every screen size.
+    // data-view: graph | matrix | edges | split; data-orient: v | h.
+    // Persisted in localStorage so the workspace layout survives reloads.
     const mainEl = document.querySelector('.main');
     if (mainEl) {
-        // Default to graph view in landscape; on desktop the data-view attribute is absent so all panels show
-        const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
-        if (isLandscape) {
-            mainEl.dataset.view = 'graph';
-            mainEl.dataset.orient = 'v';
+        const VIEWS = ['graph', 'matrix', 'edges', 'split'];
+        let savedView = '', savedOrient = '';
+        try {
+            savedView = localStorage.getItem('graph-editor-view') || '';
+            savedOrient = localStorage.getItem('graph-editor-orient') || '';
         }
-        document.querySelectorAll('[data-view-btn]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const view = btn.dataset.viewBtn;
-                mainEl.dataset.view = view;
-                document.querySelectorAll('[data-view-btn]').forEach(b => b.classList.toggle('active', b === btn));
-                // Trigger a render to resize the canvas to its new container
-                setTimeout(() => queueRender(true), 0);
-            });
-        });
+        catch { }
         const orientBtn = $('#btnViewOrient');
+        const syncOrientBtn = () => {
+            if (!orientBtn)
+                return;
+            orientBtn.textContent = mainEl.dataset.orient === 'h' ? '↕' : '↔';
+            orientBtn.title = mainEl.dataset.orient === 'h' ? 'Switch to vertical split' : 'Switch to horizontal split';
+        };
+        const setView = view => {
+            if (!VIEWS.includes(view))
+                view = 'split';
+            mainEl.dataset.view = view;
+            document.querySelectorAll('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === view));
+            try {
+                localStorage.setItem('graph-editor-view', view);
+            }
+            catch { }
+            // Trigger a render to resize the canvas to its new container
+            setTimeout(() => queueRender(true), 0);
+        };
+        mainEl.dataset.orient = savedOrient === 'h' ? 'h' : 'v';
+        syncOrientBtn();
+        setView(savedView || 'split');
+        document.querySelectorAll('[data-view-btn]').forEach(btn => {
+            btn.addEventListener('click', () => setView(btn.dataset.viewBtn));
+        });
         if (orientBtn) {
             orientBtn.addEventListener('click', () => {
-                const cur = mainEl.dataset.orient || 'v';
-                mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
-                orientBtn.textContent = mainEl.dataset.orient === 'v' ? '↔' : '↕';
-                orientBtn.title = mainEl.dataset.orient === 'v' ? 'Switch to horizontal split' : 'Switch to vertical split';
+                mainEl.dataset.orient = (mainEl.dataset.orient || 'v') === 'v' ? 'h' : 'v';
+                syncOrientBtn();
+                try {
+                    localStorage.setItem('graph-editor-orient', mainEl.dataset.orient);
+                }
+                catch { }
                 setTimeout(() => queueRender(true), 0);
             });
         }
-        // Update view when orientation changes (e.g. rotating device)
-        window.matchMedia('(max-width:950px) and (orientation:landscape)').addEventListener('change', e => {
-            if (e.matches) {
-                if (!mainEl.dataset.view)
-                    mainEl.dataset.view = 'graph';
-                if (!mainEl.dataset.orient)
-                    mainEl.dataset.orient = 'v';
-            }
-            else {
-                // Leaving landscape — clear view attributes so desktop layout applies
-                delete mainEl.dataset.view;
-                delete mainEl.dataset.orient;
-                document.querySelectorAll('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === 'graph'));
-                if (orientBtn) {
-                    orientBtn.textContent = '↔';
-                }
-            }
-            setTimeout(() => queueRender(true), 50);
-        });
     }
     $('#btnBfs').addEventListener('click', runBfs);
     $('#btnDfs').addEventListener('click', runDfs);
