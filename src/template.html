@@ -426,7 +426,12 @@
                 <span data-i18n="layout_view">Layout and view</span>
               </summary>
               <div class="sec-body">
-                <div class="grid2">
+                <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher">
+                  <button class="btn small active" data-view-btn="graph" title="Show only graph canvas" data-i18n="view_graph">Graph</button>
+                  <button class="btn small" data-view-btn="matrix" title="Show graph + adjacency matrix" data-i18n="view_matrix">Matrix</button>
+                  <button class="btn small" data-view-btn="edges" title="Show graph + edge list" data-i18n="view_edges">Edges</button>
+                </div>
+                <div class="grid2" style="margin-top:8px">
                   <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
                   <button id="btnLayoutGrid" class="btn" data-i18n="grid">Grid</button>
                   <button id="btnLayoutForce" class="btn" data-i18n="relax">Relax</button>
