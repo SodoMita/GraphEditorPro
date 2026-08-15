@@ -315,8 +315,8 @@
     settings.gridSizeX = clamp(parseInt(settings.gridSizeX,10) || legacyGrid, 5, 300);
     settings.gridSizeY = clamp(parseInt(settings.gridSizeY,10) || legacyGrid, 5, 300);
     settings.gridSize = settings.gridSizeX;
-    settings.matrixLimit = clamp(parseInt(settings.matrixLimit,10) || 90, 10, 300);
-    settings.edgeListPageSize = clamp(parseInt(settings.edgeListPageSize,10) || 250, 50, 8000);
+    settings.matrixLimit = positiveInteger(settings.matrixLimit, 90);
+    settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, 300);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
@@ -395,6 +395,10 @@
   function finite(value: unknown, fallback: number): number {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
+  }
+  function positiveInteger(value: unknown, fallback: number): number {
+    const numeric = Math.trunc(finite(value, fallback));
+    return numeric > 0 ? numeric : fallback;
   }
   function safeId(value: unknown, prefix: string): string {
     const id = String(value ?? '').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,40);

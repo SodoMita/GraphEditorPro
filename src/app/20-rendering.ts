@@ -900,7 +900,7 @@
   }
   let edgeListRenderLimit = 250;
   function configuredEdgeListPageSize(){
-    return clamp(parseInt(state.settings.edgeListPageSize, 10) || 250, 50, 8000);
+    return positiveInteger(state.settings.edgeListPageSize, 250);
   }
   function renderMatrixAndList(){
     edgeListRenderLimit = configuredEdgeListPageSize();

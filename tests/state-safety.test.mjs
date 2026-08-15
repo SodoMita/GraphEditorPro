@@ -67,8 +67,8 @@ test('sanitizer clamps unsafe settings and rejects non-numeric ranges', () => {
   assert.equal(result.settings.visibleRange.end, 2147483647);
   assert.equal(result.settings.nodeWidth, 10);
   assert.equal(result.settings.nodeLabelSize, 72);
-  assert.equal(result.settings.matrixLimit, 300);
-  assert.equal(result.settings.edgeListPageSize, 8_000);
+  assert.equal(result.settings.matrixLimit, 999);
+  assert.equal(result.settings.edgeListPageSize, 99_999);
   assert.equal(result.settings.canvasBgColor, '#020617');
   assert.equal(Object.getPrototypeOf(result.settings.nodeTypeStyles), null);
   assert.equal(result.settings.nodeTypeStyles.safe.color, '#112233');

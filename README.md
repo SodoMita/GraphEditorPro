@@ -56,4 +56,4 @@ Runtime data is also validated before use. Imported graph state is size-limited,
 
 Navigation keeps the logical SVG `viewBox` frozen during a gesture and applies one compositor-backed CSS transform to the complete SVG image. The grid is an oversized cached layer transformed alongside it, avoiding per-frame gradient repainting. The crisp vector `viewBox` is committed once when navigation ends.
 
-Large supporting views are bounded independently of graph data using configurable reliability settings. The defaults render 250 edge rows per page and matrices up to 90×90, while faster computers can raise the edge-page setting to 8,000 rows and the matrix setting to 300×300. Full graph data remains available through paging and CSV export.
+Large supporting views are bounded independently of graph data using configurable reliability settings. The defaults render 250 edge rows per page and matrices up to 90×90. Both settings accept any positive integer, so faster computers can raise them without an artificial upper cap. Full graph data remains available through paging and CSV export.

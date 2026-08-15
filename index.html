@@ -632,10 +632,10 @@
             <label class="row tiny muted" for="optAutosave"><input id="optAutosave" type="checkbox" checked /> <span data-i18n="autosave">Autosave to this browser</span></label>
             <div class="grid2" style="margin-top:8px">
               <label class="field" for="optMatrixLimit"><span data-i18n="matrix_limit">Matrix render limit</span>
-                <input id="optMatrixLimit" type="number" min="10" max="300" step="10" value="90" />
+                <input id="optMatrixLimit" type="number" min="1" step="1" value="90" />
               </label>
               <label class="field" for="optEdgeListPageSize"><span data-i18n="edge_list_page_size">Edge rows per page</span>
-                <input id="optEdgeListPageSize" type="number" min="50" max="8000" step="50" value="250" />
+                <input id="optEdgeListPageSize" type="number" min="1" step="1" value="250" />
               </label>
             </div>
             <p class="tiny muted"><span data-i18n="performance_limits_desc">Raise these limits on faster computers. Large editable tables can temporarily block the browser.</span></p>
@@ -1644,8 +1644,8 @@ function sanitizeState(input) {
     settings.gridSizeX = clamp(parseInt(settings.gridSizeX, 10) || legacyGrid, 5, 300);
     settings.gridSizeY = clamp(parseInt(settings.gridSizeY, 10) || legacyGrid, 5, 300);
     settings.gridSize = settings.gridSizeX;
-    settings.matrixLimit = clamp(parseInt(settings.matrixLimit, 10) || 90, 10, 300);
-    settings.edgeListPageSize = clamp(parseInt(settings.edgeListPageSize, 10) || 250, 50, 8000);
+    settings.matrixLimit = positiveInteger(settings.matrixLimit, 90);
+    settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension, 10) || 0, 0, 300);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter, 10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed);
@@ -1741,6 +1741,10 @@ function isRecord(value) {
 function finite(value, fallback) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
+}
+function positiveInteger(value, fallback) {
+    const numeric = Math.trunc(finite(value, fallback));
+    return numeric > 0 ? numeric : fallback;
 }
 function safeId(value, prefix) {
     const id = String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
@@ -2978,7 +2982,7 @@ function matrixNodes() {
 }
 let edgeListRenderLimit = 250;
 function configuredEdgeListPageSize() {
-    return clamp(parseInt(state.settings.edgeListPageSize, 10) || 250, 50, 8000);
+    return positiveInteger(state.settings.edgeListPageSize, 250);
 }
 function renderMatrixAndList() {
     edgeListRenderLimit = configuredEdgeListPageSize();
@@ -6619,8 +6623,8 @@ function wireUi() {
     $('#optSnapY').addEventListener('change', e => { state.settings.snapY = e.target.checked; pushHistory('snap y'); });
     $('#optGridX').addEventListener('change', e => { state.settings.gridSizeX = clamp(parseInt(e.target.value, 10) || 40, 5, 300); state.settings.gridSize = state.settings.gridSizeX; e.target.value = state.settings.gridSizeX; pushHistory('grid width'); updateGridBackground(); });
     $('#optGridY').addEventListener('change', e => { state.settings.gridSizeY = clamp(parseInt(e.target.value, 10) || 40, 5, 300); e.target.value = state.settings.gridSizeY; pushHistory('grid height'); updateGridBackground(); });
-    $('#optMatrixLimit').addEventListener('change', e => { state.settings.matrixLimit = clamp(parseInt(e.target.value, 10) || 90, 10, 300); e.target.value = state.settings.matrixLimit; pushHistory('matrix limit'); queueRender(true); });
-    $('#optEdgeListPageSize').addEventListener('change', e => { state.settings.edgeListPageSize = clamp(parseInt(e.target.value, 10) || 250, 50, 8000); e.target.value = state.settings.edgeListPageSize; edgeListRenderLimit = state.settings.edgeListPageSize; pushHistory('edge list page size'); queueRender(true); });
+    $('#optMatrixLimit').addEventListener('change', e => { state.settings.matrixLimit = positiveInteger(e.target.value, 90); e.target.value = state.settings.matrixLimit; pushHistory('matrix limit'); queueRender(true); });
+    $('#optEdgeListPageSize').addEventListener('change', e => { state.settings.edgeListPageSize = positiveInteger(e.target.value, 250); e.target.value = state.settings.edgeListPageSize; edgeListRenderLimit = state.settings.edgeListPageSize; pushHistory('edge list page size'); queueRender(true); });
     $('#btnUndo').addEventListener('click', undo);
     $('#btnRedo').addEventListener('click', redo);
     $('#btnDelete').addEventListener('click', deleteSelected);
