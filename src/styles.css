@@ -452,6 +452,17 @@
       .main.v-matrix .bottom-pane:nth-child(1),
       .main.v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; overflow:hidden}
       .table-scroll{flex:1 1 auto; min-height:0; max-height:none}
+      /* Compact panel header: each control bar is one short, horizontally
+         scrollable row instead of wrapping into tall stacks */
+      .matrix-controls{flex-wrap:nowrap; overflow-x:auto; gap:4px; margin-bottom:4px; padding-bottom:2px; -webkit-overflow-scrolling:touch}
+      .matrix-controls .btn{flex:0 0 auto; min-height:24px; padding:0 7px; font-size:10.5px; border-radius:7px}
+      .matrix-controls .field{flex:0 0 auto; font-size:10.5px; margin:0}
+      .matrix-controls .field input, .matrix-controls .field select{min-height:24px; font-size:11px; padding:2px 6px; width:auto}
+      .matrix-controls .range-label{display:none}
+      .section-title{margin-bottom:5px}
+      /* Compact table rows so a small matrix/edge list stays short */
+      th,td{padding:3px 5px}
+      td .matrix-input, th .matrix-label-input{min-height:24px; font-size:12px; padding:2px 4px}
     }
     /* Portrait: canvas on top, panels below — stacked full-width, sized
        by content (max 50%). The ↔ toggle switches matrix + edge list to
