@@ -235,7 +235,9 @@ const I18N: I18nService = {
     'camera_hint': { en: 'Width/Height control zoom (smaller = zoomed in). Apply pans and zooms precisely.', ru: 'Ширина/Высота управляют зумом (меньше = ближе). Применить точно панорамирует и зумирует.' },
     'reliability_options': { en: 'Reliability options', ru: 'Настройки надёжности' },
     'autosave': { en: 'Autosave to this browser', ru: 'Автосохранение в этом браузере' },
-    'matrix_limit': { en: 'Matrix limit', ru: 'Лимит матрицы' },
+    'matrix_limit': { en: 'Matrix render limit', ru: 'Лимит отображения матрицы' },
+    'edge_list_page_size': { en: 'Edge rows per page', ru: 'Строк рёбер на страницу' },
+    'performance_limits_desc': { en: 'Raise these limits on faster computers. Large editable tables can temporarily block the browser.', ru: 'Увеличьте лимиты на быстрых компьютерах. Большие редактируемые таблицы могут временно заблокировать браузер.' },
 
     // --- Help tab ---
     'quick_help': { en: 'Quick help', ru: 'Краткая справка' },

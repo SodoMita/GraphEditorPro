@@ -82,6 +82,7 @@ test('large edge lists render in bounded pages', async () => {
   const nodeCount = 300;
   const edgeCount = 600;
   const graph = {
+    settings: { edgeListPageSize: 500 },
     nodes: Array.from({ length: nodeCount }, (_, index) => ({
       id: `n${index}`, label: `N${index}`, x: index % 30, y: Math.floor(index / 30), order: index,
     })),
@@ -92,10 +93,10 @@ test('large edge lists render in bounded pages', async () => {
   const { dom, errors } = createEditorDom(graph);
   await new Promise(resolve => dom.window.setTimeout(resolve, 150));
 
-  assert.equal(dom.window.document.querySelectorAll('#edgeListHost tbody tr').length, 250);
+  assert.equal(dom.window.document.querySelectorAll('#edgeListHost tbody tr').length, 500);
   assert.ok(dom.window.document.querySelector('#btnEdgeListMore'));
   dom.window.document.querySelector('#btnEdgeListMore').click();
-  assert.equal(dom.window.document.querySelectorAll('#edgeListHost tbody tr').length, 500);
+  assert.equal(dom.window.document.querySelectorAll('#edgeListHost tbody tr').length, 600);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

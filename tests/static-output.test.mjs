@@ -32,7 +32,7 @@ test('key graph editor controls remain in the generated page', () => {
   for (const id of [
     'graphCanvas', 'gridLayer', 'sceneLayer', 'nodesLayer', 'edgesLayer', 'modeSelect', 'modeNode',
     'modeEdge', 'matrixHost', 'edgeListHost', 'btnUndo', 'btnRedo',
-    'btnExportJson', 'fileImport', 'algoOutput',
+    'btnExportJson', 'fileImport', 'optMatrixLimit', 'optEdgeListPageSize', 'algoOutput',
   ]) {
     assert.match(html, new RegExp(`\\bid=["']${id}["']`), `missing #${id}`);
   }

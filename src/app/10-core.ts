@@ -43,7 +43,7 @@
       edgeType:'', edgeColor:'#94a3b8', edgeStrokeSize:2.4, edgeStrokeStyle:'solid',
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
       snap:false, snapX:false, snapY:false, gridSize:40, gridSizeX:40, gridSizeY:40,
-      autosave:true, matrixLimit:90, matrixDimension:0, brushDiameter:80,
+      autosave:true, matrixLimit:90, edgeListPageSize:250, matrixDimension:0, brushDiameter:80,
       inheritDefaults: true,
       noLabel: false, // when true, new nodes are created with empty labels
       // Visible range: filters matrix, edge list, and graph canvas to nodes within [start, end] by order.
@@ -316,6 +316,7 @@
     settings.gridSizeY = clamp(parseInt(settings.gridSizeY,10) || legacyGrid, 5, 300);
     settings.gridSize = settings.gridSizeX;
     settings.matrixLimit = clamp(parseInt(settings.matrixLimit,10) || 90, 10, 300);
+    settings.edgeListPageSize = clamp(parseInt(settings.edgeListPageSize,10) || 250, 50, 8000);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, 300);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;

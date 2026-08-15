@@ -631,10 +631,14 @@
             <div class="section-title" data-i18n="reliability_options">Reliability options</div>
             <label class="row tiny muted" for="optAutosave"><input id="optAutosave" type="checkbox" checked /> <span data-i18n="autosave">Autosave to this browser</span></label>
             <div class="grid2" style="margin-top:8px">
-              <label class="field" for="optMatrixLimit"><span data-i18n="matrix_limit">Matrix limit</span>
+              <label class="field" for="optMatrixLimit"><span data-i18n="matrix_limit">Matrix render limit</span>
                 <input id="optMatrixLimit" type="number" min="10" max="300" step="10" value="90" />
               </label>
+              <label class="field" for="optEdgeListPageSize"><span data-i18n="edge_list_page_size">Edge rows per page</span>
+                <input id="optEdgeListPageSize" type="number" min="50" max="8000" step="50" value="250" />
+              </label>
             </div>
+            <p class="tiny muted"><span data-i18n="performance_limits_desc">Raise these limits on faster computers. Large editable tables can temporarily block the browser.</span></p>
           </div>
         </section>
 
@@ -1004,7 +1008,9 @@ const I18N = {
         'camera_hint': { en: 'Width/Height control zoom (smaller = zoomed in). Apply pans and zooms precisely.', ru: 'Ширина/Высота управляют зумом (меньше = ближе). Применить точно панорамирует и зумирует.' },
         'reliability_options': { en: 'Reliability options', ru: 'Настройки надёжности' },
         'autosave': { en: 'Autosave to this browser', ru: 'Автосохранение в этом браузере' },
-        'matrix_limit': { en: 'Matrix limit', ru: 'Лимит матрицы' },
+        'matrix_limit': { en: 'Matrix render limit', ru: 'Лимит отображения матрицы' },
+        'edge_list_page_size': { en: 'Edge rows per page', ru: 'Строк рёбер на страницу' },
+        'performance_limits_desc': { en: 'Raise these limits on faster computers. Large editable tables can temporarily block the browser.', ru: 'Увеличьте лимиты на быстрых компьютерах. Большие редактируемые таблицы могут временно заблокировать браузер.' },
         // --- Help tab ---
         'quick_help': { en: 'Quick help', ru: 'Краткая справка' },
         'help_node': { en: '<b>Node:</b> choose Node mode, then click the canvas. In Node mode you can also drag existing nodes to reposition them (Blender-style).', ru: '<b>Узел:</b> выберите режим Узел, затем кликните по холсту. В режиме Узел можно также перетаскивать существующие узлы (в стиле Blender).' },
@@ -1313,7 +1319,7 @@ const defaultState = () => ({
         edgeType: '', edgeColor: '#94a3b8', edgeStrokeSize: 2.4, edgeStrokeStyle: 'solid',
         edgeLabelColor: '#dbeafe', edgeLabelFont: 'Inter', edgeLabelSize: 12,
         snap: false, snapX: false, snapY: false, gridSize: 40, gridSizeX: 40, gridSizeY: 40,
-        autosave: true, matrixLimit: 90, matrixDimension: 0, brushDiameter: 80,
+        autosave: true, matrixLimit: 90, edgeListPageSize: 250, matrixDimension: 0, brushDiameter: 80,
         inheritDefaults: true,
         noLabel: false, // when true, new nodes are created with empty labels
         // Visible range: filters matrix, edge list, and graph canvas to nodes within [start, end] by order.
@@ -1639,6 +1645,7 @@ function sanitizeState(input) {
     settings.gridSizeY = clamp(parseInt(settings.gridSizeY, 10) || legacyGrid, 5, 300);
     settings.gridSize = settings.gridSizeX;
     settings.matrixLimit = clamp(parseInt(settings.matrixLimit, 10) || 90, 10, 300);
+    settings.edgeListPageSize = clamp(parseInt(settings.edgeListPageSize, 10) || 250, 50, 8000);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension, 10) || 0, 0, 300);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter, 10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed);
@@ -1940,6 +1947,7 @@ function syncControls() {
     $('#optGridY').value = state.settings.gridSizeY;
     $('#optBrushDiameter').value = state.settings.brushDiameter;
     $('#optMatrixLimit').value = state.settings.matrixLimit;
+    $('#optEdgeListPageSize').value = state.settings.edgeListPageSize;
     const inhEl = $('#optInheritDefaults');
     if (inhEl)
         inhEl.checked = state.settings.inheritDefaults !== false;
@@ -2968,13 +2976,12 @@ function matrixNodes() {
     const sorted = visibleNodes();
     return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted;
 }
-// Profiling shows form-control tables become multi-second work above ~10k cells.
-// Keep the interactive matrix at 100×100; CSV export still includes the full graph.
-const MATRIX_RENDER_CAP = 100;
-const EDGE_LIST_PAGE_SIZE = 250;
-let edgeListRenderLimit = EDGE_LIST_PAGE_SIZE;
+let edgeListRenderLimit = 250;
+function configuredEdgeListPageSize() {
+    return clamp(parseInt(state.settings.edgeListPageSize, 10) || 250, 50, 8000);
+}
 function renderMatrixAndList() {
-    edgeListRenderLimit = EDGE_LIST_PAGE_SIZE;
+    edgeListRenderLimit = configuredEdgeListPageSize();
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
     const sizeInput = $('#matrixSize');
@@ -2992,11 +2999,6 @@ function renderMatrixAndList() {
     if (n === 0) {
         $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>';
         note.textContent = `0 / ${total}`;
-    }
-    else if (n > MATRIX_RENDER_CAP) {
-        // Above the hard cap, do not create a multi-second form-control table.
-        $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n}×${n} = ${n * n} ячеек).<br>Используйте экспорт <b>Matrix CSV</b> во вкладке Данные для просмотра полной матрицы, или сузьте видимый диапазон до ≤${MATRIX_RENDER_CAP} узлов.` : `Matrix hidden for performance (${n}×${n} = ${n * n} cells).<br>Use <b>Matrix CSV</b> export in the Data tab to view the full matrix, or narrow the visible range to ≤${MATRIX_RENDER_CAP} nodes.`) + '</div>';
-        note.textContent = I18N.current === 'ru' ? `скрыто (${n}×${n} > лимит ${MATRIX_RENDER_CAP}²)` : `hidden (${n}×${n} > ${MATRIX_RENDER_CAP}² cap)`;
     }
     else if (n > limit) {
         $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n} узлов > лимит ${limit}). Используйте экспорт Matrix CSV или увеличьте лимит.` : `Matrix hidden for performance (${n} nodes > limit ${limit}). Use Matrix CSV export or increase the limit.`) + '</div>';
@@ -3110,15 +3112,16 @@ function edgeListHtml() {
     html += '</tbody></table>';
     if (renderedEdges.length < filteredEdges.length) {
         const remaining = filteredEdges.length - renderedEdges.length;
+        const pageSize = configuredEdgeListPageSize();
         const label = I18N.current === 'ru'
-            ? `Показать ещё ${Math.min(EDGE_LIST_PAGE_SIZE, remaining)}`
-            : `Show ${Math.min(EDGE_LIST_PAGE_SIZE, remaining)} more`;
+            ? `Показать ещё ${Math.min(pageSize, remaining)}`
+            : `Show ${Math.min(pageSize, remaining)} more`;
         html += `<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`;
     }
     return html;
 }
 function showMoreEdgeRows() {
-    edgeListRenderLimit += EDGE_LIST_PAGE_SIZE;
+    edgeListRenderLimit += configuredEdgeListPageSize();
     $('#edgeListHost').innerHTML = edgeListHtml();
 }
 function setMode(mode, render = true) {
@@ -6617,6 +6620,7 @@ function wireUi() {
     $('#optGridX').addEventListener('change', e => { state.settings.gridSizeX = clamp(parseInt(e.target.value, 10) || 40, 5, 300); state.settings.gridSize = state.settings.gridSizeX; e.target.value = state.settings.gridSizeX; pushHistory('grid width'); updateGridBackground(); });
     $('#optGridY').addEventListener('change', e => { state.settings.gridSizeY = clamp(parseInt(e.target.value, 10) || 40, 5, 300); e.target.value = state.settings.gridSizeY; pushHistory('grid height'); updateGridBackground(); });
     $('#optMatrixLimit').addEventListener('change', e => { state.settings.matrixLimit = clamp(parseInt(e.target.value, 10) || 90, 10, 300); e.target.value = state.settings.matrixLimit; pushHistory('matrix limit'); queueRender(true); });
+    $('#optEdgeListPageSize').addEventListener('change', e => { state.settings.edgeListPageSize = clamp(parseInt(e.target.value, 10) || 250, 50, 8000); e.target.value = state.settings.edgeListPageSize; edgeListRenderLimit = state.settings.edgeListPageSize; pushHistory('edge list page size'); queueRender(true); });
     $('#btnUndo').addEventListener('click', undo);
     $('#btnRedo').addEventListener('click', redo);
     $('#btnDelete').addEventListener('click', deleteSelected);

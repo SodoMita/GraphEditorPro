@@ -47,6 +47,7 @@
     $('#optGridX').addEventListener('change', e => { state.settings.gridSizeX = clamp(parseInt(e.target.value,10)||40,5,300); state.settings.gridSize = state.settings.gridSizeX; e.target.value=state.settings.gridSizeX; pushHistory('grid width'); updateGridBackground(); });
     $('#optGridY').addEventListener('change', e => { state.settings.gridSizeY = clamp(parseInt(e.target.value,10)||40,5,300); e.target.value=state.settings.gridSizeY; pushHistory('grid height'); updateGridBackground(); });
     $('#optMatrixLimit').addEventListener('change', e => { state.settings.matrixLimit = clamp(parseInt(e.target.value,10)||90,10,300); e.target.value=state.settings.matrixLimit; pushHistory('matrix limit'); queueRender(true); });
+    $('#optEdgeListPageSize').addEventListener('change', e => { state.settings.edgeListPageSize = clamp(parseInt(e.target.value,10)||250,50,8000); e.target.value=state.settings.edgeListPageSize; edgeListRenderLimit=state.settings.edgeListPageSize; pushHistory('edge list page size'); queueRender(true); });
     $('#btnUndo').addEventListener('click', undo); $('#btnRedo').addEventListener('click', redo);
     $('#btnDelete').addEventListener('click', deleteSelected);
     // Presets overlay

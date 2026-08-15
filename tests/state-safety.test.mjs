@@ -60,13 +60,15 @@ test('sanitizer normalizes IDs, keeps them unique, and drops dangling edges', ()
 });
 
 test('sanitizer clamps unsafe settings and rejects non-numeric ranges', () => {
-  const maliciousSettings = JSON.parse('{"visibleRange":{"start":"oops","end":99999999999},"nodeWidth":-50,"nodeLabelSize":500,"canvasBgColor":"javascript:bad","nodeTypeStyles":{"__proto__":{"color":"#ffffff"},"safe":{"color":"#112233"}}}');
+  const maliciousSettings = JSON.parse('{"visibleRange":{"start":"oops","end":99999999999},"nodeWidth":-50,"nodeLabelSize":500,"matrixLimit":999,"edgeListPageSize":99999,"canvasBgColor":"javascript:bad","nodeTypeStyles":{"__proto__":{"color":"#ffffff"},"safe":{"color":"#112233"}}}');
   const result = sanitizeState({ settings: maliciousSettings });
 
   assert.equal(result.settings.visibleRange.start, -1);
   assert.equal(result.settings.visibleRange.end, 2147483647);
   assert.equal(result.settings.nodeWidth, 10);
   assert.equal(result.settings.nodeLabelSize, 72);
+  assert.equal(result.settings.matrixLimit, 300);
+  assert.equal(result.settings.edgeListPageSize, 8_000);
   assert.equal(result.settings.canvasBgColor, '#020617');
   assert.equal(Object.getPrototypeOf(result.settings.nodeTypeStyles), null);
   assert.equal(result.settings.nodeTypeStyles.safe.color, '#112233');

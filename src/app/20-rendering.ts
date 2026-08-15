@@ -149,6 +149,7 @@
     $('#optGridY').value = state.settings.gridSizeY;
     $('#optBrushDiameter').value = state.settings.brushDiameter;
     $('#optMatrixLimit').value = state.settings.matrixLimit;
+    $('#optEdgeListPageSize').value = state.settings.edgeListPageSize;
     const inhEl = $('#optInheritDefaults'); if(inhEl) inhEl.checked = state.settings.inheritDefaults !== false;
     const noLblEl = $('#optNoLabel'); if(noLblEl) noLblEl.checked = Boolean(state.settings.noLabel);
     syncStyleControls();
@@ -897,13 +898,12 @@
     const sorted = visibleNodes();
     return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted;
   }
-  // Profiling shows form-control tables become multi-second work above ~10k cells.
-  // Keep the interactive matrix at 100×100; CSV export still includes the full graph.
-  const MATRIX_RENDER_CAP = 100;
-  const EDGE_LIST_PAGE_SIZE = 250;
-  let edgeListRenderLimit = EDGE_LIST_PAGE_SIZE;
+  let edgeListRenderLimit = 250;
+  function configuredEdgeListPageSize(){
+    return clamp(parseInt(state.settings.edgeListPageSize, 10) || 250, 50, 8000);
+  }
   function renderMatrixAndList(){
-    edgeListRenderLimit = EDGE_LIST_PAGE_SIZE;
+    edgeListRenderLimit = configuredEdgeListPageSize();
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
     const sizeInput = $('#matrixSize'); if(sizeInput) sizeInput.value = state.settings.matrixDimension || total;
@@ -912,11 +912,6 @@
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     if(total === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>'; $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; note.textContent=''; return; }
     if(n === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>'; note.textContent = `0 / ${total}`; }
-    else if(n > MATRIX_RENDER_CAP){
-      // Above the hard cap, do not create a multi-second form-control table.
-      $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n}×${n} = ${n*n} ячеек).<br>Используйте экспорт <b>Matrix CSV</b> во вкладке Данные для просмотра полной матрицы, или сузьте видимый диапазон до ≤${MATRIX_RENDER_CAP} узлов.` : `Matrix hidden for performance (${n}×${n} = ${n*n} cells).<br>Use <b>Matrix CSV</b> export in the Data tab to view the full matrix, or narrow the visible range to ≤${MATRIX_RENDER_CAP} nodes.`) + '</div>';
-      note.textContent = I18N.current === 'ru' ? `скрыто (${n}×${n} > лимит ${MATRIX_RENDER_CAP}²)` : `hidden (${n}×${n} > ${MATRIX_RENDER_CAP}² cap)`;
-    }
     else if(n > limit){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n} узлов > лимит ${limit}). Используйте экспорт Matrix CSV или увеличьте лимит.` : `Matrix hidden for performance (${n} nodes > limit ${limit}). Use Matrix CSV export or increase the limit.`) + '</div>'; note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`; }
     else {
       $('#matrixHost').innerHTML = adjacencyMatrixHtml(visNodes);
@@ -1017,14 +1012,15 @@
     html += '</tbody></table>';
     if(renderedEdges.length < filteredEdges.length){
       const remaining = filteredEdges.length - renderedEdges.length;
+      const pageSize = configuredEdgeListPageSize();
       const label = I18N.current === 'ru'
-        ? `Показать ещё ${Math.min(EDGE_LIST_PAGE_SIZE, remaining)}`
-        : `Show ${Math.min(EDGE_LIST_PAGE_SIZE, remaining)} more`;
+        ? `Показать ещё ${Math.min(pageSize, remaining)}`
+        : `Show ${Math.min(pageSize, remaining)} more`;
       html += `<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`;
     }
     return html;
   }
   function showMoreEdgeRows(){
-    edgeListRenderLimit += EDGE_LIST_PAGE_SIZE;
+    edgeListRenderLimit += configuredEdgeListPageSize();
     $('#edgeListHost').innerHTML = edgeListHtml();
   }
