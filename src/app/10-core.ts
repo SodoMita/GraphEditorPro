@@ -14,7 +14,9 @@
   const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
   const esc = (value: unknown): string => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
   const svg = $('#graphCanvas');
+  const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
+  const sceneLayer = $('#sceneLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');

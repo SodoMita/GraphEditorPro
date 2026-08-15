@@ -65,9 +65,10 @@
     .field input:focus,.field select:focus,.field textarea:focus,.input:focus,.select:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.12)}
     input[type="checkbox"]{accent-color:var(--accent)} input[type="color"]{padding:2px; height:36px}
     .canvas-wrap{position:relative; overflow:hidden; min-height:0}
-    #graphCanvas{--grid:40px; --major-grid:200px; --grid-minor-color:rgba(148,163,184,.105); --grid-major-color:rgba(148,163,184,.16); width:100%; height:100%; display:block; border-radius:var(--radius); background-color:#020617; background-image:linear-gradient(var(--grid-minor-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor-color) 1px,transparent 1px),linear-gradient(var(--grid-major-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-major-color) 1px,transparent 1px); background-size:var(--grid-px,var(--grid)) var(--grid-py,var(--grid)),var(--grid-px,var(--grid)) var(--grid-py,var(--grid)),var(--major-grid-px,var(--major-grid)) var(--major-grid-py,var(--major-grid)),var(--major-grid-px,var(--major-grid)) var(--major-grid-py,var(--major-grid)); background-position:var(--grid-pos-x,0px) var(--grid-pos-y,0px),var(--grid-pos-x,0px) var(--grid-pos-y,0px),var(--major-grid-pos-x,0px) var(--major-grid-pos-y,0px),var(--major-grid-pos-x,0px) var(--major-grid-pos-y,0px); touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; overscroll-behavior:none}
+    .grid-layer{--grid:40px; --major-grid:200px; --grid-minor-color:rgba(148,163,184,.105); --grid-major-color:rgba(148,163,184,.16); position:absolute; inset:0; border-radius:var(--radius); pointer-events:none; contain:strict; background-color:#020617; background-image:linear-gradient(var(--grid-minor-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor-color) 1px,transparent 1px),linear-gradient(var(--grid-major-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-major-color) 1px,transparent 1px); background-size:var(--grid) var(--grid),var(--grid) var(--grid),var(--major-grid) var(--major-grid),var(--major-grid) var(--major-grid); will-change:background-position,background-size}
+    #graphCanvas{position:relative; width:100%; height:100%; display:block; border-radius:var(--radius); background:transparent; touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; overscroll-behavior:none}
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
-    #gridRect{display:none}#edgesLayer,#nodesLayer,#selectionOverlayLayer,#dragLine{will-change:transform}
+    #gridRect{display:none}#sceneLayer{will-change:transform}
     .canvas-hud{position:absolute; left:12px; top:12px; display:flex; gap:8px; flex-wrap:wrap; pointer-events:none}.canvas-hud>*{pointer-events:auto}
     .status-pill{background:rgba(2,6,23,.78); border:1px solid rgba(51,65,85,.8); border-radius:999px; padding:7px 10px; font-size:12px; color:#cbd5e1; backdrop-filter:blur(8px)}
     .zoom-controls{position:absolute; right:12px; top:12px; display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
@@ -121,6 +122,8 @@
     .toast{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); box-shadow:var(--shadow); border-radius:14px; padding:10px 12px; color:#e2e8f0; animation:pop .18s ease-out}
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
     .node-shape{filter:drop-shadow(0 8px 14px rgba(0,0,0,.28))}.node.selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}.node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}.node{cursor:grab}.node.dragging{cursor:grabbing}.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}.canvas-wrap.panning #graphCanvas,.canvas-wrap.panning .node{cursor:grabbing}.edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}.edge-line{fill:none}.edge-arrow{pointer-events:none}.edge.selected .edge-line{stroke:var(--accent)}.edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}.selection-draft{fill:rgba(34,211,238,.12);stroke:#22d3ee;stroke-width:2;stroke-dasharray:6 5;pointer-events:none}.selection-draft.fill-soft{fill:rgba(34,211,238,.08)}.node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
+    /* Filters force expensive per-node rasterization while the scene is moving. */
+    .canvas-wrap.panning .node .node-shape{filter:none}
     .kbd{border:1px solid rgba(148,163,184,.35); border-bottom-width:2px; border-radius:6px; padding:1px 5px; background:#0f172a; font-size:11px; color:#cbd5e1}
     .thin-scroll::-webkit-scrollbar{width:9px;height:9px}.thin-scroll::-webkit-scrollbar-thumb{background:#334155;border-radius:999px}.thin-scroll::-webkit-scrollbar-track{background:transparent}
     @media (max-width:950px){body{overflow:auto}.app{height:auto; min-height:100svh; grid-template-columns:1fr; grid-template-areas:"main" "sidebar"}.sidebar{max-height:none}.main{grid-template-rows:auto 64svh auto}.bottom{grid-template-columns:1fr}.bottom-pane + .bottom-pane{border-left:0;border-top:1px solid rgba(51,65,85,.65)}.tab .wide{display:none}.title-input{width:42vw}.canvas-hud{display:none}.mobile-modebar{display:flex}.table-scroll{max-height:280px}}
@@ -690,6 +693,7 @@
       </header>
 
       <section id="canvasWrap" class="panel canvas-wrap empty">
+        <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
         <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor">
           <defs>
             <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -704,10 +708,12 @@
             </marker>
           </defs>
           <rect id="gridRect" x="-100000" y="-100000" width="200000" height="200000" fill="url(#gridPattern)"></rect>
-          <g id="edgesLayer"></g>
-          <path id="dragLine" class="drag-line" d="" style="display:none"></path>
-          <g id="selectionOverlayLayer"></g>
-          <g id="nodesLayer"></g>
+          <g id="sceneLayer">
+            <g id="edgesLayer"></g>
+            <path id="dragLine" class="drag-line" d="" style="display:none"></path>
+            <g id="selectionOverlayLayer"></g>
+            <g id="nodesLayer"></g>
+          </g>
         </svg>
         <div class="canvas-hud"><div id="statusPill" class="status-pill" data-i18n="ready">Ready</div><div id="statsPill" class="status-pill">0 nodes · 0 edges</div></div>
         <div class="mobile-modebar" aria-label="Quick edit modes">
@@ -1282,7 +1288,9 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 const svg = $('#graphCanvas');
+const gridLayer = $('#gridLayer');
 const gridRect = $('#gridRect');
+const sceneLayer = $('#sceneLayer');
 const edgesLayer = $('#edgesLayer');
 const nodesLayer = $('#nodesLayer');
 const dragLine = $('#dragLine');
@@ -1973,7 +1981,6 @@ let sidebarDirty = false;
 function markSidebarDirty() { sidebarDirty = true; }
 function renderCanvas() {
     applyViewBox();
-    updateGridBackground();
     gridPattern.setAttribute('width', state.settings.gridSizeX);
     gridPattern.setAttribute('height', state.settings.gridSizeY);
     const paths = state.nodes.length;
@@ -2008,21 +2015,19 @@ function applyViewBox() {
     updateGridBackground(state.viewBox);
     syncCameraInputs();
 }
-function fastTransformLayers() { return [edgesLayer, dragLine, selectionOverlayLayer, nodesLayer].filter(Boolean); }
-function setLayerMatrix(scale, tx, ty) {
-    const t = `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`;
-    for (const el of fastTransformLayers())
-        el.setAttribute('transform', t);
+function setSceneMatrix(scale, tx, ty) {
+    // One transform on a promoted parent is substantially cheaper than changing
+    // the root viewBox (which makes the browser rerasterize every SVG child).
+    sceneLayer.setAttribute('transform', `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`);
 }
 function applyPreviewViewBox(preview, base = state.viewBox, rect = null) {
     const scale = base.w / preview.w;
     const tx = base.x - scale * preview.x;
     const ty = base.y - scale * preview.y;
-    setLayerMatrix(scale, tx, ty);
-    updateGridBackground(preview, rect);
+    setSceneMatrix(scale, tx, ty);
+    updateGridBackground(preview, rect, false);
 }
-function clearFastPanTransform() { for (const el of fastTransformLayers())
-    el.removeAttribute('transform'); updateGridBackground(state.viewBox); }
+function clearFastPanTransform() { sceneLayer.removeAttribute('transform'); }
 function hexToRgba(hex, alpha) {
     const h = String(hex || '#94a3b8').replace('#', '');
     if (h.length !== 6)
@@ -2030,35 +2035,43 @@ function hexToRgba(hex, alpha) {
     const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
     return `rgba(${r},${g},${b},${alpha})`;
 }
-function updateGridBackground(vb = state.viewBox, cachedRect = null) {
+function setStyleIfChanged(style, property, value) {
+    if (style[property] !== value)
+        style[property] = value;
+}
+function updateGridBackground(vb = state.viewBox, cachedRect = null, refreshColors = true) {
     const rect = cachedRect || svg.getBoundingClientRect();
-    const s = state.settings;
-    const gx = s.gridSizeX || s.gridSize || 40;
-    const gy = s.gridSizeY || s.gridSize || 40;
-    // Apply background color
-    svg.style.backgroundColor = s.canvasBgColor || '#020617';
-    // Apply grid colors via CSS variables
-    svg.style.setProperty('--grid-minor-color', hexToRgba(s.gridMinorColor, s.gridMinorAlpha ?? 0.105));
-    svg.style.setProperty('--grid-major-color', hexToRgba(s.gridMajorColor, s.gridMajorAlpha ?? 0.16));
-    // Match SVG's default preserveAspectRatio="xMidYMid meet": one uniform world-to-screen scale.
+    if (!rect.width || !rect.height)
+        return;
+    const settings = state.settings;
+    const gx = settings.gridSizeX || settings.gridSize || 40;
+    const gy = settings.gridSizeY || settings.gridSize || 40;
+    // The grid is a sibling layer, so repainting it does not invalidate the
+    // potentially thousands of vector elements in the SVG scene.
+    if (refreshColors) {
+        setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
+        const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
+        const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
+        if (gridLayer.style.getPropertyValue('--grid-minor-color') !== minorColor)
+            gridLayer.style.setProperty('--grid-minor-color', minorColor);
+        if (gridLayer.style.getPropertyValue('--grid-major-color') !== majorColor)
+            gridLayer.style.setProperty('--grid-major-color', majorColor);
+    }
+    // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
     const offsetX = (rect.width - vb.w * scale) / 2;
     const offsetY = (rect.height - vb.h * scale) / 2;
     const cellX = Math.max(4, gx * scale), cellY = Math.max(4, gy * scale);
     const majorXSize = cellX * 5, majorYSize = cellY * 5;
-    const mod = (v, m) => ((v % m) + m) % m;
+    const mod = (value, size) => ((value % size) + size) % size;
     const minorX = mod(offsetX - vb.x * scale, cellX);
     const minorY = mod(offsetY - vb.y * scale, cellY);
     const majorX = mod(offsetX - vb.x * scale, majorXSize);
     const majorY = mod(offsetY - vb.y * scale, majorYSize);
-    svg.style.setProperty('--grid-px', `${cellX}px`);
-    svg.style.setProperty('--grid-py', `${cellY}px`);
-    svg.style.setProperty('--major-grid-px', `${majorXSize}px`);
-    svg.style.setProperty('--major-grid-py', `${majorYSize}px`);
-    svg.style.setProperty('--grid-pos-x', `${minorX}px`);
-    svg.style.setProperty('--grid-pos-y', `${minorY}px`);
-    svg.style.setProperty('--major-grid-pos-x', `${majorX}px`);
-    svg.style.setProperty('--major-grid-pos-y', `${majorY}px`);
+    const size = `${cellX}px ${cellY}px,${cellX}px ${cellY}px,${majorXSize}px ${majorYSize}px,${majorXSize}px ${majorYSize}px`;
+    const position = `${minorX}px ${minorY}px,${minorX}px ${minorY}px,${majorX}px ${majorY}px,${majorX}px ${majorY}px`;
+    setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
+    setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
 }
 function requestViewBoxApply() {
     if (viewBoxFrame)
@@ -3774,7 +3787,12 @@ function beginPinch(a, b) {
         drag = null;
         syncSelectionDom();
     }
-    pan = null;
+    if (pan) {
+        state.viewBox = { ...pan.previewViewBox };
+        pan = null;
+        clearFastPanTransform();
+        applyViewBox();
+    }
     pendingEdgeFrom = null;
     pendingNodeTap = null;
     const c = centerClient(a, b);
@@ -4158,34 +4176,24 @@ svg.addEventListener('pointermove', ev => {
         return;
     }
     if (pan) {
-        // === Per-frame incremental pan ===
-        // Compute the delta for THIS frame only (since the last move event),
-        // then apply it directly to both pan.viewBox and state.viewBox.
-        // This avoids the "spring" compounding that happens when you keep
-        // the original clientX/clientY and recompute total delta every frame
-        // while state.viewBox is being mutated.
-        const r = pan.rect || svg.getBoundingClientRect();
-        const scale = Math.min(r.width / pan.viewBox.w, r.height / pan.viewBox.h);
-        const dx = (ev.clientX - pan.clientX) / scale;
-        const dy = (ev.clientY - pan.clientY) / scale;
-        // Advance reference position so next frame's delta is incremental
-        pan.clientX = ev.clientX;
-        pan.clientY = ev.clientY;
-        // Apply incremental delta to both the pan snapshot and the live state
-        pan.viewBox = { ...pan.viewBox, x: pan.viewBox.x - dx, y: pan.viewBox.y - dy };
-        state.viewBox = { ...pan.viewBox };
-        // Update the preview (used on pointerup to finalize) and render
-        pan.previewViewBox = { ...pan.viewBox };
+        // Keep the real SVG viewBox frozen for the whole gesture. Updating it on
+        // every pointer event forces a full vector layout/paint. Instead, move one
+        // scene group with a temporary matrix and commit the viewBox on pointerup.
+        const rect = pan.rect || svg.getBoundingClientRect();
+        const start = pan.startViewBox;
+        const scale = Math.min(rect.width / start.w, rect.height / start.h);
+        const dx = (ev.clientX - pan.startClientX) / scale;
+        const dy = (ev.clientY - pan.startClientY) / scale;
+        pan.previewViewBox = { ...start, x: start.x - dx, y: start.y - dy };
         if (!pan.frame) {
             pan.frame = true;
             requestAnimationFrame(() => {
                 if (pan) {
                     pan.frame = false;
-                    applyViewBox();
+                    applyPreviewViewBox(pan.previewViewBox, pan.startViewBox, pan.rect);
                 }
             });
         }
-        // NOTE: saveSoon() is intentionally NOT called here — only on pointerup.
         return;
     }
     const p = pointFromEvent(ev);
@@ -4293,8 +4301,8 @@ function finishPointer(ev, cancel = false) {
         queueRender(false);
     }
     if (pan) {
-        // state.viewBox was already updated incrementally during pointermove.
-        // Just clean up the preview transform, apply the final viewBox, and save.
+        const completedPan = pan;
+        state.viewBox = { ...completedPan.previewViewBox };
         pan = null;
         clearFastPanTransform();
         applyViewBox();
@@ -4311,10 +4319,23 @@ function updateDragLine(p) {
     dragLine.setAttribute('d', `M ${from.x} ${from.y} L ${p.x} ${p.y}`);
     dragLine.style.display = 'block';
 }
-function startPan(ev) { ev.preventDefault(); try {
-    svg.setPointerCapture(ev.pointerId);
+function startPan(ev) {
+    ev.preventDefault();
+    try {
+        svg.setPointerCapture(ev.pointerId);
+    }
+    catch { }
+    pan = {
+        startClientX: ev.clientX,
+        startClientY: ev.clientY,
+        startViewBox: { ...state.viewBox },
+        previewViewBox: { ...state.viewBox },
+        rect: svg.getBoundingClientRect(),
+        frame: false
+    };
+    $('#canvasWrap').classList.add('panning');
+    setStatusOnly();
 }
-catch { } pan = { clientX: ev.clientX, clientY: ev.clientY, viewBox: { ...state.viewBox }, previewViewBox: { ...state.viewBox }, rect: svg.getBoundingClientRect(), frame: false }; $('#canvasWrap').classList.add('panning'); setStatusOnly(); }
 svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, { passive: false });
 function zoomAt(factor, clientX, clientY) {
     const r = svg.getBoundingClientRect();
@@ -4325,7 +4346,7 @@ function zoomAt(factor, clientX, clientY) {
     state.viewBox.y = wy - cy * nh;
     state.viewBox.w = nw;
     state.viewBox.h = nh;
-    applyViewBox();
+    requestViewBoxApply();
     saveSoon();
 }
 function fitView() {
@@ -7027,7 +7048,7 @@ function wireUi() {
     // Global reset: clear drag/pan/pinch states on blur or Escape to prevent "zombie drag"
     // (pointerup may be missed if a system alert steals focus or the window loses focus mid-drag)
     function resetInteractionState() {
-        let changed = false;
+        let changed = false, navigationChanged = false;
         if (drag) {
             if (drag.fastNodeId)
                 moveNodeFast(drag.fastNodeId);
@@ -7037,12 +7058,16 @@ function wireUi() {
             changed = true;
         }
         if (pan) {
+            state.viewBox = { ...pan.previewViewBox };
             pan = null;
             changed = true;
+            navigationChanged = true;
         }
         if (pinch) {
+            state.viewBox = { ...pinch.previewViewBox };
             pinch = null;
             changed = true;
+            navigationChanged = true;
         }
         if (edgeDraft) {
             edgeDraft = null;
@@ -7061,6 +7086,11 @@ function wireUi() {
         if (selectDraft) {
             finishSelectionDraft(true);
             changed = true;
+        }
+        if (navigationChanged) {
+            clearFastPanTransform();
+            applyViewBox();
+            saveSoon();
         }
         if (changed) {
             syncSelectionDom();

@@ -173,7 +173,6 @@
   function markSidebarDirty(){ sidebarDirty = true; }
   function renderCanvas(){
     applyViewBox();
-    updateGridBackground();
     gridPattern.setAttribute('width', state.settings.gridSizeX);
     gridPattern.setAttribute('height', state.settings.gridSizeY);
     const paths = state.nodes.length;
@@ -200,52 +199,60 @@
     updateGridBackground(state.viewBox);
     syncCameraInputs();
   }
-  function fastTransformLayers(){ return [edgesLayer, dragLine, selectionOverlayLayer, nodesLayer].filter(Boolean); }
-  function setLayerMatrix(scale, tx, ty){
-    const t = `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`;
-    for(const el of fastTransformLayers()) el.setAttribute('transform', t);
+  function setSceneMatrix(scale, tx, ty){
+    // One transform on a promoted parent is substantially cheaper than changing
+    // the root viewBox (which makes the browser rerasterize every SVG child).
+    sceneLayer.setAttribute('transform', `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`);
   }
   function applyPreviewViewBox(preview, base=state.viewBox, rect=null){
     const scale = base.w / preview.w;
     const tx = base.x - scale * preview.x;
     const ty = base.y - scale * preview.y;
-    setLayerMatrix(scale, tx, ty);
-    updateGridBackground(preview, rect);
+    setSceneMatrix(scale, tx, ty);
+    updateGridBackground(preview, rect, false);
   }
-  function clearFastPanTransform(){ for(const el of fastTransformLayers()) el.removeAttribute('transform'); updateGridBackground(state.viewBox); }
+  function clearFastPanTransform(){ sceneLayer.removeAttribute('transform'); }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
     if(h.length !== 6) return `rgba(148,163,184,${alpha})`;
     const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
     return `rgba(${r},${g},${b},${alpha})`;
   }
-  function updateGridBackground(vb=state.viewBox, cachedRect=null){
+  function setStyleIfChanged(style, property, value){
+    if(style[property] !== value) style[property] = value;
+  }
+  function updateGridBackground(vb=state.viewBox, cachedRect=null, refreshColors=true){
     const rect = cachedRect || svg.getBoundingClientRect();
-    const s = state.settings;
-    const gx = s.gridSizeX || s.gridSize || 40;
-    const gy = s.gridSizeY || s.gridSize || 40;
-    // Apply background color
-    svg.style.backgroundColor = s.canvasBgColor || '#020617';
-    // Apply grid colors via CSS variables
-    svg.style.setProperty('--grid-minor-color', hexToRgba(s.gridMinorColor, s.gridMinorAlpha ?? 0.105));
-    svg.style.setProperty('--grid-major-color', hexToRgba(s.gridMajorColor, s.gridMajorAlpha ?? 0.16));
-    // Match SVG's default preserveAspectRatio="xMidYMid meet": one uniform world-to-screen scale.
+    if(!rect.width || !rect.height) return;
+    const settings = state.settings;
+    const gx = settings.gridSizeX || settings.gridSize || 40;
+    const gy = settings.gridSizeY || settings.gridSize || 40;
+
+    // The grid is a sibling layer, so repainting it does not invalidate the
+    // potentially thousands of vector elements in the SVG scene.
+    if(refreshColors){
+      setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
+      const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
+      const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
+      if(gridLayer.style.getPropertyValue('--grid-minor-color') !== minorColor) gridLayer.style.setProperty('--grid-minor-color', minorColor);
+      if(gridLayer.style.getPropertyValue('--grid-major-color') !== majorColor) gridLayer.style.setProperty('--grid-major-color', majorColor);
+    }
+
+    // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
     const offsetX = (rect.width - vb.w * scale) / 2;
     const offsetY = (rect.height - vb.h * scale) / 2;
     const cellX = Math.max(4, gx * scale), cellY = Math.max(4, gy * scale);
     const majorXSize = cellX * 5, majorYSize = cellY * 5;
-    const mod = (v, m) => ((v % m) + m) % m;
+    const mod = (value, size) => ((value % size) + size) % size;
     const minorX = mod(offsetX - vb.x * scale, cellX);
     const minorY = mod(offsetY - vb.y * scale, cellY);
     const majorX = mod(offsetX - vb.x * scale, majorXSize);
     const majorY = mod(offsetY - vb.y * scale, majorYSize);
-    svg.style.setProperty('--grid-px', `${cellX}px`);
-    svg.style.setProperty('--grid-py', `${cellY}px`);
-    svg.style.setProperty('--major-grid-px', `${majorXSize}px`);
-    svg.style.setProperty('--major-grid-py', `${majorYSize}px`);
-    svg.style.setProperty('--grid-pos-x', `${minorX}px`); svg.style.setProperty('--grid-pos-y', `${minorY}px`);
-    svg.style.setProperty('--major-grid-pos-x', `${majorX}px`); svg.style.setProperty('--major-grid-pos-y', `${majorY}px`);
+    const size = `${cellX}px ${cellY}px,${cellX}px ${cellY}px,${majorXSize}px ${majorYSize}px,${majorXSize}px ${majorYSize}px`;
+    const position = `${minorX}px ${minorY}px,${minorX}px ${minorY}px,${majorX}px ${majorY}px,${majorX}px ${majorY}px`;
+    setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
+    setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
   }
   function requestViewBoxApply(){
     if(viewBoxFrame) return;

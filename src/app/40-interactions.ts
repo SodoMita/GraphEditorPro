@@ -32,7 +32,13 @@
       drag = null;
       syncSelectionDom();
     }
-    pan = null; pendingEdgeFrom = null; pendingNodeTap = null;
+    if(pan){
+      state.viewBox = {...pan.previewViewBox};
+      pan = null;
+      clearFastPanTransform();
+      applyViewBox();
+    }
+    pendingEdgeFrom = null; pendingNodeTap = null;
     const c = centerClient(a,b);
     pinch = { startDistance:distClient(a,b), startViewBox:{...state.viewBox}, startWorld:null, rect:svg.getBoundingClientRect(), previewViewBox:{...state.viewBox}, frame:false };
     pinch.startWorld = clientToWorld(c.clientX, c.clientY, state.viewBox, pinch.rect);
@@ -355,31 +361,24 @@
     updatePointer(ev);
     if(pinch){ updatePinch(); return; }
     if(pan){
-      // === Per-frame incremental pan ===
-      // Compute the delta for THIS frame only (since the last move event),
-      // then apply it directly to both pan.viewBox and state.viewBox.
-      // This avoids the "spring" compounding that happens when you keep
-      // the original clientX/clientY and recompute total delta every frame
-      // while state.viewBox is being mutated.
-      const r = pan.rect || svg.getBoundingClientRect();
-      const scale = Math.min(r.width / pan.viewBox.w, r.height / pan.viewBox.h);
-      const dx = (ev.clientX - pan.clientX) / scale;
-      const dy = (ev.clientY - pan.clientY) / scale;
-      // Advance reference position so next frame's delta is incremental
-      pan.clientX = ev.clientX;
-      pan.clientY = ev.clientY;
-      // Apply incremental delta to both the pan snapshot and the live state
-      pan.viewBox = { ...pan.viewBox, x: pan.viewBox.x - dx, y: pan.viewBox.y - dy };
-      state.viewBox = { ...pan.viewBox };
-      // Update the preview (used on pointerup to finalize) and render
-      pan.previewViewBox = { ...pan.viewBox };
+      // Keep the real SVG viewBox frozen for the whole gesture. Updating it on
+      // every pointer event forces a full vector layout/paint. Instead, move one
+      // scene group with a temporary matrix and commit the viewBox on pointerup.
+      const rect = pan.rect || svg.getBoundingClientRect();
+      const start = pan.startViewBox;
+      const scale = Math.min(rect.width / start.w, rect.height / start.h);
+      const dx = (ev.clientX - pan.startClientX) / scale;
+      const dy = (ev.clientY - pan.startClientY) / scale;
+      pan.previewViewBox = {...start, x:start.x - dx, y:start.y - dy};
       if(!pan.frame){
         pan.frame = true;
         requestAnimationFrame(() => {
-          if(pan){ pan.frame = false; applyViewBox(); }
+          if(pan){
+            pan.frame = false;
+            applyPreviewViewBox(pan.previewViewBox, pan.startViewBox, pan.rect);
+          }
         });
       }
-      // NOTE: saveSoon() is intentionally NOT called here — only on pointerup.
       return;
     }
     const p = pointFromEvent(ev);
@@ -460,8 +459,8 @@
       queueRender(false);
     }
     if(pan){
-      // state.viewBox was already updated incrementally during pointermove.
-      // Just clean up the preview transform, apply the final viewBox, and save.
+      const completedPan = pan;
+      state.viewBox = {...completedPan.previewViewBox};
       pan = null;
       clearFastPanTransform();
       applyViewBox();
@@ -473,7 +472,20 @@
     const from = nodeById(edgeDraft.from); if(!from) return;
     dragLine.setAttribute('d', `M ${from.x} ${from.y} L ${p.x} ${p.y}`); dragLine.style.display = 'block';
   }
-  function startPan(ev){ ev.preventDefault(); try{ svg.setPointerCapture(ev.pointerId); }catch{} pan = { clientX:ev.clientX, clientY:ev.clientY, viewBox:{...state.viewBox}, previewViewBox:{...state.viewBox}, rect:svg.getBoundingClientRect(), frame:false }; $('#canvasWrap').classList.add('panning'); setStatusOnly(); }
+  function startPan(ev){
+    ev.preventDefault();
+    try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    pan = {
+      startClientX:ev.clientX,
+      startClientY:ev.clientY,
+      startViewBox:{...state.viewBox},
+      previewViewBox:{...state.viewBox},
+      rect:svg.getBoundingClientRect(),
+      frame:false
+    };
+    $('#canvasWrap').classList.add('panning');
+    setStatusOnly();
+  }
 
   svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, {passive:false});
   function zoomAt(factor, clientX, clientY){
@@ -482,7 +494,7 @@
     const wx = state.viewBox.x + cx * state.viewBox.w, wy = state.viewBox.y + cy * state.viewBox.h;
     const nw = clamp(state.viewBox.w * factor, 120, 20000), nh = clamp(state.viewBox.h * factor, 90, 20000);
     state.viewBox.x = wx - cx * nw; state.viewBox.y = wy - cy * nh; state.viewBox.w = nw; state.viewBox.h = nh;
-    applyViewBox(); saveSoon();
+    requestViewBoxApply(); saveSoon();
   }
   function fitView(){
     if(!state.nodes.length){ state.viewBox = {x:-500,y:-330,w:1000,h:660}; queueRender(false); saveSoon(); return; }

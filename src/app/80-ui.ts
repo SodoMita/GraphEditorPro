@@ -368,18 +368,19 @@
     // Global reset: clear drag/pan/pinch states on blur or Escape to prevent "zombie drag"
     // (pointerup may be missed if a system alert steals focus or the window loses focus mid-drag)
     function resetInteractionState(){
-      let changed = false;
+      let changed = false, navigationChanged = false;
       if(drag){
         if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
         if(drag.moved) pushHistory('move node');
         drag = null; changed = true;
       }
-      if(pan){ pan = null; changed = true; }
-      if(pinch){ pinch = null; changed = true; }
+      if(pan){ state.viewBox = {...pan.previewViewBox}; pan = null; changed = true; navigationChanged = true; }
+      if(pinch){ state.viewBox = {...pinch.previewViewBox}; pinch = null; changed = true; navigationChanged = true; }
       if(edgeDraft){ edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d',''); changed = true; }
       if(pendingEdgeFrom){ pendingEdgeFrom = null; changed = true; }
       if(pendingNodeTap){ pendingNodeTap = null; changed = true; }
       if(selectDraft){ finishSelectionDraft(true); changed = true; }
+      if(navigationChanged){ clearFastPanTransform(); applyViewBox(); saveSoon(); }
       if(changed){ syncSelectionDom(); setStatusOnly(); $('#canvasWrap').classList.remove('panning'); activePointers.clear(); }
     }
     window.addEventListener('blur', resetInteractionState);
