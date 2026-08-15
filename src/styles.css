@@ -312,6 +312,14 @@
       border-radius:7px; padding:4px 5px; text-align:center; min-height:28px;
     }
     .matrix-input:focus{outline:none; border-color:var(--accent)}
+    /* Matrix inputs inside .field labels must keep their compact size —
+       the generic .field input rule would otherwise stretch them */
+    .field input.matrix-input, .field select.matrix-input{
+      width:62px; min-width:44px; min-height:28px; padding:4px 5px; font-size:12px;
+    }
+    .field input.matrix-label-input{
+      width:80px; min-height:28px; padding:3px 5px; font-size:12px;
+    }
     .matrix-input.matrix-selected,.matrix-label-input.matrix-selected{border-color:var(--accent)!important; box-shadow:0 0 0 2px rgba(34,211,238,.16)}
     .matrix-label-input{
       width:80px; background:transparent; border:1px solid transparent; color:#bfdbfe; text-align:center;
@@ -432,10 +440,36 @@
       .tabbar{display:none}
       .toast-stack{bottom:calc(72px + var(--sa-bottom))}
     }
-    /* Portrait phones: side-by-side split is unusable, hide the toggle */
+    /* Portrait phones: hide the orientation toggle. Panels are sized by
+       their content but capped at ~30% of the screen — a short matrix or
+       edge list never leaves a blank half-screen block, and big ones
+       scroll inside instead of eating the viewport. */
     @media (max-width:950px) and (orientation:portrait){
       #btnViewOrient{display:none}
       .appbar .toolbar{grid-template-columns:repeat(7,minmax(0,1fr))}
+      .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(auto,30vh); grid-template-areas:"canvas" "bottom"}
+      .main.v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1fr 1fr}
+      .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      /* Pane is a flex column: title + controls fixed, table fills and
+         scrolls inside the capped height — no dead space */
+      .main.v-matrix .bottom-pane:nth-child(1),
+      .main.v-edges .bottom-pane:nth-child(2){
+        display:flex; flex-direction:column; min-height:0; container-type:inline-size;
+      }
+      .table-scroll{flex:1 1 auto; min-height:0; max-height:none}
+      /* Keep control bars compact */
+      .matrix-controls{gap:4px; margin-bottom:5px}
+      .matrix-controls .btn{min-height:25px; padding:0 7px; font-size:10.5px}
+      .matrix-controls .field{font-size:10.5px}
+      .matrix-controls .range-label{display:none}
+      /* Compact table rows on phones */
+      th,td{padding:3px 5px}
+      td .matrix-input, th .matrix-label-input{min-height:24px; font-size:12px; padding:2px 4px}
+      /* Narrow panes (side-by-side): single scrollable control row */
+      @container (max-width:300px){
+        .matrix-controls{flex-wrap:nowrap; overflow-x:auto; padding-bottom:2px}
+        .matrix-controls .btn, .matrix-controls .field{flex:0 0 auto}
+      }
     }
 
     /* =====================================================================
