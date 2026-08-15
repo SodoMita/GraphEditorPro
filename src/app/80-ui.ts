@@ -3,6 +3,14 @@
     svg.addEventListener('contextmenu', ev => ev.preventDefault());
     svg.addEventListener('auxclick', ev => ev.preventDefault());
     $$('.tab').forEach(btn => btn.addEventListener('click', () => { $$('.tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); $$('.tab-panel').forEach(p=>p.classList.remove('active')); $(`#panel-${btn.dataset.tab}`).classList.add('active'); }));
+    // Collapsible sections
+    $$('.section.collapsible').forEach(sec => {
+      const title = sec.querySelector(':scope > .section-title');
+      if(!title) return;
+      // Apply initial collapsed state from data-collapsed attribute
+      if(sec.dataset.collapsed === 'true') sec.classList.add('collapsed');
+      title.addEventListener('click', () => sec.classList.toggle('collapsed'));
+    });
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
