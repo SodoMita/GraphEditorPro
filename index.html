@@ -5053,36 +5053,70 @@ function hitTestSelection(draft, liveBrush = false) {
     const inPoly = p => pts.length > 2 && pointInPolygon(p, pts);
     const test = p => tool === 'rect' ? inRect(p) : tool === 'line' ? nearLine(p) : tool === 'brush' ? nearBrush(p) : inPoly(p);
     const hitMode = state.settings.hitTestMode === 'center' ? 'center' : 'any';
-    // In 'center' mode only the node's centre point counts; in 'any' mode a
-    // node is also selected when the region overlaps any part of its body.
+    // --- 'any' mode helper geometry ---
+    // A node is treated as a circle of its radius; an edge as a thick line
+    // segment between its endpoints. 'any' selects when the region overlaps
+    // any part of that body; 'center' only when the centre point is hit.
     const circleRectIntersect = (cx, cy, r, x0, y0, x1, y1) => {
         const nx = clamp(cx, x0, x1), ny = clamp(cy, y0, y1);
         return Math.hypot(cx - nx, cy - ny) <= r;
     };
+    // Sample N points along a segment; true if any falls inside the polygon.
+    const segInPoly = (ax, ay, bx, by, n, poly) => {
+        for (let k = 0; k <= n; k++) {
+            const t = k / n;
+            const px = ax + (bx - ax) * t, py = ay + (by - ay) * t;
+            if (pointInPolygon({ x: px, y: py }, poly))
+                return true;
+        }
+        return false;
+    };
+    // Sample points along a segment; true if any is inside the rectangle.
+    const segInRect = (ax, ay, bx, by, n) => {
+        for (let k = 0; k <= n; k++) {
+            const t = k / n;
+            const px = ax + (bx - ax) * t, py = ay + (by - ay) * t;
+            if (px >= minX && px <= maxX && py >= minY && py <= maxY)
+                return true;
+        }
+        return false;
+    };
+    const lineThresh = Math.max(22, state.viewBox.w / 220);
     for (const n of state.nodes) {
+        const r = nodeRadius(n);
+        // Centre-point test always counts (and is the only test in 'center' mode).
         if (test(n)) {
             nodes.push(n.id);
             continue;
         }
         if (hitMode !== 'any')
             continue;
-        const r = nodeRadius(n);
+        let hit = false;
         if (tool === 'rect') {
-            if (circleRectIntersect(n.x, n.y, r, minX, minY, maxX, maxY))
-                nodes.push(n.id);
+            hit = circleRectIntersect(n.x, n.y, r, minX, minY, maxX, maxY);
         }
         else if (tool === 'brush') {
-            if (pts.some(q => Math.hypot(q.x - n.x, q.y - n.y) <= brushRadius + r))
-                nodes.push(n.id);
+            hit = pts.some(q => Math.hypot(q.x - n.x, q.y - n.y) <= brushRadius + r);
         }
         else if (tool === 'line') {
-            if (distToSegment(n, draft.start, draft.end) <= r + Math.max(22, state.viewBox.w / 220))
-                nodes.push(n.id);
+            hit = distToSegment(n, draft.start, draft.end) <= r + lineThresh;
         }
         else if (pts.length > 2) {
-            if (pts.some(q => Math.hypot(q.x - n.x, q.y - n.y) <= r))
-                nodes.push(n.id);
+            // Lasso / polygon: node selected if its body overlaps the polygon
+            // (centre inside, or any boundary point inside).
+            hit = pointInPolygon(n, pts);
+            if (!hit) {
+                for (let k = 0; k < 8; k++) {
+                    const ang = k * Math.PI / 4;
+                    if (pointInPolygon({ x: n.x + r * Math.cos(ang), y: n.y + r * Math.sin(ang) }, pts)) {
+                        hit = true;
+                        break;
+                    }
+                }
+            }
         }
+        if (hit)
+            nodes.push(n.id);
     }
     for (const e of state.edges) {
         const a = nodeById(e.from), b = nodeById(e.to);
@@ -5095,7 +5129,23 @@ function hitTestSelection(draft, liveBrush = false) {
                 edges.push(e.id);
             continue;
         }
-        if (test(mid) || (tool === 'brush' && pts.some(q => distToSegment(q, a, b) <= brushRadius)) || (tool === 'rect' && (inRect(a) || inRect(b))) || (tool === 'line' && segmentNearSegment(draft.start, draft.end, a, b, 20)))
+        // 'any': the edge is selected when any part of its line overlaps the region.
+        let hit = test(mid);
+        if (!hit) {
+            if (tool === 'brush') {
+                hit = pts.some(q => distToSegment(q, a, b) <= brushRadius);
+            }
+            else if (tool === 'line') {
+                hit = segmentNearSegment(draft.start, draft.end, a, b, 20);
+            }
+            else if (tool === 'rect') {
+                hit = segInRect(a.x, a.y, b.x, b.y, 8);
+            }
+            else if (pts.length > 2) {
+                hit = segInPoly(a.x, a.y, b.x, b.y, 4, pts);
+            }
+        }
+        if (hit)
             edges.push(e.id);
     }
     return { nodes, edges };
