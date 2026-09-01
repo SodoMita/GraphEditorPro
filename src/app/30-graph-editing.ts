@@ -53,30 +53,61 @@
   }
   function selectItem(type,id){ setSelection(type === 'node' ? [id] : [], type === 'edge' ? [id] : [], {type,id}, false); }
   function deselect(){ if(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length) setSelection([], [], null, false); }
+  // Mirror of the selection currently reflected in the DOM. syncSelectionDom
+  // used to walk and re-toggle every rendered node and edge on every click;
+  // with large graphs that is thousands of class operations per click. Only
+  // the elements whose state actually changed are touched now — O(delta).
+  let domSelectedNodes = new Set<string>(), domSelectedEdges = new Set<string>();
+  function resetSelectionMirror(){
+    // Called after a full render pass: renderEdges/renderNodes just applied the
+    // exact selection state to every element, so the mirror can adopt it.
+    domSelectedNodes = selectedNodeIds();
+    domSelectedEdges = selectedEdgeIds();
+  }
   function syncSelectionDom(){
     const ns = selectedNodeIds(), es = selectedEdgeIds();
-    nodesLayer.querySelectorAll('.node.selected,.node.dragging').forEach(el => el.classList.remove('selected','dragging'));
-    nodesLayer.querySelectorAll('.node').forEach(el => el.classList.toggle('selected', ns.has(el.dataset.id)));
-    edgesLayer.querySelectorAll('.edge').forEach(el => {
-      const selected = es.has(el.dataset.id);
-      el.classList.toggle('selected', selected);
-      const e = edgeById(el.dataset.id);
-      // Update arrow color to match selection state
-      const arrow = el.querySelector('.edge-arrow');
-      if(arrow && e){
-        const v = edgeVisual(e);
-        arrow.setAttribute('fill', selected ? '#22d3ee' : v.color);
+    for(const id of domSelectedNodes){
+      if(!ns.has(id)){ const el = nodeEl(id); if(el) toggleClass(el, 'selected', false); }
+    }
+    for(const id of ns){
+      if(!domSelectedNodes.has(id)){ const el = nodeEl(id); if(el) toggleClass(el, 'selected', true); }
+    }
+    for(const id of domSelectedEdges){
+      if(!es.has(id)){
+        const el = edgeEl(id); if(!el) continue;
+        toggleClass(el, 'selected', false);
+        const arrow = (el as any).__arrow;
+        if(arrow){ const e = edgeById(id); if(e && e.directed) setAttr(arrow, 'fill', edgeRenderStyleC(e).color); }
       }
-    });
+    }
+    for(const id of es){
+      if(!domSelectedEdges.has(id)){
+        const el = edgeEl(id); if(!el) continue;
+        toggleClass(el, 'selected', true);
+        const arrow = (el as any).__arrow;
+        if(arrow){ const e = edgeById(id); if(e && e.directed) setAttr(arrow, 'fill', '#22d3ee'); }
+      }
+    }
+    domSelectedNodes = ns; domSelectedEdges = es;
     updateMatrixSelectionDom();
   }
   function updateMatrixSelectionDom(){
+    const host = $('#matrixHost');
+    if(!host || !host.firstElementChild) return;
+    // The matrix panel is hidden in "graph" view and its HTML is rebuilt from
+    // the current selection whenever the view switches back — no need to sync.
+    const mainEl = document.querySelector('.main');
+    if(mainEl && (mainEl as HTMLElement).dataset?.view === 'graph') return;
     const ns = selectedNodeIds(), es = selectedEdgeIds();
-    $$('#matrixHost [data-node-label]').forEach(input => input.classList.toggle('matrix-selected', ns.has(input.dataset.nodeLabel)));
-    $$('#matrixHost [data-cell-from][data-cell-to]').forEach(input => {
+    for(const input of host.querySelectorAll('[data-node-label]')){
+      toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
+    }
+    for(const input of host.querySelectorAll('[data-cell-from][data-cell-to]')){
       const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
-      input.classList.toggle('matrix-selected', ids.some(id => es.has(id)));
-    });
+      let selected = false;
+      for(let i = 0; i < ids.length; i++){ if(es.has(ids[i])){ selected = true; break; } }
+      toggleClass(input, 'matrix-selected', selected);
+    }
   }
   function selectMatrixNode(id, append=false){
     if(!nodeById(id)) return;

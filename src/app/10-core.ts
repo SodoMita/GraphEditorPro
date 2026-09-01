@@ -6,6 +6,14 @@
 
   /** Return a required DOM element or fail immediately with a useful error. */
   const $ = (selector: string, root: ParentNode = document): any => {
+    // Plain "#id" lookups are extremely common in render paths (camera inputs,
+    // selection panel, status pills). querySelector('#id') walks the tree in
+    // some engines/libraries; getElementById is a hash lookup.
+    if(root === document && typeof document.getElementById === 'function' && /^#[A-Za-z][A-Za-z0-9_-]*$/.test(selector)){
+      const byId = document.getElementById(selector.slice(1));
+      if(!byId) throw new Error(`Required DOM element not found: ${selector}`);
+      return byId;
+    }
     const element = root.querySelector(selector);
     if(!element) throw new Error(`Required DOM element not found: ${selector}`);
     return element;
@@ -81,10 +89,10 @@
   let appHistory: string[] = [], appHistoryIndex = -1;
   let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
-  let viewBoxFrame = false;
   const activePointers = new Map();
 
   function snapshot(){
+    flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
       title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, nextNode:state.nextNode, nextEdge:state.nextEdge,
       nodes:state.nodes, edges:state.edges, settings:state.settings, viewBox:state.viewBox,
@@ -424,7 +432,26 @@
     while(n > 0){ n--; out = String.fromCharCode(65 + (n % 26)) + out; n = Math.floor(n / 26); }
     return out;
   }
-  function nodeById(id){ return state.nodes.find(n => n.id === id); }
-  function edgeById(id){ return state.edges.find(e => e.id === id); }
+  // === Indexed id lookups ===
+  // nodeById/edgeById used to be Array.find linear scans. They sit on every hot
+  // path (selection sync walks all edges, drag updates resolve both endpoints
+  // per affected edge, algorithms resolve per traversal step), which made large
+  // graphs O(E*N) per frame — the single biggest source of lag versus draw.io.
+  // The index rebuilds lazily, and only when the array identity, its length, or
+  // an explicit invalidation (in-place id rewrite) says the mapping changed.
+  let graphRev = 0;
+  function invalidateGraphIndex(){ graphRev++; }
+  let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
+  let edgeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
+  function indexFor(index, arr){
+    if(index.arr !== arr || index.len !== arr.length || index.rev !== graphRev){
+      const map = new Map();
+      for(let i = 0; i < arr.length; i++) map.set(arr[i].id, arr[i]);
+      index.arr = arr; index.len = arr.length; index.rev = graphRev; index.map = map;
+    }
+    return index.map;
+  }
+  function nodeById(id){ return indexFor(nodeIndex, state.nodes).get(id); }
+  function edgeById(id){ return indexFor(edgeIndex, state.edges).get(id); }
 
   // === Visual resolution: merge per-item overrides → type styles → defaults ===

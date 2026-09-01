@@ -54,6 +54,14 @@ Runtime data is also validated before use. Imported graph state is size-limited,
 
 ## Performance design
 
-Navigation keeps the logical SVG `viewBox` frozen during a gesture and applies one compositor-backed CSS transform to the complete SVG image. The grid is an oversized cached layer transformed alongside it, avoiding per-frame gradient repainting. The crisp vector `viewBox` is committed once when navigation ends.
+Navigation keeps the logical SVG `viewBox` frozen during a gesture and applies one compositor-backed CSS transform to the complete SVG image. The grid is an oversized cached layer transformed alongside it, avoiding per-frame gradient repainting. The crisp vector `viewBox` is committed once when navigation ends. Wheel zooming uses the same mechanism: each wheel event only scales the existing raster on the compositor and the expensive full-vector `viewBox` relayout happens once, when the wheel settles (~140 ms) or a pointer gesture adopts the camera.
 
-Large supporting views are bounded independently of graph data using configurable reliability settings. The defaults render 250 edge rows per page and matrices up to 90×90. Both settings accept any positive integer, so faster computers can raise them without an artificial upper cap. Full graph data remains available through paging and CSV export.
+Beyond navigation, the hot interaction paths are engineered so their cost tracks *what changed*, not the total graph size:
+
+- **Indexed lookups.** `nodeById`/`edgeById` are lazily rebuilt hash indexes instead of linear scans. Selection sync and drag geometry used to degrade quadratically (every rendered edge resolved by scanning all edges).
+- **De-duplicated DOM writes.** Every attribute/class write on rendered graph elements goes through small `setAttr`/`toggleClass` helpers that skip the DOM when the value is unchanged, so a render pass that changes nothing writes nothing.
+- **Delta selection sync.** Selecting an item touches only the elements whose selection state actually changed (the previous selection is mirrored), instead of re-toggle-walking every node and edge.
+- **Per-pass visual caching.** Merged node/edge style objects and node radii are computed once per render pass and reused across edges and drag frames, eliminating thousands of short-lived allocations per frame.
+- **Gesture-scoped re-rendering.** A click that does not move anything performs no full render pass at all, and a drag with live edges (up to 40 affected) already patched every transform and path during the gesture, so release needs no re-render either.
+- **Interaction quality mode.** While a drag or brush gesture is active (`.fast-interaction`), node drop-shadow filters and label halos are skipped — they are the most expensive effects to re-rasterize — and restored on release.
+- **Bounded supporting views.** Large matrices and edge lists render behind configurable limits (defaults: 250 edge rows per page, matrices up to 90×90) independently of graph size; both settings accept any positive integer, so faster computers can raise them without an artificial upper cap. Full data remains available through paging and CSV export.

@@ -1,11 +1,19 @@
-  function registerPointer(ev){ activePointers.set(ev.pointerId, {id:ev.pointerId, type:ev.pointerType || 'mouse', clientX:ev.clientX, clientY:ev.clientY}); }
+  let pointerRect = null; // viewport rect captured at pointerdown, reused for the whole gesture
+  function registerPointer(ev){
+    // Adopt any pending wheel-zoom before new gesture math runs, and capture the
+    // viewport rect once per gesture (clientToWorld used to force a layout with
+    // getBoundingClientRect on every single pointermove).
+    flushZoomPreview();
+    activePointers.set(ev.pointerId, {id:ev.pointerId, type:ev.pointerType || 'mouse', clientX:ev.clientX, clientY:ev.clientY});
+    if(!pointerRect) pointerRect = svg.getBoundingClientRect();
+  }
   function updatePointer(ev){ const p = activePointers.get(ev.pointerId); if(p){ p.clientX = ev.clientX; p.clientY = ev.clientY; } }
-  function unregisterPointer(ev){ activePointers.delete(ev.pointerId); }
+  function unregisterPointer(ev){ activePointers.delete(ev.pointerId); if(!activePointers.size) pointerRect = null; }
   function touchPointers(){ return [...activePointers.values()].filter(p => p.type === 'touch'); }
   function distClient(a,b){ return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
   function centerClient(a,b){ return {clientX:(a.clientX + b.clientX) / 2, clientY:(a.clientY + b.clientY) / 2}; }
   function clientToWorld(clientX, clientY, viewBox=state.viewBox, rect=null){
-    const r = rect || svg.getBoundingClientRect();
+    const r = rect || pointerRect || svg.getBoundingClientRect();
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly, otherwise cursor-based
     // gestures drift when the canvas aspect ratio differs from the viewBox.
     const scale = Math.min(r.width / viewBox.w, r.height / viewBox.h);
@@ -29,6 +37,8 @@
     if(drag){
       if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
       if(drag.moved) pushHistory('move node');
+      const dragNodes = drag.nodes || (drag.node ? [drag.node] : []);
+      for(const dn of dragNodes){ const el = nodeEl(dn.id); if(el) toggleClass(el, 'dragging', false); }
       drag = null;
       syncSelectionDom();
     }
@@ -312,8 +322,8 @@
     const dragStarts = new Map(dragNodes.map(node => [node.id, {x:node.x, y:node.y}]));
     const dragIdSet = new Set(dragNodes.map(node => node.id));
     const affectedEdges = state.edges.filter(e => dragIdSet.has(e.from) || dragIdSet.has(e.to));
-    drag = { nodeId:id, node:n, nodes:dragNodes, starts:dragStarts, ignoreIds:dragIdSet, startX:n.x, startY:n.y, offsetX:p.x-n.x, offsetY:p.y-n.y, moved:false, affectedEdges, liveEdges: affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT, nodeMap:new Map(state.nodes.map(node => [node.id, node])), fastFrame:false, fastNodeId:null };
-    for(const dn of dragNodes){ const el = nodeEl(dn.id); if(el) el.classList.add('dragging'); }
+    drag = { nodeId:id, node:n, nodes:dragNodes, starts:dragStarts, ignoreIds:dragIdSet, startX:n.x, startY:n.y, offsetX:p.x-n.x, offsetY:p.y-n.y, moved:false, affectedEdges, liveEdges: affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT, fastFrame:false, fastNodeId:null, vc:null };
+    for(const dn of dragNodes){ const el = nodeEl(dn.id); if(el) toggleClass(el, 'dragging', true); }
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
   }
@@ -359,6 +369,9 @@
   });
   svg.addEventListener('pointermove', ev => {
     updatePointer(ev);
+    // Pending wheel-zoom distorts clientToWorld (the preview lives in a CSS
+    // transform, not the viewBox). Commit it before any gesture math.
+    if(zoomPreview) flushZoomPreview();
     if(pinch){ updatePinch(); return; }
     if(pan){
       // Keep the real SVG viewBox frozen for the whole gesture. Updating it on
@@ -409,6 +422,7 @@
   svg.addEventListener('pointerup', ev => finishPointer(ev));
   svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
   function finishPointer(ev, cancel=false){
+    if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
     if(pinch){
       unregisterPointer(ev);
       if(touchPointers().length < 2) endPinch();
@@ -450,13 +464,18 @@
         if (drag.nodes) {
           for(const dn of drag.nodes){
             const el = nodeEl(dn.id);
-            if(el) el.classList.remove('dragging');
+            if(el) toggleClass(el, 'dragging', false);
           }
         }
       } catch(e){}
+      const moved = drag.moved, edgesWereLive = drag.liveEdges !== false;
       drag = null;
       $('#canvasWrap').classList.remove('fast-interaction');
-      queueRender(false);
+      // A click that never moved left the canvas untouched (selection is synced
+      // directly), and a live-edge drag already patched every transform and path
+      // frame-by-frame — either way the full re-render pass is unnecessary.
+      // Only drags whose edges were frozen (very high degree) need a re-render.
+      if(moved && !edgesWereLive) queueRender(false);
     }
     if(pan){
       const completedPan = pan;
@@ -488,14 +507,54 @@
   }
 
   svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, {passive:false});
+  // === Composited wheel zoom ===
+  // Changing the SVG viewBox re-lays-out and re-rasterizes every vector element;
+  // doing that per wheel tick is the main reason zooming felt slower than
+  // draw.io on large graphs. Wheel events now only drive a GPU-composited CSS
+  // transform preview (same mechanism as panning); the real viewBox is applied
+  // exactly once, when the wheel settles.
+  let zoomPreview = null; // {base, preview, rect, frame, timer}
+  const ZOOM_COMMIT_DELAY = 140;
   function zoomAt(factor, clientX, clientY){
-    const r = svg.getBoundingClientRect();
+    // A wheel arriving mid pan/pinch would fight the gesture's transform —
+    // finalize the gesture first so zoom starts from what is on screen.
+    if(pan){
+      state.viewBox = {...pan.previewViewBox};
+      pan = null;
+      clearFastPanTransform();
+      $('#canvasWrap').classList.remove('panning');
+    }
+    if(pinch) endPinch();
+    const base = zoomPreview ? zoomPreview.base : {...state.viewBox};
+    const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
+    const r = zoomPreview ? zoomPreview.rect : svg.getBoundingClientRect();
     const cx = (clientX - r.left) / r.width, cy = (clientY - r.top) / r.height;
-    const wx = state.viewBox.x + cx * state.viewBox.w, wy = state.viewBox.y + cy * state.viewBox.h;
-    const nw = clamp(state.viewBox.w * factor, 120, 20000), nh = clamp(state.viewBox.h * factor, 90, 20000);
-    state.viewBox.x = wx - cx * nw; state.viewBox.y = wy - cy * nh; state.viewBox.w = nw; state.viewBox.h = nh;
-    requestViewBoxApply(); saveSoon();
+    const wx = cur.x + cx * cur.w, wy = cur.y + cy * cur.h;
+    const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
+    const preview = { x: wx - cx * nw, y: wy - cy * nh, w: nw, h: nh };
+    if(!zoomPreview) zoomPreview = { base, preview, rect: r, frame: false, timer: null };
+    else zoomPreview.preview = preview;
+    if(!zoomPreview.frame){
+      zoomPreview.frame = true;
+      requestAnimationFrame(() => {
+        if(!zoomPreview) return;
+        zoomPreview.frame = false;
+        applyPreviewViewBox(zoomPreview.preview, zoomPreview.base, zoomPreview.rect);
+      });
+    }
+    clearTimeout(zoomPreview.timer);
+    zoomPreview.timer = setTimeout(commitZoomPreview, ZOOM_COMMIT_DELAY);
   }
+  function commitZoomPreview(){
+    if(!zoomPreview) return;
+    const z = zoomPreview; zoomPreview = null;
+    clearTimeout(z.timer);
+    state.viewBox = {...z.preview};
+    clearFastPanTransform();
+    applyViewBox();
+    saveSoon();
+  }
+  function flushZoomPreview(){ if(zoomPreview) commitZoomPreview(); }
   function fitView(){
     if(!state.nodes.length){ state.viewBox = {x:-500,y:-330,w:1000,h:660}; queueRender(false); saveSoon(); return; }
     const xs = state.nodes.map(n=>n.x), ys = state.nodes.map(n=>n.y);

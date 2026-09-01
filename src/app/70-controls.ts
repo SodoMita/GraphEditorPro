@@ -69,12 +69,15 @@
     const cx = state.viewBox.x + state.viewBox.w/2;
     const cy = state.viewBox.y + state.viewBox.h/2;
     const xEl = $('#cameraX'), yEl = $('#cameraY'), wEl = $('#cameraW'), hEl = $('#cameraH');
-    if(xEl && document.activeElement !== xEl) xEl.value = Math.round(cx);
-    if(yEl && document.activeElement !== yEl) yEl.value = Math.round(cy);
-    if(wEl && document.activeElement !== wEl) wEl.value = Math.round(state.viewBox.w);
-    if(hEl && document.activeElement !== hEl) hEl.value = Math.round(state.viewBox.h);
+    if(xEl && document.activeElement !== xEl && xEl.value !== String(Math.round(cx))) xEl.value = Math.round(cx);
+    if(yEl && document.activeElement !== yEl && yEl.value !== String(Math.round(cy))) yEl.value = Math.round(cy);
+    if(wEl && document.activeElement !== wEl && wEl.value !== String(Math.round(state.viewBox.w))) wEl.value = Math.round(state.viewBox.w);
+    if(hEl && document.activeElement !== hEl && hEl.value !== String(Math.round(state.viewBox.h))) hEl.value = Math.round(state.viewBox.h);
     const readout = $('#cameraReadout');
-    if(readout) readout.textContent = (I18N.current === 'ru' ? 'центр' : 'center') + ` (${Math.round(cx)}, ${Math.round(cy)}) · ` + (I18N.current === 'ru' ? 'зум' : 'zoom') + ` ${(1000/state.viewBox.w*100).toFixed(0)}%`;
+    if(readout){
+      const text = (I18N.current === 'ru' ? 'центр' : 'center') + ` (${Math.round(cx)}, ${Math.round(cy)}) · ` + (I18N.current === 'ru' ? 'зум' : 'zoom') + ` ${(1000/state.viewBox.w*100).toFixed(0)}%`;
+      if(readout.textContent !== text) readout.textContent = text;
+    }
   }
   function setCameraFromInputs(){
     const cx = finite($('#cameraX').value, state.viewBox.x + state.viewBox.w/2);
