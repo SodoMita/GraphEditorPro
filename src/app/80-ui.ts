@@ -2,7 +2,29 @@
     svg.addEventListener('selectstart', ev => ev.preventDefault());
     svg.addEventListener('contextmenu', ev => ev.preventDefault());
     svg.addEventListener('auxclick', ev => ev.preventDefault());
-    $$('.tab').forEach(btn => btn.addEventListener('click', () => { $$('.tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); $$('.tab-panel').forEach(p=>p.classList.remove('active')); $(`#panel-${btn.dataset.tab}`).classList.add('active'); }));
+    $$('.tab').forEach(btn => btn.addEventListener('click', () => {
+      // Mobile-app style: tapping a tab opens its panel as a bottom sheet;
+      // tapping the active tab again closes the sheet. Both the bottom tab
+      // bar and the sheet-header tabs share this handler and stay in sync.
+      const target = btn.dataset.tab;
+      const panel = $(`#panel-${target}`);
+      const opening = !panel.classList.contains('active');
+      $$('.tab-panel').forEach(p => p.classList.remove('active'));
+      $$('.tab').forEach(b => b.classList.toggle('active', opening && b.dataset.tab === target));
+      if(opening) panel.classList.add('active');
+      const sidebarEl = document.querySelector('.sidebar');
+      if(sidebarEl) sidebarEl.classList.toggle('open', opening);
+    }));
+    // Hamburger menu: opens/closes the panel sheet (tabs live in the sheet
+    // header, so the menu button just re-triggers the active tab).
+    const menuBtn = $('#btnMenu');
+    if(menuBtn){
+      menuBtn.addEventListener('click', () => {
+        const tab = document.querySelector<HTMLElement>('.sidebar .tabs .tab.active')
+          || document.querySelector<HTMLElement>('.sidebar .tabs .tab[data-tab="edit"]');
+        if(tab) tab.click();
+      });
+    }
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
@@ -304,39 +326,61 @@
     // View toggle controls
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
-      // Default to graph view in landscape; on desktop the data-view attribute is absent so all panels show
+      // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
+      // classes on .main). At least one view must stay visible.
       const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
-      if(isLandscape){ mainEl.dataset.view = 'graph'; mainEl.dataset.orient = 'v'; }
+      const isDesktop = window.matchMedia('(min-width:951px)').matches;
+      if(isLandscape){ mainEl.dataset.orient = 'h'; }
+      if(isDesktop){ mainEl.classList.add('v-matrix', 'v-edges'); }
+      const VIEW_CLASS: Record<string, string> = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
+      const syncViewButtons = () => {
+        document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => {
+          b.classList.toggle('active', mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || ''));
+        });
+      };
+      const visibleViewCount = () =>
+        ['graph','matrix','edges'].filter(v => mainEl.classList.contains(VIEW_CLASS[v])).length;
       document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(btn => {
         btn.addEventListener('click', () => {
-          const view = btn.dataset.viewBtn;
-          mainEl.dataset.view = view;
-          document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b === btn));
+          const cls = VIEW_CLASS[btn.dataset.viewBtn];
+          const turningOff = mainEl.classList.contains(cls);
+          if(turningOff && visibleViewCount() <= 1){ toast(I18N.t('view_keep_last')); return; }
+          mainEl.classList.toggle(cls);
+          syncViewButtons();
           // Trigger a render to resize the canvas to its new container
           setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
         });
       });
+      syncViewButtons();
       const orientBtn = $('#btnViewOrient');
+      let syncOrientBtn: (() => void) | null = null;
       if(orientBtn){
+        syncOrientBtn = () => {
+          orientBtn.textContent = mainEl.dataset.orient === 'h' ? '↕' : '↔';
+          orientBtn.classList.toggle('active', mainEl.dataset.orient === 'h');
+          orientBtn.title = I18N.t(mainEl.dataset.orient === 'h' ? 'orient_to_v' : 'orient_to_h');
+        };
         orientBtn.addEventListener('click', () => {
           const cur = mainEl.dataset.orient || 'v';
           mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
-          orientBtn.textContent = mainEl.dataset.orient === 'v' ? '↔' : '↕';
-          orientBtn.title = mainEl.dataset.orient === 'v' ? 'Switch to horizontal split' : 'Switch to vertical split';
+          if(syncOrientBtn) syncOrientBtn();
           setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
         });
+        if(mainEl.dataset.orient) syncOrientBtn();
       }
-      // Update view when orientation changes (e.g. rotating device)
+      // Update layout when orientation changes (e.g. rotating device)
       window.matchMedia('(max-width:950px) and (orientation:landscape)').addEventListener('change', e => {
         if(e.matches){
-          if(!mainEl.dataset.view) mainEl.dataset.view = 'graph';
-          if(!mainEl.dataset.orient) mainEl.dataset.orient = 'v';
+          if(!mainEl.dataset.orient) mainEl.dataset.orient = 'h';
+          if(syncOrientBtn) syncOrientBtn();
         } else {
-          // Leaving landscape — clear view attributes so desktop layout applies
-          delete mainEl.dataset.view;
           delete mainEl.dataset.orient;
-          document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === 'graph'));
-          if(orientBtn){ orientBtn.textContent = '↔'; }
+          // Back to desktop width: show all panels by default
+          if(window.matchMedia('(min-width:951px)').matches){
+            mainEl.classList.add('v-matrix', 'v-edges');
+            syncViewButtons();
+          }
+          if(syncOrientBtn) syncOrientBtn();
         }
         setTimeout(() => { invalidateGridCache(); queueRender(true); }, 50);
       });

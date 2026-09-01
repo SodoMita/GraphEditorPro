@@ -9,7 +9,13 @@ const I18N: I18nService = {
     'view_graph': { en: 'Graph', ru: 'Граф' },
     'view_matrix': { en: 'Matrix', ru: 'Матрица' },
     'view_edges': { en: 'Edges', ru: 'Рёбра' },
+    'view_graph_title': { en: 'Show/hide graph canvas', ru: 'Показать/скрыть холст' },
+    'view_matrix_title': { en: 'Show/hide adjacency matrix', ru: 'Показать/скрыть матрицу смежности' },
+    'view_edges_title': { en: 'Show/hide edge list', ru: 'Показать/скрыть список рёбер' },
+    'view_keep_last': { en: 'At least one view must stay visible', ru: 'Хотя бы один вид должен оставаться видимым' },
     'orient_toggle': { en: 'Toggle split orientation (vertical/horizontal)', ru: 'Переключить ориентацию разделения (вертикально/горизонтально)' },
+    'orient_to_h': { en: 'Switch to horizontal split (canvas left, panels right)', ru: 'Горизонтальное разделение (холст слева, панели справа)' },
+    'orient_to_v': { en: 'Switch to vertical split (canvas on top, panels below)', ru: 'Вертикальное разделение (холст сверху, панели снизу)' },
     'presets_open': { en: 'Open style presets overlay', ru: 'Открыть пресеты стилей' },
     'undo': { en: 'Undo', ru: 'Отменить' },
     'redo': { en: 'Redo', ru: 'Повторить' },
@@ -27,6 +33,10 @@ const I18N: I18nService = {
     'tab_algo': { en: 'Algo', ru: 'Алго' },
     'tab_data': { en: 'Data', ru: 'Данные' },
     'tab_help': { en: 'Help', ru: 'Справка' },
+
+    // --- Navigation ---
+    'menu_open': { en: 'Open panels', ru: 'Открыть панели' },
+    'behavior_grid': { en: 'Behavior & grid', ru: 'Поведение и сетка' },
 
     // --- Edit tab: Mode ---
     'mode_title': { en: 'Mode', ru: 'Режим' },

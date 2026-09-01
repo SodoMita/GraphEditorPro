@@ -13,8 +13,11 @@
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
+    "@sparticuz/chromium": "^149.0.0",
     "jsdom": "26.1.0",
-    "typescript": "5.9.2"
+    "playwright": "^1.62.1",
+    "typescript": "5.9.2",
+    "ws": "^8.21.3"
   },
   "engines": {
     "node": ">=20"
