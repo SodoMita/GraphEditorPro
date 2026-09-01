@@ -11,16 +11,16 @@
     $('#docTitleInput').addEventListener('change', () => pushHistory('title'));
     // Edit-tab node placement — primary values for newly added nodes
     $('#nodeShape').addEventListener('change', e => { state.settings.nodeShape = e.target.value; pushHistory('node shape'); queueRender(false); });
-    $('#nodeColor').addEventListener('input', e => { state.settings.nodeColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#nodeColor').addEventListener('input', e => { state.settings.nodeColor = e.target.value; saveSoon(); });
     $('#nodeColor').addEventListener('change', () => pushHistory('node color'));
     $('#nodeWidth').addEventListener('change', e => { state.settings.nodeWidth = clamp(finite(e.target.value,50),10,300); e.target.value = state.settings.nodeWidth; pushHistory('node width'); queueRender(false); });
     $('#nodeHeight').addEventListener('change', e => { state.settings.nodeHeight = clamp(finite(e.target.value,50),10,300); e.target.value = state.settings.nodeHeight; pushHistory('node height'); queueRender(false); });
-    $('#nodeStrokeColor').addEventListener('input', e => { state.settings.nodeStrokeColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#nodeStrokeColor').addEventListener('input', e => { state.settings.nodeStrokeColor = e.target.value; saveSoon(); });
     $('#nodeStrokeColor').addEventListener('change', () => pushHistory('node stroke color'));
     $('#nodeStrokeSize').addEventListener('change', e => { state.settings.nodeStrokeSize = clamp(finite(e.target.value,2.2),0,20); e.target.value = state.settings.nodeStrokeSize; pushHistory('node stroke size'); queueRender(false); });
     $('#nodeStrokeStyle').addEventListener('change', e => { state.settings.nodeStrokeStyle = e.target.value; pushHistory('node stroke style'); queueRender(false); });
     $('#nodeType').addEventListener('change', e => { state.settings.nodeType = e.target.value.slice(0,40); pushHistory('node type'); saveSoon(); });
-    $('#nodeLabelColor').addEventListener('input', e => { state.settings.nodeLabelColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#nodeLabelColor').addEventListener('input', e => { state.settings.nodeLabelColor = e.target.value; saveSoon(); });
     $('#nodeLabelColor').addEventListener('change', () => pushHistory('node label color'));
     $('#nodeLabelFont').addEventListener('change', e => { state.settings.nodeLabelFont = e.target.value.slice(0,60); pushHistory('node label font'); queueRender(false); });
     $('#nodeLabelSize').addEventListener('change', e => { state.settings.nodeLabelSize = clamp(finite(e.target.value,13),4,72); e.target.value = state.settings.nodeLabelSize; pushHistory('node label size'); queueRender(false); });
@@ -29,11 +29,11 @@
     $('#edgeWeight').addEventListener('input', e => { state.settings.edgeWeight = e.target.value; saveSoon(); });
     $('#edgeLabel').addEventListener('input', e => { state.settings.edgeLabel = e.target.value; saveSoon(); });
     $('#edgeType').addEventListener('change', e => { state.settings.edgeType = e.target.value.slice(0,40); pushHistory('edge type'); saveSoon(); });
-    $('#edgeColor').addEventListener('input', e => { state.settings.edgeColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#edgeColor').addEventListener('input', e => { state.settings.edgeColor = e.target.value; saveSoon(); });
     $('#edgeColor').addEventListener('change', () => pushHistory('edge color'));
     $('#edgeStrokeSize').addEventListener('change', e => { state.settings.edgeStrokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = state.settings.edgeStrokeSize; pushHistory('edge stroke size'); queueRender(false); });
     $('#edgeStrokeStyle').addEventListener('change', e => { state.settings.edgeStrokeStyle = e.target.value; pushHistory('edge stroke style'); queueRender(false); });
-    $('#edgeLabelColor').addEventListener('input', e => { state.settings.edgeLabelColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#edgeLabelColor').addEventListener('input', e => { state.settings.edgeLabelColor = e.target.value; saveSoon(); });
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0,60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value,12),4,72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
@@ -63,8 +63,8 @@
     $('#btnClear').addEventListener('click', () => { if(!state.nodes.length && !state.edges.length) return; if(confirm(I18N.t('clear_entire'))){ state.nodes=[]; state.edges=[]; state.selected=null; state.selection={nodes: [], edges: []}; state.nextNode=1; state.nextEdge=1; pushHistory('clear'); queueRender(true, true); } });
     $('#btnSample').addEventListener('click', addSample);
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
-    $('#btnZoomIn').addEventListener('click', () => { const r=svg.getBoundingClientRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
-    $('#btnZoomOut').addEventListener('click', () => { const r=svg.getBoundingClientRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
+    $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
+    $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
     $('#btnZoomReset').addEventListener('click', fitView); $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
     $('#matrixSize').addEventListener('keydown', ev => { if(ev.key === 'Enter') setMatrixDimension(ev.target.value); });
@@ -136,7 +136,7 @@
         else if(t.matches('.edge-id')){
           const newId = safeId(t.value, 'e');
           if(newId !== e.id && !state.edges.some(x => x.id === newId)){
-            e.id = newId; pushHistory('edit edge id'); queueRender(false); saveSoon();
+            e.id = newId; invalidateGraphIndex(); pushHistory('edit edge id'); queueRender(false); saveSoon();
           } else { t.value = e.id; }
         }
         else if(t.matches('.edge-from') || t.matches('.edge-to')){
@@ -144,6 +144,7 @@
           const target = state.nodes.find(n => n.label === label || n.id === label);
           if(target){
             if(t.matches('.edge-from')) e.from = target.id; else e.to = target.id;
+            invalidateGraphIndex();
             pushHistory('edit edge endpoint'); queueRender(false); saveSoon();
           }
         }
@@ -312,7 +313,7 @@
           mainEl.dataset.view = view;
           document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b === btn));
           // Trigger a render to resize the canvas to its new container
-          setTimeout(() => queueRender(true), 0);
+          setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
         });
       });
       const orientBtn = $('#btnViewOrient');
@@ -322,7 +323,7 @@
           mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
           orientBtn.textContent = mainEl.dataset.orient === 'v' ? '↔' : '↕';
           orientBtn.title = mainEl.dataset.orient === 'v' ? 'Switch to horizontal split' : 'Switch to vertical split';
-          setTimeout(() => queueRender(true), 0);
+          setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
         });
       }
       // Update view when orientation changes (e.g. rotating device)
@@ -337,7 +338,7 @@
           document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => b.classList.toggle('active', b.dataset.viewBtn === 'graph'));
           if(orientBtn){ orientBtn.textContent = '↔'; }
         }
-        setTimeout(() => queueRender(true), 50);
+        setTimeout(() => { invalidateGridCache(); queueRender(true); }, 50);
       });
     }
     $('#btnBfs').addEventListener('click', runBfs); $('#btnDfs').addEventListener('click', runDfs); $('#btnDijkstra').addEventListener('click', runDijkstra); $('#btnComponents').addEventListener('click', runComponents); $('#btnTopo').addEventListener('click', runTopo); $('#btnStats').addEventListener('click', runStats);
@@ -358,7 +359,7 @@
       if(matchesHotkey(ev, 'edge')){ ev.preventDefault(); setMode('edge'); return; }
     });
     window.addEventListener('keyup', ev => { if(matchesHotkey(ev, 'pan')){ spaceDown = false; setStatusOnly(); } });
-    window.addEventListener('resize', () => queueRender(false));
+    window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
     // Перерисовать матрицу и канвас при смене языка
     window.addEventListener('i18n-change', () => {
       // Обновить state.title если он дефолтный

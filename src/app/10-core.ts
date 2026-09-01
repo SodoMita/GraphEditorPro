@@ -1,11 +1,22 @@
   const NS = 'http://www.w3.org/2000/svg';
   const STORAGE_KEY = 'graph-editor-pro-v2';
   const R = 25;
-  const DRAG_LIVE_EDGE_LIMIT = 40;
+  // All connected edges follow a dragged node live while their count stays
+  // under this budget; beyond it, edges stay frozen until release. Each live
+  // edge costs an indexed lookup plus a path rebuild (≈1–2 µs), so the budget
+  // bounds per-frame work at a few milliseconds.
+  const DRAG_LIVE_EDGE_LIMIT = 2000;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
   /** Return a required DOM element or fail immediately with a useful error. */
   const $ = (selector: string, root: ParentNode = document): any => {
+    // Plain "#id" lookups are common in render paths (camera inputs,
+    // selection panel, status pills); getElementById is a hash lookup.
+    if(root === document && typeof document.getElementById === 'function' && /^#[A-Za-z][A-Za-z0-9_-]*$/.test(selector)){
+      const byId = document.getElementById(selector.slice(1));
+      if(!byId) throw new Error(`Required DOM element not found: ${selector}`);
+      return byId;
+    }
     const element = root.querySelector(selector);
     if(!element) throw new Error(`Required DOM element not found: ${selector}`);
     return element;
@@ -81,10 +92,10 @@
   let appHistory: string[] = [], appHistoryIndex = -1;
   let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
-  let viewBoxFrame = false;
   const activePointers = new Map();
 
   function snapshot(){
+    flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
       title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, nextNode:state.nextNode, nextEdge:state.nextEdge,
       nodes:state.nodes, edges:state.edges, settings:state.settings, viewBox:state.viewBox,
@@ -93,7 +104,6 @@
     });
   }
   function applySnapshot(raw){
-    edgeOffsetCache = null;
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
     const sane = sanitizeState(data);
@@ -115,15 +125,32 @@
     queueRender(true, true);
     saveSoon();
   }
+  // History is bounded both by entry count and by total serialized size:
+  // snapshots of large graphs can be megabytes each, and a byte cap keeps
+  // memory and eviction cost predictable where an entry cap alone would not.
+  const HISTORY_MAX_ENTRIES = 100;
+  const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+  let historyBytes = 0;
   function pushHistory(label='change'){
-    edgeOffsetCache = null;
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    if(appHistory.length > 100){ appHistory.shift(); } else { appHistoryIndex++; }
+    historyBytes += snap.length;
+    appHistoryIndex = appHistory.length - 1;
+    while(appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)){
+      historyBytes -= appHistory[0].length;
+      appHistory.shift();
+      appHistoryIndex--;
+    }
     updateUndoRedo();
     saveSoon();
+  }
+  function resetHistory(){
+    appHistory = [snapshot()];
+    appHistoryIndex = 0;
+    historyBytes = appHistory[0].length;
+    updateUndoRedo();
   }
   function undo(){ if(appHistoryIndex <= 0) return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
   function redo(){ if(appHistoryIndex >= appHistory.length - 1) return; appHistoryIndex++; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('redone')); }
@@ -424,7 +451,25 @@
     while(n > 0){ n--; out = String.fromCharCode(65 + (n % 26)) + out; n = Math.floor(n / 26); }
     return out;
   }
-  function nodeById(id){ return state.nodes.find(n => n.id === id); }
-  function edgeById(id){ return state.edges.find(e => e.id === id); }
+  // === Indexed id lookups ===
+  // Id→object hash indexes behind nodeById/edgeById. These sit on every hot
+  // path (selection sync, drag geometry, algorithms), so they must stay O(1)
+  // regardless of graph size. The index rebuilds lazily, and only when the
+  // array identity, its length, or an explicit invalidation (in-place id
+  // rewrite or edge reordering) says the mapping changed.
+  let graphRev = 0;
+  function invalidateGraphIndex(){ graphRev++; }
+  let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
+  let edgeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
+  function indexFor(index, arr){
+    if(index.arr !== arr || index.len !== arr.length || index.rev !== graphRev){
+      const map = new Map();
+      for(let i = 0; i < arr.length; i++) map.set(arr[i].id, arr[i]);
+      index.arr = arr; index.len = arr.length; index.rev = graphRev; index.map = map;
+    }
+    return index.map;
+  }
+  function nodeById(id){ return indexFor(nodeIndex, state.nodes).get(id); }
+  function edgeById(id){ return indexFor(edgeIndex, state.edges).get(id); }
 
   // === Visual resolution: merge per-item overrides → type styles → defaults ===

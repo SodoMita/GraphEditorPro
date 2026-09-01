@@ -93,10 +93,70 @@
     }
     return v;
   }
+  // Dash patterns depend only on (style, stroke size); sizes repeat heavily
+  // across a graph, so the built strings are memoized.
+  const dashCache = new Map();
   function strokeDashArray(style, size){
-    if(style === 'dashed') return `${Math.max(4, size*2)} ${Math.max(3, size*1.5)}`;
-    if(style === 'dotted') return `${Math.max(1, size*0.8)} ${Math.max(3, size*1.8)}`;
-    return 'none';
+    if(style !== 'dashed' && style !== 'dotted') return 'none';
+    const key = style + size;
+    let dash = dashCache.get(key);
+    if(dash === undefined){
+      dash = style === 'dashed'
+        ? `${Math.max(4, size*2)} ${Math.max(3, size*1.5)}`
+        : `${Math.max(1, size*0.8)} ${Math.max(3, size*1.8)}`;
+      if(dashCache.size > 128) dashCache.clear();
+      dashCache.set(key, dash);
+    }
+    return dash;
+  }
+  // === DOM write de-duplication ===
+  // Every write to rendered graph elements goes through these helpers, which
+  // skip the DOM entirely when the value equals the last write: unchanged
+  // elements cost nothing, avoiding needless attribute parsing and
+  // style/paint invalidation during full render passes.
+  function attrBox(el){ return el.__ac || (el.__ac = Object.create(null)); }
+  function setAttr(el, name, value){
+    const c = attrBox(el);
+    if(c[name] !== value){ c[name] = value; el.setAttribute(name, value); }
+  }
+  function removeAttr(el, name){
+    const c = attrBox(el);
+    if(c[name] !== undefined){ delete c[name]; el.removeAttribute(name); }
+  }
+  function toggleClass(el, name, on){
+    const c = attrBox(el);
+    const key = '⟂' + name;
+    if(c[key] !== on){ c[key] = on; el.classList.toggle(name, on); }
+  }
+  function setText(el, text){
+    const c = attrBox(el);
+    if(c.__text !== text){ c.__text = text; el.textContent = text; }
+  }
+  // === Per-pass visual cache ===
+  // Merged style objects and node "radii" are computed once per item and
+  // reused by every edge that touches the item, keeping render passes and drag
+  // frames free of repeated merges and short-lived allocations. Each render
+  // pass (and each drag gesture) owns one cache.
+  function newVisualCache(){ return { node: new Map(), edge: new Map(), radius: new Map() }; }
+  let passVisuals = null;
+  function beginRenderPass(){ passVisuals = newVisualCache(); }
+  function endRenderPass(){ passVisuals = null; }
+  function visualFor(item, cache, compute, key){
+    const c = cache || passVisuals;
+    if(!c) return compute();
+    let v = c[key].get(item.id);
+    if(v === undefined){ v = compute(); c[key].set(item.id, v); }
+    return v;
+  }
+  function nodeVisualC(n, vc=null){ return visualFor(n, vc, () => nodeVisual(n), 'node'); }
+  function edgeVisualC(e, vc=null){ return visualFor(e, vc, () => edgeVisual(e), 'edge'); }
+  function edgeRenderStyleC(e, vc=null){ return visualFor(e, vc, () => edgeRenderStyle(e), 'edge'); }
+  function nodeRadiusC(n, vc){
+    const c = vc || passVisuals;
+    if(!c) return nodeRadius(n);
+    let r = c.radius.get(n.id);
+    if(r === undefined){ r = nodeRadius(n); c.radius.set(n.id, r); }
+    return r;
   }
   function shouldShowLabels(){
     const policy = state.settings.graphDefaults?.labelsPolicy || 'auto';
@@ -173,16 +233,19 @@
   let sidebarDirty = false;
   function markSidebarDirty(){ sidebarDirty = true; }
   function renderCanvas(){
+    beginRenderPass();
     applyViewBox();
     gridPattern.setAttribute('width', state.settings.gridSizeX);
     gridPattern.setAttribute('height', state.settings.gridSizeY);
     const paths = state.nodes.length;
     $('#canvasWrap').classList.toggle('empty', paths === 0);
-    $('#statsPill').textContent = I18N.t('n_nodes_m_edges', {n: state.nodes.length, m: state.edges.length});
-    $('#statusPill').textContent = statusText();
+    setText($('#statsPill'), I18N.t('n_nodes_m_edges', {n: state.nodes.length, m: state.edges.length}));
+    setText($('#statusPill'), statusText());
     renderEdges();
     renderNodes();
     updateUndoRedo();
+    resetSelectionMirror();
+    endRenderPass();
   }
   function statusText(){
     if(edgeDraft) return I18N.t('drag_to_target');
@@ -196,7 +259,10 @@
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: state.selectTool});
   }
   function applyViewBox(){
-    svg.setAttribute('viewBox', `${state.viewBox.x} ${state.viewBox.y} ${state.viewBox.w} ${state.viewBox.h}`);
+    // Commit any in-flight composited zoom preview before the camera changes
+    // underneath it (fit view, camera inputs, undo, import, ...).
+    flushZoomPreview();
+    setAttr(svg, 'viewBox', `${state.viewBox.x} ${state.viewBox.y} ${state.viewBox.w} ${state.viewBox.h}`);
     updateGridBackground(state.viewBox);
     syncCameraInputs();
   }
@@ -230,10 +296,18 @@
   function setStyleIfChanged(style, property, value){
     if(style[property] !== value) style[property] = value;
   }
+  let gridSig = '';
+  function invalidateGridCache(){ gridSig = ''; }
   function updateGridBackground(vb=state.viewBox, cachedRect=null){
+    const settings = state.settings;
+    // The gradient geometry depends only on (viewBox, viewport size, grid
+    // settings); it is recomputed only when one of them changes. Viewport
+    // resizes invalidate the cache via invalidateGridCache().
+    const sig = `${vb.x},${vb.y},${vb.w},${vb.h}|${settings.gridSizeX},${settings.gridSizeY},${settings.gridSize}|${settings.canvasBgColor},${settings.gridMinorColor},${settings.gridMajorColor},${settings.gridMinorAlpha},${settings.gridMajorAlpha}`;
+    if(sig === gridSig) return;
     const rect = cachedRect || svg.getBoundingClientRect();
     if(!rect.width || !rect.height) return;
-    const settings = state.settings;
+    gridSig = sig;
     const gx = settings.gridSizeX || settings.gridSize || 40;
     const gy = settings.gridSizeY || settings.gridSize || 40;
 
@@ -264,17 +338,16 @@
     setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
   }
-  function requestViewBoxApply(){
-    if(viewBoxFrame) return;
-    viewBoxFrame = true;
-    requestAnimationFrame(() => { viewBoxFrame = false; applyViewBox(); });
-  }
-  function setStatusOnly(){ $('#statusPill').textContent = statusText(); }
-  function nodeEl(id){ return document.getElementById('node-' + id); }
-  function edgeEl(id){ return document.getElementById('edge-' + id); }
+  function setStatusOnly(){ setText($('#statusPill'), statusText()); }
+  // Id→element registries for rendered graph elements. They are maintained by
+  // the render passes so hot paths (drag geometry, selection sync) never pay a
+  // document-wide id lookup. getElementById remains as a safety fallback.
+  const nodeEls = new Map(), edgeEls = new Map();
+  function nodeEl(id){ return nodeEls.get(id) || document.getElementById('node-' + id); }
+  function edgeEl(id){ return edgeEls.get(id) || document.getElementById('edge-' + id); }
   function moveNodeFast(id){
     const n = drag?.node?.id === id ? drag.node : nodeById(id); if(!n) return;
-    const el = nodeEl(id); if(el) el.setAttribute('transform', `translate(${n.x},${n.y})`);
+    const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
     if(drag && drag.liveEdges === false) return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
     for(const edge of edges) updateEdgeFast(edge);
@@ -284,28 +357,31 @@
     try {
       const nodes = drag.nodes || (drag.node ? [drag.node] : []);
       for(const n of nodes){
-        const el = nodeEl(n.id); if(el) el.setAttribute('transform', `translate(${n.x},${n.y})`);
+        const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
       }
       if(drag.liveEdges === false) return;
-      for(const edge of (drag.affectedEdges || [])) updateEdgeFast(edge);
+      const vc = drag.vc || (drag.vc = newVisualCache());
+      for(const edge of (drag.affectedEdges || [])) updateEdgeFast(edge, vc);
     } catch(e) { /* fail-safe */ }
   }
-  function updateEdgeFast(edgeOrId){
+  function updateEdgeFast(edgeOrId, vc=null){
     const e = typeof edgeOrId === 'object' ? edgeOrId : edgeById(edgeOrId); if(!e) return;
-    const getNode = drag?.nodeMap ? id => drag.nodeMap.get(id) : nodeById;
-    const a = getNode(e.from), b = getNode(e.to); if(!a || !b) return;
+    // nodeById is an indexed O(1) lookup now; node positions are mutated in
+    // place, so the index always returns the live objects during a drag.
+    const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) return;
     const el = edgeEl(e.id); if(!el) return;
-    const d = edgePath(a,b,e);
-    const line = el.querySelector('.edge-line'); if(line) line.setAttribute('d', d.path);
-    const hit = el.querySelector('.edge-hit'); if(hit) hit.setAttribute('d', d.path);
-    const label = el.querySelector('.edge-label');
-    const weight = el.querySelector('.edge-weight');
+    const g: any = el;
+    const d = edgePath(a,b,e, vc || passVisuals);
+    const line = g.__line || el.querySelector('.edge-line'); if(line) setAttr(line, 'd', d.path);
+    const hit = g.__hit || el.querySelector('.edge-hit'); if(hit) setAttr(hit, 'd', d.path);
+    const label = g.__label || null;
+    const weight = g.__weight || null;
     const hasBoth = label && weight;
-    const labelOffsetY = hasBoth ? -((edgeVisual(e).labelSize || 12) * 0.75 + 2) : 0;
-    if(label){ label.setAttribute('x', d.labelX); label.setAttribute('y', d.labelY + labelOffsetY); }
-    if(weight){ weight.setAttribute('x', d.labelX); weight.setAttribute('y', d.labelY); }
+    const labelOffsetY = hasBoth ? -((edgeVisualC(e, vc).labelSize || 12) * 0.75 + 2) : 0;
+    if(label){ setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY); }
+    if(weight){ setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY); }
     // Update arrow tip position/angle during drag
-    const arrow = el.querySelector('.edge-arrow');
+    const arrow = g.__arrow || null;
     if(arrow && e.directed && d.tipX != null && d.arrowAngle != null){
       const aw = ARROW_HW, ang = d.arrowAngle;
       const sin = Math.sin(ang), cos = Math.cos(ang);
@@ -313,7 +389,7 @@
       const baseX = d.tx, baseY = d.ty;
       const leftX = baseX + px * aw, leftY = baseY + py * aw;
       const rightX = baseX - px * aw, rightY = baseY - py * aw;
-      arrow.setAttribute('points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
+      setAttr(arrow, 'points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
     }
   }
   function scheduleFastNodeMove(id){
@@ -329,19 +405,26 @@
   function renderEdges(){
     buildEdgeOffsetCache();
     const showLabels = shouldShowLabels();
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     const existing = new Map();
-    for(const el of [...edgesLayer.children]){
-      if(el.dataset?.id) existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "edge-<edgeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for(let el = edgesLayer.firstElementChild; el; el = el.nextElementSibling){
+      const eid = el.id;
+      if(eid.startsWith('edge-')) existing.set(eid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — edges touching non-visible nodes are skipped entirely
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    const gd = state.settings.graphDefaults || {};
+    const weightMode = gd.edgeWeightMode || 'number';
+    const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
     for(const e of state.edges){
-      const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+      const a = nodeById(e.from), b = nodeById(e.to);
       if(!a || !b){
         // Edge has dangling endpoint — remove from DOM if present
         if(existing.has(e.id)) existing.get(e.id).remove();
@@ -351,9 +434,8 @@
       if(rangeActive && (!visIds.has(e.from) || !visIds.has(e.to))) continue;
       seen.add(e.id);
       const selected = selectedEdges.has(e.id);
-      const v = edgeRenderStyle(e);
-      const d = edgePath(a,b,e);
-      let g = existing.get(e.id);
+      const v = edgeRenderStyleC(e);
+      let g: any = existing.get(e.id);
       if(!g){
         g = document.createElementNS(NS,'g'); g.classList.add('edge');
         g.id = 'edge-' + e.id; g.dataset.id = e.id; g.dataset.from = e.from; g.dataset.to = e.to;
@@ -367,22 +449,37 @@
         });
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
         edgesLayer.appendChild(g);
+        edgeEls.set(e.id, g);
       }
-      g.classList.toggle('selected', selected);
-      // Update or create hit path
-      let hit = g.querySelector('.edge-hit');
-      if(!hit){ hit = document.createElementNS(NS,'path'); hit.setAttribute('class','edge-hit'); g.appendChild(hit); }
-      hit.setAttribute('d', d.path);
+      // Geometry cache: the path depends only on endpoint positions, node
+      // radii, the parallel-edge lane, and direction. When none of these
+      // changed (style-only or unrelated renders), the previous edgePath
+      // result is reused without recomputation.
+      const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
+      const lane = edgeSiblingOffset(e);
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}`;
+      let d = g.__geoSig === geoSig ? g.__geoData : null;
+      if(!d){
+        d = edgePath(a,b,e, passVisuals);
+        g.__geoSig = geoSig;
+        g.__geoData = d;
+      }
+      toggleClass(g, 'selected', selected);
+      // Update or create hit path (child refs are stashed on the group to
+      // avoid per-edge selector queries)
+      let hit = g.__hit;
+      if(!hit){ hit = document.createElementNS(NS,'path'); hit.setAttribute('class','edge-hit'); g.appendChild(hit); g.__hit = hit; }
+      setAttr(hit, 'd', d.path);
       // Update or create line path
-      let line = g.querySelector('.edge-line');
-      if(!line){ line = document.createElementNS(NS,'path'); line.setAttribute('class','edge-line'); g.insertBefore(line, g.firstChild); }
-      line.setAttribute('d', d.path);
-      line.setAttribute('stroke', v.color); line.setAttribute('stroke-width', v.strokeSize);
+      let line = g.__line;
+      if(!line){ line = document.createElementNS(NS,'path'); line.setAttribute('class','edge-line'); g.insertBefore(line, g.firstChild); g.__line = line; }
+      setAttr(line, 'd', d.path);
+      setAttr(line, 'stroke', v.color); setAttr(line, 'stroke-width', v.strokeSize);
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
-      if(dash !== 'none') line.setAttribute('stroke-dasharray', dash);
-      else line.removeAttribute('stroke-dasharray');
+      if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
+      else removeAttr(line, 'stroke-dasharray');
       // Update or create arrow
-      let arrow = g.querySelector('.edge-arrow');
+      let arrow = g.__arrow || null;
       if(e.directed && d.tipX != null && d.arrowAngle != null){
         const arrowColor = selected ? '#22d3ee' : v.color;
         const aw = ARROW_HW, ang = d.arrowAngle;
@@ -391,27 +488,25 @@
         const baseX = d.tx, baseY = d.ty;
         const leftX = baseX + px * aw, leftY = baseY + py * aw;
         const rightX = baseX - px * aw, rightY = baseY - py * aw;
-        if(!arrow){ arrow = document.createElementNS(NS,'polygon'); arrow.setAttribute('class','edge-arrow'); g.appendChild(arrow); }
-        arrow.setAttribute('points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
-        arrow.setAttribute('fill', arrowColor);
+        if(!arrow){ arrow = document.createElementNS(NS,'polygon'); arrow.setAttribute('class','edge-arrow'); g.appendChild(arrow); g.__arrow = arrow; }
+        setAttr(arrow, 'points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
+        setAttr(arrow, 'fill', arrowColor);
       } else if(arrow){
-        arrow.remove();
+        arrow.remove(); g.__arrow = null; arrow = null;
       }
       // Compute label and weight text separately so both can be shown at once.
       // Weight is drawn ON the line midpoint; label is drawn ABOVE it (offset).
-      const gd = state.settings.graphDefaults || {};
-      const mode = gd.edgeWeightMode || 'number';
       let labelText = '', weightText = '';
       if(showLabels){
         if(e.label) labelText = e.label;
         if(e.weight !== '' && e.weight != null){
           const w = edgeWeightNumber(e);
           if(w != null){
-            if(mode === 'number'){
+            if(weightMode === 'number'){
               weightText = e.weight;
-            } else if(mode === 'color' || mode === 'width'){
+            } else if(weightMode === 'color' || weightMode === 'width'){
               // Show number only when weight is outside the configured range
-              if(!isWeightInRange(w, gd.edgeWeightMin ?? 1, gd.edgeWeightMax ?? 10)) weightText = e.weight;
+              if(!isWeightInRange(w, wMin, wMax)) weightText = e.weight;
             }
             // 'none' mode: never show weight as text
           }
@@ -420,7 +515,7 @@
       const hasBoth = labelText && weightText;
       const labelOffsetY = hasBoth ? -(v.labelSize * 0.75 + 2) : 0;
       // Update or create label (drawn above weight when both present)
-      let label = g.querySelector('.edge-label');
+      let label = g.__label || null;
       if(labelText){
         if(!label){
           label = document.createElementNS(NS,'text');
@@ -429,19 +524,19 @@
           label.setAttribute('paint-order','stroke');
           label.setAttribute('stroke','#020617');
           label.setAttribute('stroke-linejoin','round');
-          g.appendChild(label);
+          g.appendChild(label); g.__label = label;
         }
-        label.setAttribute('x', d.labelX); label.setAttribute('y', d.labelY + labelOffsetY);
-        label.setAttribute('fill', v.labelColor);
-        label.setAttribute('font-size', v.labelSize);
-        label.setAttribute('font-family', v.labelFont);
-        label.setAttribute('stroke-width', Math.max(3, v.labelSize * 0.36));
+        setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
+        setAttr(label, 'fill', v.labelColor);
+        setAttr(label, 'font-size', v.labelSize);
+        setAttr(label, 'font-family', v.labelFont);
+        setAttr(label, 'stroke-width', Math.max(3, v.labelSize * 0.36));
         if(label.textContent !== labelText) label.textContent = labelText;
       } else if(label){
-        label.remove();
+        label.remove(); g.__label = null; label = null;
       }
       // Update or create weight text (drawn on the line midpoint)
-      let weight = g.querySelector('.edge-weight');
+      let weight = g.__weight || null;
       if(weightText){
         if(!weight){
           weight = document.createElementNS(NS,'text');
@@ -450,25 +545,31 @@
           weight.setAttribute('paint-order','stroke');
           weight.setAttribute('stroke','#020617');
           weight.setAttribute('stroke-linejoin','round');
-          g.appendChild(weight);
+          g.appendChild(weight); g.__weight = weight;
         }
-        weight.setAttribute('x', d.labelX); weight.setAttribute('y', d.labelY);
-        weight.setAttribute('fill', v.labelColor);
-        weight.setAttribute('font-size', v.labelSize);
-        weight.setAttribute('font-family', v.labelFont);
-        weight.setAttribute('stroke-width', Math.max(3, v.labelSize * 0.36));
+        setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
+        setAttr(weight, 'fill', v.labelColor);
+        setAttr(weight, 'font-size', v.labelSize);
+        setAttr(weight, 'font-family', v.labelFont);
+        setAttr(weight, 'stroke-width', Math.max(3, v.labelSize * 0.36));
         if(weight.textContent !== weightText) weight.textContent = weightText;
       } else if(weight){
-        weight.remove();
+        weight.remove(); g.__weight = null; weight = null;
       }
     }
     // Remove stale edges
-    for(const [id, el] of existing){ if(!seen.has(id)) el.remove(); }
+    for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); edgeEls.delete(id); } }
   }
   function edgeGroupKey(e){ return e.from <= e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
+  // Lane offsets depend only on edge ids/endpoints and their order in the
+  // array. The cache is reused across renders until the array is replaced or
+  // resized, or an in-place id/endpoint/reorder mutation bumps the revision.
+  let edgeOffsetCacheSrc = null, edgeOffsetCacheLen = -1, edgeOffsetCacheRev = -1;
   function buildEdgeOffsetCache(){
+    const edges = state.edges;
+    if(edgeOffsetCache && edgeOffsetCacheSrc === edges && edgeOffsetCacheLen === edges.length && edgeOffsetCacheRev === graphRev) return;
     const groups = new Map();
-    for(const e of state.edges){
+    for(const e of edges){
       const key = edgeGroupKey(e);
       if(!groups.has(key)) groups.set(key, []);
       groups.get(key).push(e);
@@ -482,6 +583,7 @@
         edgeOffsetCache.set(e.id, (idx - (group.length - 1) / 2) * spacing);
       });
     }
+    edgeOffsetCacheSrc = edges; edgeOffsetCacheLen = edges.length; edgeOffsetCacheRev = graphRev;
   }
   function edgeCanonicalFrom(e){ return e.from <= e.to ? e.from : e.to; }
   function edgeSiblingOffset(e){
@@ -496,8 +598,8 @@
   }
   const ARROW_LEN = 18; // arrow length from base to tip
   const ARROW_HW = 8;   // arrow half-width
-  function edgePath(a,b,e){
-    const ra = nodeRadius(a), rb = nodeRadius(b);
+  function edgePath(a,b,e,vc=null){
+    const ra = nodeRadiusC(a, vc), rb = nodeRadiusC(b, vc);
     const arrowGap = e.directed ? ARROW_LEN : 2; // space reserved for arrow at target
     if(a.id === b.id){
       const lane = edgeSiblingOffset(e);
@@ -547,23 +649,28 @@
     const showLabels = shouldShowLabels();
     const selectedNodes = selectedNodeIds();
     const existing = new Map();
-    // Index existing node elements by id, collect for removal
-    for(const el of [...nodesLayer.children]){
-      if(el.dataset?.id) existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "node-<nodeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for(let el = nodesLayer.firstElementChild; el; el = el.nextElementSibling){
+      const nid = el.id;
+      if(nid.startsWith('node-')) existing.set(nid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — avoids per-node Set lookup
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    const draggingId = drag?.nodeId;
     for(const n of state.nodes){
       // Skip non-visible nodes entirely — they are removed from DOM, not dimmed.
       // This gives real performance: fewer SVG elements, fewer attribute patches, less paint.
       if(rangeActive && !visIds.has(n.id)) continue;
       seen.add(n.id);
       const selected = selectedNodes.has(n.id);
-      const v = nodeVisual(n);
-      let g = existing.get(n.id);
+      const v = nodeVisualC(n);
+      let g: any = existing.get(n.id);
       if(!g){
         // Create new node group
         g = document.createElementNS(NS,'g'); g.classList.add('node');
@@ -571,16 +678,18 @@
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
         nodesLayer.appendChild(g);
+        nodeEls.set(n.id, g);
       }
       // Update transform (always — this is the hot path during drag)
-      g.setAttribute('transform',`translate(${n.x},${n.y})`);
+      setAttr(g, 'transform',`translate(${n.x},${n.y})`);
       // Update selection class
-      g.classList.toggle('selected', selected);
-      g.classList.toggle('dragging', drag?.nodeId === n.id);
-      // Update or create shape
-      let shape = g.querySelector('.node-shape');
+      toggleClass(g, 'selected', selected);
+      toggleClass(g, 'dragging', draggingId === n.id);
+      // Update or create shape (element ref stashed on the group)
+      let shape = g.__shape;
       const w = v.width, h = v.height;
-      const needRebuild = !shape || shape.dataset.shape !== v.shape || shape.dataset.w !== String(w) || shape.dataset.h !== String(h);
+      const shapeSig = v.shape + '|' + w + '|' + h;
+      const needRebuild = !shape || g.__shapeSig !== shapeSig;
       if(needRebuild){
         if(shape) shape.remove();
         if(v.shape === 'square'){
@@ -598,17 +707,19 @@
           shape = document.createElementNS(NS,'ellipse'); shape.setAttribute('rx',w/2); shape.setAttribute('ry',h/2);
         }
         shape.setAttribute('class','node-shape');
-        shape.dataset.shape = v.shape; shape.dataset.w = w; shape.dataset.h = h;
+        g.__shapeSig = shapeSig;
         g.insertBefore(shape, g.firstChild);
+        g.__shape = shape;
       }
-      // Update shape style attributes (cheap, do every frame)
-      shape.setAttribute('fill', v.color);
-      shape.setAttribute('stroke', v.strokeColor); shape.setAttribute('stroke-width', v.strokeSize);
+      // Update shape style attributes — de-duplicated, so untouched nodes
+      // write nothing
+      setAttr(shape, 'fill', v.color);
+      setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', v.strokeSize);
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
-      if(dash !== 'none') shape.setAttribute('stroke-dasharray', dash);
-      else shape.removeAttribute('stroke-dasharray');
+      if(dash !== 'none') setAttr(shape, 'stroke-dasharray', dash);
+      else removeAttr(shape, 'stroke-dasharray');
       // Update label
-      let label = g.querySelector('text');
+      let label = g.__text || null;
       const wantLabel = showLabels && n.label;
       if(wantLabel){
         if(!label){
@@ -616,37 +727,68 @@
           label.setAttribute('paint-order','stroke');
           label.setAttribute('stroke','#020617');
           label.setAttribute('stroke-linejoin','round');
-          g.appendChild(label);
+          g.appendChild(label); g.__text = label;
         }
-        label.setAttribute('text-anchor','middle');
-        label.setAttribute('dominant-baseline','middle');
-        label.setAttribute('fill', v.labelColor);
-        label.setAttribute('font-size', v.labelSize);
-        label.setAttribute('font-family', v.labelFont);
-        label.setAttribute('stroke-width', Math.max(3, v.labelSize * 0.32));
+        setAttr(label, 'text-anchor', 'middle');
+        setAttr(label, 'dominant-baseline', 'middle');
+        setAttr(label, 'fill', v.labelColor);
+        setAttr(label, 'font-size', v.labelSize);
+        setAttr(label, 'font-family', v.labelFont);
+        setAttr(label, 'stroke-width', Math.max(3, v.labelSize * 0.32));
         let lx = 0, ly = 0;
         const offset = Math.max(w, h)/2 + v.labelSize * 0.7;
-        if(v.labelPosition === 'top'){ ly = -offset; label.setAttribute('dominant-baseline','auto'); }
-        else if(v.labelPosition === 'bottom'){ ly = offset; label.setAttribute('dominant-baseline','hanging'); }
-        else if(v.labelPosition === 'left'){ lx = -offset; label.setAttribute('text-anchor','end'); }
-        else if(v.labelPosition === 'right'){ lx = offset; label.setAttribute('text-anchor','start'); }
-        label.setAttribute('x', lx); label.setAttribute('y', ly);
+        if(v.labelPosition === 'top'){ ly = -offset; setAttr(label, 'dominant-baseline','auto'); }
+        else if(v.labelPosition === 'bottom'){ ly = offset; setAttr(label, 'dominant-baseline','hanging'); }
+        else if(v.labelPosition === 'left'){ lx = -offset; setAttr(label, 'text-anchor','end'); }
+        else if(v.labelPosition === 'right'){ lx = offset; setAttr(label, 'text-anchor','start'); }
+        setAttr(label, 'x', lx); setAttr(label, 'y', ly);
         if(label.textContent !== n.label) label.textContent = n.label;
       } else if(label){
-        label.remove();
+        label.remove(); g.__text = null; label = null;
       }
     }
     // Remove stale elements
-    for(const [id, el] of existing){ if(!seen.has(id)) el.remove(); }
+    for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); nodeEls.delete(id); } }
   }
   function renderSidebar(){
     renderStartSelect();
     renderSelectionPanel();
   }
+  let startSelectSig = '';
   function renderStartSelect(){
     const sel = $('#algoStart');
+    const nodes = state.nodes;
+    // FNV-1a signature over id+label: O(total chars), no DOM. The option list
+    // is only patched when this signature changes.
+    let h = 2166136261 ^ nodes.length;
+    for(let i = 0; i < nodes.length; i++){
+      const s = nodes[i].id + '>' + nodes[i].label;
+      for(let j = 0; j < s.length; j++){ h ^= s.charCodeAt(j); h = Math.imul(h, 16777619); }
+    }
+    const sig = I18N.current + ':' + h;
+    if(sig !== startSelectSig){
+      startSelectSig = sig;
+      const options = sel.options;
+      const desired = nodes.length ? nodes.length : 1;
+      while(options.length > desired) sel.remove(options.length - 1);
+      if(nodes.length){
+        for(let i = 0; i < nodes.length; i++){
+          let opt = options[i];
+          if(!opt){ opt = document.createElement('option'); sel.add(opt); }
+          const value = nodes[i].id;
+          const text = `${nodes[i].label || nodes[i].id} (${nodes[i].id})`;
+          if(opt.value !== value) opt.value = value;
+          if(opt.textContent !== text) opt.textContent = text;
+        }
+      } else {
+        let opt = options[0];
+        if(!opt){ opt = document.createElement('option'); sel.add(opt); }
+        if(opt.value !== '') opt.value = '';
+        const placeholder = I18N.t('no_nodes');
+        if(opt.textContent !== placeholder) opt.textContent = placeholder;
+      }
+    }
     const current = sel.value || state.selected?.id;
-    sel.innerHTML = state.nodes.length ? state.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.label || n.id)} (${esc(n.id)})</option>`).join('') : '<option value="">' + I18N.t('no_nodes') + '</option>';
     const selectedNode = state.selected?.type === 'node' ? state.selected.id : current;
     if(selectedNode && state.nodes.some(n => n.id === selectedNode)) sel.value = selectedNode;
   }
@@ -985,11 +1127,10 @@
         : '';
       $('#edgeListNote').textContent = filterNote + pageNote;
     }
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     let html = '<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>';
     renderedEdges.forEach((e,i) => {
-      const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+      const a = nodeById(e.from), b = nodeById(e.to);
       const sel = selectedEdges.has(e.id) ? ' matrix-selected' : '';
       const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle===s?' selected':''}>${I18N.t('stroke_' + s)}</option>`).join('');
       html += `<tr>

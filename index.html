@@ -122,6 +122,13 @@
     .toast{background:rgba(15,23,42,.95); border:1px solid rgba(51,65,85,.9); box-shadow:var(--shadow); border-radius:14px; padding:10px 12px; color:#e2e8f0; animation:pop .18s ease-out}
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
     .node-shape{filter:drop-shadow(0 8px 14px rgba(0,0,0,.28))}.node.selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}.node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}.node{cursor:grab}.node.dragging{cursor:grabbing}.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}.canvas-wrap.panning #graphCanvas{cursor:grabbing}.edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}.edge-line{fill:none}.edge-arrow{pointer-events:none}.edge.selected .edge-line{stroke:var(--accent)}.edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}.drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}.selection-draft{fill:rgba(34,211,238,.12);stroke:#22d3ee;stroke-width:2;stroke-dasharray:6 5;pointer-events:none}.selection-draft.fill-soft{fill:rgba(34,211,238,.08)}.node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
+    /* === Interaction performance ===
+       drop-shadow filters on every node shape and the paint-order halos on every
+       label are the most expensive things to re-rasterize while anything moves.
+       They are skipped for the duration of a drag/brush gesture (.fast-interaction
+       is applied by the pointer handlers) and restored on release. */
+    .canvas-wrap.fast-interaction .node-shape{filter:none}
+    .canvas-wrap.fast-interaction .node text,.canvas-wrap.fast-interaction .edge-label,.canvas-wrap.fast-interaction .edge-weight{stroke:none}
     .kbd{border:1px solid rgba(148,163,184,.35); border-bottom-width:2px; border-radius:6px; padding:1px 5px; background:#0f172a; font-size:11px; color:#cbd5e1}
     .thin-scroll::-webkit-scrollbar{width:9px;height:9px}.thin-scroll::-webkit-scrollbar-thumb{background:#334155;border-radius:999px}.thin-scroll::-webkit-scrollbar-track{background:transparent}
     @media (max-width:950px){body{overflow:auto}.app{height:auto; min-height:100svh; grid-template-columns:1fr; grid-template-areas:"main" "sidebar"}.sidebar{max-height:none}.main{grid-template-rows:auto 64svh auto}.bottom{grid-template-columns:1fr}.bottom-pane + .bottom-pane{border-left:0;border-top:1px solid rgba(51,65,85,.65)}.tab .wide{display:none}.title-input{width:42vw}.canvas-hud{display:none}.mobile-modebar{display:flex}.table-scroll{max-height:280px}}
@@ -1279,10 +1286,22 @@ window.I18N = I18N;
 const NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'graph-editor-pro-v2';
 const R = 25;
-const DRAG_LIVE_EDGE_LIMIT = 40;
+// All connected edges follow a dragged node live while their count stays
+// under this budget; beyond it, edges stay frozen until release. Each live
+// edge costs an indexed lookup plus a path rebuild (≈1–2 µs), so the budget
+// bounds per-frame work at a few milliseconds.
+const DRAG_LIVE_EDGE_LIMIT = 2000;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 /** Return a required DOM element or fail immediately with a useful error. */
 const $ = (selector, root = document) => {
+    // Plain "#id" lookups are common in render paths (camera inputs,
+    // selection panel, status pills); getElementById is a hash lookup.
+    if (root === document && typeof document.getElementById === 'function' && /^#[A-Za-z][A-Za-z0-9_-]*$/.test(selector)) {
+        const byId = document.getElementById(selector.slice(1));
+        if (!byId)
+            throw new Error(`Required DOM element not found: ${selector}`);
+        return byId;
+    }
     const element = root.querySelector(selector);
     if (!element)
         throw new Error(`Required DOM element not found: ${selector}`);
@@ -1357,9 +1376,9 @@ let state = defaultState();
 let appHistory = [], appHistoryIndex = -1;
 let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
 let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
-let viewBoxFrame = false;
 const activePointers = new Map();
 function snapshot() {
+    flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
         title: state.title, mode: state.mode, selectTool: state.selectTool, selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
         nodes: state.nodes, edges: state.edges, settings: state.settings, viewBox: state.viewBox,
@@ -1368,7 +1387,6 @@ function snapshot() {
     });
 }
 function applySnapshot(raw) {
-    edgeOffsetCache = null;
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
     const sane = sanitizeState(data);
@@ -1394,21 +1412,33 @@ function applySnapshot(raw) {
     queueRender(true, true);
     saveSoon();
 }
+// History is bounded both by entry count and by total serialized size:
+// snapshots of large graphs can be megabytes each, and a byte cap keeps
+// memory and eviction cost predictable where an entry cap alone would not.
+const HISTORY_MAX_ENTRIES = 100;
+const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+let historyBytes = 0;
 function pushHistory(label = 'change') {
-    edgeOffsetCache = null;
     const snap = snapshot();
     if (appHistory[appHistoryIndex] === snap)
         return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    if (appHistory.length > 100) {
+    historyBytes += snap.length;
+    appHistoryIndex = appHistory.length - 1;
+    while (appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)) {
+        historyBytes -= appHistory[0].length;
         appHistory.shift();
-    }
-    else {
-        appHistoryIndex++;
+        appHistoryIndex--;
     }
     updateUndoRedo();
     saveSoon();
+}
+function resetHistory() {
+    appHistory = [snapshot()];
+    appHistoryIndex = 0;
+    historyBytes = appHistory[0].length;
+    updateUndoRedo();
 }
 function undo() { if (appHistoryIndex <= 0)
     return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
@@ -1775,8 +1805,30 @@ function labelFromNumber(num) {
     }
     return out;
 }
-function nodeById(id) { return state.nodes.find(n => n.id === id); }
-function edgeById(id) { return state.edges.find(e => e.id === id); }
+// === Indexed id lookups ===
+// Id→object hash indexes behind nodeById/edgeById. These sit on every hot
+// path (selection sync, drag geometry, algorithms), so they must stay O(1)
+// regardless of graph size. The index rebuilds lazily, and only when the
+// array identity, its length, or an explicit invalidation (in-place id
+// rewrite or edge reordering) says the mapping changed.
+let graphRev = 0;
+function invalidateGraphIndex() { graphRev++; }
+let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
+let edgeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
+function indexFor(index, arr) {
+    if (index.arr !== arr || index.len !== arr.length || index.rev !== graphRev) {
+        const map = new Map();
+        for (let i = 0; i < arr.length; i++)
+            map.set(arr[i].id, arr[i]);
+        index.arr = arr;
+        index.len = arr.length;
+        index.rev = graphRev;
+        index.map = map;
+    }
+    return index.map;
+}
+function nodeById(id) { return indexFor(nodeIndex, state.nodes).get(id); }
+function edgeById(id) { return indexFor(edgeIndex, state.edges).get(id); }
 // === Visual resolution: merge per-item overrides → type styles → defaults ===
 function nodeVisual(n) {
     const d = state.settings.nodeDefaults;
@@ -1888,12 +1940,92 @@ function edgeRenderStyle(e) {
     }
     return v;
 }
+// Dash patterns depend only on (style, stroke size); sizes repeat heavily
+// across a graph, so the built strings are memoized.
+const dashCache = new Map();
 function strokeDashArray(style, size) {
-    if (style === 'dashed')
-        return `${Math.max(4, size * 2)} ${Math.max(3, size * 1.5)}`;
-    if (style === 'dotted')
-        return `${Math.max(1, size * 0.8)} ${Math.max(3, size * 1.8)}`;
-    return 'none';
+    if (style !== 'dashed' && style !== 'dotted')
+        return 'none';
+    const key = style + size;
+    let dash = dashCache.get(key);
+    if (dash === undefined) {
+        dash = style === 'dashed'
+            ? `${Math.max(4, size * 2)} ${Math.max(3, size * 1.5)}`
+            : `${Math.max(1, size * 0.8)} ${Math.max(3, size * 1.8)}`;
+        if (dashCache.size > 128)
+            dashCache.clear();
+        dashCache.set(key, dash);
+    }
+    return dash;
+}
+// === DOM write de-duplication ===
+// Every write to rendered graph elements goes through these helpers, which
+// skip the DOM entirely when the value equals the last write: unchanged
+// elements cost nothing, avoiding needless attribute parsing and
+// style/paint invalidation during full render passes.
+function attrBox(el) { return el.__ac || (el.__ac = Object.create(null)); }
+function setAttr(el, name, value) {
+    const c = attrBox(el);
+    if (c[name] !== value) {
+        c[name] = value;
+        el.setAttribute(name, value);
+    }
+}
+function removeAttr(el, name) {
+    const c = attrBox(el);
+    if (c[name] !== undefined) {
+        delete c[name];
+        el.removeAttribute(name);
+    }
+}
+function toggleClass(el, name, on) {
+    const c = attrBox(el);
+    const key = '⟂' + name;
+    if (c[key] !== on) {
+        c[key] = on;
+        el.classList.toggle(name, on);
+    }
+}
+function setText(el, text) {
+    const c = attrBox(el);
+    if (c.__text !== text) {
+        c.__text = text;
+        el.textContent = text;
+    }
+}
+// === Per-pass visual cache ===
+// Merged style objects and node "radii" are computed once per item and
+// reused by every edge that touches the item, keeping render passes and drag
+// frames free of repeated merges and short-lived allocations. Each render
+// pass (and each drag gesture) owns one cache.
+function newVisualCache() { return { node: new Map(), edge: new Map(), radius: new Map() }; }
+let passVisuals = null;
+function beginRenderPass() { passVisuals = newVisualCache(); }
+function endRenderPass() { passVisuals = null; }
+function visualFor(item, cache, compute, key) {
+    const c = cache || passVisuals;
+    if (!c)
+        return compute();
+    let v = c[key].get(item.id);
+    if (v === undefined) {
+        v = compute();
+        c[key].set(item.id, v);
+    }
+    return v;
+}
+function nodeVisualC(n, vc = null) { return visualFor(n, vc, () => nodeVisual(n), 'node'); }
+function edgeVisualC(e, vc = null) { return visualFor(e, vc, () => edgeVisual(e), 'edge'); }
+function edgeRenderStyleC(e, vc = null) { return visualFor(e, vc, () => edgeRenderStyle(e), 'edge'); }
+function nodeRadiusC(n, vc) {
+    const c = vc || passVisuals;
+    if (!c)
+        return nodeRadius(n);
+    let r = c.radius.get(n.id);
+    if (r === undefined) {
+        r = nodeRadius(n);
+        c.radius.set(n.id, r);
+    }
+    return r;
 }
 function shouldShowLabels() {
     const policy = state.settings.graphDefaults?.labelsPolicy || 'auto';
@@ -1989,16 +2121,19 @@ function queueRender(includeMatrix = false, includeSidebar = false) {
 let sidebarDirty = false;
 function markSidebarDirty() { sidebarDirty = true; }
 function renderCanvas() {
+    beginRenderPass();
     applyViewBox();
     gridPattern.setAttribute('width', state.settings.gridSizeX);
     gridPattern.setAttribute('height', state.settings.gridSizeY);
     const paths = state.nodes.length;
     $('#canvasWrap').classList.toggle('empty', paths === 0);
-    $('#statsPill').textContent = I18N.t('n_nodes_m_edges', { n: state.nodes.length, m: state.edges.length });
-    $('#statusPill').textContent = statusText();
+    setText($('#statsPill'), I18N.t('n_nodes_m_edges', { n: state.nodes.length, m: state.edges.length }));
+    setText($('#statusPill'), statusText());
     renderEdges();
     renderNodes();
     updateUndoRedo();
+    resetSelectionMirror();
+    endRenderPass();
 }
 function statusText() {
     if (edgeDraft)
@@ -2020,7 +2155,10 @@ function statusText() {
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', { tool: state.selectTool });
 }
 function applyViewBox() {
-    svg.setAttribute('viewBox', `${state.viewBox.x} ${state.viewBox.y} ${state.viewBox.w} ${state.viewBox.h}`);
+    // Commit any in-flight composited zoom preview before the camera changes
+    // underneath it (fit view, camera inputs, undo, import, ...).
+    flushZoomPreview();
+    setAttr(svg, 'viewBox', `${state.viewBox.x} ${state.viewBox.y} ${state.viewBox.w} ${state.viewBox.h}`);
     updateGridBackground(state.viewBox);
     syncCameraInputs();
 }
@@ -2055,11 +2193,20 @@ function setStyleIfChanged(style, property, value) {
     if (style[property] !== value)
         style[property] = value;
 }
+let gridSig = '';
+function invalidateGridCache() { gridSig = ''; }
 function updateGridBackground(vb = state.viewBox, cachedRect = null) {
+    const settings = state.settings;
+    // The gradient geometry depends only on (viewBox, viewport size, grid
+    // settings); it is recomputed only when one of them changes. Viewport
+    // resizes invalidate the cache via invalidateGridCache().
+    const sig = `${vb.x},${vb.y},${vb.w},${vb.h}|${settings.gridSizeX},${settings.gridSizeY},${settings.gridSize}|${settings.canvasBgColor},${settings.gridMinorColor},${settings.gridMajorColor},${settings.gridMinorAlpha},${settings.gridMajorAlpha}`;
+    if (sig === gridSig)
+        return;
     const rect = cachedRect || svg.getBoundingClientRect();
     if (!rect.width || !rect.height)
         return;
-    const settings = state.settings;
+    gridSig = sig;
     const gx = settings.gridSizeX || settings.gridSize || 40;
     const gy = settings.gridSizeY || settings.gridSize || 40;
     // The grid is a sibling layer, so repainting it does not invalidate the
@@ -2090,22 +2237,20 @@ function updateGridBackground(vb = state.viewBox, cachedRect = null) {
     setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
 }
-function requestViewBoxApply() {
-    if (viewBoxFrame)
-        return;
-    viewBoxFrame = true;
-    requestAnimationFrame(() => { viewBoxFrame = false; applyViewBox(); });
-}
-function setStatusOnly() { $('#statusPill').textContent = statusText(); }
-function nodeEl(id) { return document.getElementById('node-' + id); }
-function edgeEl(id) { return document.getElementById('edge-' + id); }
+function setStatusOnly() { setText($('#statusPill'), statusText()); }
+// Id→element registries for rendered graph elements. They are maintained by
+// the render passes so hot paths (drag geometry, selection sync) never pay a
+// document-wide id lookup. getElementById remains as a safety fallback.
+const nodeEls = new Map(), edgeEls = new Map();
+function nodeEl(id) { return nodeEls.get(id) || document.getElementById('node-' + id); }
+function edgeEl(id) { return edgeEls.get(id) || document.getElementById('edge-' + id); }
 function moveNodeFast(id) {
     const n = drag?.node?.id === id ? drag.node : nodeById(id);
     if (!n)
         return;
     const el = nodeEl(id);
     if (el)
-        el.setAttribute('transform', `translate(${n.x},${n.y})`);
+        setAttr(el, 'transform', `translate(${n.x},${n.y})`);
     if (drag && drag.liveEdges === false)
         return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
@@ -2120,47 +2265,50 @@ function moveDragFast() {
         for (const n of nodes) {
             const el = nodeEl(n.id);
             if (el)
-                el.setAttribute('transform', `translate(${n.x},${n.y})`);
+                setAttr(el, 'transform', `translate(${n.x},${n.y})`);
         }
         if (drag.liveEdges === false)
             return;
+        const vc = drag.vc || (drag.vc = newVisualCache());
         for (const edge of (drag.affectedEdges || []))
-            updateEdgeFast(edge);
+            updateEdgeFast(edge, vc);
     }
     catch (e) { /* fail-safe */ }
 }
-function updateEdgeFast(edgeOrId) {
+function updateEdgeFast(edgeOrId, vc = null) {
     const e = typeof edgeOrId === 'object' ? edgeOrId : edgeById(edgeOrId);
     if (!e)
         return;
-    const getNode = drag?.nodeMap ? id => drag.nodeMap.get(id) : nodeById;
-    const a = getNode(e.from), b = getNode(e.to);
+    // nodeById is an indexed O(1) lookup now; node positions are mutated in
+    // place, so the index always returns the live objects during a drag.
+    const a = nodeById(e.from), b = nodeById(e.to);
     if (!a || !b)
         return;
     const el = edgeEl(e.id);
     if (!el)
         return;
-    const d = edgePath(a, b, e);
-    const line = el.querySelector('.edge-line');
+    const g = el;
+    const d = edgePath(a, b, e, vc || passVisuals);
+    const line = g.__line || el.querySelector('.edge-line');
     if (line)
-        line.setAttribute('d', d.path);
-    const hit = el.querySelector('.edge-hit');
+        setAttr(line, 'd', d.path);
+    const hit = g.__hit || el.querySelector('.edge-hit');
     if (hit)
-        hit.setAttribute('d', d.path);
-    const label = el.querySelector('.edge-label');
-    const weight = el.querySelector('.edge-weight');
+        setAttr(hit, 'd', d.path);
+    const label = g.__label || null;
+    const weight = g.__weight || null;
     const hasBoth = label && weight;
-    const labelOffsetY = hasBoth ? -((edgeVisual(e).labelSize || 12) * 0.75 + 2) : 0;
+    const labelOffsetY = hasBoth ? -((edgeVisualC(e, vc).labelSize || 12) * 0.75 + 2) : 0;
     if (label) {
-        label.setAttribute('x', d.labelX);
-        label.setAttribute('y', d.labelY + labelOffsetY);
+        setAttr(label, 'x', d.labelX);
+        setAttr(label, 'y', d.labelY + labelOffsetY);
     }
     if (weight) {
-        weight.setAttribute('x', d.labelX);
-        weight.setAttribute('y', d.labelY);
+        setAttr(weight, 'x', d.labelX);
+        setAttr(weight, 'y', d.labelY);
     }
     // Update arrow tip position/angle during drag
-    const arrow = el.querySelector('.edge-arrow');
+    const arrow = g.__arrow || null;
     if (arrow && e.directed && d.tipX != null && d.arrowAngle != null) {
         const aw = ARROW_HW, ang = d.arrowAngle;
         const sin = Math.sin(ang), cos = Math.cos(ang);
@@ -2168,7 +2316,7 @@ function updateEdgeFast(edgeOrId) {
         const baseX = d.tx, baseY = d.ty;
         const leftX = baseX + px * aw, leftY = baseY + py * aw;
         const rightX = baseX - px * aw, rightY = baseY - py * aw;
-        arrow.setAttribute('points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
+        setAttr(arrow, 'points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
     }
 }
 function scheduleFastNodeMove(id) {
@@ -2187,20 +2335,27 @@ function scheduleFastNodeMove(id) {
 function renderEdges() {
     buildEdgeOffsetCache();
     const showLabels = shouldShowLabels();
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     const existing = new Map();
-    for (const el of [...edgesLayer.children]) {
-        if (el.dataset?.id)
-            existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "edge-<edgeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for (let el = edgesLayer.firstElementChild; el; el = el.nextElementSibling) {
+        const eid = el.id;
+        if (eid.startsWith('edge-'))
+            existing.set(eid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — edges touching non-visible nodes are skipped entirely
     const vr = state.settings.visibleRange || { start: -1, end: -1 };
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    const gd = state.settings.graphDefaults || {};
+    const weightMode = gd.edgeWeightMode || 'number';
+    const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
     for (const e of state.edges) {
-        const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+        const a = nodeById(e.from), b = nodeById(e.to);
         if (!a || !b) {
             // Edge has dangling endpoint — remove from DOM if present
             if (existing.has(e.id))
@@ -2212,8 +2367,7 @@ function renderEdges() {
             continue;
         seen.add(e.id);
         const selected = selectedEdges.has(e.id);
-        const v = edgeRenderStyle(e);
-        const d = edgePath(a, b, e);
+        const v = edgeRenderStyleC(e);
         let g = existing.get(e.id);
         if (!g) {
             g = document.createElementNS(NS, 'g');
@@ -2248,33 +2402,50 @@ function renderEdges() {
             else
                 editEdgeQuick(e.id); });
             edgesLayer.appendChild(g);
+            edgeEls.set(e.id, g);
         }
-        g.classList.toggle('selected', selected);
-        // Update or create hit path
-        let hit = g.querySelector('.edge-hit');
+        // Geometry cache: the path depends only on endpoint positions, node
+        // radii, the parallel-edge lane, and direction. When none of these
+        // changed (style-only or unrelated renders), the previous edgePath
+        // result is reused without recomputation.
+        const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
+        const lane = edgeSiblingOffset(e);
+        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}`;
+        let d = g.__geoSig === geoSig ? g.__geoData : null;
+        if (!d) {
+            d = edgePath(a, b, e, passVisuals);
+            g.__geoSig = geoSig;
+            g.__geoData = d;
+        }
+        toggleClass(g, 'selected', selected);
+        // Update or create hit path (child refs are stashed on the group to
+        // avoid per-edge selector queries)
+        let hit = g.__hit;
         if (!hit) {
             hit = document.createElementNS(NS, 'path');
             hit.setAttribute('class', 'edge-hit');
             g.appendChild(hit);
+            g.__hit = hit;
         }
-        hit.setAttribute('d', d.path);
+        setAttr(hit, 'd', d.path);
         // Update or create line path
-        let line = g.querySelector('.edge-line');
+        let line = g.__line;
         if (!line) {
             line = document.createElementNS(NS, 'path');
             line.setAttribute('class', 'edge-line');
             g.insertBefore(line, g.firstChild);
+            g.__line = line;
         }
-        line.setAttribute('d', d.path);
-        line.setAttribute('stroke', v.color);
-        line.setAttribute('stroke-width', v.strokeSize);
+        setAttr(line, 'd', d.path);
+        setAttr(line, 'stroke', v.color);
+        setAttr(line, 'stroke-width', v.strokeSize);
         const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
         if (dash !== 'none')
-            line.setAttribute('stroke-dasharray', dash);
+            setAttr(line, 'stroke-dasharray', dash);
         else
-            line.removeAttribute('stroke-dasharray');
+            removeAttr(line, 'stroke-dasharray');
         // Update or create arrow
-        let arrow = g.querySelector('.edge-arrow');
+        let arrow = g.__arrow || null;
         if (e.directed && d.tipX != null && d.arrowAngle != null) {
             const arrowColor = selected ? '#22d3ee' : v.color;
             const aw = ARROW_HW, ang = d.arrowAngle;
@@ -2287,17 +2458,18 @@ function renderEdges() {
                 arrow = document.createElementNS(NS, 'polygon');
                 arrow.setAttribute('class', 'edge-arrow');
                 g.appendChild(arrow);
+                g.__arrow = arrow;
             }
-            arrow.setAttribute('points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
-            arrow.setAttribute('fill', arrowColor);
+            setAttr(arrow, 'points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
+            setAttr(arrow, 'fill', arrowColor);
         }
         else if (arrow) {
             arrow.remove();
+            g.__arrow = null;
+            arrow = null;
         }
         // Compute label and weight text separately so both can be shown at once.
         // Weight is drawn ON the line midpoint; label is drawn ABOVE it (offset).
-        const gd = state.settings.graphDefaults || {};
-        const mode = gd.edgeWeightMode || 'number';
         let labelText = '', weightText = '';
         if (showLabels) {
             if (e.label)
@@ -2305,12 +2477,12 @@ function renderEdges() {
             if (e.weight !== '' && e.weight != null) {
                 const w = edgeWeightNumber(e);
                 if (w != null) {
-                    if (mode === 'number') {
+                    if (weightMode === 'number') {
                         weightText = e.weight;
                     }
-                    else if (mode === 'color' || mode === 'width') {
+                    else if (weightMode === 'color' || weightMode === 'width') {
                         // Show number only when weight is outside the configured range
-                        if (!isWeightInRange(w, gd.edgeWeightMin ?? 1, gd.edgeWeightMax ?? 10))
+                        if (!isWeightInRange(w, wMin, wMax))
                             weightText = e.weight;
                     }
                     // 'none' mode: never show weight as text
@@ -2320,7 +2492,7 @@ function renderEdges() {
         const hasBoth = labelText && weightText;
         const labelOffsetY = hasBoth ? -(v.labelSize * 0.75 + 2) : 0;
         // Update or create label (drawn above weight when both present)
-        let label = g.querySelector('.edge-label');
+        let label = g.__label || null;
         if (labelText) {
             if (!label) {
                 label = document.createElementNS(NS, 'text');
@@ -2331,21 +2503,24 @@ function renderEdges() {
                 label.setAttribute('stroke', '#020617');
                 label.setAttribute('stroke-linejoin', 'round');
                 g.appendChild(label);
+                g.__label = label;
             }
-            label.setAttribute('x', d.labelX);
-            label.setAttribute('y', d.labelY + labelOffsetY);
-            label.setAttribute('fill', v.labelColor);
-            label.setAttribute('font-size', v.labelSize);
-            label.setAttribute('font-family', v.labelFont);
-            label.setAttribute('stroke-width', Math.max(3, v.labelSize * 0.36));
+            setAttr(label, 'x', d.labelX);
+            setAttr(label, 'y', d.labelY + labelOffsetY);
+            setAttr(label, 'fill', v.labelColor);
+            setAttr(label, 'font-size', v.labelSize);
+            setAttr(label, 'font-family', v.labelFont);
+            setAttr(label, 'stroke-width', Math.max(3, v.labelSize * 0.36));
             if (label.textContent !== labelText)
                 label.textContent = labelText;
         }
         else if (label) {
             label.remove();
+            g.__label = null;
+            label = null;
         }
         // Update or create weight text (drawn on the line midpoint)
-        let weight = g.querySelector('.edge-weight');
+        let weight = g.__weight || null;
         if (weightText) {
             if (!weight) {
                 weight = document.createElementNS(NS, 'text');
@@ -2356,30 +2531,42 @@ function renderEdges() {
                 weight.setAttribute('stroke', '#020617');
                 weight.setAttribute('stroke-linejoin', 'round');
                 g.appendChild(weight);
+                g.__weight = weight;
             }
-            weight.setAttribute('x', d.labelX);
-            weight.setAttribute('y', d.labelY);
-            weight.setAttribute('fill', v.labelColor);
-            weight.setAttribute('font-size', v.labelSize);
-            weight.setAttribute('font-family', v.labelFont);
-            weight.setAttribute('stroke-width', Math.max(3, v.labelSize * 0.36));
+            setAttr(weight, 'x', d.labelX);
+            setAttr(weight, 'y', d.labelY);
+            setAttr(weight, 'fill', v.labelColor);
+            setAttr(weight, 'font-size', v.labelSize);
+            setAttr(weight, 'font-family', v.labelFont);
+            setAttr(weight, 'stroke-width', Math.max(3, v.labelSize * 0.36));
             if (weight.textContent !== weightText)
                 weight.textContent = weightText;
         }
         else if (weight) {
             weight.remove();
+            g.__weight = null;
+            weight = null;
         }
     }
     // Remove stale edges
     for (const [id, el] of existing) {
-        if (!seen.has(id))
+        if (!seen.has(id)) {
             el.remove();
+            edgeEls.delete(id);
+        }
     }
 }
 function edgeGroupKey(e) { return e.from <= e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
+// Lane offsets depend only on edge ids/endpoints and their order in the
+// array. The cache is reused across renders until the array is replaced or
+// resized, or an in-place id/endpoint/reorder mutation bumps the revision.
+let edgeOffsetCacheSrc = null, edgeOffsetCacheLen = -1, edgeOffsetCacheRev = -1;
 function buildEdgeOffsetCache() {
+    const edges = state.edges;
+    if (edgeOffsetCache && edgeOffsetCacheSrc === edges && edgeOffsetCacheLen === edges.length && edgeOffsetCacheRev === graphRev)
+        return;
     const groups = new Map();
-    for (const e of state.edges) {
+    for (const e of edges) {
         const key = edgeGroupKey(e);
         if (!groups.has(key))
             groups.set(key, []);
@@ -2394,6 +2581,9 @@ function buildEdgeOffsetCache() {
             edgeOffsetCache.set(e.id, (idx - (group.length - 1) / 2) * spacing);
         });
     }
+    edgeOffsetCacheSrc = edges;
+    edgeOffsetCacheLen = edges.length;
+    edgeOffsetCacheRev = graphRev;
 }
 function edgeCanonicalFrom(e) { return e.from <= e.to ? e.from : e.to; }
 function edgeSiblingOffset(e) {
@@ -2409,8 +2599,8 @@ function nodeRadius(n) {
 }
 const ARROW_LEN = 18; // arrow length from base to tip
 const ARROW_HW = 8; // arrow half-width
-function edgePath(a, b, e) {
-    const ra = nodeRadius(a), rb = nodeRadius(b);
+function edgePath(a, b, e, vc = null) {
+    const ra = nodeRadiusC(a, vc), rb = nodeRadiusC(b, vc);
     const arrowGap = e.directed ? ARROW_LEN : 2; // space reserved for arrow at target
     if (a.id === b.id) {
         const lane = edgeSiblingOffset(e);
@@ -2460,16 +2650,21 @@ function renderNodes() {
     const showLabels = shouldShowLabels();
     const selectedNodes = selectedNodeIds();
     const existing = new Map();
-    // Index existing node elements by id, collect for removal
-    for (const el of [...nodesLayer.children]) {
-        if (el.dataset?.id)
-            existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "node-<nodeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for (let el = nodesLayer.firstElementChild; el; el = el.nextElementSibling) {
+        const nid = el.id;
+        if (nid.startsWith('node-'))
+            existing.set(nid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — avoids per-node Set lookup
     const vr = state.settings.visibleRange || { start: -1, end: -1 };
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    const draggingId = drag?.nodeId;
     for (const n of state.nodes) {
         // Skip non-visible nodes entirely — they are removed from DOM, not dimmed.
         // This gives real performance: fewer SVG elements, fewer attribute patches, less paint.
@@ -2477,7 +2672,7 @@ function renderNodes() {
             continue;
         seen.add(n.id);
         const selected = selectedNodes.has(n.id);
-        const v = nodeVisual(n);
+        const v = nodeVisualC(n);
         let g = existing.get(n.id);
         if (!g) {
             // Create new node group
@@ -2491,16 +2686,18 @@ function renderNodes() {
             else
                 editNodeQuick(n.id); });
             nodesLayer.appendChild(g);
+            nodeEls.set(n.id, g);
         }
         // Update transform (always — this is the hot path during drag)
-        g.setAttribute('transform', `translate(${n.x},${n.y})`);
+        setAttr(g, 'transform', `translate(${n.x},${n.y})`);
         // Update selection class
-        g.classList.toggle('selected', selected);
-        g.classList.toggle('dragging', drag?.nodeId === n.id);
-        // Update or create shape
-        let shape = g.querySelector('.node-shape');
+        toggleClass(g, 'selected', selected);
+        toggleClass(g, 'dragging', draggingId === n.id);
+        // Update or create shape (element ref stashed on the group)
+        let shape = g.__shape;
         const w = v.width, h = v.height;
-        const needRebuild = !shape || shape.dataset.shape !== v.shape || shape.dataset.w !== String(w) || shape.dataset.h !== String(h);
+        const shapeSig = v.shape + '|' + w + '|' + h;
+        const needRebuild = !shape || g.__shapeSig !== shapeSig;
         if (needRebuild) {
             if (shape)
                 shape.remove();
@@ -2534,22 +2731,22 @@ function renderNodes() {
                 shape.setAttribute('ry', h / 2);
             }
             shape.setAttribute('class', 'node-shape');
-            shape.dataset.shape = v.shape;
-            shape.dataset.w = w;
-            shape.dataset.h = h;
+            g.__shapeSig = shapeSig;
             g.insertBefore(shape, g.firstChild);
+            g.__shape = shape;
         }
-        // Update shape style attributes (cheap, do every frame)
-        shape.setAttribute('fill', v.color);
-        shape.setAttribute('stroke', v.strokeColor);
-        shape.setAttribute('stroke-width', v.strokeSize);
+        // Update shape style attributes — de-duplicated, so untouched nodes
+        // write nothing
+        setAttr(shape, 'fill', v.color);
+        setAttr(shape, 'stroke', v.strokeColor);
+        setAttr(shape, 'stroke-width', v.strokeSize);
         const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
         if (dash !== 'none')
-            shape.setAttribute('stroke-dasharray', dash);
+            setAttr(shape, 'stroke-dasharray', dash);
         else
-            shape.removeAttribute('stroke-dasharray');
+            removeAttr(shape, 'stroke-dasharray');
         // Update label
-        let label = g.querySelector('text');
+        let label = g.__text || null;
         const wantLabel = showLabels && n.label;
         if (wantLabel) {
             if (!label) {
@@ -2558,54 +2755,105 @@ function renderNodes() {
                 label.setAttribute('stroke', '#020617');
                 label.setAttribute('stroke-linejoin', 'round');
                 g.appendChild(label);
+                g.__text = label;
             }
-            label.setAttribute('text-anchor', 'middle');
-            label.setAttribute('dominant-baseline', 'middle');
-            label.setAttribute('fill', v.labelColor);
-            label.setAttribute('font-size', v.labelSize);
-            label.setAttribute('font-family', v.labelFont);
-            label.setAttribute('stroke-width', Math.max(3, v.labelSize * 0.32));
+            setAttr(label, 'text-anchor', 'middle');
+            setAttr(label, 'dominant-baseline', 'middle');
+            setAttr(label, 'fill', v.labelColor);
+            setAttr(label, 'font-size', v.labelSize);
+            setAttr(label, 'font-family', v.labelFont);
+            setAttr(label, 'stroke-width', Math.max(3, v.labelSize * 0.32));
             let lx = 0, ly = 0;
             const offset = Math.max(w, h) / 2 + v.labelSize * 0.7;
             if (v.labelPosition === 'top') {
                 ly = -offset;
-                label.setAttribute('dominant-baseline', 'auto');
+                setAttr(label, 'dominant-baseline', 'auto');
             }
             else if (v.labelPosition === 'bottom') {
                 ly = offset;
-                label.setAttribute('dominant-baseline', 'hanging');
+                setAttr(label, 'dominant-baseline', 'hanging');
             }
             else if (v.labelPosition === 'left') {
                 lx = -offset;
-                label.setAttribute('text-anchor', 'end');
+                setAttr(label, 'text-anchor', 'end');
             }
             else if (v.labelPosition === 'right') {
                 lx = offset;
-                label.setAttribute('text-anchor', 'start');
+                setAttr(label, 'text-anchor', 'start');
             }
-            label.setAttribute('x', lx);
-            label.setAttribute('y', ly);
+            setAttr(label, 'x', lx);
+            setAttr(label, 'y', ly);
             if (label.textContent !== n.label)
                 label.textContent = n.label;
         }
         else if (label) {
             label.remove();
+            g.__text = null;
+            label = null;
         }
     }
     // Remove stale elements
     for (const [id, el] of existing) {
-        if (!seen.has(id))
+        if (!seen.has(id)) {
             el.remove();
+            nodeEls.delete(id);
+        }
     }
 }
 function renderSidebar() {
     renderStartSelect();
     renderSelectionPanel();
 }
+let startSelectSig = '';
 function renderStartSelect() {
     const sel = $('#algoStart');
+    const nodes = state.nodes;
+    // FNV-1a signature over id+label: O(total chars), no DOM. The option list
+    // is only patched when this signature changes.
+    let h = 2166136261 ^ nodes.length;
+    for (let i = 0; i < nodes.length; i++) {
+        const s = nodes[i].id + '>' + nodes[i].label;
+        for (let j = 0; j < s.length; j++) {
+            h ^= s.charCodeAt(j);
+            h = Math.imul(h, 16777619);
+        }
+    }
+    const sig = I18N.current + ':' + h;
+    if (sig !== startSelectSig) {
+        startSelectSig = sig;
+        const options = sel.options;
+        const desired = nodes.length ? nodes.length : 1;
+        while (options.length > desired)
+            sel.remove(options.length - 1);
+        if (nodes.length) {
+            for (let i = 0; i < nodes.length; i++) {
+                let opt = options[i];
+                if (!opt) {
+                    opt = document.createElement('option');
+                    sel.add(opt);
+                }
+                const value = nodes[i].id;
+                const text = `${nodes[i].label || nodes[i].id} (${nodes[i].id})`;
+                if (opt.value !== value)
+                    opt.value = value;
+                if (opt.textContent !== text)
+                    opt.textContent = text;
+            }
+        }
+        else {
+            let opt = options[0];
+            if (!opt) {
+                opt = document.createElement('option');
+                sel.add(opt);
+            }
+            if (opt.value !== '')
+                opt.value = '';
+            const placeholder = I18N.t('no_nodes');
+            if (opt.textContent !== placeholder)
+                opt.textContent = placeholder;
+        }
+    }
     const current = sel.value || state.selected?.id;
-    sel.innerHTML = state.nodes.length ? state.nodes.map(n => `<option value="${esc(n.id)}">${esc(n.label || n.id)} (${esc(n.id)})</option>`).join('') : '<option value="">' + I18N.t('no_nodes') + '</option>';
     const selectedNode = state.selected?.type === 'node' ? state.selected.id : current;
     if (selectedNode && state.nodes.some(n => n.id === selectedNode))
         sel.value = selectedNode;
@@ -3089,11 +3337,10 @@ function edgeListHtml() {
             : '';
         $('#edgeListNote').textContent = filterNote + pageNote;
     }
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     let html = '<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>';
     renderedEdges.forEach((e, i) => {
-        const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+        const a = nodeById(e.from), b = nodeById(e.to);
         const sel = selectedEdges.has(e.id) ? ' matrix-selected' : '';
         const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle === s ? ' selected' : ''}>${I18N.t('stroke_' + s)}</option>`).join('');
         html += `<tr>
@@ -3164,7 +3411,9 @@ function selectedNodeIds() { return new Set(state.selection?.nodes || []); }
 function selectedEdgeIds() { return new Set(state.selection?.edges || []); }
 function isNodeSelected(id) { return selectedNodeIds().has(id); }
 function isEdgeSelected(id) { return selectedEdgeIds().has(id); }
-function setSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
+// Shared selection-merge core: computes state.selection/state.selected from
+// the requested ids and combine mode. Callers decide how much DOM to update.
+function mergeSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
     const selectionMode = combine === true ? 'add' :
         (combine === false || combine == null ? 'replace' : combine);
     const nodeSet = selectionMode === 'replace' ? new Set() : selectedNodeIds();
@@ -3186,37 +3435,106 @@ function setSelection(nodes = [], edges = [], primary = null, combine = 'replace
         state.selected = { type: 'edge', id: state.selection.edges[0] };
     else
         state.selected = null;
+}
+function setSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
+    mergeSelection(nodes, edges, primary, combine);
     syncSelectionDom();
     renderSidebar();
+    setStatusOnly();
+}
+// Live variant for per-frame selection tools (brush): identical state
+// updates, but the sidebar render is deferred instead of running per frame.
+function setSelectionLive(nodes = [], edges = [], combine = 'add') {
+    mergeSelection(nodes, edges, null, combine);
+    syncSelectionDom();
+    markSidebarDirty();
     setStatusOnly();
 }
 function selectItem(type, id) { setSelection(type === 'node' ? [id] : [], type === 'edge' ? [id] : [], { type, id }, false); }
 function deselect() { if (state.selected || state.selection?.nodes?.length || state.selection?.edges?.length)
     setSelection([], [], null, false); }
+// Mirror of the selection currently reflected in the DOM. syncSelectionDom
+// touches only the elements whose selection state changed — O(delta) per
+// selection change instead of O(V+E).
+let domSelectedNodes = new Set(), domSelectedEdges = new Set();
+function resetSelectionMirror() {
+    // Called after a full render pass: renderEdges/renderNodes just applied the
+    // exact selection state to every element, so the mirror can adopt it.
+    domSelectedNodes = selectedNodeIds();
+    domSelectedEdges = selectedEdgeIds();
+}
 function syncSelectionDom() {
     const ns = selectedNodeIds(), es = selectedEdgeIds();
-    nodesLayer.querySelectorAll('.node.selected,.node.dragging').forEach(el => el.classList.remove('selected', 'dragging'));
-    nodesLayer.querySelectorAll('.node').forEach(el => el.classList.toggle('selected', ns.has(el.dataset.id)));
-    edgesLayer.querySelectorAll('.edge').forEach(el => {
-        const selected = es.has(el.dataset.id);
-        el.classList.toggle('selected', selected);
-        const e = edgeById(el.dataset.id);
-        // Update arrow color to match selection state
-        const arrow = el.querySelector('.edge-arrow');
-        if (arrow && e) {
-            const v = edgeVisual(e);
-            arrow.setAttribute('fill', selected ? '#22d3ee' : v.color);
+    for (const id of domSelectedNodes) {
+        if (!ns.has(id)) {
+            const el = nodeEl(id);
+            if (el)
+                toggleClass(el, 'selected', false);
         }
-    });
+    }
+    for (const id of ns) {
+        if (!domSelectedNodes.has(id)) {
+            const el = nodeEl(id);
+            if (el)
+                toggleClass(el, 'selected', true);
+        }
+    }
+    for (const id of domSelectedEdges) {
+        if (!es.has(id)) {
+            const el = edgeEl(id);
+            if (!el)
+                continue;
+            toggleClass(el, 'selected', false);
+            const arrow = el.__arrow;
+            if (arrow) {
+                const e = edgeById(id);
+                if (e && e.directed)
+                    setAttr(arrow, 'fill', edgeRenderStyleC(e).color);
+            }
+        }
+    }
+    for (const id of es) {
+        if (!domSelectedEdges.has(id)) {
+            const el = edgeEl(id);
+            if (!el)
+                continue;
+            toggleClass(el, 'selected', true);
+            const arrow = el.__arrow;
+            if (arrow) {
+                const e = edgeById(id);
+                if (e && e.directed)
+                    setAttr(arrow, 'fill', '#22d3ee');
+            }
+        }
+    }
+    domSelectedNodes = ns;
+    domSelectedEdges = es;
     updateMatrixSelectionDom();
 }
 function updateMatrixSelectionDom() {
+    const host = $('#matrixHost');
+    if (!host || !host.firstElementChild)
+        return;
+    // The matrix panel is hidden in "graph" view and its HTML is rebuilt from
+    // the current selection whenever the view switches back — no need to sync.
+    const mainEl = document.querySelector('.main');
+    if (mainEl && mainEl.dataset?.view === 'graph')
+        return;
     const ns = selectedNodeIds(), es = selectedEdgeIds();
-    $$('#matrixHost [data-node-label]').forEach(input => input.classList.toggle('matrix-selected', ns.has(input.dataset.nodeLabel)));
-    $$('#matrixHost [data-cell-from][data-cell-to]').forEach(input => {
+    for (const input of host.querySelectorAll('[data-node-label]')) {
+        toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
+    }
+    for (const input of host.querySelectorAll('[data-cell-from][data-cell-to]')) {
         const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
-        input.classList.toggle('matrix-selected', ids.some(id => es.has(id)));
-    });
+        let selected = false;
+        for (let i = 0; i < ids.length; i++) {
+            if (es.has(ids[i])) {
+                selected = true;
+                break;
+            }
+        }
+        toggleClass(input, 'matrix-selected', selected);
+    }
 }
 function selectMatrixNode(id, append = false) {
     if (!nodeById(id))
@@ -3741,6 +4059,7 @@ function renumberNodeOrder() {
 }
 function sortEdgesById() {
     state.edges.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    invalidateGraphIndex();
     pushHistory('sort edges by id');
     queueRender(true);
     toast(I18N.t('edges_sorted_id'));
@@ -3748,6 +4067,7 @@ function sortEdgesById() {
 function sortEdgesByFrom() {
     const order = id => { const n = nodeById(id); return n ? (n.order ?? 0) : 0; };
     state.edges.sort((a, b) => order(a.from) - order(b.from) || order(a.to) - order(b.to) || a.id.localeCompare(b.id, undefined, { numeric: true }));
+    invalidateGraphIndex();
     pushHistory('sort edges by from');
     queueRender(true);
     toast(I18N.t('edges_sorted_from'));
@@ -3755,6 +4075,7 @@ function sortEdgesByFrom() {
 function sortEdgesByTo() {
     const order = id => { const n = nodeById(id); return n ? (n.order ?? 0) : 0; };
     state.edges.sort((a, b) => order(a.to) - order(b.to) || order(a.from) - order(b.from) || a.id.localeCompare(b.id, undefined, { numeric: true }));
+    invalidateGraphIndex();
     pushHistory('sort edges by to');
     queueRender(true);
     toast(I18N.t('edges_sorted_to'));
@@ -3768,6 +4089,7 @@ function moveEdge(edgeId, dir) {
         return;
     const [e] = state.edges.splice(idx, 1);
     state.edges.splice(newIdx, 0, e);
+    invalidateGraphIndex();
     pushHistory('move edge');
     queueRender(true);
     saveSoon();
@@ -3790,17 +4112,26 @@ function deleteSelected() {
     pushHistory('delete');
     queueRender(true, true);
 }
-function registerPointer(ev) { activePointers.set(ev.pointerId, { id: ev.pointerId, type: ev.pointerType || 'mouse', clientX: ev.clientX, clientY: ev.clientY }); }
+let pointerRect = null; // viewport rect captured at pointerdown, reused for the whole gesture
+function registerPointer(ev) {
+    // Adopt any pending wheel-zoom before new gesture math runs, and capture
+    // the viewport rect once per gesture for clientToWorld.
+    flushZoomPreview();
+    activePointers.set(ev.pointerId, { id: ev.pointerId, type: ev.pointerType || 'mouse', clientX: ev.clientX, clientY: ev.clientY });
+    if (!pointerRect)
+        pointerRect = svg.getBoundingClientRect();
+}
 function updatePointer(ev) { const p = activePointers.get(ev.pointerId); if (p) {
     p.clientX = ev.clientX;
     p.clientY = ev.clientY;
 } }
-function unregisterPointer(ev) { activePointers.delete(ev.pointerId); }
+function unregisterPointer(ev) { activePointers.delete(ev.pointerId); if (!activePointers.size)
+    pointerRect = null; }
 function touchPointers() { return [...activePointers.values()].filter(p => p.type === 'touch'); }
 function distClient(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
 function centerClient(a, b) { return { clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 }; }
 function clientToWorld(clientX, clientY, viewBox = state.viewBox, rect = null) {
-    const r = rect || svg.getBoundingClientRect();
+    const r = rect || pointerRect || svg.getBoundingClientRect();
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly, otherwise cursor-based
     // gestures drift when the canvas aspect ratio differs from the viewBox.
     const scale = Math.min(r.width / viewBox.w, r.height / viewBox.h);
@@ -3832,6 +4163,12 @@ function beginPinch(a, b) {
             moveNodeFast(drag.fastNodeId);
         if (drag.moved)
             pushHistory('move node');
+        const dragNodes = drag.nodes || (drag.node ? [drag.node] : []);
+        for (const dn of dragNodes) {
+            const el = nodeEl(dn.id);
+            if (el)
+                toggleClass(el, 'dragging', false);
+        }
         drag = null;
         syncSelectionDom();
     }
@@ -3900,7 +4237,9 @@ function beginSelectionDraft(ev) {
     renderSelectionDraft();
     setStatusOnly();
 }
-function updateSelectionDraft(p) {
+function sampleSelectionDraftPoint(p) {
+    // Stroke sampling runs on every pointermove: brush and lasso geometry
+    // must not skip input samples.
     if (!selectDraft)
         return;
     selectDraft.end = p;
@@ -3911,11 +4250,38 @@ function updateSelectionDraft(p) {
         if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 6)
             selectDraft.points.push(p);
     }
+}
+function applySelectionDraft() {
+    if (!selectDraft)
+        return;
     if (selectDraft.tool === 'brush') {
         const hit = hitTestSelection(selectDraft, true);
-        setSelection(hit.nodes, hit.edges, null, selectDraft.combine || 'add');
+        setSelectionLive(hit.nodes, hit.edges, selectDraft.combine || 'add');
     }
     renderSelectionDraft();
+}
+function updateSelectionDraft(p) {
+    if (!selectDraft)
+        return;
+    sampleSelectionDraftPoint(p);
+    applySelectionDraft();
+}
+// The expensive part of a draft update — the O(V+E) brush hit test and the
+// overlay redraw — is coalesced to one per animation frame. pointermove
+// fires far above display rate (trackpads, high-Hz mice); only the latest
+// sampled state per frame matters visually.
+let selectDraftFrame = false;
+function scheduleSelectionDraftUpdate(p) {
+    if (!selectDraft)
+        return;
+    sampleSelectionDraftPoint(p);
+    if (selectDraftFrame)
+        return;
+    selectDraftFrame = true;
+    requestAnimationFrame(() => {
+        selectDraftFrame = false;
+        applySelectionDraft();
+    });
 }
 function finishSelectionDraft(cancel = false) {
     if (!selectDraft)
@@ -3929,6 +4295,12 @@ function finishSelectionDraft(cancel = false) {
         setSelection(hit.nodes, hit.edges, null, draft.combine || 'replace');
         if (hit.nodes.length || hit.edges.length)
             toast(I18N.t('selected_n_m', { n: hit.nodes.length, m: hit.edges.length }));
+    }
+    else {
+        // Brush strokes apply their selection live with the sidebar deferred;
+        // make sure the panel catches up even when the gesture is cancelled.
+        markSidebarDirty();
+        queueRender(false);
     }
 }
 function polygonCloseThreshold() { return Math.max(10, state.viewBox.w / 160); }
@@ -4162,11 +4534,11 @@ function onNodePointerDown(ev, id) {
     const dragStarts = new Map(dragNodes.map(node => [node.id, { x: node.x, y: node.y }]));
     const dragIdSet = new Set(dragNodes.map(node => node.id));
     const affectedEdges = state.edges.filter(e => dragIdSet.has(e.from) || dragIdSet.has(e.to));
-    drag = { nodeId: id, node: n, nodes: dragNodes, starts: dragStarts, ignoreIds: dragIdSet, startX: n.x, startY: n.y, offsetX: p.x - n.x, offsetY: p.y - n.y, moved: false, affectedEdges, liveEdges: affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT, nodeMap: new Map(state.nodes.map(node => [node.id, node])), fastFrame: false, fastNodeId: null };
+    drag = { nodeId: id, node: n, nodes: dragNodes, starts: dragStarts, ignoreIds: dragIdSet, startX: n.x, startY: n.y, offsetX: p.x - n.x, offsetY: p.y - n.y, moved: false, affectedEdges, liveEdges: affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT, fastFrame: false, fastNodeId: null, vc: null };
     for (const dn of dragNodes) {
         const el = nodeEl(dn.id);
         if (el)
-            el.classList.add('dragging');
+            toggleClass(el, 'dragging', true);
     }
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
@@ -4219,6 +4591,10 @@ svg.addEventListener('dblclick', ev => {
 });
 svg.addEventListener('pointermove', ev => {
     updatePointer(ev);
+    // Pending wheel-zoom distorts clientToWorld (the preview lives in a CSS
+    // transform, not the viewBox). Commit it before any gesture math.
+    if (zoomPreview)
+        flushZoomPreview();
     if (pinch) {
         updatePinch();
         return;
@@ -4250,7 +4626,7 @@ svg.addEventListener('pointermove', ev => {
         return;
     }
     if (selectDraft && ev.pointerId === selectDraft.pointerId) {
-        updateSelectionDraft(p);
+        scheduleSelectionDraftUpdate(p);
         return;
     }
     if (pendingNodeTap && ev.pointerId === pendingNodeTap.pointerId) {
@@ -4288,6 +4664,8 @@ svg.addEventListener('pointermove', ev => {
 svg.addEventListener('pointerup', ev => finishPointer(ev));
 svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
 function finishPointer(ev, cancel = false) {
+    if (zoomPreview)
+        flushZoomPreview(); // hit-testing must see committed geometry
     if (pinch) {
         unregisterPointer(ev);
         if (touchPointers().length < 2)
@@ -4339,14 +4717,20 @@ function finishPointer(ev, cancel = false) {
                 for (const dn of drag.nodes) {
                     const el = nodeEl(dn.id);
                     if (el)
-                        el.classList.remove('dragging');
+                        toggleClass(el, 'dragging', false);
                 }
             }
         }
         catch (e) { }
+        const moved = drag.moved, edgesWereLive = drag.liveEdges !== false;
         drag = null;
         $('#canvasWrap').classList.remove('fast-interaction');
-        queueRender(false);
+        // A click that never moved left the canvas untouched (selection is synced
+        // directly), and a live-edge drag already patched every transform and path
+        // frame-by-frame — either way the full re-render pass is unnecessary.
+        // Only drags whose edges were frozen (very high degree) need a re-render.
+        if (moved && !edgesWereLive)
+            queueRender(false);
     }
     if (pan) {
         const completedPan = pan;
@@ -4385,18 +4769,60 @@ function startPan(ev) {
     setStatusOnly();
 }
 svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, { passive: false });
+// === Composited wheel zoom ===
+// Changing the SVG viewBox re-lays-out and re-rasterizes every vector
+// element. Wheel events only drive a GPU-composited CSS transform preview
+// (the same mechanism panning uses); the real viewBox is applied exactly
+// once, when the wheel settles.
+let zoomPreview = null; // {base, preview, rect, frame, timer}
+const ZOOM_COMMIT_DELAY = 140;
 function zoomAt(factor, clientX, clientY) {
-    const r = svg.getBoundingClientRect();
+    // A wheel arriving mid pan/pinch would fight the gesture's transform —
+    // finalize the gesture first so zoom starts from what is on screen.
+    if (pan) {
+        state.viewBox = { ...pan.previewViewBox };
+        pan = null;
+        clearFastPanTransform();
+        $('#canvasWrap').classList.remove('panning');
+    }
+    if (pinch)
+        endPinch();
+    const base = zoomPreview ? zoomPreview.base : { ...state.viewBox };
+    const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
+    const r = zoomPreview ? zoomPreview.rect : svg.getBoundingClientRect();
     const cx = (clientX - r.left) / r.width, cy = (clientY - r.top) / r.height;
-    const wx = state.viewBox.x + cx * state.viewBox.w, wy = state.viewBox.y + cy * state.viewBox.h;
-    const nw = clamp(state.viewBox.w * factor, 120, 20000), nh = clamp(state.viewBox.h * factor, 90, 20000);
-    state.viewBox.x = wx - cx * nw;
-    state.viewBox.y = wy - cy * nh;
-    state.viewBox.w = nw;
-    state.viewBox.h = nh;
-    requestViewBoxApply();
+    const wx = cur.x + cx * cur.w, wy = cur.y + cy * cur.h;
+    const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
+    const preview = { x: wx - cx * nw, y: wy - cy * nh, w: nw, h: nh };
+    if (!zoomPreview)
+        zoomPreview = { base, preview, rect: r, frame: false, timer: null };
+    else
+        zoomPreview.preview = preview;
+    if (!zoomPreview.frame) {
+        zoomPreview.frame = true;
+        requestAnimationFrame(() => {
+            if (!zoomPreview)
+                return;
+            zoomPreview.frame = false;
+            applyPreviewViewBox(zoomPreview.preview, zoomPreview.base, zoomPreview.rect);
+        });
+    }
+    clearTimeout(zoomPreview.timer);
+    zoomPreview.timer = setTimeout(commitZoomPreview, ZOOM_COMMIT_DELAY);
+}
+function commitZoomPreview() {
+    if (!zoomPreview)
+        return;
+    const z = zoomPreview;
+    zoomPreview = null;
+    clearTimeout(z.timer);
+    state.viewBox = { ...z.preview };
+    clearFastPanTransform();
+    applyViewBox();
     saveSoon();
 }
+function flushZoomPreview() { if (zoomPreview)
+    commitZoomPreview(); }
 function fitView() {
     if (!state.nodes.length) {
         state.viewBox = { x: -500, y: -330, w: 1000, h: 660 };
@@ -5832,17 +6258,20 @@ function syncCameraInputs() {
     const cx = state.viewBox.x + state.viewBox.w / 2;
     const cy = state.viewBox.y + state.viewBox.h / 2;
     const xEl = $('#cameraX'), yEl = $('#cameraY'), wEl = $('#cameraW'), hEl = $('#cameraH');
-    if (xEl && document.activeElement !== xEl)
+    if (xEl && document.activeElement !== xEl && xEl.value !== String(Math.round(cx)))
         xEl.value = Math.round(cx);
-    if (yEl && document.activeElement !== yEl)
+    if (yEl && document.activeElement !== yEl && yEl.value !== String(Math.round(cy)))
         yEl.value = Math.round(cy);
-    if (wEl && document.activeElement !== wEl)
+    if (wEl && document.activeElement !== wEl && wEl.value !== String(Math.round(state.viewBox.w)))
         wEl.value = Math.round(state.viewBox.w);
-    if (hEl && document.activeElement !== hEl)
+    if (hEl && document.activeElement !== hEl && hEl.value !== String(Math.round(state.viewBox.h)))
         hEl.value = Math.round(state.viewBox.h);
     const readout = $('#cameraReadout');
-    if (readout)
-        readout.textContent = (I18N.current === 'ru' ? 'центр' : 'center') + ` (${Math.round(cx)}, ${Math.round(cy)}) · ` + (I18N.current === 'ru' ? 'зум' : 'zoom') + ` ${(1000 / state.viewBox.w * 100).toFixed(0)}%`;
+    if (readout) {
+        const text = (I18N.current === 'ru' ? 'центр' : 'center') + ` (${Math.round(cx)}, ${Math.round(cy)}) · ` + (I18N.current === 'ru' ? 'зум' : 'zoom') + ` ${(1000 / state.viewBox.w * 100).toFixed(0)}%`;
+        if (readout.textContent !== text)
+            readout.textContent = text;
+    }
 }
 function setCameraFromInputs() {
     const cx = finite($('#cameraX').value, state.viewBox.x + state.viewBox.w / 2);
@@ -6587,16 +7016,16 @@ function wireUi() {
     $('#docTitleInput').addEventListener('change', () => pushHistory('title'));
     // Edit-tab node placement — primary values for newly added nodes
     $('#nodeShape').addEventListener('change', e => { state.settings.nodeShape = e.target.value; pushHistory('node shape'); queueRender(false); });
-    $('#nodeColor').addEventListener('input', e => { state.settings.nodeColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#nodeColor').addEventListener('input', e => { state.settings.nodeColor = e.target.value; saveSoon(); });
     $('#nodeColor').addEventListener('change', () => pushHistory('node color'));
     $('#nodeWidth').addEventListener('change', e => { state.settings.nodeWidth = clamp(finite(e.target.value, 50), 10, 300); e.target.value = state.settings.nodeWidth; pushHistory('node width'); queueRender(false); });
     $('#nodeHeight').addEventListener('change', e => { state.settings.nodeHeight = clamp(finite(e.target.value, 50), 10, 300); e.target.value = state.settings.nodeHeight; pushHistory('node height'); queueRender(false); });
-    $('#nodeStrokeColor').addEventListener('input', e => { state.settings.nodeStrokeColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#nodeStrokeColor').addEventListener('input', e => { state.settings.nodeStrokeColor = e.target.value; saveSoon(); });
     $('#nodeStrokeColor').addEventListener('change', () => pushHistory('node stroke color'));
     $('#nodeStrokeSize').addEventListener('change', e => { state.settings.nodeStrokeSize = clamp(finite(e.target.value, 2.2), 0, 20); e.target.value = state.settings.nodeStrokeSize; pushHistory('node stroke size'); queueRender(false); });
     $('#nodeStrokeStyle').addEventListener('change', e => { state.settings.nodeStrokeStyle = e.target.value; pushHistory('node stroke style'); queueRender(false); });
     $('#nodeType').addEventListener('change', e => { state.settings.nodeType = e.target.value.slice(0, 40); pushHistory('node type'); saveSoon(); });
-    $('#nodeLabelColor').addEventListener('input', e => { state.settings.nodeLabelColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#nodeLabelColor').addEventListener('input', e => { state.settings.nodeLabelColor = e.target.value; saveSoon(); });
     $('#nodeLabelColor').addEventListener('change', () => pushHistory('node label color'));
     $('#nodeLabelFont').addEventListener('change', e => { state.settings.nodeLabelFont = e.target.value.slice(0, 60); pushHistory('node label font'); queueRender(false); });
     $('#nodeLabelSize').addEventListener('change', e => { state.settings.nodeLabelSize = clamp(finite(e.target.value, 13), 4, 72); e.target.value = state.settings.nodeLabelSize; pushHistory('node label size'); queueRender(false); });
@@ -6605,11 +7034,11 @@ function wireUi() {
     $('#edgeWeight').addEventListener('input', e => { state.settings.edgeWeight = e.target.value; saveSoon(); });
     $('#edgeLabel').addEventListener('input', e => { state.settings.edgeLabel = e.target.value; saveSoon(); });
     $('#edgeType').addEventListener('change', e => { state.settings.edgeType = e.target.value.slice(0, 40); pushHistory('edge type'); saveSoon(); });
-    $('#edgeColor').addEventListener('input', e => { state.settings.edgeColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#edgeColor').addEventListener('input', e => { state.settings.edgeColor = e.target.value; saveSoon(); });
     $('#edgeColor').addEventListener('change', () => pushHistory('edge color'));
     $('#edgeStrokeSize').addEventListener('change', e => { state.settings.edgeStrokeSize = clamp(finite(e.target.value, 2.4), 0, 20); e.target.value = state.settings.edgeStrokeSize; pushHistory('edge stroke size'); queueRender(false); });
     $('#edgeStrokeStyle').addEventListener('change', e => { state.settings.edgeStrokeStyle = e.target.value; pushHistory('edge stroke style'); queueRender(false); });
-    $('#edgeLabelColor').addEventListener('input', e => { state.settings.edgeLabelColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#edgeLabelColor').addEventListener('input', e => { state.settings.edgeLabelColor = e.target.value; saveSoon(); });
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0, 60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value, 12), 4, 72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
@@ -6657,8 +7086,8 @@ function wireUi() {
     } });
     $('#btnSample').addEventListener('click', addSample);
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
-    $('#btnZoomIn').addEventListener('click', () => { const r = svg.getBoundingClientRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
-    $('#btnZoomOut').addEventListener('click', () => { const r = svg.getBoundingClientRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
+    $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
+    $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
     $('#btnZoomReset').addEventListener('click', fitView);
     $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
@@ -6796,6 +7225,7 @@ function wireUi() {
                 const newId = safeId(t.value, 'e');
                 if (newId !== e.id && !state.edges.some(x => x.id === newId)) {
                     e.id = newId;
+                    invalidateGraphIndex();
                     pushHistory('edit edge id');
                     queueRender(false);
                     saveSoon();
@@ -6812,6 +7242,7 @@ function wireUi() {
                         e.from = target.id;
                     else
                         e.to = target.id;
+                    invalidateGraphIndex();
                     pushHistory('edit edge endpoint');
                     queueRender(false);
                     saveSoon();
@@ -7005,7 +7436,7 @@ function wireUi() {
                 mainEl.dataset.view = view;
                 document.querySelectorAll('[data-view-btn]').forEach(b => b.classList.toggle('active', b === btn));
                 // Trigger a render to resize the canvas to its new container
-                setTimeout(() => queueRender(true), 0);
+                setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
             });
         });
         const orientBtn = $('#btnViewOrient');
@@ -7015,7 +7446,7 @@ function wireUi() {
                 mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
                 orientBtn.textContent = mainEl.dataset.orient === 'v' ? '↔' : '↕';
                 orientBtn.title = mainEl.dataset.orient === 'v' ? 'Switch to horizontal split' : 'Switch to vertical split';
-                setTimeout(() => queueRender(true), 0);
+                setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
             });
         }
         // Update view when orientation changes (e.g. rotating device)
@@ -7035,7 +7466,7 @@ function wireUi() {
                     orientBtn.textContent = '↔';
                 }
             }
-            setTimeout(() => queueRender(true), 50);
+            setTimeout(() => { invalidateGridCache(); queueRender(true); }, 50);
         });
     }
     $('#btnBfs').addEventListener('click', runBfs);
@@ -7109,7 +7540,7 @@ function wireUi() {
         spaceDown = false;
         setStatusOnly();
     } });
-    window.addEventListener('resize', () => queueRender(false));
+    window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
     // Перерисовать матрицу и канвас при смене языка
     window.addEventListener('i18n-change', () => {
         // Обновить state.title если он дефолтный
@@ -7191,8 +7622,7 @@ function init() {
     syncHotkeyInputs();
     syncCameraInputs();
     document.title = state.title + ' · ' + (I18N.t('brand_name'));
-    appHistory = [snapshot()];
-    appHistoryIndex = 0;
+    resetHistory();
     queueRender(true);
 }
 init();
