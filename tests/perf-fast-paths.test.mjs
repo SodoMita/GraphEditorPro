@@ -224,6 +224,37 @@ test('renaming an edge id through the edge list keeps selection and lookups work
   dom.window.close();
 });
 
+test('brush selection coalesces to frames and applies selection with sidebar', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const svg = dom.window.document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  // Switch to the brush tool.
+  dom.window.document.querySelector('[data-selecttool="brush"]').click();
+  await nextFrame(dom.window);
+
+  // Alpha sits at (-200, 0) → client (300, 330). Sweep across it with several
+  // pointermove samples in one frame — only the last should be applied.
+  dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 120, clientY: 330 });
+  for (let x = 140; x <= 460; x += 40) {
+    dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: x, clientY: 330 });
+  }
+  await settle(dom.window, 60);
+  const nodeA = dom.window.document.getElementById('node-a');
+  assert.equal(nodeA.classList.contains('selected'), true, 'brushed node becomes selected mid-gesture');
+
+  dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 460, clientY: 330 });
+  await nextFrame(dom.window);
+  assert.equal(nodeA.classList.contains('selected'), true, 'selection persists after release');
+  // Sidebar must reflect the selection after the gesture (deferred during it).
+  // The sweep crosses an edge too, so the multi-selection header is shown.
+  const panel = dom.window.document.getElementById('selectionPanel');
+  assert.match(panel.textContent, /1 node/, 'selection panel reflects the brushed selection');
+  assert.equal(dom.window.document.querySelector('#canvasWrap').classList.contains('fast-interaction'), false);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
 test('algorithm start select follows selection and label edits', async () => {
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);

@@ -1288,9 +1288,9 @@ const STORAGE_KEY = 'graph-editor-pro-v2';
 const R = 25;
 // All connected edges follow a dragged node live while their count stays
 // under this budget; beyond it, edges stay frozen until release. Each live
-// edge costs an indexed lookup plus a path rebuild, so the budget trades a
-// few milliseconds per frame against immediate feedback on hub nodes.
-const DRAG_LIVE_EDGE_LIMIT = 400;
+// edge costs an indexed lookup plus a path rebuild (≈1–2 µs), so the budget
+// bounds per-frame work at a few milliseconds.
+const DRAG_LIVE_EDGE_LIMIT = 2000;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 /** Return a required DOM element or fail immediately with a useful error. */
 const $ = (selector, root = document) => {
@@ -1940,12 +1940,23 @@ function edgeRenderStyle(e) {
     }
     return v;
 }
+// Dash patterns depend only on (style, stroke size); sizes repeat heavily
+// across a graph, so the built strings are memoized.
+const dashCache = new Map();
 function strokeDashArray(style, size) {
-    if (style === 'dashed')
-        return `${Math.max(4, size * 2)} ${Math.max(3, size * 1.5)}`;
-    if (style === 'dotted')
-        return `${Math.max(1, size * 0.8)} ${Math.max(3, size * 1.8)}`;
-    return 'none';
+    if (style !== 'dashed' && style !== 'dotted')
+        return 'none';
+    const key = style + size;
+    let dash = dashCache.get(key);
+    if (dash === undefined) {
+        dash = style === 'dashed'
+            ? `${Math.max(4, size * 2)} ${Math.max(3, size * 1.5)}`
+            : `${Math.max(1, size * 0.8)} ${Math.max(3, size * 1.8)}`;
+        if (dashCache.size > 128)
+            dashCache.clear();
+        dashCache.set(key, dash);
+    }
+    return dash;
 }
 // === DOM write de-duplication ===
 // Every write to rendered graph elements goes through these helpers, which
@@ -2357,7 +2368,6 @@ function renderEdges() {
         seen.add(e.id);
         const selected = selectedEdges.has(e.id);
         const v = edgeRenderStyleC(e);
-        const d = edgePath(a, b, e, passVisuals);
         let g = existing.get(e.id);
         if (!g) {
             g = document.createElementNS(NS, 'g');
@@ -2393,6 +2403,19 @@ function renderEdges() {
                 editEdgeQuick(e.id); });
             edgesLayer.appendChild(g);
             edgeEls.set(e.id, g);
+        }
+        // Geometry cache: the path depends only on endpoint positions, node
+        // radii, the parallel-edge lane, and direction. When none of these
+        // changed (style-only or unrelated renders), the previous edgePath
+        // result is reused without recomputation.
+        const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
+        const lane = edgeSiblingOffset(e);
+        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}`;
+        let d = g.__geoSig === geoSig ? g.__geoData : null;
+        if (!d) {
+            d = edgePath(a, b, e, passVisuals);
+            g.__geoSig = geoSig;
+            g.__geoData = d;
         }
         toggleClass(g, 'selected', selected);
         // Update or create hit path (child refs are stashed on the group to
@@ -2673,7 +2696,8 @@ function renderNodes() {
         // Update or create shape (element ref stashed on the group)
         let shape = g.__shape;
         const w = v.width, h = v.height;
-        const needRebuild = !shape || shape.dataset.shape !== v.shape || shape.dataset.w !== String(w) || shape.dataset.h !== String(h);
+        const shapeSig = v.shape + '|' + w + '|' + h;
+        const needRebuild = !shape || g.__shapeSig !== shapeSig;
         if (needRebuild) {
             if (shape)
                 shape.remove();
@@ -2707,9 +2731,7 @@ function renderNodes() {
                 shape.setAttribute('ry', h / 2);
             }
             shape.setAttribute('class', 'node-shape');
-            shape.dataset.shape = v.shape;
-            shape.dataset.w = w;
-            shape.dataset.h = h;
+            g.__shapeSig = shapeSig;
             g.insertBefore(shape, g.firstChild);
             g.__shape = shape;
         }
@@ -3389,7 +3411,9 @@ function selectedNodeIds() { return new Set(state.selection?.nodes || []); }
 function selectedEdgeIds() { return new Set(state.selection?.edges || []); }
 function isNodeSelected(id) { return selectedNodeIds().has(id); }
 function isEdgeSelected(id) { return selectedEdgeIds().has(id); }
-function setSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
+// Shared selection-merge core: computes state.selection/state.selected from
+// the requested ids and combine mode. Callers decide how much DOM to update.
+function mergeSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
     const selectionMode = combine === true ? 'add' :
         (combine === false || combine == null ? 'replace' : combine);
     const nodeSet = selectionMode === 'replace' ? new Set() : selectedNodeIds();
@@ -3411,8 +3435,19 @@ function setSelection(nodes = [], edges = [], primary = null, combine = 'replace
         state.selected = { type: 'edge', id: state.selection.edges[0] };
     else
         state.selected = null;
+}
+function setSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
+    mergeSelection(nodes, edges, primary, combine);
     syncSelectionDom();
     renderSidebar();
+    setStatusOnly();
+}
+// Live variant for per-frame selection tools (brush): identical state
+// updates, but the sidebar render is deferred instead of running per frame.
+function setSelectionLive(nodes = [], edges = [], combine = 'add') {
+    mergeSelection(nodes, edges, null, combine);
+    syncSelectionDom();
+    markSidebarDirty();
     setStatusOnly();
 }
 function selectItem(type, id) { setSelection(type === 'node' ? [id] : [], type === 'edge' ? [id] : [], { type, id }, false); }
@@ -4202,7 +4237,9 @@ function beginSelectionDraft(ev) {
     renderSelectionDraft();
     setStatusOnly();
 }
-function updateSelectionDraft(p) {
+function sampleSelectionDraftPoint(p) {
+    // Stroke sampling runs on every pointermove: brush and lasso geometry
+    // must not skip input samples.
     if (!selectDraft)
         return;
     selectDraft.end = p;
@@ -4213,11 +4250,38 @@ function updateSelectionDraft(p) {
         if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 6)
             selectDraft.points.push(p);
     }
+}
+function applySelectionDraft() {
+    if (!selectDraft)
+        return;
     if (selectDraft.tool === 'brush') {
         const hit = hitTestSelection(selectDraft, true);
-        setSelection(hit.nodes, hit.edges, null, selectDraft.combine || 'add');
+        setSelectionLive(hit.nodes, hit.edges, selectDraft.combine || 'add');
     }
     renderSelectionDraft();
+}
+function updateSelectionDraft(p) {
+    if (!selectDraft)
+        return;
+    sampleSelectionDraftPoint(p);
+    applySelectionDraft();
+}
+// The expensive part of a draft update — the O(V+E) brush hit test and the
+// overlay redraw — is coalesced to one per animation frame. pointermove
+// fires far above display rate (trackpads, high-Hz mice); only the latest
+// sampled state per frame matters visually.
+let selectDraftFrame = false;
+function scheduleSelectionDraftUpdate(p) {
+    if (!selectDraft)
+        return;
+    sampleSelectionDraftPoint(p);
+    if (selectDraftFrame)
+        return;
+    selectDraftFrame = true;
+    requestAnimationFrame(() => {
+        selectDraftFrame = false;
+        applySelectionDraft();
+    });
 }
 function finishSelectionDraft(cancel = false) {
     if (!selectDraft)
@@ -4231,6 +4295,12 @@ function finishSelectionDraft(cancel = false) {
         setSelection(hit.nodes, hit.edges, null, draft.combine || 'replace');
         if (hit.nodes.length || hit.edges.length)
             toast(I18N.t('selected_n_m', { n: hit.nodes.length, m: hit.edges.length }));
+    }
+    else {
+        // Brush strokes apply their selection live with the sidebar deferred;
+        // make sure the panel catches up even when the gesture is cancelled.
+        markSidebarDirty();
+        queueRender(false);
     }
 }
 function polygonCloseThreshold() { return Math.max(10, state.viewBox.w / 160); }
@@ -4556,7 +4626,7 @@ svg.addEventListener('pointermove', ev => {
         return;
     }
     if (selectDraft && ev.pointerId === selectDraft.pointerId) {
-        updateSelectionDraft(p);
+        scheduleSelectionDraftUpdate(p);
         return;
     }
     if (pendingNodeTap && ev.pointerId === pendingNodeTap.pointerId) {

@@ -98,7 +98,9 @@
     renderSelectionDraft();
     setStatusOnly();
   }
-  function updateSelectionDraft(p){
+  function sampleSelectionDraftPoint(p){
+    // Stroke sampling runs on every pointermove: brush and lasso geometry
+    // must not skip input samples.
     if(!selectDraft) return;
     selectDraft.end = p;
     if(Math.hypot(p.x - selectDraft.start.x, p.y - selectDraft.start.y) > 3) selectDraft.moved = true;
@@ -106,11 +108,34 @@
       const last = selectDraft.points[selectDraft.points.length - 1];
       if(!last || Math.hypot(p.x-last.x, p.y-last.y) > 6) selectDraft.points.push(p);
     }
+  }
+  function applySelectionDraft(){
+    if(!selectDraft) return;
     if(selectDraft.tool === 'brush'){
       const hit = hitTestSelection(selectDraft, true);
-      setSelection(hit.nodes, hit.edges, null, selectDraft.combine || 'add');
+      setSelectionLive(hit.nodes, hit.edges, selectDraft.combine || 'add');
     }
     renderSelectionDraft();
+  }
+  function updateSelectionDraft(p){
+    if(!selectDraft) return;
+    sampleSelectionDraftPoint(p);
+    applySelectionDraft();
+  }
+  // The expensive part of a draft update — the O(V+E) brush hit test and the
+  // overlay redraw — is coalesced to one per animation frame. pointermove
+  // fires far above display rate (trackpads, high-Hz mice); only the latest
+  // sampled state per frame matters visually.
+  let selectDraftFrame = false;
+  function scheduleSelectionDraftUpdate(p){
+    if(!selectDraft) return;
+    sampleSelectionDraftPoint(p);
+    if(selectDraftFrame) return;
+    selectDraftFrame = true;
+    requestAnimationFrame(() => {
+      selectDraftFrame = false;
+      applySelectionDraft();
+    });
   }
   function finishSelectionDraft(cancel=false){
     if(!selectDraft) return;
@@ -122,6 +147,11 @@
       const hit = hitTestSelection(draft, false);
       setSelection(hit.nodes, hit.edges, null, draft.combine || 'replace');
       if(hit.nodes.length || hit.edges.length) toast(I18N.t('selected_n_m', {n: hit.nodes.length, m: hit.edges.length}));
+    } else {
+      // Brush strokes apply their selection live with the sidebar deferred;
+      // make sure the panel catches up even when the gesture is cancelled.
+      markSidebarDirty();
+      queueRender(false);
     }
   }
   function polygonCloseThreshold(){ return Math.max(10, state.viewBox.w / 160); }
@@ -395,7 +425,7 @@
     }
     const p = pointFromEvent(ev);
     if(selectDraft?.tool === 'polygon'){ updatePolygonPreview(ev); return; }
-    if(selectDraft && ev.pointerId === selectDraft.pointerId){ updateSelectionDraft(p); return; }
+    if(selectDraft && ev.pointerId === selectDraft.pointerId){ scheduleSelectionDraftUpdate(p); return; }
     if(pendingNodeTap && ev.pointerId === pendingNodeTap.pointerId){
       if(Math.hypot(ev.clientX - pendingNodeTap.startClientX, ev.clientY - pendingNodeTap.startClientY) > 10) pendingNodeTap.moved = true;
       pendingNodeTap.x = p.x; pendingNodeTap.y = p.y;

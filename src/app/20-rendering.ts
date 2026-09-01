@@ -93,10 +93,21 @@
     }
     return v;
   }
+  // Dash patterns depend only on (style, stroke size); sizes repeat heavily
+  // across a graph, so the built strings are memoized.
+  const dashCache = new Map();
   function strokeDashArray(style, size){
-    if(style === 'dashed') return `${Math.max(4, size*2)} ${Math.max(3, size*1.5)}`;
-    if(style === 'dotted') return `${Math.max(1, size*0.8)} ${Math.max(3, size*1.8)}`;
-    return 'none';
+    if(style !== 'dashed' && style !== 'dotted') return 'none';
+    const key = style + size;
+    let dash = dashCache.get(key);
+    if(dash === undefined){
+      dash = style === 'dashed'
+        ? `${Math.max(4, size*2)} ${Math.max(3, size*1.5)}`
+        : `${Math.max(1, size*0.8)} ${Math.max(3, size*1.8)}`;
+      if(dashCache.size > 128) dashCache.clear();
+      dashCache.set(key, dash);
+    }
+    return dash;
   }
   // === DOM write de-duplication ===
   // Every write to rendered graph elements goes through these helpers, which
@@ -424,7 +435,6 @@
       seen.add(e.id);
       const selected = selectedEdges.has(e.id);
       const v = edgeRenderStyleC(e);
-      const d = edgePath(a,b,e, passVisuals);
       let g: any = existing.get(e.id);
       if(!g){
         g = document.createElementNS(NS,'g'); g.classList.add('edge');
@@ -440,6 +450,19 @@
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
+      }
+      // Geometry cache: the path depends only on endpoint positions, node
+      // radii, the parallel-edge lane, and direction. When none of these
+      // changed (style-only or unrelated renders), the previous edgePath
+      // result is reused without recomputation.
+      const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
+      const lane = edgeSiblingOffset(e);
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}`;
+      let d = g.__geoSig === geoSig ? g.__geoData : null;
+      if(!d){
+        d = edgePath(a,b,e, passVisuals);
+        g.__geoSig = geoSig;
+        g.__geoData = d;
       }
       toggleClass(g, 'selected', selected);
       // Update or create hit path (child refs are stashed on the group to
@@ -665,7 +688,8 @@
       // Update or create shape (element ref stashed on the group)
       let shape = g.__shape;
       const w = v.width, h = v.height;
-      const needRebuild = !shape || shape.dataset.shape !== v.shape || shape.dataset.w !== String(w) || shape.dataset.h !== String(h);
+      const shapeSig = v.shape + '|' + w + '|' + h;
+      const needRebuild = !shape || g.__shapeSig !== shapeSig;
       if(needRebuild){
         if(shape) shape.remove();
         if(v.shape === 'square'){
@@ -683,7 +707,7 @@
           shape = document.createElementNS(NS,'ellipse'); shape.setAttribute('rx',w/2); shape.setAttribute('ry',h/2);
         }
         shape.setAttribute('class','node-shape');
-        shape.dataset.shape = v.shape; shape.dataset.w = w; shape.dataset.h = h;
+        g.__shapeSig = shapeSig;
         g.insertBefore(shape, g.firstChild);
         g.__shape = shape;
       }

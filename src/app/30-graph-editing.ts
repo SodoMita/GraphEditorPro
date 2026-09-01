@@ -25,7 +25,9 @@
   function selectedEdgeIds(){ return new Set(state.selection?.edges || []); }
   function isNodeSelected(id){ return selectedNodeIds().has(id); }
   function isEdgeSelected(id){ return selectedEdgeIds().has(id); }
-  function setSelection(
+  // Shared selection-merge core: computes state.selection/state.selected from
+  // the requested ids and combine mode. Callers decide how much DOM to update.
+  function mergeSelection(
     nodes: string[] = [],
     edges: string[] = [],
     primary: GraphState['selected'] = null,
@@ -47,8 +49,28 @@
     else if(state.selection.nodes.length) state.selected = {type:'node', id:state.selection.nodes[0]};
     else if(state.selection.edges.length) state.selected = {type:'edge', id:state.selection.edges[0]};
     else state.selected = null;
+  }
+  function setSelection(
+    nodes: string[] = [],
+    edges: string[] = [],
+    primary: GraphState['selected'] = null,
+    combine: SelectionCombine | boolean | null = 'replace'
+  ){
+    mergeSelection(nodes, edges, primary, combine);
     syncSelectionDom();
     renderSidebar();
+    setStatusOnly();
+  }
+  // Live variant for per-frame selection tools (brush): identical state
+  // updates, but the sidebar render is deferred instead of running per frame.
+  function setSelectionLive(
+    nodes: string[] = [],
+    edges: string[] = [],
+    combine: SelectionCombine | boolean | null = 'add'
+  ){
+    mergeSelection(nodes, edges, null, combine);
+    syncSelectionDom();
+    markSidebarDirty();
     setStatusOnly();
   }
   function selectItem(type,id){ setSelection(type === 'node' ? [id] : [], type === 'edge' ? [id] : [], {type,id}, false); }

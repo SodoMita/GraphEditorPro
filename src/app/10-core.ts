@@ -3,9 +3,9 @@
   const R = 25;
   // All connected edges follow a dragged node live while their count stays
   // under this budget; beyond it, edges stay frozen until release. Each live
-  // edge costs an indexed lookup plus a path rebuild, so the budget trades a
-  // few milliseconds per frame against immediate feedback on hub nodes.
-  const DRAG_LIVE_EDGE_LIMIT = 400;
+  // edge costs an indexed lookup plus a path rebuild (≈1–2 µs), so the budget
+  // bounds per-frame work at a few milliseconds.
+  const DRAG_LIVE_EDGE_LIMIT = 2000;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
   /** Return a required DOM element or fail immediately with a useful error. */
