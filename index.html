@@ -423,9 +423,12 @@
     }
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
 
-    /* ---------- SVG scene styling ---------- */
-    .node-shape{filter:drop-shadow(0 6px 10px rgba(0,0,0,.28))}
-    .node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
+    /* ---------- SVG scene styling ----------
+       No `filter: drop-shadow` on node shapes: the blur forces the browser to
+       re-rasterize every node on each paint, which dominates pan/zoom/pinch
+       cost. Selection is signalled with a thicker accent stroke instead (a
+       cheap, non-blurred highlight). */
+    .node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); stroke-width:3.5}
     .node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
@@ -441,11 +444,12 @@
     .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:2; stroke-dasharray:6 5; pointer-events:none}
     .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
 
-    /* === Interaction performance (kept from main / PR #2) ===
-       drop-shadow filters on every node shape and the paint-order halos on every
-       label are the most expensive things to re-rasterize while anything moves.
-       They are skipped for the duration of a drag/brush gesture (.fast-interaction
-       is applied by the pointer handlers) and restored on release. */
+    /* === Interaction performance ===
+       The paint-order halos on every node/edge label are the most expensive
+       thing left to re-rasterize while anything moves. They are skipped for
+       the duration of any gesture (.fast-interaction is applied by the pointer
+       and camera handlers) and restored on release. The .node-shape filter is
+       also nulled defensively (shadows are removed anyway). */
     .canvas-wrap.fast-interaction .node-shape{filter:none}
     .canvas-wrap.fast-interaction .node text,.canvas-wrap.fast-interaction .edge-label,.canvas-wrap.fast-interaction .edge-weight{stroke:none}
 
@@ -4662,6 +4666,7 @@ function beginPinch(a, b) {
     pinch = { startDistance: distClient(a, b), startViewBox: { ...state.viewBox }, startWorld: null, rect: svg.getBoundingClientRect(), previewViewBox: { ...state.viewBox }, frame: false };
     pinch.startWorld = clientToWorld(c.clientX, c.clientY, state.viewBox, pinch.rect);
     $('#canvasWrap').classList.add('panning');
+    $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
 }
 function updatePinch() {
@@ -4698,6 +4703,7 @@ function endPinch() {
     clearFastPanTransform();
     applyViewBox();
     $('#canvasWrap').classList.remove('panning');
+    $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
     setStatusOnly();
 }
@@ -5217,6 +5223,7 @@ function finishPointer(ev, cancel = false) {
         clearFastPanTransform();
         applyViewBox();
         $('#canvasWrap').classList.remove('panning');
+        $('#canvasWrap').classList.remove('fast-interaction');
         saveSoon();
         setStatusOnly();
     }
@@ -5244,6 +5251,7 @@ function startPan(ev) {
         frame: false
     };
     $('#canvasWrap').classList.add('panning');
+    $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
 }
 svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, { passive: false });
@@ -5253,7 +5261,9 @@ svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 
 // (the same mechanism panning uses); the real viewBox is applied exactly
 // once, when the wheel settles.
 let zoomPreview = null; // {base, preview, rect, frame, timer}
-const ZOOM_COMMIT_DELAY = 140;
+// Debounce the full-scene viewBox commit: a rapid scroll burst should resolve
+// to a single repaint once the wheel goes idle, not one per ~140ms pause.
+const ZOOM_COMMIT_DELAY = 220;
 function zoomAt(factor, clientX, clientY) {
     // A wheel arriving mid pan/pinch would fight the gesture's transform —
     // finalize the gesture first so zoom starts from what is on screen.
@@ -5272,8 +5282,10 @@ function zoomAt(factor, clientX, clientY) {
     const wx = cur.x + cx * cur.w, wy = cur.y + cy * cur.h;
     const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
     const preview = { x: wx - cx * nw, y: wy - cy * nh, w: nw, h: nh };
-    if (!zoomPreview)
+    if (!zoomPreview) {
         zoomPreview = { base, preview, rect: r, frame: false, timer: null };
+        $('#canvasWrap').classList.add('fast-interaction');
+    }
     else
         zoomPreview.preview = preview;
     if (!zoomPreview.frame) {
@@ -5297,6 +5309,7 @@ function commitZoomPreview() {
     state.viewBox = { ...z.preview };
     clearFastPanTransform();
     applyViewBox();
+    $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
 }
 function flushZoomPreview() { if (zoomPreview)

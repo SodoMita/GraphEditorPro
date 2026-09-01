@@ -52,6 +52,7 @@
     pinch = { startDistance:distClient(a,b), startViewBox:{...state.viewBox}, startWorld:null, rect:svg.getBoundingClientRect(), previewViewBox:{...state.viewBox}, frame:false };
     pinch.startWorld = clientToWorld(c.clientX, c.clientY, state.viewBox, pinch.rect);
     $('#canvasWrap').classList.add('panning');
+    $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
   }
   function updatePinch(){
@@ -82,7 +83,7 @@
     pinch = null;
     clearFastPanTransform();
     applyViewBox();
-    $('#canvasWrap').classList.remove('panning');
+    $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
     setStatusOnly();
   }
@@ -512,7 +513,7 @@
       pan = null;
       clearFastPanTransform();
       applyViewBox();
-      $('#canvasWrap').classList.remove('panning'); saveSoon(); setStatusOnly();
+      $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction'); saveSoon(); setStatusOnly();
     }
     unregisterPointer(ev);
   }
@@ -532,6 +533,7 @@
       frame:false
     };
     $('#canvasWrap').classList.add('panning');
+    $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
   }
 
@@ -542,7 +544,9 @@
   // (the same mechanism panning uses); the real viewBox is applied exactly
   // once, when the wheel settles.
   let zoomPreview = null; // {base, preview, rect, frame, timer}
-  const ZOOM_COMMIT_DELAY = 140;
+  // Debounce the full-scene viewBox commit: a rapid scroll burst should resolve
+  // to a single repaint once the wheel goes idle, not one per ~140ms pause.
+  const ZOOM_COMMIT_DELAY = 220;
   function zoomAt(factor, clientX, clientY){
     // A wheel arriving mid pan/pinch would fight the gesture's transform —
     // finalize the gesture first so zoom starts from what is on screen.
@@ -560,7 +564,7 @@
     const wx = cur.x + cx * cur.w, wy = cur.y + cy * cur.h;
     const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
     const preview = { x: wx - cx * nw, y: wy - cy * nh, w: nw, h: nh };
-    if(!zoomPreview) zoomPreview = { base, preview, rect: r, frame: false, timer: null };
+    if(!zoomPreview){ zoomPreview = { base, preview, rect: r, frame: false, timer: null }; $('#canvasWrap').classList.add('fast-interaction'); }
     else zoomPreview.preview = preview;
     if(!zoomPreview.frame){
       zoomPreview.frame = true;
@@ -580,6 +584,7 @@
     state.viewBox = {...z.preview};
     clearFastPanTransform();
     applyViewBox();
+    $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
   }
   function flushZoomPreview(){ if(zoomPreview) commitZoomPreview(); }

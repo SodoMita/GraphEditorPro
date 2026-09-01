@@ -416,9 +416,12 @@
     }
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
 
-    /* ---------- SVG scene styling ---------- */
-    .node-shape{filter:drop-shadow(0 6px 10px rgba(0,0,0,.28))}
-    .node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); filter:drop-shadow(0 0 12px rgba(34,211,238,.42))}
+    /* ---------- SVG scene styling ----------
+       No `filter: drop-shadow` on node shapes: the blur forces the browser to
+       re-rasterize every node on each paint, which dominates pan/zoom/pinch
+       cost. Selection is signalled with a thicker accent stroke instead (a
+       cheap, non-blurred highlight). */
+    .node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); stroke-width:3.5}
     .node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
@@ -434,11 +437,12 @@
     .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:2; stroke-dasharray:6 5; pointer-events:none}
     .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
 
-    /* === Interaction performance (kept from main / PR #2) ===
-       drop-shadow filters on every node shape and the paint-order halos on every
-       label are the most expensive things to re-rasterize while anything moves.
-       They are skipped for the duration of a drag/brush gesture (.fast-interaction
-       is applied by the pointer handlers) and restored on release. */
+    /* === Interaction performance ===
+       The paint-order halos on every node/edge label are the most expensive
+       thing left to re-rasterize while anything moves. They are skipped for
+       the duration of any gesture (.fast-interaction is applied by the pointer
+       and camera handlers) and restored on release. The .node-shape filter is
+       also nulled defensively (shadows are removed anyway). */
     .canvas-wrap.fast-interaction .node-shape{filter:none}
     .canvas-wrap.fast-interaction .node text,.canvas-wrap.fast-interaction .edge-label,.canvas-wrap.fast-interaction .edge-weight{stroke:none}
 
