@@ -438,7 +438,7 @@
     .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
     .edge-line{fill:none}
     .edge-arrow{pointer-events:none}
-    .edge.selected .edge-line{stroke:var(--accent)}
+    .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:round; stroke-linecap:round; pointer-events:none}
     .edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
     .edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
     .drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}
@@ -2561,6 +2561,31 @@ function syncNodeSelRing(g, n, shape, w, h, selected) {
     }
     return sel;
 }
+// === Edge selection ring ===
+// Like nodes, a selected edge gets a slightly wider accent path placed BEHIND
+// the edge line, so the edge's own colour stays visible while selection is
+// clearly outlined. It exists only while selected.
+function syncEdgeSelRing(g, e, v, d, selected) {
+    let sel = g.__sel;
+    if (selected) {
+        const line = g.__line;
+        if (!sel) {
+            sel = document.createElementNS(NS, 'path');
+            sel.setAttribute('class', 'edge-sel');
+            sel.setAttribute('fill', 'none');
+            g.insertBefore(sel, line || g.firstChild); // behind the line
+            g.__sel = sel;
+        }
+        setAttr(sel, 'd', d && d.path ? d.path : (line ? line.getAttribute('d') : ''));
+        setAttr(sel, 'stroke-width', Math.max(7, v.strokeSize + 5));
+    }
+    else if (sel) {
+        sel.remove();
+        g.__sel = null;
+        sel = null;
+    }
+    return sel;
+}
 function nodeRadiusC(n, vc) {
     const c = vc || passVisuals;
     if (!c)
@@ -2989,6 +3014,8 @@ function renderEdges() {
             setAttr(line, 'stroke-dasharray', dash);
         else
             removeAttr(line, 'stroke-dasharray');
+        // Selection ring: wider accent path behind the line so the edge colour stays visible
+        syncEdgeSelRing(g, e, v, d, selected);
         // Update or create arrow
         let arrow = g.__arrow || null;
         if (e.directed && d.tipX != null && d.arrowAngle != null) {
@@ -4051,12 +4078,13 @@ function syncSelectionDom() {
             if (!el)
                 continue;
             toggleClass(el, 'selected', false);
+            const e = edgeById(id);
+            const ev = e ? edgeRenderStyleC(e) : null;
+            if (e)
+                syncEdgeSelRing(el, e, ev, null, false);
             const arrow = el.__arrow;
-            if (arrow) {
-                const e = edgeById(id);
-                if (e && e.directed)
-                    setAttr(arrow, 'fill', edgeRenderStyleC(e).color);
-            }
+            if (arrow && e && e.directed && ev)
+                setAttr(arrow, 'fill', ev.color);
         }
     }
     for (const id of es) {
@@ -4065,12 +4093,14 @@ function syncSelectionDom() {
             if (!el)
                 continue;
             toggleClass(el, 'selected', true);
-            const arrow = el.__arrow;
-            if (arrow) {
-                const e = edgeById(id);
-                if (e && e.directed)
-                    setAttr(arrow, 'fill', '#22d3ee');
+            const e = edgeById(id);
+            if (e) {
+                const v = edgeRenderStyleC(e);
+                syncEdgeSelRing(el, e, v, null, true);
             }
+            const arrow = el.__arrow;
+            if (arrow && e && e.directed)
+                setAttr(arrow, 'fill', '#22d3ee');
         }
     }
     domSelectedNodes = ns;

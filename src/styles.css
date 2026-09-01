@@ -431,7 +431,7 @@
     .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
     .edge-line{fill:none}
     .edge-arrow{pointer-events:none}
-    .edge.selected .edge-line{stroke:var(--accent)}
+    .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:round; stroke-linecap:round; pointer-events:none}
     .edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
     .edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
     .drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}

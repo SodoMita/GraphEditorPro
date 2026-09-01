@@ -107,16 +107,21 @@
       if(!es.has(id)){
         const el = edgeEl(id); if(!el) continue;
         toggleClass(el, 'selected', false);
+        const e = edgeById(id);
+        const ev = e ? edgeRenderStyleC(e) : null;
+        if(e) syncEdgeSelRing(el, e, ev, null, false);
         const arrow = (el as any).__arrow;
-        if(arrow){ const e = edgeById(id); if(e && e.directed) setAttr(arrow, 'fill', edgeRenderStyleC(e).color); }
+        if(arrow && e && e.directed && ev) setAttr(arrow, 'fill', ev.color);
       }
     }
     for(const id of es){
       if(!domSelectedEdges.has(id)){
         const el = edgeEl(id); if(!el) continue;
         toggleClass(el, 'selected', true);
+        const e = edgeById(id);
+        if(e){ const v = edgeRenderStyleC(e); syncEdgeSelRing(el, e, v, null, true); }
         const arrow = (el as any).__arrow;
-        if(arrow){ const e = edgeById(id); if(e && e.directed) setAttr(arrow, 'fill', '#22d3ee'); }
+        if(arrow && e && e.directed) setAttr(arrow, 'fill', '#22d3ee');
       }
     }
     domSelectedNodes = ns; domSelectedEdges = es;

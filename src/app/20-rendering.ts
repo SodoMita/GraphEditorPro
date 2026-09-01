@@ -194,6 +194,28 @@
     }
     return sel;
   }
+  // === Edge selection ring ===
+  // Like nodes, a selected edge gets a slightly wider accent path placed BEHIND
+  // the edge line, so the edge's own colour stays visible while selection is
+  // clearly outlined. It exists only while selected.
+  function syncEdgeSelRing(g: any, e: any, v: any, d: any, selected: boolean){
+    let sel = g.__sel;
+    if(selected){
+      const line = g.__line;
+      if(!sel){
+        sel = document.createElementNS(NS,'path');
+        sel.setAttribute('class','edge-sel');
+        sel.setAttribute('fill','none');
+        g.insertBefore(sel, line || g.firstChild); // behind the line
+        g.__sel = sel;
+      }
+      setAttr(sel, 'd', d && d.path ? d.path : (line ? line.getAttribute('d') : ''));
+      setAttr(sel, 'stroke-width', Math.max(7, v.strokeSize + 5));
+    } else if(sel){
+      sel.remove(); g.__sel = null; sel = null;
+    }
+    return sel;
+  }
   function nodeRadiusC(n, vc){
     const c = vc || passVisuals;
     if(!c) return nodeRadius(n);
@@ -521,6 +543,8 @@
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
       if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
       else removeAttr(line, 'stroke-dasharray');
+      // Selection ring: wider accent path behind the line so the edge colour stays visible
+      syncEdgeSelRing(g, e, v, d, selected);
       // Update or create arrow
       let arrow = g.__arrow || null;
       if(e.directed && d.tipX != null && d.arrowAngle != null){
