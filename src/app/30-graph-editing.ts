@@ -22,6 +22,11 @@
     $$('[data-selectcombine]').forEach(b => b.classList.toggle('active', b.dataset.selectcombine === state.selectCombine));
     if(render) saveSoon();
   }
+  function setHitTestMode(mode, render=true){
+    state.settings.hitTestMode = ['any','center'].includes(mode) ? mode : 'any';
+    $$('[data-hittest]').forEach(b => b.classList.toggle('active', b.dataset.hittest === state.settings.hitTestMode));
+    if(render) { setStatusOnly(); saveSoon(); }
+  }
   function effectiveSelectCombine(ev=null){ return ev?.shiftKey ? 'add' : (state.selectCombine || 'replace'); }
   function selectedNodeIds(){ return new Set(state.selection?.nodes || []); }
   function selectedEdgeIds(){ return new Set(state.selection?.edges || []); }

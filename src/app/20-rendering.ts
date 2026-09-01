@@ -282,6 +282,7 @@
     setMode(state.mode, false);
     setSelectTool(state.selectTool || 'single', false);
     setSelectCombine(state.selectCombine || 'replace', false);
+    setHitTestMode(state.settings.hitTestMode || 'any', false);
   }
   function syncEditTypeLists(){
     const ntl = $('#nodeTypeListEdit'); if(ntl) ntl.innerHTML = existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('');
@@ -510,6 +511,17 @@
           if(ev.button !== 0) return;
           if(polygonToolActive()){ registerPointer(ev); handlePolygonPointerDown(ev); return; }
           if(state.mode === 'move'){ centerOnFurthestNodeOfEdge(e); return; }
+          // In centre-hit mode, an edge is only selected when the click lands
+          // at the edge's midpoint, not anywhere along it.
+          if(state.settings.hitTestMode === 'center'){
+            const pa = nodeById(e.from), pb = nodeById(e.to);
+            if(pa && pb){
+              const p = clientToWorld(ev.clientX, ev.clientY, state.viewBox);
+              const mx=(pa.x+pb.x)/2, my=(pa.y+pb.y)/2;
+              const len = Math.hypot(pb.x-pa.x, pb.y-pa.y) || 1;
+              if(Math.hypot(p.x-mx, p.y-my) > Math.max(10, len*0.18)){ deselect(); return; }
+            }
+          }
           selectItem('edge', e.id);
         });
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });

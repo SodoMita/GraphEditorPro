@@ -4,6 +4,7 @@ type AnyRecord = Record<string, any>;
 type GraphMode = 'select' | 'move' | 'node' | 'edge';
 type SelectionTool = 'single' | 'rect' | 'brush' | 'lasso' | 'line' | 'polygon';
 type SelectionCombine = 'replace' | 'add' | 'subtract';
+type HitTestMode = 'any' | 'center';
 
 interface Point {
   x: number;

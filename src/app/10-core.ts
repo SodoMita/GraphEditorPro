@@ -55,6 +55,9 @@
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
       snap:false, snapX:false, snapY:false, gridSize:40, gridSizeX:40, gridSizeY:40,
       autosave:true, matrixLimit:90, edgeListPageSize:250, matrixDimension:0, brushDiameter:80,
+      // Hit-testing for selection: 'any' selects nodes/edges by any part of
+      // them; 'center' selects only at the exact centre of a node/edge.
+      hitTestMode: 'any',
       inheritDefaults: true,
       noLabel: false, // when true, new nodes are created with empty labels
       // Visible range: filters matrix, edge list, and graph canvas to nodes within [start, end] by order.
@@ -245,6 +248,7 @@
     settings.edgeLabelColor = validColor(settings.edgeLabelColor) || '#dbeafe';
     settings.edgeLabelFont = String(settings.edgeLabelFont || 'Inter').slice(0, 60);
     settings.edgeLabelSize = clamp(finite(settings.edgeLabelSize, 12), 4, 72);
+    settings.hitTestMode = ['any','center'].includes(settings.hitTestMode) ? settings.hitTestMode : 'any';
     // Merge nested defaults objects
     settings.graphDefaults = {
       ...base.settings.graphDefaults,

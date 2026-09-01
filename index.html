@@ -796,6 +796,11 @@
                 <label class="field" for="optBrushDiameter" style="margin-top:8px"><span data-i18n="brush_diameter">Brush diameter</span>
                   <input id="optBrushDiameter" type="number" min="10" max="400" step="5" value="80" />
                 </label>
+                <div class="section-title" style="margin-top:8px" data-i18n="hit_test">Selection hit target</div>
+                <div class="grid2">
+                  <button class="btn active" data-hittest="any" title="Select nodes/edges by any part of them" data-i18n-title="hit_any" data-i18n="hit_any">Any part</button>
+                  <button class="btn" data-hittest="center" title="Select only at the exact centre of nodes/edges" data-i18n-title="hit_center" data-i18n="hit_center">Centres</button>
+                </div>
               </div>
             </details>
 
@@ -1326,6 +1331,9 @@ const I18N = {
         'sel_add': { en: 'Add', ru: 'Добавить' },
         'sel_subtract': { en: 'Subtract', ru: 'Вычесть' },
         'brush_diameter': { en: 'Brush diameter', ru: 'Диаметр кисти' },
+        'hit_test': { en: 'Selection hit target', ru: 'Область попадания' },
+        'hit_any': { en: 'Any part', ru: 'Любая часть' },
+        'hit_center': { en: 'Centres', ru: 'Центры' },
         'sel_tip': { en: 'Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.', ru: 'Инструменты выделения работают в режиме Выбора. Используйте Замена/Добавить/Вычесть; Shift временно добавляет к текущему выделению. Многоугольник — кликами; клик по первой точке или двойной клик для замыкания.' },
         // --- Edit tab: Node placement ---
         'node_placement': { en: 'Node placement', ru: 'Размещение узла' },
@@ -1820,6 +1828,9 @@ const defaultState = () => ({
         edgeLabelColor: '#dbeafe', edgeLabelFont: 'Inter', edgeLabelSize: 12,
         snap: false, snapX: false, snapY: false, gridSize: 40, gridSizeX: 40, gridSizeY: 40,
         autosave: true, matrixLimit: 90, edgeListPageSize: 250, matrixDimension: 0, brushDiameter: 80,
+        // Hit-testing for selection: 'any' selects nodes/edges by any part of
+        // them; 'center' selects only at the exact centre of a node/edge.
+        hitTestMode: 'any',
         inheritDefaults: true,
         noLabel: false, // when true, new nodes are created with empty labels
         // Visible range: filters matrix, edge list, and graph canvas to nodes within [start, end] by order.
@@ -2032,6 +2043,7 @@ function sanitizeState(input) {
     settings.edgeLabelColor = validColor(settings.edgeLabelColor) || '#dbeafe';
     settings.edgeLabelFont = String(settings.edgeLabelFont || 'Inter').slice(0, 60);
     settings.edgeLabelSize = clamp(finite(settings.edgeLabelSize, 12), 4, 72);
+    settings.hitTestMode = ['any', 'center'].includes(settings.hitTestMode) ? settings.hitTestMode : 'any';
     // Merge nested defaults objects
     settings.graphDefaults = {
         ...base.settings.graphDefaults,
@@ -2665,6 +2677,7 @@ function syncControls() {
     setMode(state.mode, false);
     setSelectTool(state.selectTool || 'single', false);
     setSelectCombine(state.selectCombine || 'replace', false);
+    setHitTestMode(state.settings.hitTestMode || 'any', false);
 }
 function syncEditTypeLists() {
     const ntl = $('#nodeTypeListEdit');
@@ -2964,6 +2977,20 @@ function renderEdges() {
                 if (state.mode === 'move') {
                     centerOnFurthestNodeOfEdge(e);
                     return;
+                }
+                // In centre-hit mode, an edge is only selected when the click lands
+                // at the edge's midpoint, not anywhere along it.
+                if (state.settings.hitTestMode === 'center') {
+                    const pa = nodeById(e.from), pb = nodeById(e.to);
+                    if (pa && pb) {
+                        const p = clientToWorld(ev.clientX, ev.clientY, state.viewBox);
+                        const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+                        const len = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
+                        if (Math.hypot(p.x - mx, p.y - my) > Math.max(10, len * 0.18)) {
+                            deselect();
+                            return;
+                        }
+                    }
                 }
                 selectItem('edge', e.id);
             });
@@ -3986,6 +4013,14 @@ function setSelectCombine(mode, render = true) {
     $$('[data-selectcombine]').forEach(b => b.classList.toggle('active', b.dataset.selectcombine === state.selectCombine));
     if (render)
         saveSoon();
+}
+function setHitTestMode(mode, render = true) {
+    state.settings.hitTestMode = ['any', 'center'].includes(mode) ? mode : 'any';
+    $$('[data-hittest]').forEach(b => b.classList.toggle('active', b.dataset.hittest === state.settings.hitTestMode));
+    if (render) {
+        setStatusOnly();
+        saveSoon();
+    }
 }
 function effectiveSelectCombine(ev = null) { return ev?.shiftKey ? 'add' : (state.selectCombine || 'replace'); }
 function selectedNodeIds() { return new Set(state.selection?.nodes || []); }
@@ -5017,14 +5052,49 @@ function hitTestSelection(draft, liveBrush = false) {
     const nearBrush = p => pts.some(q => Math.hypot(p.x - q.x, p.y - q.y) <= brushRadius);
     const inPoly = p => pts.length > 2 && pointInPolygon(p, pts);
     const test = p => tool === 'rect' ? inRect(p) : tool === 'line' ? nearLine(p) : tool === 'brush' ? nearBrush(p) : inPoly(p);
-    for (const n of state.nodes)
-        if (test(n))
+    const hitMode = state.settings.hitTestMode === 'center' ? 'center' : 'any';
+    // In 'center' mode only the node's centre point counts; in 'any' mode a
+    // node is also selected when the region overlaps any part of its body.
+    const circleRectIntersect = (cx, cy, r, x0, y0, x1, y1) => {
+        const nx = clamp(cx, x0, x1), ny = clamp(cy, y0, y1);
+        return Math.hypot(cx - nx, cy - ny) <= r;
+    };
+    for (const n of state.nodes) {
+        if (test(n)) {
             nodes.push(n.id);
+            continue;
+        }
+        if (hitMode !== 'any')
+            continue;
+        const r = nodeRadius(n);
+        if (tool === 'rect') {
+            if (circleRectIntersect(n.x, n.y, r, minX, minY, maxX, maxY))
+                nodes.push(n.id);
+        }
+        else if (tool === 'brush') {
+            if (pts.some(q => Math.hypot(q.x - n.x, q.y - n.y) <= brushRadius + r))
+                nodes.push(n.id);
+        }
+        else if (tool === 'line') {
+            if (distToSegment(n, draft.start, draft.end) <= r + Math.max(22, state.viewBox.w / 220))
+                nodes.push(n.id);
+        }
+        else if (pts.length > 2) {
+            if (pts.some(q => Math.hypot(q.x - n.x, q.y - n.y) <= r))
+                nodes.push(n.id);
+        }
+    }
     for (const e of state.edges) {
         const a = nodeById(e.from), b = nodeById(e.to);
         if (!a || !b)
             continue;
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        if (hitMode === 'center') {
+            // Edge is selected only when its midpoint falls in the region.
+            if (test(mid))
+                edges.push(e.id);
+            continue;
+        }
         if (test(mid) || (tool === 'brush' && pts.some(q => distToSegment(q, a, b) <= brushRadius)) || (tool === 'rect' && (inRect(a) || inRect(b))) || (tool === 'line' && segmentNearSegment(draft.start, draft.end, a, b, 20)))
             edges.push(e.id);
     }
@@ -5108,6 +5178,18 @@ function onNodePointerDown(ev, id) {
         return;
     }
     const n = nodeById(id);
+    // In centre-hit mode, a node is only selected when the click lands near
+    // its centre, not anywhere on its body. Otherwise treat as a background
+    // click (deselect, no drag).
+    if (n && state.settings.hitTestMode === 'center') {
+        const hv = nodeVisualC(n);
+        const hw = hv.width, hh = hv.height;
+        const centerR = Math.max(8, Math.min(hw, hh) * 0.25);
+        if (Math.hypot(p.x - n.x, p.y - n.y) > centerR) {
+            deselect();
+            return;
+        }
+    }
     // === ROBUST GROUP DRAG FIX ===
     // When the clicked node is already in the current multi-selection,
     // do NOT call setSelection (which would collapse it in Override mode).
@@ -7641,6 +7723,7 @@ function wireUi() {
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
+    $$('[data-hittest]').forEach(btn => btn.addEventListener('click', () => setHitTestMode(btn.dataset.hittest)));
     $('#optBrushDiameter').addEventListener('change', e => { state.settings.brushDiameter = clamp(parseInt(e.target.value, 10) || 80, 10, 400); e.target.value = state.settings.brushDiameter; pushHistory('brush diameter'); });
     $('#docTitleInput').addEventListener('input', e => { state.title = e.target.value.slice(0, 80) || 'untitled'; document.title = state.title + ' · Graph Editor Pro'; saveSoon(); });
     $('#docTitleInput').addEventListener('change', () => pushHistory('title'));

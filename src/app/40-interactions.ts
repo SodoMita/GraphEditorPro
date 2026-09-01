@@ -250,10 +250,35 @@
     const nearBrush = p => pts.some(q => Math.hypot(p.x-q.x, p.y-q.y) <= brushRadius);
     const inPoly = p => pts.length > 2 && pointInPolygon(p, pts);
     const test = p => tool === 'rect' ? inRect(p) : tool === 'line' ? nearLine(p) : tool === 'brush' ? nearBrush(p) : inPoly(p);
-    for(const n of state.nodes) if(test(n)) nodes.push(n.id);
+    const hitMode = state.settings.hitTestMode === 'center' ? 'center' : 'any';
+    // In 'center' mode only the node's centre point counts; in 'any' mode a
+    // node is also selected when the region overlaps any part of its body.
+    const circleRectIntersect = (cx, cy, r, x0, y0, x1, y1) => {
+      const nx = clamp(cx, x0, x1), ny = clamp(cy, y0, y1);
+      return Math.hypot(cx - nx, cy - ny) <= r;
+    };
+    for(const n of state.nodes){
+      if(test(n)){ nodes.push(n.id); continue; }
+      if(hitMode !== 'any') continue;
+      const r = nodeRadius(n);
+      if(tool === 'rect'){
+        if(circleRectIntersect(n.x, n.y, r, minX, minY, maxX, maxY)) nodes.push(n.id);
+      } else if(tool === 'brush'){
+        if(pts.some(q => Math.hypot(q.x-n.x, q.y-n.y) <= brushRadius + r)) nodes.push(n.id);
+      } else if(tool === 'line'){
+        if(distToSegment(n, draft.start, draft.end) <= r + Math.max(22, state.viewBox.w / 220)) nodes.push(n.id);
+      } else if(pts.length > 2){
+        if(pts.some(q => Math.hypot(q.x-n.x, q.y-n.y) <= r)) nodes.push(n.id);
+      }
+    }
     for(const e of state.edges){
       const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) continue;
       const mid = {x:(a.x+b.x)/2, y:(a.y+b.y)/2};
+      if(hitMode === 'center'){
+        // Edge is selected only when its midpoint falls in the region.
+        if(test(mid)) edges.push(e.id);
+        continue;
+      }
       if(test(mid) || (tool === 'brush' && pts.some(q => distToSegment(q, a, b) <= brushRadius)) || (tool === 'rect' && (inRect(a) || inRect(b))) || (tool === 'line' && segmentNearSegment(draft.start, draft.end, a, b, 20))) edges.push(e.id);
     }
     return {nodes, edges};
@@ -326,6 +351,16 @@
     }
 
     const n = nodeById(id);
+
+    // In centre-hit mode, a node is only selected when the click lands near
+    // its centre, not anywhere on its body. Otherwise treat as a background
+    // click (deselect, no drag).
+    if(n && state.settings.hitTestMode === 'center'){
+      const hv = nodeVisualC(n);
+      const hw = hv.width, hh = hv.height;
+      const centerR = Math.max(8, Math.min(hw, hh) * 0.25);
+      if(Math.hypot(p.x - n.x, p.y - n.y) > centerR){ deselect(); return; }
+    }
 
     // === ROBUST GROUP DRAG FIX ===
     // When the clicked node is already in the current multi-selection,

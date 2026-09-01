@@ -28,6 +28,7 @@
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
+    $$('[data-hittest]').forEach(btn => btn.addEventListener('click', () => setHitTestMode(btn.dataset.hittest)));
     $('#optBrushDiameter').addEventListener('change', e => { state.settings.brushDiameter = clamp(parseInt(e.target.value,10)||80,10,400); e.target.value = state.settings.brushDiameter; pushHistory('brush diameter'); });
     $('#docTitleInput').addEventListener('input', e => { state.title = e.target.value.slice(0,80) || 'untitled'; document.title = state.title + ' · Graph Editor Pro'; saveSoon(); });
     $('#docTitleInput').addEventListener('change', () => pushHistory('title'));

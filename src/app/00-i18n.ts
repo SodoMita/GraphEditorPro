@@ -65,6 +65,9 @@ const I18N: I18nService = {
     'sel_add': { en: 'Add', ru: 'Добавить' },
     'sel_subtract': { en: 'Subtract', ru: 'Вычесть' },
     'brush_diameter': { en: 'Brush diameter', ru: 'Диаметр кисти' },
+    'hit_test': { en: 'Selection hit target', ru: 'Область попадания' },
+    'hit_any': { en: 'Any part', ru: 'Любая часть' },
+    'hit_center': { en: 'Centres', ru: 'Центры' },
     'sel_tip': { en: 'Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.', ru: 'Инструменты выделения работают в режиме Выбора. Используйте Замена/Добавить/Вычесть; Shift временно добавляет к текущему выделению. Многоугольник — кликами; клик по первой точке или двойной клик для замыкания.' },
 
     // --- Edit tab: Node placement ---
