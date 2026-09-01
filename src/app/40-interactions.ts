@@ -1,4 +1,9 @@
   let pointerRect = null; // viewport rect captured at pointerdown, reused for the whole gesture
+  // True while a node/edge drag, pan, or pinch is in progress. Suppresses
+  // background deselection so an active gesture never clears the current
+  // selection — e.g. releasing a dragged node over empty canvas keeps it
+  // selected instead of wiping it.
+  let gestureActive = false;
   function registerPointer(ev){
     // Adopt any pending wheel-zoom before new gesture math runs, and capture
     // the viewport rect once per gesture for clientToWorld.
@@ -32,6 +37,7 @@
   }
   function beginPinch(a,b){
     if(pinch) return;
+    gestureActive = true;
     if(edgeDraft){ edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d',''); }
     if(drag){
       if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
@@ -84,6 +90,7 @@
     clearFastPanTransform();
     applyViewBox();
     $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction');
+    gestureActive = false;
     saveSoon();
     setStatusOnly();
   }
@@ -383,6 +390,7 @@
       pendingEdgeFrom = null;
       selectItem('node', id);
       edgeDraft = { from:id, x:p.x, y:p.y, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
+      gestureActive = true;
       updateDragLine(p); setStatusOnly(); return;
     }
     if(state.mode !== 'select' && state.mode !== 'node'){
@@ -435,6 +443,7 @@
     const dragIdSet = new Set(dragNodes.map(node => node.id));
     const affectedEdges = state.edges.filter(e => dragIdSet.has(e.from) || dragIdSet.has(e.to));
     drag = { nodeId:id, node:n, nodes:dragNodes, starts:dragStarts, ignoreIds:dragIdSet, startX:n.x, startY:n.y, offsetX:p.x-n.x, offsetY:p.y-n.y, moved:false, affectedEdges, liveEdges: affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT, fastFrame:false, fastNodeId:null, vc:null };
+    gestureActive = true;
     for(const dn of dragNodes){ const el = nodeEl(dn.id); if(el) toggleClass(el, 'dragging', true); }
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
@@ -468,7 +477,7 @@
       } else addNode(p.x, p.y);
       return;
     }
-    if(state.mode === 'select') deselect();
+    if(state.mode === 'select' && !gestureActive) deselect();
   });
   svg.addEventListener('dblclick', ev => {
     if(polygonToolActive() && selectDraft?.tool === 'polygon'){
@@ -597,6 +606,7 @@
       applyViewBox();
       $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction'); saveSoon(); setStatusOnly();
     }
+    gestureActive = false;
     unregisterPointer(ev);
   }
   function updateDragLine(p){
@@ -605,6 +615,7 @@
   }
   function startPan(ev){
     ev.preventDefault();
+    gestureActive = true;
     try{ svg.setPointerCapture(ev.pointerId); }catch{}
     pan = {
       startClientX:ev.clientX,
