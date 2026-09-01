@@ -419,9 +419,10 @@
     /* ---------- SVG scene styling ----------
        No `filter: drop-shadow` on node shapes: the blur forces the browser to
        re-rasterize every node on each paint, which dominates pan/zoom/pinch
-       cost. Selection is signalled with a thicker accent stroke instead (a
-       cheap, non-blurred highlight). */
+       cost. Selection is signalled with a larger ring placed BEHIND the node
+       shape (.node-sel), so the node's own fill colour stays visible. */
     .node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); stroke-width:3.5}
+    .node-sel{fill:none; stroke:var(--accent); stroke-width:3; stroke-linejoin:round; pointer-events:none}
     .node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}

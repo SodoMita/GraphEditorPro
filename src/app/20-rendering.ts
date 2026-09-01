@@ -151,6 +151,49 @@
   function nodeVisualC(n, vc=null){ return visualFor(n, vc, () => nodeVisual(n), 'node'); }
   function edgeVisualC(e, vc=null){ return visualFor(e, vc, () => edgeVisual(e), 'edge'); }
   function edgeRenderStyleC(e, vc=null){ return visualFor(e, vc, () => edgeRenderStyle(e), 'edge'); }
+  // === Node selection ring ===
+  // The selection outline is a slightly larger copy of the node shape, placed
+  // BEHIND the shape so the node's own fill colour stays visible. It exists
+  // only while a node is selected (unselected nodes keep a single element).
+  const SEL_RING_SCALE = 1.35;
+  function selRingFor(shape, w, h){
+    const S = SEL_RING_SCALE;
+    let el;
+    if(shape === 'square'){
+      el = document.createElementNS(NS,'rect'); el.setAttribute('x',-w/2*S); el.setAttribute('y',-h/2*S); el.setAttribute('width',w*S); el.setAttribute('height',h*S);
+    } else if(shape === 'diamond'){
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-h/2*S-2} ${w/2*S+2},0 0,${h/2*S+2} ${-w/2*S-2},0`);
+    } else if(shape === 'triangleUp'){
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-h/2*S} ${w/2*S},${h/2*S} ${-w/2*S},${h/2*S}`);
+    } else if(shape === 'triangleDown'){
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${h/2*S} ${w/2*S},${-h/2*S} ${-w/2*S},${-h/2*S}`);
+    } else if(shape === 'hexagon'){
+      const hx = w/2*S, hy = h/2*S, mx = w/4*S;
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`${-hx+mx},${-hy} ${hx-mx},${-hy} ${hx},0 ${hx-mx},${hy} ${-hx+mx},${hy} ${-hx},0`);
+    } else {
+      el = document.createElementNS(NS,'ellipse'); el.setAttribute('rx',w/2*S); el.setAttribute('ry',h/2*S);
+    }
+    el.setAttribute('class','node-sel');
+    return el;
+  }
+  // Creates/removes/updates a node's selection ring and returns the ring
+  // element (or null). Safe to call from render passes and the fast
+  // selection-sync path alike.
+  function syncNodeSelRing(g: any, n: any, shape: string, w: number, h: number, selected: boolean){
+    const selSig = shape + '|' + w + '|' + h;
+    let sel = g.__sel;
+    if(selected){
+      if(!sel || g.__selSig !== selSig){
+        if(sel) sel.remove();
+        sel = selRingFor(shape, w, h);
+        g.insertBefore(sel, g.firstChild); // behind the shape
+        g.__sel = sel; g.__selSig = selSig;
+      }
+    } else if(sel){
+      sel.remove(); g.__sel = null; g.__selSig = null; sel = null;
+    }
+    return sel;
+  }
   function nodeRadiusC(n, vc){
     const c = vc || passVisuals;
     if(!c) return nodeRadius(n);
@@ -685,9 +728,12 @@
       // Update selection class
       toggleClass(g, 'selected', selected);
       toggleClass(g, 'dragging', draggingId === n.id);
+      const w = v.width, h = v.height;
+      // Selection ring: keep a scaled copy of the shape behind the node. It
+      // only exists while selected, so unselected nodes stay at one element.
+      const sel = syncNodeSelRing(g, n, v.shape, w, h, selected);
       // Update or create shape (element ref stashed on the group)
       let shape = g.__shape;
-      const w = v.width, h = v.height;
       const shapeSig = v.shape + '|' + w + '|' + h;
       const needRebuild = !shape || g.__shapeSig !== shapeSig;
       if(needRebuild){
@@ -708,7 +754,9 @@
         }
         shape.setAttribute('class','node-shape');
         g.__shapeSig = shapeSig;
-        g.insertBefore(shape, g.firstChild);
+        // Keep the selection ring behind the shape
+        if(sel) g.insertBefore(shape, sel.nextSibling);
+        else g.insertBefore(shape, g.firstChild);
         g.__shape = shape;
       }
       // Update shape style attributes — de-duplicated, so untouched nodes

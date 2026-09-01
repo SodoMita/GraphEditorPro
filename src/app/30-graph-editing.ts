@@ -90,10 +90,18 @@
   function syncSelectionDom(){
     const ns = selectedNodeIds(), es = selectedEdgeIds();
     for(const id of domSelectedNodes){
-      if(!ns.has(id)){ const el = nodeEl(id); if(el) toggleClass(el, 'selected', false); }
+      if(!ns.has(id)){
+        const el = nodeEl(id); if(!el) continue;
+        toggleClass(el, 'selected', false);
+        const n = nodeById(id); if(n){ const v = nodeVisualC(n); syncNodeSelRing(el, n, v.shape, v.width, v.height, false); }
+      }
     }
     for(const id of ns){
-      if(!domSelectedNodes.has(id)){ const el = nodeEl(id); if(el) toggleClass(el, 'selected', true); }
+      if(!domSelectedNodes.has(id)){
+        const el = nodeEl(id); if(!el) continue;
+        toggleClass(el, 'selected', true);
+        const n = nodeById(id); if(n){ const v = nodeVisualC(n); syncNodeSelRing(el, n, v.shape, v.width, v.height, true); }
+      }
     }
     for(const id of domSelectedEdges){
       if(!es.has(id)){
