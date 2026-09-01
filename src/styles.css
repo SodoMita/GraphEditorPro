@@ -422,7 +422,6 @@
        cost. Selection is signalled with a SOLID accent shape placed BEHIND the
        node (.node-sel, 1.35x larger). The node draws over its centre, so a
        solid accent band stays visible around the node without covering it. */
-    .node.selected .node-shape,.node.multi-selected .node-shape{stroke:var(--accent); stroke-width:3.5}
     .node-sel{fill:var(--accent); stroke:none; pointer-events:none}
     .node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
