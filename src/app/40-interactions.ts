@@ -4,6 +4,11 @@
   // selection — e.g. releasing a dragged node over empty canvas keeps it
   // selected instead of wiping it.
   let gestureActive = false;
+  // Single (click) select tool: pressing on empty canvas arms a sweep. On
+  // release, if the cursor is over a node/edge it is selected; releasing on
+  // empty deselects. This makes press-empty → drag → release-on-node select
+  // that node, while a plain empty click still clears the selection.
+  let singleSweep: { pointerId:number; startClientX:number; startClientY:number; moved:boolean } | null = null;
   function registerPointer(ev){
     // Adopt any pending wheel-zoom before new gesture math runs, and capture
     // the viewport rect once per gesture for clientToWorld.
@@ -477,7 +482,17 @@
       } else addNode(p.x, p.y);
       return;
     }
-    if(state.mode === 'select' && !gestureActive) deselect();
+    if(state.mode === 'select' && !gestureActive){
+      if(state.selectTool === 'single'){
+        // Defer deselection: arm a sweep so releasing over a node/edge selects
+        // it. A plain click on empty still deselects on release.
+        singleSweep = { pointerId:ev.pointerId, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
+        gestureActive = true;
+        try{ svg.setPointerCapture(ev.pointerId); }catch{}
+      } else {
+        deselect();
+      }
+    }
   });
   svg.addEventListener('dblclick', ev => {
     if(polygonToolActive() && selectDraft?.tool === 'polygon'){
@@ -522,6 +537,9 @@
       if(Math.hypot(ev.clientX - pendingNodeTap.startClientX, ev.clientY - pendingNodeTap.startClientY) > 10) pendingNodeTap.moved = true;
       pendingNodeTap.x = p.x; pendingNodeTap.y = p.y;
     }
+    if(singleSweep && ev.pointerId === singleSweep.pointerId){
+      if(Math.hypot(ev.clientX - singleSweep.startClientX, ev.clientY - singleSweep.startClientY) > 4) singleSweep.moved = true;
+    }
     if(edgeDraft){
       edgeDraft.x = p.x; edgeDraft.y = p.y;
       if(Math.hypot(ev.clientX - edgeDraft.startClientX, ev.clientY - edgeDraft.startClientY) > 8) edgeDraft.moved = true;
@@ -544,6 +562,32 @@
   svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
   function finishPointer(ev, cancel=false){
     if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
+    if(singleSweep && ev.pointerId === singleSweep.pointerId){
+      const sw = singleSweep;
+      singleSweep = null;
+      gestureActive = false;
+      try{ if(svg.hasPointerCapture?.(ev.pointerId)) svg.releasePointerCapture(ev.pointerId); }catch{}
+      if(!cancel){
+        const el = typeof document.elementFromPoint === 'function'
+          ? document.elementFromPoint(ev.clientX, ev.clientY)
+          : null;
+        const nodeT = el?.closest?.('.node') as HTMLElement | null;
+        if(nodeT?.dataset?.id){
+          const combine = effectiveSelectCombine(ev);
+          setSelection([nodeT.dataset.id], [], {type:'node', id:nodeT.dataset.id}, combine);
+        } else {
+          const edgeT = el?.closest?.('.edge') as HTMLElement | null;
+          if(edgeT?.dataset?.id){
+            const combine = effectiveSelectCombine(ev);
+            setSelection([], [edgeT.dataset.id], {type:'edge', id:edgeT.dataset.id}, combine);
+          } else {
+            deselect();
+          }
+        }
+      }
+      unregisterPointer(ev);
+      return;
+    }
     if(pinch){
       unregisterPointer(ev);
       if(touchPointers().length < 2) endPinch();
