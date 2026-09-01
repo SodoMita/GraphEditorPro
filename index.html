@@ -1286,13 +1286,16 @@ window.I18N = I18N;
 const NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'graph-editor-pro-v2';
 const R = 25;
-const DRAG_LIVE_EDGE_LIMIT = 40;
+// All connected edges follow a dragged node live while their count stays
+// under this budget; beyond it, edges stay frozen until release. Each live
+// edge costs an indexed lookup plus a path rebuild, so the budget trades a
+// few milliseconds per frame against immediate feedback on hub nodes.
+const DRAG_LIVE_EDGE_LIMIT = 400;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 /** Return a required DOM element or fail immediately with a useful error. */
 const $ = (selector, root = document) => {
-    // Plain "#id" lookups are extremely common in render paths (camera inputs,
-    // selection panel, status pills). querySelector('#id') walks the tree in
-    // some engines/libraries; getElementById is a hash lookup.
+    // Plain "#id" lookups are common in render paths (camera inputs,
+    // selection panel, status pills); getElementById is a hash lookup.
     if (root === document && typeof document.getElementById === 'function' && /^#[A-Za-z][A-Za-z0-9_-]*$/.test(selector)) {
         const byId = document.getElementById(selector.slice(1));
         if (!byId)
@@ -1384,7 +1387,6 @@ function snapshot() {
     });
 }
 function applySnapshot(raw) {
-    edgeOffsetCache = null;
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
     const sane = sanitizeState(data);
@@ -1410,21 +1412,33 @@ function applySnapshot(raw) {
     queueRender(true, true);
     saveSoon();
 }
+// History is bounded both by entry count and by total serialized size:
+// snapshots of large graphs can be megabytes each, and a byte cap keeps
+// memory and eviction cost predictable where an entry cap alone would not.
+const HISTORY_MAX_ENTRIES = 100;
+const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+let historyBytes = 0;
 function pushHistory(label = 'change') {
-    edgeOffsetCache = null;
     const snap = snapshot();
     if (appHistory[appHistoryIndex] === snap)
         return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    if (appHistory.length > 100) {
+    historyBytes += snap.length;
+    appHistoryIndex = appHistory.length - 1;
+    while (appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)) {
+        historyBytes -= appHistory[0].length;
         appHistory.shift();
-    }
-    else {
-        appHistoryIndex++;
+        appHistoryIndex--;
     }
     updateUndoRedo();
     saveSoon();
+}
+function resetHistory() {
+    appHistory = [snapshot()];
+    appHistoryIndex = 0;
+    historyBytes = appHistory[0].length;
+    updateUndoRedo();
 }
 function undo() { if (appHistoryIndex <= 0)
     return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
@@ -1792,12 +1806,11 @@ function labelFromNumber(num) {
     return out;
 }
 // === Indexed id lookups ===
-// nodeById/edgeById used to be Array.find linear scans. They sit on every hot
-// path (selection sync walks all edges, drag updates resolve both endpoints
-// per affected edge, algorithms resolve per traversal step), which made large
-// graphs O(E*N) per frame — the single biggest source of lag versus draw.io.
-// The index rebuilds lazily, and only when the array identity, its length, or
-// an explicit invalidation (in-place id rewrite) says the mapping changed.
+// Id→object hash indexes behind nodeById/edgeById. These sit on every hot
+// path (selection sync, drag geometry, algorithms), so they must stay O(1)
+// regardless of graph size. The index rebuilds lazily, and only when the
+// array identity, its length, or an explicit invalidation (in-place id
+// rewrite or edge reordering) says the mapping changed.
 let graphRev = 0;
 function invalidateGraphIndex() { graphRev++; }
 let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
@@ -1935,12 +1948,10 @@ function strokeDashArray(style, size) {
     return 'none';
 }
 // === DOM write de-duplication ===
-// setAttribute/classList.toggle are not free even when the value is unchanged:
-// the browser still parses the attribute and invalidates style/paint for the
-// element. Full renders used to write ~15 attributes per node and per edge on
-// every frame — selection clicks, style tweaks and camera moves all paid it.
-// Every write to rendered graph elements now goes through these helpers, which
-// skip the DOM entirely when the value is identical to the last write.
+// Every write to rendered graph elements goes through these helpers, which
+// skip the DOM entirely when the value equals the last write: unchanged
+// elements cost nothing, avoiding needless attribute parsing and
+// style/paint invalidation during full render passes.
 function attrBox(el) { return el.__ac || (el.__ac = Object.create(null)); }
 function setAttr(el, name, value) {
     const c = attrBox(el);
@@ -1972,11 +1983,10 @@ function setText(el, text) {
     }
 }
 // === Per-pass visual cache ===
-// nodeVisual/edgeVisual allocate a merged style object per item; edge paths
-// need node "radii" which used to recompute that object twice per edge. With
-// thousands of edges that is thousands of allocations per frame and heavy GC
-// pressure mid-drag. Each render pass (and each drag gesture) fills these
-// caches once and reuses the results for every subsequent frame.
+// Merged style objects and node "radii" are computed once per item and
+// reused by every edge that touches the item, keeping render passes and drag
+// frames free of repeated merges and short-lived allocations. Each render
+// pass (and each drag gesture) owns one cache.
 function newVisualCache() { return { node: new Map(), edge: new Map(), radius: new Map() }; }
 let passVisuals = null;
 function beginRenderPass() { passVisuals = newVisualCache(); }
@@ -2176,10 +2186,9 @@ let gridSig = '';
 function invalidateGridCache() { gridSig = ''; }
 function updateGridBackground(vb = state.viewBox, cachedRect = null) {
     const settings = state.settings;
-    // Everything below depends only on (viewBox, viewport size, grid settings).
-    // Non-camera renders (selection, style edits, ...) used to recompute the
-    // gradient geometry — including a forced getBoundingClientRect layout — on
-    // every single frame. Skip when the inputs have not changed.
+    // The gradient geometry depends only on (viewBox, viewport size, grid
+    // settings); it is recomputed only when one of them changes. Viewport
+    // resizes invalidate the cache via invalidateGridCache().
     const sig = `${vb.x},${vb.y},${vb.w},${vb.h}|${settings.gridSizeX},${settings.gridSizeY},${settings.gridSize}|${settings.canvasBgColor},${settings.gridMinorColor},${settings.gridMajorColor},${settings.gridMinorAlpha},${settings.gridMajorAlpha}`;
     if (sig === gridSig)
         return;
@@ -2218,8 +2227,12 @@ function updateGridBackground(vb = state.viewBox, cachedRect = null) {
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
 }
 function setStatusOnly() { setText($('#statusPill'), statusText()); }
-function nodeEl(id) { return document.getElementById('node-' + id); }
-function edgeEl(id) { return document.getElementById('edge-' + id); }
+// Id→element registries for rendered graph elements. They are maintained by
+// the render passes so hot paths (drag geometry, selection sync) never pay a
+// document-wide id lookup. getElementById remains as a safety fallback.
+const nodeEls = new Map(), edgeEls = new Map();
+function nodeEl(id) { return nodeEls.get(id) || document.getElementById('node-' + id); }
+function edgeEl(id) { return edgeEls.get(id) || document.getElementById('edge-' + id); }
 function moveNodeFast(id) {
     const n = drag?.node?.id === id ? drag.node : nodeById(id);
     if (!n)
@@ -2311,12 +2324,16 @@ function scheduleFastNodeMove(id) {
 function renderEdges() {
     buildEdgeOffsetCache();
     const showLabels = shouldShowLabels();
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     const existing = new Map();
-    for (const el of [...edgesLayer.children]) {
-        if (el.dataset?.id)
-            existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "edge-<edgeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for (let el = edgesLayer.firstElementChild; el; el = el.nextElementSibling) {
+        const eid = el.id;
+        if (eid.startsWith('edge-'))
+            existing.set(eid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — edges touching non-visible nodes are skipped entirely
@@ -2327,7 +2344,7 @@ function renderEdges() {
     const weightMode = gd.edgeWeightMode || 'number';
     const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
     for (const e of state.edges) {
-        const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+        const a = nodeById(e.from), b = nodeById(e.to);
         if (!a || !b) {
             // Edge has dangling endpoint — remove from DOM if present
             if (existing.has(e.id))
@@ -2375,10 +2392,11 @@ function renderEdges() {
             else
                 editEdgeQuick(e.id); });
             edgesLayer.appendChild(g);
+            edgeEls.set(e.id, g);
         }
         toggleClass(g, 'selected', selected);
-        // Update or create hit path (refs stashed on the group — querySelector per
-        // edge per frame showed up prominently in profiles on large graphs)
+        // Update or create hit path (child refs are stashed on the group to
+        // avoid per-edge selector queries)
         let hit = g.__hit;
         if (!hit) {
             hit = document.createElementNS(NS, 'path');
@@ -2509,14 +2527,23 @@ function renderEdges() {
     }
     // Remove stale edges
     for (const [id, el] of existing) {
-        if (!seen.has(id))
+        if (!seen.has(id)) {
             el.remove();
+            edgeEls.delete(id);
+        }
     }
 }
 function edgeGroupKey(e) { return e.from <= e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
+// Lane offsets depend only on edge ids/endpoints and their order in the
+// array. The cache is reused across renders until the array is replaced or
+// resized, or an in-place id/endpoint/reorder mutation bumps the revision.
+let edgeOffsetCacheSrc = null, edgeOffsetCacheLen = -1, edgeOffsetCacheRev = -1;
 function buildEdgeOffsetCache() {
+    const edges = state.edges;
+    if (edgeOffsetCache && edgeOffsetCacheSrc === edges && edgeOffsetCacheLen === edges.length && edgeOffsetCacheRev === graphRev)
+        return;
     const groups = new Map();
-    for (const e of state.edges) {
+    for (const e of edges) {
         const key = edgeGroupKey(e);
         if (!groups.has(key))
             groups.set(key, []);
@@ -2531,6 +2558,9 @@ function buildEdgeOffsetCache() {
             edgeOffsetCache.set(e.id, (idx - (group.length - 1) / 2) * spacing);
         });
     }
+    edgeOffsetCacheSrc = edges;
+    edgeOffsetCacheLen = edges.length;
+    edgeOffsetCacheRev = graphRev;
 }
 function edgeCanonicalFrom(e) { return e.from <= e.to ? e.from : e.to; }
 function edgeSiblingOffset(e) {
@@ -2597,10 +2627,14 @@ function renderNodes() {
     const showLabels = shouldShowLabels();
     const selectedNodes = selectedNodeIds();
     const existing = new Map();
-    // Index existing node elements by id, collect for removal
-    for (const el of [...nodesLayer.children]) {
-        if (el.dataset?.id)
-            existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "node-<nodeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for (let el = nodesLayer.firstElementChild; el; el = el.nextElementSibling) {
+        const nid = el.id;
+        if (nid.startsWith('node-'))
+            existing.set(nid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — avoids per-node Set lookup
@@ -2629,6 +2663,7 @@ function renderNodes() {
             else
                 editNodeQuick(n.id); });
             nodesLayer.appendChild(g);
+            nodeEls.set(n.id, g);
         }
         // Update transform (always — this is the hot path during drag)
         setAttr(g, 'transform', `translate(${n.x},${n.y})`);
@@ -2678,8 +2713,8 @@ function renderNodes() {
             g.insertBefore(shape, g.firstChild);
             g.__shape = shape;
         }
-        // Update shape style attributes — de-duplicated so untouched nodes cost
-        // nothing (this used to write 4-5 attributes per node on every frame)
+        // Update shape style attributes — de-duplicated, so untouched nodes
+        // write nothing
         setAttr(shape, 'fill', v.color);
         setAttr(shape, 'stroke', v.strokeColor);
         setAttr(shape, 'stroke-width', v.strokeSize);
@@ -2737,8 +2772,10 @@ function renderNodes() {
     }
     // Remove stale elements
     for (const [id, el] of existing) {
-        if (!seen.has(id))
+        if (!seen.has(id)) {
             el.remove();
+            nodeEls.delete(id);
+        }
     }
 }
 function renderSidebar() {
@@ -2749,8 +2786,8 @@ let startSelectSig = '';
 function renderStartSelect() {
     const sel = $('#algoStart');
     const nodes = state.nodes;
-    // FNV-1a over id+label: O(total chars), no DOM. Rebuilding/patching the
-    // option list on every selection change was a visible per-click cost.
+    // FNV-1a signature over id+label: O(total chars), no DOM. The option list
+    // is only patched when this signature changes.
     let h = 2166136261 ^ nodes.length;
     for (let i = 0; i < nodes.length; i++) {
         const s = nodes[i].id + '>' + nodes[i].label;
@@ -3278,11 +3315,10 @@ function edgeListHtml() {
             : '';
         $('#edgeListNote').textContent = filterNote + pageNote;
     }
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     let html = '<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>';
     renderedEdges.forEach((e, i) => {
-        const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+        const a = nodeById(e.from), b = nodeById(e.to);
         const sel = selectedEdges.has(e.id) ? ' matrix-selected' : '';
         const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle === s ? ' selected' : ''}>${I18N.t('stroke_' + s)}</option>`).join('');
         html += `<tr>
@@ -3383,9 +3419,8 @@ function selectItem(type, id) { setSelection(type === 'node' ? [id] : [], type =
 function deselect() { if (state.selected || state.selection?.nodes?.length || state.selection?.edges?.length)
     setSelection([], [], null, false); }
 // Mirror of the selection currently reflected in the DOM. syncSelectionDom
-// used to walk and re-toggle every rendered node and edge on every click;
-// with large graphs that is thousands of class operations per click. Only
-// the elements whose state actually changed are touched now — O(delta).
+// touches only the elements whose selection state changed — O(delta) per
+// selection change instead of O(V+E).
 let domSelectedNodes = new Set(), domSelectedEdges = new Set();
 function resetSelectionMirror() {
     // Called after a full render pass: renderEdges/renderNodes just applied the
@@ -3989,6 +4024,7 @@ function renumberNodeOrder() {
 }
 function sortEdgesById() {
     state.edges.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    invalidateGraphIndex();
     pushHistory('sort edges by id');
     queueRender(true);
     toast(I18N.t('edges_sorted_id'));
@@ -3996,6 +4032,7 @@ function sortEdgesById() {
 function sortEdgesByFrom() {
     const order = id => { const n = nodeById(id); return n ? (n.order ?? 0) : 0; };
     state.edges.sort((a, b) => order(a.from) - order(b.from) || order(a.to) - order(b.to) || a.id.localeCompare(b.id, undefined, { numeric: true }));
+    invalidateGraphIndex();
     pushHistory('sort edges by from');
     queueRender(true);
     toast(I18N.t('edges_sorted_from'));
@@ -4003,6 +4040,7 @@ function sortEdgesByFrom() {
 function sortEdgesByTo() {
     const order = id => { const n = nodeById(id); return n ? (n.order ?? 0) : 0; };
     state.edges.sort((a, b) => order(a.to) - order(b.to) || order(a.from) - order(b.from) || a.id.localeCompare(b.id, undefined, { numeric: true }));
+    invalidateGraphIndex();
     pushHistory('sort edges by to');
     queueRender(true);
     toast(I18N.t('edges_sorted_to'));
@@ -4016,6 +4054,7 @@ function moveEdge(edgeId, dir) {
         return;
     const [e] = state.edges.splice(idx, 1);
     state.edges.splice(newIdx, 0, e);
+    invalidateGraphIndex();
     pushHistory('move edge');
     queueRender(true);
     saveSoon();
@@ -4040,9 +4079,8 @@ function deleteSelected() {
 }
 let pointerRect = null; // viewport rect captured at pointerdown, reused for the whole gesture
 function registerPointer(ev) {
-    // Adopt any pending wheel-zoom before new gesture math runs, and capture the
-    // viewport rect once per gesture (clientToWorld used to force a layout with
-    // getBoundingClientRect on every single pointermove).
+    // Adopt any pending wheel-zoom before new gesture math runs, and capture
+    // the viewport rect once per gesture for clientToWorld.
     flushZoomPreview();
     activePointers.set(ev.pointerId, { id: ev.pointerId, type: ev.pointerType || 'mouse', clientX: ev.clientX, clientY: ev.clientY });
     if (!pointerRect)
@@ -4662,11 +4700,10 @@ function startPan(ev) {
 }
 svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, { passive: false });
 // === Composited wheel zoom ===
-// Changing the SVG viewBox re-lays-out and re-rasterizes every vector element;
-// doing that per wheel tick is the main reason zooming felt slower than
-// draw.io on large graphs. Wheel events now only drive a GPU-composited CSS
-// transform preview (same mechanism as panning); the real viewBox is applied
-// exactly once, when the wheel settles.
+// Changing the SVG viewBox re-lays-out and re-rasterizes every vector
+// element. Wheel events only drive a GPU-composited CSS transform preview
+// (the same mechanism panning uses); the real viewBox is applied exactly
+// once, when the wheel settles.
 let zoomPreview = null; // {base, preview, rect, frame, timer}
 const ZOOM_COMMIT_DELAY = 140;
 function zoomAt(factor, clientX, clientY) {
@@ -7135,6 +7172,7 @@ function wireUi() {
                         e.from = target.id;
                     else
                         e.to = target.id;
+                    invalidateGraphIndex();
                     pushHistory('edit edge endpoint');
                     queueRender(false);
                     saveSoon();
@@ -7514,8 +7552,7 @@ function init() {
     syncHotkeyInputs();
     syncCameraInputs();
     document.title = state.title + ' · ' + (I18N.t('brand_name'));
-    appHistory = [snapshot()];
-    appHistoryIndex = 0;
+    resetHistory();
     queueRender(true);
 }
 init();

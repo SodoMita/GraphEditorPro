@@ -99,12 +99,10 @@
     return 'none';
   }
   // === DOM write de-duplication ===
-  // setAttribute/classList.toggle are not free even when the value is unchanged:
-  // the browser still parses the attribute and invalidates style/paint for the
-  // element. Full renders used to write ~15 attributes per node and per edge on
-  // every frame — selection clicks, style tweaks and camera moves all paid it.
-  // Every write to rendered graph elements now goes through these helpers, which
-  // skip the DOM entirely when the value is identical to the last write.
+  // Every write to rendered graph elements goes through these helpers, which
+  // skip the DOM entirely when the value equals the last write: unchanged
+  // elements cost nothing, avoiding needless attribute parsing and
+  // style/paint invalidation during full render passes.
   function attrBox(el){ return el.__ac || (el.__ac = Object.create(null)); }
   function setAttr(el, name, value){
     const c = attrBox(el);
@@ -124,11 +122,10 @@
     if(c.__text !== text){ c.__text = text; el.textContent = text; }
   }
   // === Per-pass visual cache ===
-  // nodeVisual/edgeVisual allocate a merged style object per item; edge paths
-  // need node "radii" which used to recompute that object twice per edge. With
-  // thousands of edges that is thousands of allocations per frame and heavy GC
-  // pressure mid-drag. Each render pass (and each drag gesture) fills these
-  // caches once and reuses the results for every subsequent frame.
+  // Merged style objects and node "radii" are computed once per item and
+  // reused by every edge that touches the item, keeping render passes and drag
+  // frames free of repeated merges and short-lived allocations. Each render
+  // pass (and each drag gesture) owns one cache.
   function newVisualCache(){ return { node: new Map(), edge: new Map(), radius: new Map() }; }
   let passVisuals = null;
   function beginRenderPass(){ passVisuals = newVisualCache(); }
@@ -292,10 +289,9 @@
   function invalidateGridCache(){ gridSig = ''; }
   function updateGridBackground(vb=state.viewBox, cachedRect=null){
     const settings = state.settings;
-    // Everything below depends only on (viewBox, viewport size, grid settings).
-    // Non-camera renders (selection, style edits, ...) used to recompute the
-    // gradient geometry — including a forced getBoundingClientRect layout — on
-    // every single frame. Skip when the inputs have not changed.
+    // The gradient geometry depends only on (viewBox, viewport size, grid
+    // settings); it is recomputed only when one of them changes. Viewport
+    // resizes invalidate the cache via invalidateGridCache().
     const sig = `${vb.x},${vb.y},${vb.w},${vb.h}|${settings.gridSizeX},${settings.gridSizeY},${settings.gridSize}|${settings.canvasBgColor},${settings.gridMinorColor},${settings.gridMajorColor},${settings.gridMinorAlpha},${settings.gridMajorAlpha}`;
     if(sig === gridSig) return;
     const rect = cachedRect || svg.getBoundingClientRect();
@@ -332,8 +328,12 @@
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); }
-  function nodeEl(id){ return document.getElementById('node-' + id); }
-  function edgeEl(id){ return document.getElementById('edge-' + id); }
+  // Id→element registries for rendered graph elements. They are maintained by
+  // the render passes so hot paths (drag geometry, selection sync) never pay a
+  // document-wide id lookup. getElementById remains as a safety fallback.
+  const nodeEls = new Map(), edgeEls = new Map();
+  function nodeEl(id){ return nodeEls.get(id) || document.getElementById('node-' + id); }
+  function edgeEl(id){ return edgeEls.get(id) || document.getElementById('edge-' + id); }
   function moveNodeFast(id){
     const n = drag?.node?.id === id ? drag.node : nodeById(id); if(!n) return;
     const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
@@ -394,11 +394,15 @@
   function renderEdges(){
     buildEdgeOffsetCache();
     const showLabels = shouldShowLabels();
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     const existing = new Map();
-    for(const el of [...edgesLayer.children]){
-      if(el.dataset?.id) existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "edge-<edgeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for(let el = edgesLayer.firstElementChild; el; el = el.nextElementSibling){
+      const eid = el.id;
+      if(eid.startsWith('edge-')) existing.set(eid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — edges touching non-visible nodes are skipped entirely
@@ -409,7 +413,7 @@
     const weightMode = gd.edgeWeightMode || 'number';
     const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
     for(const e of state.edges){
-      const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+      const a = nodeById(e.from), b = nodeById(e.to);
       if(!a || !b){
         // Edge has dangling endpoint — remove from DOM if present
         if(existing.has(e.id)) existing.get(e.id).remove();
@@ -435,10 +439,11 @@
         });
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
         edgesLayer.appendChild(g);
+        edgeEls.set(e.id, g);
       }
       toggleClass(g, 'selected', selected);
-      // Update or create hit path (refs stashed on the group — querySelector per
-      // edge per frame showed up prominently in profiles on large graphs)
+      // Update or create hit path (child refs are stashed on the group to
+      // avoid per-edge selector queries)
       let hit = g.__hit;
       if(!hit){ hit = document.createElementNS(NS,'path'); hit.setAttribute('class','edge-hit'); g.appendChild(hit); g.__hit = hit; }
       setAttr(hit, 'd', d.path);
@@ -530,12 +535,18 @@
       }
     }
     // Remove stale edges
-    for(const [id, el] of existing){ if(!seen.has(id)) el.remove(); }
+    for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); edgeEls.delete(id); } }
   }
   function edgeGroupKey(e){ return e.from <= e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
+  // Lane offsets depend only on edge ids/endpoints and their order in the
+  // array. The cache is reused across renders until the array is replaced or
+  // resized, or an in-place id/endpoint/reorder mutation bumps the revision.
+  let edgeOffsetCacheSrc = null, edgeOffsetCacheLen = -1, edgeOffsetCacheRev = -1;
   function buildEdgeOffsetCache(){
+    const edges = state.edges;
+    if(edgeOffsetCache && edgeOffsetCacheSrc === edges && edgeOffsetCacheLen === edges.length && edgeOffsetCacheRev === graphRev) return;
     const groups = new Map();
-    for(const e of state.edges){
+    for(const e of edges){
       const key = edgeGroupKey(e);
       if(!groups.has(key)) groups.set(key, []);
       groups.get(key).push(e);
@@ -549,6 +560,7 @@
         edgeOffsetCache.set(e.id, (idx - (group.length - 1) / 2) * spacing);
       });
     }
+    edgeOffsetCacheSrc = edges; edgeOffsetCacheLen = edges.length; edgeOffsetCacheRev = graphRev;
   }
   function edgeCanonicalFrom(e){ return e.from <= e.to ? e.from : e.to; }
   function edgeSiblingOffset(e){
@@ -614,9 +626,13 @@
     const showLabels = shouldShowLabels();
     const selectedNodes = selectedNodeIds();
     const existing = new Map();
-    // Index existing node elements by id, collect for removal
-    for(const el of [...nodesLayer.children]){
-      if(el.dataset?.id) existing.set(el.dataset.id, el);
+    // Linked-list traversal of the layer (the reflected id attribute is
+    // "node-<nodeId>"); avoids both collection-proxy indexing and dataset
+    // proxy access per child. Collects everything up front, so later appends
+    // of new elements during this pass cannot affect the traversal.
+    for(let el = nodesLayer.firstElementChild; el; el = el.nextElementSibling){
+      const nid = el.id;
+      if(nid.startsWith('node-')) existing.set(nid.slice(5), el);
     }
     const seen = new Set();
     // Pre-compute visible node IDs once per render — avoids per-node Set lookup
@@ -639,6 +655,7 @@
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
         nodesLayer.appendChild(g);
+        nodeEls.set(n.id, g);
       }
       // Update transform (always — this is the hot path during drag)
       setAttr(g, 'transform',`translate(${n.x},${n.y})`);
@@ -670,8 +687,8 @@
         g.insertBefore(shape, g.firstChild);
         g.__shape = shape;
       }
-      // Update shape style attributes — de-duplicated so untouched nodes cost
-      // nothing (this used to write 4-5 attributes per node on every frame)
+      // Update shape style attributes — de-duplicated, so untouched nodes
+      // write nothing
       setAttr(shape, 'fill', v.color);
       setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', v.strokeSize);
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
@@ -707,7 +724,7 @@
       }
     }
     // Remove stale elements
-    for(const [id, el] of existing){ if(!seen.has(id)) el.remove(); }
+    for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); nodeEls.delete(id); } }
   }
   function renderSidebar(){
     renderStartSelect();
@@ -717,8 +734,8 @@
   function renderStartSelect(){
     const sel = $('#algoStart');
     const nodes = state.nodes;
-    // FNV-1a over id+label: O(total chars), no DOM. Rebuilding/patching the
-    // option list on every selection change was a visible per-click cost.
+    // FNV-1a signature over id+label: O(total chars), no DOM. The option list
+    // is only patched when this signature changes.
     let h = 2166136261 ^ nodes.length;
     for(let i = 0; i < nodes.length; i++){
       const s = nodes[i].id + '>' + nodes[i].label;
@@ -1086,11 +1103,10 @@
         : '';
       $('#edgeListNote').textContent = filterNote + pageNote;
     }
-    const nodeMap = new Map(state.nodes.map(node => [node.id, node]));
     const selectedEdges = selectedEdgeIds();
     let html = '<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>';
     renderedEdges.forEach((e,i) => {
-      const a = nodeMap.get(e.from), b = nodeMap.get(e.to);
+      const a = nodeById(e.from), b = nodeById(e.to);
       const sel = selectedEdges.has(e.id) ? ' matrix-selected' : '';
       const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle===s?' selected':''}>${I18N.t('stroke_' + s)}</option>`).join('');
       html += `<tr>

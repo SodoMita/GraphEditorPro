@@ -65,3 +65,17 @@ Beyond navigation, the hot interaction paths are engineered so their cost tracks
 - **Gesture-scoped re-rendering.** A click that does not move anything performs no full render pass at all, and a drag with live edges (up to 40 affected) already patched every transform and path during the gesture, so release needs no re-render either.
 - **Interaction quality mode.** While a drag or brush gesture is active (`.fast-interaction`), node drop-shadow filters and label halos are skipped — they are the most expensive effects to re-rasterize — and restored on release.
 - **Bounded supporting views.** Large matrices and edge lists render behind configurable limits (defaults: 250 edge rows per page, matrices up to 90×90) independently of graph size; both settings accept any positive integer, so faster computers can raise them without an artificial upper cap. Full data remains available through paging and CSV export.
+- **Cheap element access.** Render passes walk the node/edge layers via linked-list traversal (`firstElementChild`/`nextElementSibling`) and read reflected `id` attributes rather than collection indexing or `dataset`, and id→element registries keep drag and selection paths off document-wide lookups. The parallel-edge lane cache rebuilds only when the edge array actually changes.
+
+### Comparison with draw.io (mxGraph)
+
+The interactive-rendering model mirrors the mechanisms draw.io uses, verified against its source (`jgraph/drawio`, `src/main/webapp`):
+
+| Mechanism | draw.io / mxGraph | This editor |
+| --- | --- | --- |
+| Panning | `mxGraph.prototype.panGraph` moves the canvas via a `transform` during the gesture; the view is revalidated once on release | Same: a compositor CSS matrix moves the SVG and grid layer; the `viewBox` commits once on release |
+| Wheel zoom | `EditorUi.js` `lazyZoom` accumulates a `cumulativeZoomFactor`, previews with `mainGroup.style.transform = 'scale(f)'` anchored at the cursor, removes shape filters during the preview, and performs one real zoom after a debounce (`lazyZoomDelay` 20 ms / `wheelZoomDelay` 500 ms) | Same architecture: cumulative factor over the preview `viewBox`, compositor scale preview, one `viewBox` commit after ~140 ms or on pointer adoption |
+| Indexed lookups | cells and view states are kept in `mxDictionary` hash maps | node/edge ids resolve through lazily rebuilt hash indexes |
+| Drag feedback | `mxGraphHandler.updateLivePreview` repaints moved states and all connected edges live | connected edges follow drags live up to a 400-edge budget, then freeze until release |
+| Undo history | `mxUndoManager` caps at 100 entries (delta edits) | 100 entries plus a total-size cap, since this editor stores full-state snapshots |
+| Off-screen culling | none — SVG clips at paint time | none by default, plus an optional order-based visible-range filter that removes non-visible nodes from the DOM entirely |

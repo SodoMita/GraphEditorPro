@@ -1,8 +1,7 @@
   let pointerRect = null; // viewport rect captured at pointerdown, reused for the whole gesture
   function registerPointer(ev){
-    // Adopt any pending wheel-zoom before new gesture math runs, and capture the
-    // viewport rect once per gesture (clientToWorld used to force a layout with
-    // getBoundingClientRect on every single pointermove).
+    // Adopt any pending wheel-zoom before new gesture math runs, and capture
+    // the viewport rect once per gesture for clientToWorld.
     flushZoomPreview();
     activePointers.set(ev.pointerId, {id:ev.pointerId, type:ev.pointerType || 'mouse', clientX:ev.clientX, clientY:ev.clientY});
     if(!pointerRect) pointerRect = svg.getBoundingClientRect();
@@ -508,11 +507,10 @@
 
   svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, {passive:false});
   // === Composited wheel zoom ===
-  // Changing the SVG viewBox re-lays-out and re-rasterizes every vector element;
-  // doing that per wheel tick is the main reason zooming felt slower than
-  // draw.io on large graphs. Wheel events now only drive a GPU-composited CSS
-  // transform preview (same mechanism as panning); the real viewBox is applied
-  // exactly once, when the wheel settles.
+  // Changing the SVG viewBox re-lays-out and re-rasterizes every vector
+  // element. Wheel events only drive a GPU-composited CSS transform preview
+  // (the same mechanism panning uses); the real viewBox is applied exactly
+  // once, when the wheel settles.
   let zoomPreview = null; // {base, preview, rect, frame, timer}
   const ZOOM_COMMIT_DELAY = 140;
   function zoomAt(factor, clientX, clientY){

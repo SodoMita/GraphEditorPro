@@ -1,14 +1,17 @@
   const NS = 'http://www.w3.org/2000/svg';
   const STORAGE_KEY = 'graph-editor-pro-v2';
   const R = 25;
-  const DRAG_LIVE_EDGE_LIMIT = 40;
+  // All connected edges follow a dragged node live while their count stays
+  // under this budget; beyond it, edges stay frozen until release. Each live
+  // edge costs an indexed lookup plus a path rebuild, so the budget trades a
+  // few milliseconds per frame against immediate feedback on hub nodes.
+  const DRAG_LIVE_EDGE_LIMIT = 400;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
   /** Return a required DOM element or fail immediately with a useful error. */
   const $ = (selector: string, root: ParentNode = document): any => {
-    // Plain "#id" lookups are extremely common in render paths (camera inputs,
-    // selection panel, status pills). querySelector('#id') walks the tree in
-    // some engines/libraries; getElementById is a hash lookup.
+    // Plain "#id" lookups are common in render paths (camera inputs,
+    // selection panel, status pills); getElementById is a hash lookup.
     if(root === document && typeof document.getElementById === 'function' && /^#[A-Za-z][A-Za-z0-9_-]*$/.test(selector)){
       const byId = document.getElementById(selector.slice(1));
       if(!byId) throw new Error(`Required DOM element not found: ${selector}`);
@@ -101,7 +104,6 @@
     });
   }
   function applySnapshot(raw){
-    edgeOffsetCache = null;
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
     const sane = sanitizeState(data);
@@ -123,15 +125,32 @@
     queueRender(true, true);
     saveSoon();
   }
+  // History is bounded both by entry count and by total serialized size:
+  // snapshots of large graphs can be megabytes each, and a byte cap keeps
+  // memory and eviction cost predictable where an entry cap alone would not.
+  const HISTORY_MAX_ENTRIES = 100;
+  const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+  let historyBytes = 0;
   function pushHistory(label='change'){
-    edgeOffsetCache = null;
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    if(appHistory.length > 100){ appHistory.shift(); } else { appHistoryIndex++; }
+    historyBytes += snap.length;
+    appHistoryIndex = appHistory.length - 1;
+    while(appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)){
+      historyBytes -= appHistory[0].length;
+      appHistory.shift();
+      appHistoryIndex--;
+    }
     updateUndoRedo();
     saveSoon();
+  }
+  function resetHistory(){
+    appHistory = [snapshot()];
+    appHistoryIndex = 0;
+    historyBytes = appHistory[0].length;
+    updateUndoRedo();
   }
   function undo(){ if(appHistoryIndex <= 0) return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
   function redo(){ if(appHistoryIndex >= appHistory.length - 1) return; appHistoryIndex++; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('redone')); }
@@ -433,12 +452,11 @@
     return out;
   }
   // === Indexed id lookups ===
-  // nodeById/edgeById used to be Array.find linear scans. They sit on every hot
-  // path (selection sync walks all edges, drag updates resolve both endpoints
-  // per affected edge, algorithms resolve per traversal step), which made large
-  // graphs O(E*N) per frame — the single biggest source of lag versus draw.io.
-  // The index rebuilds lazily, and only when the array identity, its length, or
-  // an explicit invalidation (in-place id rewrite) says the mapping changed.
+  // Id→object hash indexes behind nodeById/edgeById. These sit on every hot
+  // path (selection sync, drag geometry, algorithms), so they must stay O(1)
+  // regardless of graph size. The index rebuilds lazily, and only when the
+  // array identity, its length, or an explicit invalidation (in-place id
+  // rewrite or edge reordering) says the mapping changed.
   let graphRev = 0;
   function invalidateGraphIndex(){ graphRev++; }
   let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };

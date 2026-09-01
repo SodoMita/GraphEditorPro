@@ -54,9 +54,8 @@
   function selectItem(type,id){ setSelection(type === 'node' ? [id] : [], type === 'edge' ? [id] : [], {type,id}, false); }
   function deselect(){ if(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length) setSelection([], [], null, false); }
   // Mirror of the selection currently reflected in the DOM. syncSelectionDom
-  // used to walk and re-toggle every rendered node and edge on every click;
-  // with large graphs that is thousands of class operations per click. Only
-  // the elements whose state actually changed are touched now — O(delta).
+  // touches only the elements whose selection state changed — O(delta) per
+  // selection change instead of O(V+E).
   let domSelectedNodes = new Set<string>(), domSelectedEdges = new Set<string>();
   function resetSelectionMirror(){
     // Called after a full render pass: renderEdges/renderNodes just applied the
@@ -480,16 +479,19 @@
   }
   function sortEdgesById(){
     state.edges.sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
+    invalidateGraphIndex();
     pushHistory('sort edges by id'); queueRender(true); toast(I18N.t('edges_sorted_id'));
   }
   function sortEdgesByFrom(){
     const order = id => { const n = nodeById(id); return n ? (n.order ?? 0) : 0; };
     state.edges.sort((a,b) => order(a.from) - order(b.from) || order(a.to) - order(b.to) || a.id.localeCompare(b.id, undefined, {numeric:true}));
+    invalidateGraphIndex();
     pushHistory('sort edges by from'); queueRender(true); toast(I18N.t('edges_sorted_from'));
   }
   function sortEdgesByTo(){
     const order = id => { const n = nodeById(id); return n ? (n.order ?? 0) : 0; };
     state.edges.sort((a,b) => order(a.to) - order(b.to) || order(a.from) - order(b.from) || a.id.localeCompare(b.id, undefined, {numeric:true}));
+    invalidateGraphIndex();
     pushHistory('sort edges by to'); queueRender(true); toast(I18N.t('edges_sorted_to'));
   }
   function moveEdge(edgeId, dir){
@@ -499,6 +501,7 @@
     if(newIdx < 0 || newIdx >= state.edges.length) return;
     const [e] = state.edges.splice(idx, 1);
     state.edges.splice(newIdx, 0, e);
+    invalidateGraphIndex();
     pushHistory('move edge'); queueRender(true); saveSoon();
   }
   function deleteSelected(){

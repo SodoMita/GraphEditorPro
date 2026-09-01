@@ -144,6 +144,7 @@
           const target = state.nodes.find(n => n.label === label || n.id === label);
           if(target){
             if(t.matches('.edge-from')) e.from = target.id; else e.to = target.id;
+            invalidateGraphIndex();
             pushHistory('edit edge endpoint'); queueRender(false); saveSoon();
           }
         }
