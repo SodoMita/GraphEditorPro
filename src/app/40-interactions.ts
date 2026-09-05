@@ -396,7 +396,7 @@
       selectItem('node', id);
       edgeDraft = { from:id, x:p.x, y:p.y, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
       gestureActive = true;
-      updateDragLine(p); setStatusOnly(); return;
+      updateDragLine(p, ev.clientX, ev.clientY); setStatusOnly(); return;
     }
     if(state.mode !== 'select' && state.mode !== 'node'){
       selectItem('node', id);
@@ -543,7 +543,7 @@
     if(edgeDraft){
       edgeDraft.x = p.x; edgeDraft.y = p.y;
       if(Math.hypot(ev.clientX - edgeDraft.startClientX, ev.clientY - edgeDraft.startClientY) > 8) edgeDraft.moved = true;
-      updateDragLine(p); return;
+      updateDragLine(p, ev.clientX, ev.clientY); return;
     }
     if(drag){
       const n = drag.node; if(!n) return;
@@ -653,10 +653,26 @@
     gestureActive = false;
     unregisterPointer(ev);
   }
-  function updateDragLine(p){
+  
+  function updateDragLine(p, clientX, clientY){
     const from = nodeById(edgeDraft.from); if(!from) return;
     dragLine.setAttribute('d', `M ${from.x} ${from.y} L ${p.x} ${p.y}`); dragLine.style.display = 'block';
+    
+    // Detect if pointer is over a node and adjust line appearance
+    const target = document.elementFromPoint(clientX, clientY)?.closest?.('.node') as HTMLElement | null;
+    if(target && target.dataset.id){
+      // Over a node: make line wider and brighter
+      dragLine.style.strokeWidth = '4';
+      dragLine.style.stroke = 'var(--accent)';
+      dragLine.style.opacity = '1';
+    } else {
+      // Not over a node: revert to normal
+      dragLine.style.strokeWidth = '';
+      dragLine.style.stroke = '';
+      dragLine.style.opacity = '';
+    }
   }
+
   function startPan(ev){
     ev.preventDefault();
     gestureActive = true;
