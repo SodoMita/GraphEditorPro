@@ -244,6 +244,9 @@
     const nd = state.settings.nodeDefaults, ed = state.settings.edgeDefaults, gd = state.settings.graphDefaults;
     const set = (id, val) => { const el = $('#'+id); if(el) el.value = val ?? ''; };
     set('defLabelsPolicy', gd.labelsPolicy);
+    set('defLabelOutline', gd.labelOutline || 'outline');
+    set('defLabelOutlineColor', gd.labelOutlineColor || '#020617');
+    set('defLabelOutlineWidth', gd.labelOutlineWidth ?? 4);
     set('defEdgeWeightMode', gd.edgeWeightMode || 'number');
     set('defEdgeWeightMin', gd.edgeWeightMin ?? 1);
     set('defEdgeWeightMax', gd.edgeWeightMax ?? 10);

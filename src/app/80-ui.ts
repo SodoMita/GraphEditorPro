@@ -271,6 +271,10 @@
     // Style tab — default controls
     const nd = () => state.settings.nodeDefaults, ed = () => state.settings.edgeDefaults, gd = () => state.settings.graphDefaults;
     $('#defLabelsPolicy').addEventListener('change', e => { gd().labelsPolicy = e.target.value; pushHistory('labels policy'); queueRender(false); });
+    $('#defLabelOutline').addEventListener('change', e => { gd().labelOutline = e.target.value; pushHistory('label outline mode'); queueRender(false); saveSoon(); });
+    $('#defLabelOutlineColor').addEventListener('input', e => { gd().labelOutlineColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#defLabelOutlineColor').addEventListener('change', () => pushHistory('label outline color'));
+    $('#defLabelOutlineWidth').addEventListener('change', e => { gd().labelOutlineWidth = clamp(finite(e.target.value,4),0,10); e.target.value = gd().labelOutlineWidth; pushHistory('label outline width'); queueRender(false); saveSoon(); });
     $('#defEdgeWeightMode').addEventListener('change', e => { gd().edgeWeightMode = e.target.value; pushHistory('edge weight mode'); updateEdgeWeightModeVisibility(); queueRender(false); saveSoon(); });
     $('#defEdgeWeightMin').addEventListener('change', e => { gd().edgeWeightMin = finite(e.target.value, 1); pushHistory('edge weight min'); queueRender(false); saveSoon(); });
     $('#defEdgeWeightMax').addEventListener('change', e => { gd().edgeWeightMax = finite(e.target.value, 10); pushHistory('edge weight max'); queueRender(false); saveSoon(); });

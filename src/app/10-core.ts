@@ -67,6 +67,11 @@
       canvasBgColor:'#020617', gridMinorColor:'#94a3b8', gridMajorColor:'#94a3b8', gridMinorAlpha:0.105, gridMajorAlpha:0.16,
       graphDefaults: {
         labelsPolicy: 'auto',
+        // Label halo: 'outline' = paint-order stroke around glyphs,
+        // 'plate' = rounded background rect behind the text, 'none' = bare text.
+        labelOutline: 'outline',
+        labelOutlineColor: '#020617',
+        labelOutlineWidth: 4,
         edgeWeightMode: 'number', // 'none' | 'number' | 'color' | 'width'
         edgeWeightMin: 1, edgeWeightMax: 10,
         edgeWeightCorr: 'linear', // 'linear' | 'log' | 'exp' | 'sqrt'
@@ -255,6 +260,11 @@
       ...(isRecord(inputSettings.graphDefaults) ? inputSettings.graphDefaults : {})
     };
     settings.graphDefaults.labelsPolicy = validPolicy(settings.graphDefaults.labelsPolicy);
+    // Label outline / background plate settings
+    const los = ['outline','plate','none'];
+    settings.graphDefaults.labelOutline = los.includes(settings.graphDefaults.labelOutline) ? settings.graphDefaults.labelOutline : 'outline';
+    settings.graphDefaults.labelOutlineColor = validColor(settings.graphDefaults.labelOutlineColor) || '#020617';
+    settings.graphDefaults.labelOutlineWidth = clamp(finite(settings.graphDefaults.labelOutlineWidth, 4), 0, 10);
     // Migrate old showEdgeWeights → edgeWeightMode
     if(settings.graphDefaults.showEdgeWeights != null && !settings.graphDefaults.edgeWeightMode){
       settings.graphDefaults.edgeWeightMode = settings.graphDefaults.showEdgeWeights === false ? 'none' : 'number';

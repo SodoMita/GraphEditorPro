@@ -109,6 +109,86 @@
     }
     return dash;
   }
+  // === Label outline / background (Style tab → Graph defaults) ===
+  // Applies to node labels, edge labels, and edge weights. 'outline' draws a
+  // paint-order stroke halo around the glyphs, 'plate' a rounded background
+  // rect behind the text, 'none' renders bare text. The width setting is the
+  // halo thickness for a 13px label and scales proportionally with the label
+  // size, so outlines stay readable at any label size.
+  function labelOutlineConf(){
+    const gd = state.settings.graphDefaults || {};
+    const mode = gd.labelOutline;
+    return {
+      mode: (mode === 'plate' || mode === 'none') ? mode : 'outline',
+      color: gd.labelOutlineColor || '#020617',
+      width: clamp(finite(gd.labelOutlineWidth, 4), 0, 10)
+    };
+  }
+  function labelOutlineThickness(conf, labelSize){
+    return conf.width * (labelSize / 13);
+  }
+  function round2(v){ return Math.round(v * 100) / 100; }
+  // Measures a rendered <text> element once per (text, size, font) signature.
+  // getComputedTextLength forces layout, so it must not run per render pass;
+  // when measurement is unavailable (e.g. jsdom) fall back to a per-glyph
+  // estimate that is close enough for a background plate.
+  function measuredTextWidth(el, text, size, font){
+    const sig = text + '|' + size + '|' + font;
+    if(el.__twSig !== sig){
+      let w = 0;
+      try { if(typeof el.getComputedTextLength === 'function') w = el.getComputedTextLength(); } catch(err){ w = 0; }
+      if(!w || !Number.isFinite(w) || w <= 0) w = String(text).length * size * 0.62;
+      el.__twSig = sig; el.__tw = w;
+    }
+    return el.__tw;
+  }
+  // Keeps a <text> element and its optional background plate (a rect directly
+  // behind it) in sync with the configured outline settings. x/y/anchor/
+  // baseline describe the text placement; the plate geometry derives from the
+  // measured text width. Returns the plate element or null.
+  function applyLabelOutline(g, textEl, key, x, y, text, size, font, anchor, baseline){
+    const conf = labelOutlineConf();
+    if(!textEl) return null;
+    if(conf.mode === 'outline' && conf.width > 0){
+      setAttr(textEl, 'stroke', conf.color);
+      setAttr(textEl, 'stroke-width', round2(labelOutlineThickness(conf, size)));
+    } else {
+      setAttr(textEl, 'stroke', 'none');
+      setAttr(textEl, 'stroke-width', '0');
+    }
+    const plateKey = key + 'Plate';
+    let plate = g[plateKey] || null;
+    if(conf.mode === 'plate' && text){
+      if(!plate){
+        plate = document.createElementNS(NS,'rect');
+        plate.setAttribute('class','label-plate');
+        g.insertBefore(plate, textEl);
+        g[plateKey] = plate;
+      } else if(plate.nextSibling !== textEl){
+        g.insertBefore(plate, textEl); // stays directly behind its text
+      }
+      const tw = measuredTextWidth(textEl, text, size, font);
+      const pad = Math.max(2, labelOutlineThickness(conf, size) * 0.8);
+      const h = size * 1.12 + pad;
+      let rx = x - tw / 2 - pad, ry = y - h / 2;
+      if(anchor === 'start') rx = x - pad;
+      else if(anchor === 'end') rx = x - tw - pad;
+      if(baseline === 'auto') ry = y - size * 0.36 - h / 2;
+      else if(baseline === 'hanging') ry = y + size * 0.36 - h / 2;
+      setAttr(plate, 'x', round2(rx)); setAttr(plate, 'y', round2(ry));
+      setAttr(plate, 'width', round2(tw + pad * 2)); setAttr(plate, 'height', round2(h));
+      setAttr(plate, 'rx', round2(Math.min(4, size * 0.25)));
+      setAttr(plate, 'fill', conf.color);
+    } else if(plate){
+      plate.remove(); g[plateKey] = null; plate = null;
+    }
+    return plate;
+  }
+  function removeLabelPlate(g, key){
+    const plateKey = key + 'Plate';
+    const plate = g[plateKey];
+    if(plate){ plate.remove(); g[plateKey] = null; }
+  }
   // === DOM write de-duplication ===
   // Every write to rendered graph elements goes through these helpers, which
   // skip the DOM entirely when the value equals the last write: unchanged
@@ -137,7 +217,7 @@
   // reused by every edge that touches the item, keeping render passes and drag
   // frames free of repeated merges and short-lived allocations. Each render
   // pass (and each drag gesture) owns one cache.
-  function newVisualCache(){ return { node: new Map(), edge: new Map(), radius: new Map() }; }
+  function newVisualCache(){ return { node: new Map(), edge: new Map(), edgeStyle: new Map(), radius: new Map() }; }
   let passVisuals = null;
   function beginRenderPass(){ passVisuals = newVisualCache(); }
   function endRenderPass(){ passVisuals = null; }
@@ -150,7 +230,10 @@
   }
   function nodeVisualC(n, vc=null){ return visualFor(n, vc, () => nodeVisual(n), 'node'); }
   function edgeVisualC(e, vc=null){ return visualFor(e, vc, () => edgeVisual(e), 'edge'); }
-  function edgeRenderStyleC(e, vc=null){ return visualFor(e, vc, () => edgeRenderStyle(e), 'edge'); }
+  // Distinct cache key from edgeVisualC: both merge styles for an edge, but
+  // the results differ (weight-based overrides), so sharing a key would let
+  // one return the other's cached object within a single pass.
+  function edgeRenderStyleC(e, vc=null){ return visualFor(e, vc, () => edgeRenderStyle(e), 'edgeStyle'); }
   // === Node selection ring ===
   // The selection outline is a slightly larger copy of the node shape, placed
   // BEHIND the shape so the node's own fill colour stays visible. It exists
@@ -389,8 +472,20 @@
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
     const offsetX = (rect.width - vb.w * scale) / 2;
     const offsetY = (rect.height - vb.h * scale) / 2;
-    const cellX = Math.max(4, gx * scale), cellY = Math.max(4, gy * scale);
-    const majorXSize = cellX * 5, majorYSize = cellY * 5;
+    // Zoom-adaptive grid: when a cell would shrink below the readable minimum
+    // in screen pixels, the grid decimates to every k-th cell. Integer
+    // multiples keep the lines locked to world coordinates, so the grid never
+    // drifts or shifts diagonally relative to the nodes at low zoom (the old
+    // hard 4px clamp rescaled the pattern independently of the scene, which
+    // desynchronized it as soon as it kicked in). Major lines stay on every
+    // 5th world cell — or the nearest achievable multiple of the decimated
+    // step, always at least 2× the minor spacing.
+    const GRID_MIN_PX = 8;
+    const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / (gx * scale)));
+    const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / (gy * scale)));
+    const cellX = stepX * scale, cellY = stepY * scale;
+    const majorXSize = stepX * Math.max(2, Math.ceil((gx * 5) / stepX)) * scale;
+    const majorYSize = stepY * Math.max(2, Math.ceil((gy * 5) / stepY)) * scale;
     const mod = (value, size) => ((value % size) + size) % size;
     const extensionX = rect.width;
     const extensionY = rect.height;
@@ -443,9 +538,19 @@
     const label = g.__label || null;
     const weight = g.__weight || null;
     const hasBoth = label && weight;
-    const labelOffsetY = hasBoth ? -((edgeVisualC(e, vc).labelSize || 12) * 0.75 + 2) : 0;
-    if(label){ setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY); }
-    if(weight){ setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY); }
+    if(label || weight){
+      const v = edgeVisualC(e, vc);
+      const labelOffsetY = hasBoth ? -((v.labelSize || 12) * 0.75 + 2) : 0;
+      if(label){
+        setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
+        // Keep the background plate (if any) glued to the moving label
+        applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, label.textContent || '', v.labelSize, v.labelFont, 'middle', 'middle');
+      }
+      if(weight){
+        setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
+        applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weight.textContent || '', v.labelSize, v.labelFont, 'middle', 'middle');
+      }
+    }
     // Update arrow tip position/angle during drag
     const arrow = g.__arrow || null;
     if(arrow && e.directed && d.tipX != null && d.arrowAngle != null){
@@ -600,19 +705,17 @@
           label = document.createElementNS(NS,'text');
           label.setAttribute('class','edge-label');
           label.setAttribute('text-anchor','middle'); label.setAttribute('dominant-baseline','middle');
-          label.setAttribute('paint-order','stroke');
-          label.setAttribute('stroke','#020617');
-          label.setAttribute('stroke-linejoin','round');
           g.appendChild(label); g.__label = label;
         }
+        if(label.textContent !== labelText) label.textContent = labelText;
         setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
         setAttr(label, 'fill', v.labelColor);
         setAttr(label, 'font-size', v.labelSize);
         setAttr(label, 'font-family', v.labelFont);
-        setAttr(label, 'stroke-width', Math.max(3, v.labelSize * 0.36));
-        if(label.textContent !== labelText) label.textContent = labelText;
+        applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, labelText, v.labelSize, v.labelFont, 'middle', 'middle');
       } else if(label){
         label.remove(); g.__label = null; label = null;
+        removeLabelPlate(g, '__label');
       }
       // Update or create weight text (drawn on the line midpoint)
       let weight = g.__weight || null;
@@ -621,19 +724,17 @@
           weight = document.createElementNS(NS,'text');
           weight.setAttribute('class','edge-weight');
           weight.setAttribute('text-anchor','middle'); weight.setAttribute('dominant-baseline','middle');
-          weight.setAttribute('paint-order','stroke');
-          weight.setAttribute('stroke','#020617');
-          weight.setAttribute('stroke-linejoin','round');
           g.appendChild(weight); g.__weight = weight;
         }
+        if(weight.textContent !== weightText) weight.textContent = weightText;
         setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
         setAttr(weight, 'fill', v.labelColor);
         setAttr(weight, 'font-size', v.labelSize);
         setAttr(weight, 'font-family', v.labelFont);
-        setAttr(weight, 'stroke-width', Math.max(3, v.labelSize * 0.36));
-        if(weight.textContent !== weightText) weight.textContent = weightText;
+        applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weightText, v.labelSize, v.labelFont, 'middle', 'middle');
       } else if(weight){
         weight.remove(); g.__weight = null; weight = null;
+        removeLabelPlate(g, '__weight');
       }
     }
     // Remove stale edges
@@ -808,27 +909,27 @@
       if(wantLabel){
         if(!label){
           label = document.createElementNS(NS,'text');
-          label.setAttribute('paint-order','stroke');
-          label.setAttribute('stroke','#020617');
-          label.setAttribute('stroke-linejoin','round');
           g.appendChild(label); g.__text = label;
         }
-        setAttr(label, 'text-anchor', 'middle');
-        setAttr(label, 'dominant-baseline', 'middle');
+        // Text content first: the background plate measurement depends on it
+        if(label.textContent !== n.label) label.textContent = n.label;
+        let anchor = 'middle', baseline = 'middle';
+        let lx = 0, ly = 0;
+        const offset = Math.max(w, h)/2 + v.labelSize * 0.7;
+        if(v.labelPosition === 'top'){ ly = -offset; baseline = 'auto'; }
+        else if(v.labelPosition === 'bottom'){ ly = offset; baseline = 'hanging'; }
+        else if(v.labelPosition === 'left'){ lx = -offset; anchor = 'end'; }
+        else if(v.labelPosition === 'right'){ lx = offset; anchor = 'start'; }
+        setAttr(label, 'text-anchor', anchor);
+        setAttr(label, 'dominant-baseline', baseline);
         setAttr(label, 'fill', v.labelColor);
         setAttr(label, 'font-size', v.labelSize);
         setAttr(label, 'font-family', v.labelFont);
-        setAttr(label, 'stroke-width', Math.max(3, v.labelSize * 0.32));
-        let lx = 0, ly = 0;
-        const offset = Math.max(w, h)/2 + v.labelSize * 0.7;
-        if(v.labelPosition === 'top'){ ly = -offset; setAttr(label, 'dominant-baseline','auto'); }
-        else if(v.labelPosition === 'bottom'){ ly = offset; setAttr(label, 'dominant-baseline','hanging'); }
-        else if(v.labelPosition === 'left'){ lx = -offset; setAttr(label, 'text-anchor','end'); }
-        else if(v.labelPosition === 'right'){ lx = offset; setAttr(label, 'text-anchor','start'); }
         setAttr(label, 'x', lx); setAttr(label, 'y', ly);
-        if(label.textContent !== n.label) label.textContent = n.label;
+        applyLabelOutline(g, label, '__label', lx, ly, n.label, v.labelSize, v.labelFont, anchor, baseline);
       } else if(label){
         label.remove(); g.__text = null; label = null;
+        removeLabelPlate(g, '__label');
       }
     }
     // Remove stale elements

@@ -151,6 +151,12 @@ const I18N: I18nService = {
     // --- Style tab ---
     'graph_defaults': { en: 'Graph defaults', ru: 'Умолчания графа' },
     'labels_policy': { en: 'Labels policy', ru: 'Политика меток' },
+    'label_outline': { en: 'Label outline', ru: 'Контур меток' },
+    'label_outline_mode_outline': { en: 'Outline', ru: 'Контур' },
+    'label_outline_mode_plate': { en: 'Background plate', ru: 'Подложка' },
+    'label_outline_mode_none': { en: 'None', ru: 'Без контура' },
+    'label_outline_color': { en: 'Outline color', ru: 'Цвет контура' },
+    'label_outline_width': { en: 'Outline width', ru: 'Толщина контура' },
     'labels_auto': { en: 'Auto (hide when many nodes)', ru: 'Авто (скрывать при множестве узлов)' },
     'labels_on': { en: 'On (always show)', ru: 'Вкл (всегда показывать)' },
     'labels_off': { en: 'Off (never show)', ru: 'Выкл (никогда не показывать)' },

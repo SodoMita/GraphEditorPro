@@ -423,7 +423,12 @@
        node (.node-sel, 1.35x larger). The node draws over its centre, so a
        solid accent band stays visible around the node without covering it. */
     .node-sel{fill:var(--accent); stroke:none; pointer-events:none}
-    .node text{font-weight:800; paint-order:stroke; stroke:#020617; stroke-width:4; stroke-linejoin:round; pointer-events:none}
+    /* Label halo colour/width are applied per-label from the Style-tab
+       "Label outline" settings (see renderNodes/renderEdges). CSS only pins
+       the paint order and join so the fill stays crisp on top of the halo;
+       stylesheet rules would otherwise override the per-label presentation
+       attributes. */
+    .node text{font-weight:800; paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
     .canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
@@ -432,20 +437,23 @@
     .edge-line{fill:none}
     .edge-arrow{pointer-events:none}
     .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:round; stroke-linecap:round; pointer-events:none}
-    .edge-label{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
-    .edge-weight{paint-order:stroke; stroke:#020617; stroke-width:5; stroke-linejoin:round; pointer-events:none}
+    .edge-label{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
+    .edge-weight{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
+    /* Background plate behind a label ("Background plate" outline mode) */
+    .label-plate{pointer-events:none}
     .drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}
     .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:2; stroke-dasharray:6 5; pointer-events:none}
     .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
 
-    /* === Interaction performance ===
-       The paint-order halos on every node/edge label are the most expensive
-       thing left to re-rasterize while anything moves. They are skipped for
-       the duration of any gesture (.fast-interaction is applied by the pointer
-       and camera handlers) and restored on release. The .node-shape filter is
-       also nulled defensively (shadows are removed anyway). */
+    /* === Interaction state ===
+       .fast-interaction marks an active drag/pan/pinch/zoom gesture for the
+       interaction code (and tests). It deliberately does NOT strip the label
+       halos anymore: dropping paint-order strokes mid-gesture made text
+       outlines flicker away during drags. The halos are cheap to move —
+       transforms reuse the rasterized glyphs — and stay visually identical
+       for the whole gesture. (.node-shape filter is nulled defensively;
+       node shapes carry no shadow filters by design.) */
     .canvas-wrap.fast-interaction .node-shape{filter:none}
-    .canvas-wrap.fast-interaction .node text,.canvas-wrap.fast-interaction .edge-label,.canvas-wrap.fast-interaction .edge-weight{stroke:none}
 
     /* ---------- Scrollbars ---------- */
     .thin-scroll::-webkit-scrollbar{width:7px;height:7px}
