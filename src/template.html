@@ -227,6 +227,21 @@
                     <option value="off" data-i18n="labels_off">Off (never show)</option>
                   </select>
                 </label>
+                <div class="grid2" style="margin-top:6px">
+                  <label class="field" for="defLabelOutline"><span data-i18n="label_outline">Label outline</span>
+                    <select id="defLabelOutline">
+                      <option value="outline" data-i18n="label_outline_mode_outline">Outline</option>
+                      <option value="plate" data-i18n="label_outline_mode_plate">Background plate</option>
+                      <option value="none" data-i18n="label_outline_mode_none">None</option>
+                    </select>
+                  </label>
+                  <label class="field" for="defLabelOutlineColor"><span data-i18n="label_outline_color">Outline color</span>
+                    <input id="defLabelOutlineColor" type="color" value="#020617" />
+                  </label>
+                  <label class="field" for="defLabelOutlineWidth"><span data-i18n="label_outline_width">Outline width</span>
+                    <input id="defLabelOutlineWidth" type="number" min="0" max="10" step="0.1" value="4" inputmode="decimal" />
+                  </label>
+                </div>
                 <label class="field col" for="defEdgeWeightMode" style="margin-top:6px"><span data-i18n="edge_weight_viz">Edge weight visualization</span>
                   <select id="defEdgeWeightMode">
                     <option value="number" data-i18n="ew_number">Show weight as number</option>
