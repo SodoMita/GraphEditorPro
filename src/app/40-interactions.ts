@@ -55,7 +55,7 @@
     if(pan){
       state.viewBox = {...pan.previewViewBox};
       pan = null;
-      clearFastPanTransform();
+      rebaseCameraTransform();
       applyViewBox();
     }
     pendingEdgeFrom = null; pendingNodeTap = null;
@@ -92,7 +92,7 @@
     const done = pinch;
     state.viewBox = {...done.previewViewBox};
     pinch = null;
-    clearFastPanTransform();
+    rebaseCameraTransform();
     applyViewBox();
     $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction');
     gestureActive = false;
@@ -646,7 +646,7 @@
       const completedPan = pan;
       state.viewBox = {...completedPan.previewViewBox};
       pan = null;
-      clearFastPanTransform();
+      rebaseCameraTransform();
       applyViewBox();
       $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction'); saveSoon(); setStatusOnly();
     }
@@ -706,17 +706,27 @@
     if(pan){
       state.viewBox = {...pan.previewViewBox};
       pan = null;
-      clearFastPanTransform();
+      rebaseCameraTransform();
+      applyViewBox();
       $('#canvasWrap').classList.remove('panning');
     }
     if(pinch) endPinch();
     const base = zoomPreview ? zoomPreview.base : {...state.viewBox};
     const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
     const r = zoomPreview ? zoomPreview.rect : svg.getBoundingClientRect();
-    const cx = (clientX - r.left) / r.width, cy = (clientY - r.top) / r.height;
-    const wx = cur.x + cx * cur.w, wy = cur.y + cy * cur.h;
+    const anchor = clientToWorld(clientX, clientY, cur, r);
     const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
-    const preview = { x: wx - cx * nw, y: wy - cy * nh, w: nw, h: nh };
+    // Preserve the exact world point under the cursor, including the centered
+    // letterbox offsets introduced by SVG's xMidYMid meet aspect-ratio mode.
+    const nextPixels = Math.min(r.width / nw, r.height / nh);
+    const nextOffsetX = (r.width - nw * nextPixels) / 2;
+    const nextOffsetY = (r.height - nh * nextPixels) / 2;
+    const preview = {
+      x:anchor.x - (clientX - r.left - nextOffsetX) / nextPixels,
+      y:anchor.y - (clientY - r.top - nextOffsetY) / nextPixels,
+      w:nw,
+      h:nh
+    };
     if(!zoomPreview){ zoomPreview = { base, preview, rect: r, frame: false, timer: null }; $('#canvasWrap').classList.add('fast-interaction'); }
     else zoomPreview.preview = preview;
     if(!zoomPreview.frame){
@@ -735,7 +745,7 @@
     const z = zoomPreview; zoomPreview = null;
     clearTimeout(z.timer);
     state.viewBox = {...z.preview};
-    clearFastPanTransform();
+    rebaseCameraTransform();
     applyViewBox();
     $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();

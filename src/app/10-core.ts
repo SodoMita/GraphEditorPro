@@ -30,6 +30,9 @@
   const svg = $('#graphCanvas');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
+  // Navigation previews move only this promoted outer group. sceneLayer is an
+  // inner compensation group used to make the final viewBox handoff atomic.
+  const cameraLayer = $('#cameraLayer');
   const sceneLayer = $('#sceneLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');

@@ -60,6 +60,22 @@ function dispatchPointer(window, target, type, options) {
 const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30));
 const settle = (window, ms) => new Promise(resolve => window.setTimeout(resolve, ms));
 
+function matrixValues(element) {
+  const match = element.getAttribute('transform')?.match(/^matrix\(([^)]+)\)$/);
+  assert.ok(match, `expected a matrix transform on #${element.id}`);
+  return match[1].trim().split(/[ ,]+/).map(Number);
+}
+
+function assertCameraPairCancels(camera, scene) {
+  const outer = matrixValues(camera), inner = matrixValues(scene);
+  const scale = outer[0] * inner[0];
+  const tx = outer[0] * inner[4] + outer[4];
+  const ty = outer[3] * inner[5] + outer[5];
+  assert.ok(Math.abs(scale - 1) < 1e-9, `outer × inner scale must be identity, got ${scale}`);
+  assert.ok(Math.abs(tx) < 1e-9, `outer × inner x must cancel, got ${tx}`);
+  assert.ok(Math.abs(ty) < 1e-9, `outer × inner y must cancel, got ${ty}`);
+}
+
 function smallGraph() {
   return {
     title: 'fast-paths',
@@ -77,11 +93,13 @@ function smallGraph() {
   };
 }
 
-test('wheel zoom previews on the compositor and commits the viewBox once', async () => {
+test('wheel zoom commits without changing its promoted matrix at the boundary', async () => {
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
+  const grid = dom.window.document.querySelector('#gridLayer');
   setCanvasRect(svg);
 
   let viewBoxWrites = 0;
@@ -97,11 +115,16 @@ test('wheel zoom previews on the compositor and commits the viewBox once', async
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during the wheel burst');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'zoom preview rides on the scene transform');
+  assert.match(camera.getAttribute('transform'), /^matrix\(/, 'zoom preview rides on the promoted camera layer');
+  assert.equal(scene.getAttribute('transform'), null);
+  assert.equal(grid.style.transform, '', 'grid properties update directly instead of using a handoff transform');
+  const previewMatrix = camera.getAttribute('transform');
 
   await settle(dom.window, 250); // let the commit debounce fire
   assert.equal(viewBoxWrites, 1, 'exactly one viewBox write commits the zoom');
-  assert.equal(scene.getAttribute('transform'), null, 'preview transform is cleared on commit');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'commit leaves the compositor property untouched');
+  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'the inner scene receives the inverse matrix');
+  assertCameraPairCancels(camera, scene);
   const vb = svg.getAttribute('viewBox').split(' ').map(Number);
   assert.ok(vb[2] < 1000, 'zooming in shrinks the viewBox width');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -112,18 +135,50 @@ test('a pointer gesture during pending zoom adopts the committed camera', async 
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
 
   svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
   await nextFrame(dom.window);
-  assert.match(scene.getAttribute('transform'), /^matrix\(/);
+  assert.match(camera.getAttribute('transform'), /^matrix\(/);
+  const previewMatrix = camera.getAttribute('transform');
 
   // Any pointer gesture must flush the preview before doing hit-test math.
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
-  assert.equal(scene.getAttribute('transform'), null, 'pointerdown flushes the zoom preview');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'flush does not reset the promoted camera matrix');
+  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'flush cancels it in the inner SVG group');
+  assertCameraPairCancels(camera, scene);
   assert.equal(svg.getAttribute('viewBox').split(' ')[2], String(1000 * 0.88), 'flushed preview becomes the real viewBox');
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 100, clientY: 100 });
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('wheel zoom that interrupts a pan first commits the panned camera', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const document = dom.window.document;
+  const svg = document.querySelector('#graphCanvas');
+  const camera = document.querySelector('#cameraLayer');
+  const scene = document.querySelector('#sceneLayer');
+  setCanvasRect(svg);
+  document.querySelector('#modeMove').click();
+
+  dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
+  dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: 200, clientY: 100 });
+  await nextFrame(dom.window);
+  const panMatrix = camera.getAttribute('transform');
+  assert.equal(svg.getAttribute('viewBox'), '-500 -330 1000 660', 'viewBox is still the pre-pan camera during preview');
+
+  svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
+  assert.equal(svg.getAttribute('viewBox'), '-600 -330 1000 660', 'wheel adopts the completed pan before starting zoom');
+  await nextFrame(dom.window);
+  assert.notEqual(camera.getAttribute('transform'), panMatrix, 'zoom composes from the rebased pan matrix');
+
+  dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 200, clientY: 100 });
+  assert.equal(svg.getAttribute('viewBox').split(' ')[2], String(1000 * 0.88));
+  assertCameraPairCancels(camera, scene);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
