@@ -1,6 +1,6 @@
   function assertImportTextSize(text: string): void {
     if(text.length > MAX_IMPORT_BYTES){
-      throw new Error(`Import is too large (maximum ${Math.round(MAX_IMPORT_BYTES / 1024 / 1024)} MB)`);
+      throw new Error(I18N.t('import_too_large', {mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024)}));
     }
   }
 
@@ -60,24 +60,34 @@
     else if(lowerName.includes('edges')) format = 'edges-csv';
     else if(lowerName.includes('matrix')) format = 'matrix-csv';
     else if(lowerName.includes('nodes')) format = 'nodes-csv';
+    document.querySelector('.export-modal')?.remove();
+    const returnFocus = document.activeElement as HTMLElement;
     const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);display:grid;place-items:center;padding:16px';
+    modal.className = 'export-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'exportDialogTitle');
+    modal.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.72);display:grid;place-items:center;padding:16px';
     modal.innerHTML = `
-      <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:14px;max-width:600px;width:100%;max-height:80vh;display:flex;flex-direction:column;gap:8px">
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:14px;max-width:600px;width:100%;max-height:80vh;display:flex;flex-direction:column;gap:8px;box-shadow:0 24px 70px rgba(0,0,0,.55)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-weight:700;color:#e2e8f0">${esc(name)}</span>
+          <span id="exportDialogTitle" style="font-weight:700;color:#e2e8f0">${esc(name)}</span>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <label class="row tiny muted" style="gap:4px;margin:0"><input id="expAppendChk" type="checkbox" /> Append</label>
-            <button class="btn small good" id="expImportBtn" title="Parse the textarea content and import into the graph" data-i18n="import_btn">Import</button>
-            <button class="btn small" id="expCopyBtn" title="Copy textarea content to clipboard" data-i18n="copy">Copy</button>
-            <button class="btn small" id="expDlBtn" title="Download textarea content as a file" data-i18n="download">Download</button>
-            <button class="btn small danger" id="expCloseBtn" data-i18n="close">Close</button>
+            <label class="row tiny muted" style="gap:4px;margin:0"><input id="expAppendChk" type="checkbox" /> ${esc(I18N.t('append'))}</label>
+            <button class="btn small symbol-only good" id="expImportBtn" title="${esc(I18N.t('import_btn'))}" aria-label="${esc(I18N.t('import_btn'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+            <button class="btn small symbol-only" id="expCopyBtn" title="${esc(I18N.t('copy'))}" aria-label="${esc(I18N.t('copy'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+            <button class="btn small symbol-only" id="expDlBtn" title="${esc(I18N.t('download'))}" aria-label="${esc(I18N.t('download'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+            <button class="btn small symbol-only danger" id="expCloseBtn" title="${esc(I18N.t('close'))}" aria-label="${esc(I18N.t('close'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button>
           </div>
         </div>
-        <p class="tiny muted" style="margin:0"><span data-i18n="export_modal_desc">Editable — modify the text, or paste content here when clipboard read is blocked, then click Import.</span></p>
-        <textarea style="flex:1;min-height:240px;width:100%;background:#020617;border:1px solid #334155;color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical" spellcheck="false"></textarea>
+        <p class="tiny muted" style="margin:0">${esc(I18N.t('export_modal_desc'))}</p>
+        <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid #334155;color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical" spellcheck="false"></textarea>
       </div>`;
     document.body.appendChild(modal);
+    const closeModal = () => {
+      modal.remove();
+      if(returnFocus?.isConnected) returnFocus.focus({preventScroll:true});
+    };
     const ta = modal.querySelector<HTMLTextAreaElement>('textarea');
     ta.value = content;
     // Sync the append checkbox with the global one
@@ -96,15 +106,33 @@
         else if(format === 'edges-csv') importEdgesCsv(text, appendChk.checked);
         else if(format === 'matrix-csv') importMatrixCsv(text, appendChk.checked);
         else if(format === 'nodes-csv') importNodesCsv(text, appendChk.checked);
-        modal.remove();
+        closeModal();
       } catch(err){ toast(I18N.t('import_failed', {msg: err.message})); }
     });
     modal.querySelector('#expCopyBtn').addEventListener('click', () => { copyText(ta.value); });
     modal.querySelector('#expDlBtn').addEventListener('click', () => { downloadBlob(name, ta.value, type); });
-    modal.querySelector('#expCloseBtn').addEventListener('click', () => modal.remove());
-    modal.addEventListener('click', ev => { if(ev.target === modal) modal.remove(); });
-    // Focus the textarea for immediate editing
-    setTimeout(() => ta.focus(), 0);
+    modal.querySelector('#expCloseBtn').addEventListener('click', closeModal);
+    modal.addEventListener('click', ev => { if(ev.target === modal) closeModal(); });
+    modal.addEventListener('keydown', ev => {
+      if(ev.key === 'Escape'){
+        ev.preventDefault(); ev.stopPropagation(); closeModal(); return;
+      }
+      if(ev.key !== 'Tab') return;
+      const focusable = $$('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])', modal)
+        .filter(isKeyboardVisible);
+      if(!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
+      else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
+    });
+    // Focus at the beginning; assigning a long value leaves the caret at the
+    // end in some browsers and otherwise opens the preview scrolled to EOF.
+    setTimeout(() => {
+      ta.focus();
+      ta.setSelectionRange(0, 0);
+      ta.scrollTop = 0;
+      ta.scrollLeft = 0;
+    }, 0);
   }
   function fileBase(){ return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,60) || 'graph'; }
   function exportJson(){ showExportPreview(`${fileBase()}.graph.json`, JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json;charset=utf-8'); }
@@ -743,7 +771,7 @@
   function importFile(file, forcedFormat='auto'){
     if(!file) return;
     if(file.size > MAX_IMPORT_BYTES){
-      alert(`Import is too large (maximum ${Math.round(MAX_IMPORT_BYTES / 1024 / 1024)} MB)`);
+      alert(I18N.t('import_too_large', {mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024)}));
       return;
     }
     const reader = new FileReader();

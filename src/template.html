@@ -7,6 +7,44 @@
   <!-- INLINE_STYLES -->
 </head>
 <body>
+  <!-- Inline icon sprite: controls never depend on emoji or symbol-font coverage. -->
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="icon-undo" viewBox="0 0 24 24"><path d="M9 7H5V3M5.5 7.2A8 8 0 1 1 4 13"/></symbol>
+    <symbol id="icon-redo" viewBox="0 0 24 24"><path d="M15 7h4V3m-.5 4.2A8 8 0 1 0 20 13"/></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"/></symbol>
+    <symbol id="icon-sample" viewBox="0 0 24 24"><circle cx="6" cy="16" r="2.5"/><circle cx="12" cy="6" r="2.5"/><circle cx="19" cy="15" r="2.5"/><path d="m7.3 13.9 3.4-5.8m3.4-.5 3.2 5.2M8.5 15.7h8"/></symbol>
+    <symbol id="icon-clear" viewBox="0 0 24 24"><path d="m4 15 9-9 6 6-7 7H8l-4-4Zm6 4h10M9.5 9.5l6 6"/></symbol>
+    <symbol id="icon-star" viewBox="0 0 24 24"><path d="m12 3 2.65 5.37 5.93.86-4.29 4.18 1.01 5.91L12 16.53l-5.3 2.79 1.01-5.91-4.29-4.18 5.93-.86L12 3Z"/></symbol>
+    <symbol id="icon-split" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M12 4v16M8.5 12 6 9.5 3.5 12m17 0L18 9.5 15.5 12"/></symbol>
+    <symbol id="icon-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21M12 3C9.8 5.5 8.7 8.5 8.7 12S9.8 18.5 12 21"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="icon-cursor" viewBox="0 0 24 24"><path d="m5 3 13 9-6.3 1.4L9 20 5 3Z"/><path d="m12 13.5 4 5"/></symbol>
+    <symbol id="icon-hand" viewBox="0 0 24 24"><path d="M8.5 11V6.5a1.5 1.5 0 0 1 3 0V10m0-4.5a1.5 1.5 0 0 1 3 0V10m0-3a1.5 1.5 0 0 1 3 0v4m0-2a1.5 1.5 0 0 1 3 0v4.2c0 4.3-2.8 7.8-7.2 7.8-2.1 0-3.6-.8-5-2.5L4 13.3a1.7 1.7 0 0 1 2.5-2.2l2 1.9"/></symbol>
+    <symbol id="icon-node" viewBox="0 0 24 24"><circle cx="10" cy="12" r="6.5"/><path d="M18.5 8v8M14.5 12h8"/></symbol>
+    <symbol id="icon-edge" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h8m-3-3 3 3-3 3"/></symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4Zm9.5-13.5 4 4M13 20h7"/></symbol>
+    <symbol id="icon-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18h1.2a1.8 1.8 0 0 0 1.2-3.1 1.8 1.8 0 0 1 1.2-3.1H18A3 3 0 0 0 21 12a9 9 0 0 0-9-9Z"/><circle cx="7.5" cy="10" r=".8"/><circle cx="10" cy="6.8" r=".8"/><circle cx="14" cy="6.8" r=".8"/><circle cx="17" cy="10" r=".8"/></symbol>
+    <symbol id="icon-algorithm" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="m10.7 7.2-4.4 8.6m7-8.6 4.4 8.6M7.5 18h9"/></symbol>
+    <symbol id="icon-data" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6m-15 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></symbol>
+    <symbol id="icon-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.7 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.2 1-1.2 2.2M12 17.5h.01"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="icon-up" viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></symbol>
+    <symbol id="icon-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="icon-scrub" viewBox="0 0 24 24"><path d="M5 12h14m-11-3-3 3 3 3m8-6 3 3-3 3"/></symbol>
+    <symbol id="icon-matrix" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.3 4v16m5.4-16v16M4 9.3h16M4 14.7h16"/></symbol>
+    <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="icon-paste" viewBox="0 0 24 24"><path d="M9 5h6m-5-2h4a2 2 0 0 1 2 2v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2Z"/></symbol>
+    <symbol id="icon-export" viewBox="0 0 24 24"><path d="M12 4v11m-4-4 4 4 4-4M5 17v3h14v-3"/></symbol>
+    <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 20V9m-4 4 4-4 4 4M5 7V4h14v3"/></symbol>
+    <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
+    <symbol id="icon-brush" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" stroke-dasharray="3 2.2"/></symbol>
+    <symbol id="icon-adjacent" viewBox="0 0 24 24"><path d="m10.5 10.3-4-4m7-2.3v5.2m2 1.2 3.5-4m-3.4 7.2 3.5 3.8m-8.7-3.7-3.6 3.8"/><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="5" cy="5" r="2"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/><circle cx="5" cy="19" r="2"/></symbol>
+    <symbol id="icon-directed-adjacent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="18" r="2"/><circle cx="4" cy="18" r="2"/><path d="M12 9V6m-1.6 1.5L12 6l1.6 1.5m.8 6.2 3.3 2.6m-2.2.1 2.2-.1-.5-2.1m-7.6-.5-3.3 2.6m2.2.1-2.2-.1.5-2.1"/></symbol>
+  </svg>
+
   <div class="app">
 
     <!-- ================= App command bar — every core action is one click away ================= -->
@@ -16,39 +54,56 @@
         <span class="brand-name" data-i18n="brand_name">Graph Editor Pro</span>
       </div>
       <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
-      <button id="btnMenu" class="btn icon menu-btn" title="Open panels" data-i18n-title="menu_open" aria-label="Open panels">☰</button>
+      <button id="btnMenu" class="btn icon menu-btn" title="Open panels" data-i18n-title="menu_open" aria-label="Open panels" data-i18n-aria-label="menu_open" aria-controls="toolsPanel" aria-expanded="false">
+        <svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
+      </button>
 
-      <div class="toolbar">
+      <div class="toolbar" aria-label="Document commands">
         <div class="view-toggle" role="group" aria-label="View switcher">
-          <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
-          <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
-          <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
+          <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
+          <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
+          <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
         </div>
-        <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
-        <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
-        <button id="btnDelete" class="btn danger" title="Delete selected" data-i18n-title="delete_selected" data-i18n="delete_btn">Delete</button>
-        <button id="btnSample" class="btn" title="Add sample graph" data-i18n-title="add_sample" data-i18n="sample">Sample</button>
-        <button id="btnClear" class="btn danger" title="Clear graph" data-i18n-title="clear_graph" data-i18n="clear_sel">Clear</button>
-        <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open">★</button>
-        <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
-        <button id="btnLang" class="btn small" title="Switch language / Сменить язык" data-i18n-title="lang_switch">🌐 EN</button>
+        <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo" aria-label="Undo" data-i18n-aria-label="undo">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-undo"></use></svg>
+        </button>
+        <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo" aria-label="Redo" data-i18n-aria-label="redo">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-redo"></use></svg>
+        </button>
+        <button id="btnDelete" class="btn symbol-only danger" title="Delete selected" data-i18n-title="delete_selected" aria-label="Delete selected" data-i18n-aria-label="delete_selected"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+        <button id="btnClear" class="btn symbol-only danger" title="Clear graph" data-i18n-title="clear_graph" aria-label="Clear graph" data-i18n-aria-label="clear_graph"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
+        <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open" aria-label="Open style presets" data-i18n-aria-label="presets_open">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-star"></use></svg>
+        </button>
+        <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle" aria-label="Toggle split orientation" data-i18n-aria-label="orient_toggle" aria-pressed="false">
+          <svg class="ui-icon orient-icon" aria-hidden="true"><use href="#icon-split"></use></svg>
+        </button>
+        <button id="btnLang" class="btn small lang-btn" title="Switch language / Сменить язык" data-i18n-title="lang_switch" aria-label="Switch language" data-i18n-aria-label="lang_switch">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-globe"></use></svg><span id="langCode">RU</span>
+        </button>
       </div>
     </header>
 
     <div class="workspace">
-      <!-- ================= Sidebar: compact collapsible panels ================= -->
-      <aside class="panel sidebar">
-        <nav class="tabs" aria-label="Tool panels">
-          <button class="tab" data-tab="edit" title="Editor"><span class="tab-ico">✏️</span><span class="wide" data-i18n="tab_edit">Edit</span></button>
-          <button class="tab" data-tab="style" title="Default styles"><span class="tab-ico">🎨</span><span class="wide" data-i18n="tab_style">Style</span></button>
-          <button class="tab" data-tab="algo" title="Algorithms"><span class="tab-ico">🧠</span><span class="wide" data-i18n="tab_algo">Algo</span></button>
-          <button class="tab" data-tab="data" title="Data and export"><span class="tab-ico">📦</span><span class="wide" data-i18n="tab_data">Data</span></button>
-          <button class="tab" data-tab="help" title="Help"><span class="tab-ico">?</span><span class="wide" data-i18n="tab_help">Help</span></button>
-        </nav>
+      <!-- ================= Non-modal tools drawer / mobile bottom sheet ================= -->
+      <aside id="toolsPanel" class="panel sidebar" role="region" aria-label="Tools and properties" data-i18n-aria-label="tools_panel" aria-hidden="true" inert>
+        <div class="sheet-grabber" aria-hidden="true"></div>
+        <div class="sheet-nav-row">
+          <nav class="tabs" role="tablist" aria-label="Tool panels">
+            <button id="tab-edit" class="tab" data-tab="edit" role="tab" aria-selected="false" aria-controls="panel-edit" title="Edit" data-i18n-title="tab_edit" aria-label="Edit" data-i18n-aria-label="tab_edit"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-edit"></use></svg></button>
+            <button id="tab-style" class="tab" data-tab="style" role="tab" aria-selected="false" aria-controls="panel-style" title="Style" data-i18n-title="tab_style" aria-label="Style" data-i18n-aria-label="tab_style"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-palette"></use></svg></button>
+            <button id="tab-algo" class="tab" data-tab="algo" role="tab" aria-selected="false" aria-controls="panel-algo" title="Algorithms" data-i18n-title="tab_algo" aria-label="Algorithms" data-i18n-aria-label="tab_algo"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-algorithm"></use></svg></button>
+            <button id="tab-data" class="tab" data-tab="data" role="tab" aria-selected="false" aria-controls="panel-data" title="Data" data-i18n-title="tab_data" aria-label="Data" data-i18n-aria-label="tab_data"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-data"></use></svg></button>
+            <button id="tab-help" class="tab" data-tab="help" role="tab" aria-selected="false" aria-controls="panel-help" title="Help" data-i18n-title="tab_help" aria-label="Help" data-i18n-aria-label="tab_help"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-help"></use></svg></button>
+          </nav>
+          <button id="btnPanelClose" class="btn icon sheet-close" title="Close panels" data-i18n-title="panel_close" aria-label="Close panels" data-i18n-aria-label="panel_close">
+            <svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg>
+          </button>
+        </div>
 
         <div class="tab-panels thin-scroll">
           <!-- ================= EDIT ================= -->
-          <section id="panel-edit" class="tab-panel">
+          <section id="panel-edit" class="tab-panel" role="tabpanel" aria-labelledby="tab-edit" aria-hidden="true">
 
             <details class="section" open>
               <summary class="section-title">
@@ -57,7 +112,7 @@
               </summary>
               <div class="sec-body">
                 <label class="field col" for="nodeLabel"><span data-i18n="label_prefix">Label prefix / exact label</span>
-                  <input id="nodeLabel" type="text" placeholder="Auto: A, B, C..." />
+                  <input id="nodeLabel" type="text" placeholder="Auto: A, B, C…" data-i18n-placeholder="auto_label_placeholder" />
                 </label>
                 <div class="grid2" style="margin-top:6px">
                   <label class="field" for="nodeColor"><span data-i18n="color">Color</span>
@@ -150,7 +205,7 @@
                     <input id="edgeWeight" type="text" value="1" inputmode="decimal" />
                   </label>
                   <label class="field" for="edgeLabel"><span data-i18n="label">Label</span>
-                    <input id="edgeLabel" type="text" placeholder="Optional" />
+                    <input id="edgeLabel" type="text" placeholder="Optional" data-i18n-placeholder="optional_placeholder" />
                   </label>
                   <label class="field" for="edgeType"><span data-i18n="type">Type</span>
                     <input id="edgeType" type="text" list="edgeTypeListEdit" placeholder="none" data-i18n-placeholder="none_placeholder" />
@@ -191,17 +246,17 @@
                 <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="sel_tip">Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection.</span></p>
                 <div class="section-title" style="margin-top:8px" data-i18n="sel_result">Selection result</div>
                 <div class="grid3">
-                  <button class="btn active" data-selectcombine="replace" title="Replace current selection" data-i18n="sel_override">Override</button>
-                  <button class="btn" data-selectcombine="add" title="Add to current selection" data-i18n="sel_add">Add</button>
-                  <button class="btn" data-selectcombine="subtract" title="Remove from current selection" data-i18n="sel_subtract">Subtract</button>
+                  <button class="btn symbol-only active" data-selectcombine="replace" title="Replace current selection" data-i18n-title="sel_override_title" aria-label="Replace current selection" data-i18n-aria-label="sel_override_title"><span class="unicode-symbol" aria-hidden="true">↺</span></button>
+                  <button class="btn symbol-only" data-selectcombine="add" title="Add to current selection" data-i18n-title="sel_add_title" aria-label="Add to current selection" data-i18n-aria-label="sel_add_title"><span class="unicode-symbol" aria-hidden="true">＋</span></button>
+                  <button class="btn symbol-only" data-selectcombine="subtract" title="Remove from current selection" data-i18n-title="sel_subtract_title" aria-label="Remove from current selection" data-i18n-aria-label="sel_subtract_title"><span class="unicode-symbol" aria-hidden="true">−</span></button>
                 </div>
                 <label class="field" for="optBrushDiameter" style="margin-top:8px"><span data-i18n="brush_diameter">Brush diameter</span>
                   <input id="optBrushDiameter" type="number" min="10" max="400" step="5" value="80" />
                 </label>
                 <div class="section-title" style="margin-top:8px" data-i18n="hit_test">Selection hit target</div>
                 <div class="grid2">
-                  <button class="btn active" data-hittest="any" title="Select nodes/edges by any part of them" data-i18n-title="hit_any" data-i18n="hit_any">Any part</button>
-                  <button class="btn" data-hittest="center" title="Select only at the exact centre of nodes/edges" data-i18n-title="hit_center" data-i18n="hit_center">Centres</button>
+                  <button class="btn symbol-only active" data-hittest="any" title="Select nodes or edges by any part" data-i18n-title="hit_any_title" aria-label="Select nodes or edges by any part" data-i18n-aria-label="hit_any_title"><span class="unicode-symbol" aria-hidden="true">◌</span></button>
+                  <button class="btn symbol-only" data-hittest="center" title="Select only at exact centres" data-i18n-title="hit_center_title" aria-label="Select only at exact centres" data-i18n-aria-label="hit_center_title"><span class="unicode-symbol" aria-hidden="true">⊙</span></button>
                 </div>
               </div>
             </details>
@@ -213,7 +268,7 @@
           </section>
 
           <!-- ================= STYLE ================= -->
-          <section id="panel-style" class="tab-panel">
+          <section id="panel-style" class="tab-panel" role="tabpanel" aria-labelledby="tab-style" aria-hidden="true">
 
             <details class="section">
               <summary class="section-title">
@@ -344,9 +399,9 @@
                   <label class="field" for="ntsLabelFont"><span data-i18n="label_font">Label font</span> <input id="ntsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                 </div>
                 <div class="row" style="margin-top:8px">
-                  <button id="btnSaveNodeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
-                  <button id="btnDelNodeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
-                  <button id="btnClearNodeOverrides" class="btn small warn" style="flex:1" title="Clear per-node color/shape overrides so type style takes effect" data-i18n-title="clear_per_node_title" data-i18n="clear_per_node">Clear per-node</button>
+                  <button id="btnSaveNodeTypeStyle" class="btn small symbol-only good" title="Save" data-i18n-title="save" aria-label="Save" data-i18n-aria-label="save"><svg class="ui-icon" aria-hidden="true"><use href="#icon-save"></use></svg></button>
+                  <button id="btnDelNodeTypeStyle" class="btn small symbol-only danger" title="Delete" data-i18n-title="delete_btn" aria-label="Delete" data-i18n-aria-label="delete_btn"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+                  <button id="btnClearNodeOverrides" class="btn small symbol-only warn" title="Clear per-node color/shape overrides so type style takes effect" data-i18n-title="clear_per_node_title" aria-label="Clear per-node color and shape overrides" data-i18n-aria-label="clear_per_node_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
                 </div>
               </div>
             </details>
@@ -369,16 +424,16 @@
                   <label class="field" for="etsLabelFont"><span data-i18n="label_font">Label font</span> <input id="etsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                 </div>
                 <div class="row" style="margin-top:8px">
-                  <button id="btnSaveEdgeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
-                  <button id="btnDelEdgeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
-                  <button id="btnClearEdgeOverrides" class="btn small warn" style="flex:1" title="Clear per-edge color overrides so type style takes effect" data-i18n-title="clear_per_edge_title" data-i18n="clear_per_edge">Clear per-edge</button>
+                  <button id="btnSaveEdgeTypeStyle" class="btn small symbol-only good" title="Save" data-i18n-title="save" aria-label="Save" data-i18n-aria-label="save"><svg class="ui-icon" aria-hidden="true"><use href="#icon-save"></use></svg></button>
+                  <button id="btnDelEdgeTypeStyle" class="btn small symbol-only danger" title="Delete" data-i18n-title="delete_btn" aria-label="Delete" data-i18n-aria-label="delete_btn"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+                  <button id="btnClearEdgeOverrides" class="btn small symbol-only warn" title="Clear per-edge color overrides so type style takes effect" data-i18n-title="clear_per_edge_title" aria-label="Clear per-edge color overrides" data-i18n-aria-label="clear_per_edge_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
                 </div>
               </div>
             </details>
           </section>
 
           <!-- ================= ALGO ================= -->
-          <section id="panel-algo" class="tab-panel">
+          <section id="panel-algo" class="tab-panel" role="tabpanel" aria-labelledby="tab-algo" aria-hidden="true">
             <div class="section flat">
               <div class="section-title" data-i18n="run_algorithms">Run algorithms</div>
               <label class="field" for="algoStart"><span data-i18n="start_node">Start node</span>
@@ -396,14 +451,14 @@
             <div class="section flat">
               <div class="section-title">
                 <span data-i18n="results">Results</span>
-                <button id="btnCopyResults" class="btn small" data-i18n="copy">Copy</button>
+                <button id="btnCopyResults" class="btn small symbol-only" title="Copy" data-i18n-title="copy" aria-label="Copy" data-i18n-aria-label="copy"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
               </div>
               <div id="algoOutput" class="result-box" data-i18n="algo_output_init">Create a graph, choose a start node, then run an algorithm.</div>
             </div>
           </section>
 
           <!-- ================= DATA ================= -->
-          <section id="panel-data" class="tab-panel">
+          <section id="panel-data" class="tab-panel" role="tabpanel" aria-labelledby="tab-data" aria-hidden="true">
 
             <details class="section" open>
               <summary class="section-title">
@@ -412,27 +467,45 @@
               <div class="sec-body">
                 <label class="chk" for="optImportAppend" style="margin-bottom:6px"><input id="optImportAppend" type="checkbox" /> <span data-i18n="append_mode">Append to current graph</span></label>
                 <div class="io-grid">
-                  <button id="btnExportJson" class="btn small good" data-i18n="export_json">Export JSON</button>
-                  <button id="btnCopyJson" class="btn small" data-i18n="copy_json">Copy JSON</button>
-                  <button id="btnPasteJson" class="btn small" data-i18n="paste_json">Paste JSON</button>
-                  <button id="btnImportJson" class="btn small" data-i18n="import_json">Import JSON</button>
-                  <button id="btnExportDot" class="btn small good" data-i18n="export_dot">Export DOT</button>
-                  <button id="btnCopyDot" class="btn small" data-i18n="copy_dot">Copy DOT</button>
-                  <button id="btnPasteDot" class="btn small" data-i18n="paste_dot">Paste DOT</button>
-                  <button id="btnImportDot" class="btn small" data-i18n="import_dot">Import DOT</button>
-                  <button id="btnExportGraphml" class="btn small good" data-i18n="graphml">GraphML</button>
-                  <button id="btnCopyGraphml" class="btn small" data-i18n="copy_graphml">Copy GraphML</button>
-                  <button id="btnPasteGraphml" class="btn small" data-i18n="paste_graphml">Paste GraphML</button>
-                  <button id="btnImportGraphml" class="btn small" data-i18n="import_graphml">Import GraphML</button>
-                  <button id="btnExportEdgesCsv" class="btn small good" data-i18n="export_edges_csv">Edges CSV</button>
-                  <button id="btnCopyEdgeCsv" class="btn small" data-i18n="copy_edges">Copy Edges</button>
-                  <button id="btnPasteEdgesCsv" class="btn small" data-i18n="paste_edges">Paste Edges</button>
-                  <button id="btnExportMatrixCsv" class="btn small good" data-i18n="export_matrix_csv">Matrix CSV</button>
-                  <button id="btnCopyMatrixCsv" class="btn small" data-i18n="copy_matrix">Copy Matrix</button>
-                  <button id="btnPasteMatrixCsv" class="btn small" data-i18n="paste_matrix">Paste Matrix</button>
-                  <button id="btnExportNodesCsv" class="btn small good" data-i18n="export_nodes_csv">Nodes CSV</button>
-                  <button id="btnCopyNodesCsv" class="btn small" data-i18n="copy_nodes">Copy Nodes</button>
-                  <button id="btnPasteNodesCsv" class="btn small" data-i18n="paste_nodes">Paste Nodes</button>
+                  <div class="io-row">
+                    <span class="io-format">JSON</span>
+                    <button id="btnExportJson" class="btn small symbol-only good" title="Export JSON" data-i18n-title="export_json" aria-label="Export JSON" data-i18n-aria-label="export_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyJson" class="btn small symbol-only" title="Copy JSON" data-i18n-title="copy_json" aria-label="Copy JSON" data-i18n-aria-label="copy_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteJson" class="btn small symbol-only" title="Paste JSON" data-i18n-title="paste_json" aria-label="Paste JSON" data-i18n-aria-label="paste_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportJson" class="btn small symbol-only" title="Import JSON" data-i18n-title="import_json" aria-label="Import JSON" data-i18n-aria-label="import_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format">DOT</span>
+                    <button id="btnExportDot" class="btn small symbol-only good" title="Export DOT" data-i18n-title="export_dot" aria-label="Export DOT" data-i18n-aria-label="export_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyDot" class="btn small symbol-only" title="Copy DOT" data-i18n-title="copy_dot" aria-label="Copy DOT" data-i18n-aria-label="copy_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteDot" class="btn small symbol-only" title="Paste DOT" data-i18n-title="paste_dot" aria-label="Paste DOT" data-i18n-aria-label="paste_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportDot" class="btn small symbol-only" title="Import DOT" data-i18n-title="import_dot" aria-label="Import DOT" data-i18n-aria-label="import_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format">GraphML</span>
+                    <button id="btnExportGraphml" class="btn small symbol-only good" title="Export GraphML" data-i18n-title="export_graphml" aria-label="Export GraphML" data-i18n-aria-label="export_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyGraphml" class="btn small symbol-only" title="Copy GraphML" data-i18n-title="copy_graphml" aria-label="Copy GraphML" data-i18n-aria-label="copy_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteGraphml" class="btn small symbol-only" title="Paste GraphML" data-i18n-title="paste_graphml" aria-label="Paste GraphML" data-i18n-aria-label="paste_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportGraphml" class="btn small symbol-only" title="Import GraphML" data-i18n-title="import_graphml" aria-label="Import GraphML" data-i18n-aria-label="import_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format" data-i18n="edges_csv">Edges CSV</span>
+                    <button id="btnExportEdgesCsv" class="btn small symbol-only good" title="Export Edges CSV" data-i18n-title="export_edges_csv" aria-label="Export Edges CSV" data-i18n-aria-label="export_edges_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyEdgeCsv" class="btn small symbol-only" title="Copy Edges" data-i18n-title="copy_edges" aria-label="Copy Edges" data-i18n-aria-label="copy_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteEdgesCsv" class="btn small symbol-only" title="Paste Edges" data-i18n-title="paste_edges" aria-label="Paste Edges" data-i18n-aria-label="paste_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format" data-i18n="matrix_csv">Matrix CSV</span>
+                    <button id="btnExportMatrixCsv" class="btn small symbol-only good" title="Export Matrix CSV" data-i18n-title="export_matrix_csv" aria-label="Export Matrix CSV" data-i18n-aria-label="export_matrix_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyMatrixCsv" class="btn small symbol-only" title="Copy Matrix" data-i18n-title="copy_matrix" aria-label="Copy Matrix" data-i18n-aria-label="copy_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteMatrixCsv" class="btn small symbol-only" title="Paste Matrix" data-i18n-title="paste_matrix" aria-label="Paste Matrix" data-i18n-aria-label="paste_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format" data-i18n="nodes_csv">Nodes CSV</span>
+                    <button id="btnExportNodesCsv" class="btn small symbol-only good" title="Export Nodes CSV" data-i18n-title="export_nodes_csv" aria-label="Export Nodes CSV" data-i18n-aria-label="export_nodes_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyNodesCsv" class="btn small symbol-only" title="Copy Nodes" data-i18n-title="copy_nodes" aria-label="Copy Nodes" data-i18n-aria-label="copy_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteNodesCsv" class="btn small symbol-only" title="Paste Nodes" data-i18n-title="paste_nodes" aria-label="Paste Nodes" data-i18n-aria-label="paste_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                  </div>
                 </div>
                 <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml" hidden />
               </div>
@@ -444,9 +517,9 @@
               </summary>
               <div class="sec-body">
                 <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher">
-                  <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
-                  <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
-                  <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
+                  <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
+                  <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
+                  <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
                 </div>
                 <div class="grid2" style="margin-top:8px">
                   <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
@@ -497,12 +570,15 @@
           </section>
 
           <!-- ================= HELP ================= -->
-          <section id="panel-help" class="tab-panel">
+          <section id="panel-help" class="tab-panel" role="tabpanel" aria-labelledby="tab-help" aria-hidden="true">
             <details class="section" open>
               <summary class="section-title">
                 <span data-i18n="quick_help">Quick help</span>
               </summary>
               <div class="sec-body">
+                <div class="help-actions">
+                  <button id="btnSample" class="btn symbol-only good" title="Add sample graph" data-i18n-title="add_sample" aria-label="Add sample graph" data-i18n-aria-label="add_sample"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
+                </div>
                 <p class="tiny muted"><span data-i18n-html="help_node"><b>Node:</b> choose Node mode, then click the canvas. In Node mode you can also drag existing nodes to reposition them (Blender-style).</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_edge"><b>Edge:</b> choose Edge mode, then drag from a source node to a target node. On touch screens, tap a source node, then tap a target node.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_move_nodes"><b>Move nodes:</b> choose Select or Node mode and drag nodes.</span></p>
@@ -541,7 +617,7 @@
       <main class="main v-canvas">
         <section id="canvasWrap" class="panel canvas-wrap empty">
           <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
-          <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor">
+          <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor canvas" data-i18n-aria-label="graph_canvas">
             <defs>
               <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
                 <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(148,163,184,.12)" stroke-width="1" />
@@ -568,56 +644,49 @@
             <div id="statsPill" class="status-pill">0 nodes · 0 edges</div>
           </div>
 
-          <div class="mobile-modebar" aria-label="Quick edit modes">
-            <button class="btn active" data-mode="select" title="Select/move nodes">↖</button>
-            <button class="btn" data-mode="move" title="Move canvas">✋</button>
-            <button class="btn" data-mode="node" title="Add node">＋</button>
-            <button class="btn" data-mode="edge" title="Add edge">↔</button>
-          </div>
-
-          <div class="zoom-controls">
-            <button id="btnZoomIn" class="btn icon" title="Zoom in" data-i18n-title="zoom_in">＋</button>
-            <button id="btnZoomOut" class="btn icon" title="Zoom out" data-i18n-title="zoom_out">−</button>
+          <div class="zoom-controls" role="group" aria-label="Zoom controls">
+            <button id="btnZoomIn" class="btn icon" title="Zoom in" data-i18n-title="zoom_in" aria-label="Zoom in" data-i18n-aria-label="zoom_in"><svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
+            <button id="btnZoomOut" class="btn icon" title="Zoom out" data-i18n-title="zoom_out" aria-label="Zoom out" data-i18n-aria-label="zoom_out"><svg class="ui-icon" aria-hidden="true"><use href="#icon-minus"></use></svg></button>
             <button id="btnZoomReset" class="btn" title="Reset zoom" data-i18n-title="reset_zoom">100%</button>
           </div>
 
-          <!-- Floating tool switcher — always thumb-reachable above the tab bar -->
+          <!-- Floating tool switcher — always thumb-reachable -->
           <div class="mode-fab" role="group" aria-label="Edit modes">
-            <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" data-i18n="mode_select">↖ Select</button>
-            <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" data-i18n="mode_move">✋ Move</button>
-            <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" data-i18n="mode_node">＋ Node</button>
-            <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" data-i18n="mode_edge">↔ Edge</button>
+            <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" aria-label="Select and move nodes" data-i18n-aria-label="mode_select_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cursor"></use></svg></button>
+            <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" aria-label="Pan the canvas by dragging" data-i18n-aria-label="mode_move_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-hand"></use></svg></button>
+            <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" aria-label="Click canvas to add nodes" data-i18n-aria-label="mode_node_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-node"></use></svg></button>
+            <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" aria-label="Drag from node to node" data-i18n-aria-label="mode_edge_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-edge"></use></svg></button>
           </div>
 
           <!-- Floating selection tools — icon-only, visible in Select mode -->
           <div class="sel-tools" role="group" aria-label="Selection tools">
-            <button class="btn" data-selecttool="single" title="Single select" data-i18n-title="sel_single">
+            <button class="btn" data-selecttool="single" title="Single select" data-i18n-title="sel_single" aria-label="Single select" data-i18n-aria-label="sel_single" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3.5 2.5v11.2l3.4-2.9 2.2 4.4 1.9-.9-2.2-4.4H13z" fill="currentColor"/></svg>
             </button>
-            <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n-title="sel_rect">
+            <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n-title="sel_rect" aria-label="Rectangle selection" data-i18n-aria-label="sel_rect" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3.2 2.2"/></svg>
             </button>
-            <button class="btn" data-selecttool="brush" title="Brush over items" data-i18n-title="sel_brush">
-              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="5.5" cy="13.5" r="2.1" fill="currentColor"/><circle cx="9.8" cy="9.6" r="2.7" fill="currentColor" opacity=".72"/><circle cx="13.6" cy="5.4" r="1.7" fill="currentColor" opacity=".45"/></svg>
+            <button class="btn" data-selecttool="brush" title="Brush over items" data-i18n-title="sel_brush" aria-label="Brush selection" data-i18n-aria-label="sel_brush" aria-pressed="false">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-brush"></use></svg>
             </button>
-            <button class="btn" data-selecttool="lasso" title="Freehand lasso" data-i18n-title="sel_lasso">
+            <button class="btn" data-selecttool="lasso" title="Freehand lasso" data-i18n-title="sel_lasso" aria-label="Lasso selection" data-i18n-aria-label="sel_lasso" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M5 12.5c-.6-3.6 1.2-7 4.4-7 2.8 0 4.8 2 4.6 4.4-.2 2.4-2.4 3.6-4.4 3.2-1.3-.3-1.8-1.2-1.6-2.2.2-1 1.2-1.5 2.1-1.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </button>
-            <button class="btn" data-selecttool="line" title="Select near a line" data-i18n-title="sel_line">
+            <button class="btn" data-selecttool="line" title="Select near a line" data-i18n-title="sel_line" aria-label="Line selection" data-i18n-aria-label="sel_line" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 14L14 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="4" cy="14" r="1.7" fill="currentColor"/><circle cx="14" cy="4" r="1.7" fill="currentColor"/></svg>
             </button>
-            <button class="btn" data-selecttool="polygon" title="Polygon-style drag selection" data-i18n-title="sel_polygon">
+            <button class="btn" data-selecttool="polygon" title="Polygon-style drag selection" data-i18n-title="sel_polygon" aria-label="Polygon selection" data-i18n-aria-label="sel_polygon" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2.6l6.4 3.9-2.4 7.4H5L2.6 6.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
             </button>
-            <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n-title="sel_adjacent">
-              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.1" fill="currentColor"/><path d="M9 11.1v3.2M9 6.9V3.7M11.1 9h3.2M6.9 9H3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="9" cy="14.3" r="1.15" fill="currentColor"/><circle cx="9" cy="3.7" r="1.15" fill="currentColor"/><circle cx="14.3" cy="9" r="1.15" fill="currentColor"/><circle cx="3.7" cy="9" r="1.15" fill="currentColor"/></svg>
+            <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n-title="sel_adjacent" aria-label="Expand to adjacent nodes" data-i18n-aria-label="sel_adjacent">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-adjacent"></use></svg>
             </button>
-            <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n-title="sel_directed_adj">
-              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.1" fill="currentColor"/><path d="M9 11.1v2.4M9 6.9V4.5M11.1 9h2.4M6.9 9H4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M9 14.6l-1.7-1.9h3.4z" fill="currentColor"/><path d="M9 3.4l1.7 1.9H7.3z" fill="currentColor"/><path d="M14.6 9l-1.9 1.7V7.3z" fill="currentColor"/><path d="M3.4 9l1.9-1.7v3.4z" fill="currentColor"/></svg>
+            <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n-title="sel_directed_adj" aria-label="Expand along directed edges" data-i18n-aria-label="sel_directed_adj">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-directed-adjacent"></use></svg>
             </button>
           </div>
 
-          <div class="empty-hint" data-i18n="empty_hint">Start by selecting Node mode and clicking the canvas, or press Sample.</div>
+          <div class="empty-hint" data-i18n="empty_hint">Choose Node, then click the canvas — or open Help to load the sample graph.</div>
         </section>
 
         <section class="panel bottom">
@@ -636,7 +705,7 @@
             <div class="matrix-controls tiny muted">
               <span class="tiny muted range-label" data-i18n="visible_range">Visible range (by order):</span>
               <label class="field" for="visRangeStart"><span data-i18n="range_start">Start</span> <input id="visRangeStart" class="matrix-input" type="number" min="0" placeholder="0" title="Start of visible node order range" data-i18n-title="range_start_title"></label>
-              <label class="field" for="visRangeEnd"><span data-i18n="range_end">End</span> <input id="visRangeEnd" class="matrix-input" type="number" min="0" placeholder="end" title="End of visible node order range (inclusive)" data-i18n-title="range_end_title"></label>
+              <label class="field" for="visRangeEnd"><span data-i18n="range_end">End</span> <input id="visRangeEnd" class="matrix-input" type="number" min="0" placeholder="end" data-i18n-placeholder="end_placeholder" title="End of visible node order range (inclusive)" data-i18n-title="range_end_title"></label>
               <button id="btnVisRangeApply" class="btn small good" title="Apply visible range filter to matrix, edge list, and graph" data-i18n-title="apply_range_title" data-i18n="apply">Apply</button>
               <button id="btnVisRangeAll" class="btn small" title="Show all nodes (clear visible range)" data-i18n-title="show_all_title" data-i18n="show_all">Show all</button>
               <span id="visRangeNote" class="tiny muted"></span>
@@ -657,22 +726,13 @@
       </main>
     </div>
 
-    <!-- Bottom tab bar — always visible; tap to slide up a panel sheet -->
-    <nav class="tabbar panel" aria-label="Tool panels">
-      <button class="tab" data-tab="edit" title="Editor"><span class="tab-ico">✏️</span><span data-i18n="tab_edit">Edit</span></button>
-      <button class="tab" data-tab="style" title="Default styles"><span class="tab-ico">🎨</span><span data-i18n="tab_style">Style</span></button>
-      <button class="tab" data-tab="algo" title="Algorithms"><span class="tab-ico">🧠</span><span data-i18n="tab_algo">Algo</span></button>
-      <button class="tab" data-tab="data" title="Data and export"><span class="tab-ico">📦</span><span data-i18n="tab_data">Data</span></button>
-      <button class="tab" data-tab="help" title="Help"><span class="tab-ico">?</span><span data-i18n="tab_help">Help</span></button>
-    </nav>
-
     <!-- Style presets overlay — covers the whole app -->
-    <div id="presetsOverlay" class="presets-overlay">
+    <div id="presetsOverlay" class="presets-overlay" role="dialog" aria-modal="true" aria-labelledby="presetsTitle" aria-hidden="true" tabindex="-1">
       <div class="presets-header">
-        <h3 data-i18n="style_presets">Style presets</h3>
+        <h3 id="presetsTitle" data-i18n="style_presets">Style presets</h3>
         <div style="display:flex; gap:6px; flex-wrap:wrap">
-          <button id="btnPresetSave" class="btn small good" title="Save current selection's style as a new preset" data-i18n="save_from_sel">Save from selection</button>
-          <button id="btnPresetClose" class="btn small danger" data-i18n="close">Close</button>
+          <button id="btnPresetSave" class="btn small symbol-only good" title="Save current selection's style as a new preset" data-i18n-title="save_from_sel" aria-label="Save from selection" data-i18n-aria-label="save_from_sel"><svg class="ui-icon" aria-hidden="true"><use href="#icon-save"></use></svg></button>
+          <button id="btnPresetClose" class="btn small symbol-only danger" title="Close" data-i18n-title="close" aria-label="Close" data-i18n-aria-label="close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button>
         </div>
       </div>
       <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>

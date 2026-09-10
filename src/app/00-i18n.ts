@@ -35,15 +35,17 @@ const I18N: I18nService = {
     'tab_help': { en: 'Help', ru: 'Справка' },
 
     // --- Navigation ---
-    'menu_open': { en: 'Open panels', ru: 'Открыть панели' },
+    'menu_open': { en: 'Open tools and properties', ru: 'Открыть инструменты и свойства' },
+    'panel_close': { en: 'Close panels', ru: 'Закрыть панели' },
+    'tools_panel': { en: 'Tools and properties', ru: 'Инструменты и свойства' },
     'behavior_grid': { en: 'Behavior & grid', ru: 'Поведение и сетка' },
 
     // --- Edit tab: Mode ---
     'mode_title': { en: 'Mode', ru: 'Режим' },
-    'mode_select': { en: '↖ Select', ru: '↖ Выбор' },
-    'mode_move': { en: '✋ Move', ru: '✋ Перемещение' },
-    'mode_node': { en: '＋ Node', ru: '＋ Узел' },
-    'mode_edge': { en: '↔ Edge', ru: '↔ Ребро' },
+    'mode_select': { en: 'Select', ru: 'Выбор' },
+    'mode_move': { en: 'Move', ru: 'Перемещение' },
+    'mode_node': { en: 'Node', ru: 'Узел' },
+    'mode_edge': { en: 'Edge', ru: 'Ребро' },
     'mode_select_title': { en: 'Select and move nodes', ru: 'Выбирать и перемещать узлы' },
     'mode_move_title': { en: 'Pan the canvas by dragging', ru: 'Панорамировать холст перетаскиванием' },
     'mode_node_title': { en: 'Click canvas to add nodes', ru: 'Клик по холсту добавляет узлы' },
@@ -64,10 +66,15 @@ const I18N: I18nService = {
     'sel_override': { en: 'Override', ru: 'Замена' },
     'sel_add': { en: 'Add', ru: 'Добавить' },
     'sel_subtract': { en: 'Subtract', ru: 'Вычесть' },
+    'sel_override_title': { en: 'Replace current selection', ru: 'Заменить текущее выделение' },
+    'sel_add_title': { en: 'Add to current selection', ru: 'Добавить к текущему выделению' },
+    'sel_subtract_title': { en: 'Remove from current selection', ru: 'Вычесть из текущего выделения' },
     'brush_diameter': { en: 'Brush diameter', ru: 'Диаметр кисти' },
     'hit_test': { en: 'Selection hit target', ru: 'Область попадания' },
     'hit_any': { en: 'Any part', ru: 'Любая часть' },
     'hit_center': { en: 'Centres', ru: 'Центры' },
+    'hit_any_title': { en: 'Select nodes or edges by any part', ru: 'Выбирать узлы и рёбра по любой части' },
+    'hit_center_title': { en: 'Select only at exact centres', ru: 'Выбирать только по точным центрам' },
     'sel_tip': { en: 'Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.', ru: 'Инструменты выделения работают в режиме Выбора. Используйте Замена/Добавить/Вычесть; Shift временно добавляет к текущему выделению. Многоугольник — кликами; клик по первой точке или двойной клик для замыкания.' },
 
     // --- Edit tab: Node placement ---
@@ -123,6 +130,9 @@ const I18N: I18nService = {
     'label': { en: 'Label', ru: 'Метка' },
     'directed_edge': { en: 'Directed edge', ru: 'Направленное ребро' },
     'none_placeholder': { en: 'none', ru: 'нет' },
+    'auto_label_placeholder': { en: 'Auto: A, B, C…', ru: 'Авто: А, Б, В…' },
+    'optional_placeholder': { en: 'Optional', ru: 'Необязательно' },
+    'end_placeholder': { en: 'end', ru: 'конец' },
 
     // --- Edit tab: Selection panel ---
     'selection': { en: 'Selection', ru: 'Выделение' },
@@ -223,16 +233,20 @@ const I18N: I18nService = {
     'paste_dot': { en: 'Paste DOT', ru: 'Вставить DOT' },
     'import_dot': { en: 'Import DOT', ru: 'Импорт DOT' },
     'graphml': { en: 'GraphML', ru: 'GraphML' },
+    'export_graphml': { en: 'Export GraphML', ru: 'Экспорт GraphML' },
     'copy_graphml': { en: 'Copy GraphML', ru: 'Копировать GraphML' },
     'paste_graphml': { en: 'Paste GraphML', ru: 'Вставить GraphML' },
     'import_graphml': { en: 'Import GraphML', ru: 'Импорт GraphML' },
-    'export_edges_csv': { en: 'Edges CSV', ru: 'Рёбра CSV' },
+    'edges_csv': { en: 'Edges CSV', ru: 'Рёбра CSV' },
+    'export_edges_csv': { en: 'Export Edges CSV', ru: 'Экспорт рёбер CSV' },
     'copy_edges': { en: 'Copy Edges', ru: 'Копировать рёбра' },
     'paste_edges': { en: 'Paste Edges', ru: 'Вставить рёбра' },
-    'export_matrix_csv': { en: 'Matrix CSV', ru: 'Матрица CSV' },
+    'matrix_csv': { en: 'Matrix CSV', ru: 'Матрица CSV' },
+    'export_matrix_csv': { en: 'Export Matrix CSV', ru: 'Экспорт матрицы CSV' },
     'copy_matrix': { en: 'Copy Matrix', ru: 'Копировать матрицу' },
     'paste_matrix': { en: 'Paste Matrix', ru: 'Вставить матрицу' },
-    'export_nodes_csv': { en: 'Nodes CSV', ru: 'Узлы CSV' },
+    'nodes_csv': { en: 'Nodes CSV', ru: 'Узлы CSV' },
+    'export_nodes_csv': { en: 'Export Nodes CSV', ru: 'Экспорт узлов CSV' },
     'copy_nodes': { en: 'Copy Nodes', ru: 'Копировать узлы' },
     'paste_nodes': { en: 'Paste Nodes', ru: 'Вставить узлы' },
     'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Используйте "Добавить" для слияния импортированных узлов/рёбер с текущим графом без изменения стилей и фона.' },
@@ -291,10 +305,11 @@ const I18N: I18nService = {
 
     // --- Canvas HUD ---
     'ready': { en: 'Ready', ru: 'Готово' },
+    'graph_canvas': { en: 'Interactive graph editor canvas', ru: 'Интерактивный холст редактора графов' },
     'zoom_in': { en: 'Zoom in', ru: 'Приблизить' },
     'zoom_out': { en: 'Zoom out', ru: 'Отдалить' },
     'reset_zoom': { en: 'Reset zoom', ru: 'Сбросить зум' },
-    'empty_hint': { en: 'Start by selecting Node mode and clicking the canvas, or press Sample.', ru: 'Начните с выбора режима Узел и клика по холсту, либо нажмите Пример.' },
+    'empty_hint': { en: 'Choose Node, then click the canvas — or open Help to load the sample graph.', ru: 'Выберите Узел и нажмите на холст — либо откройте Справку, чтобы загрузить пример.' },
 
     // --- Matrix panel ---
     'adjacency_matrix': { en: 'Adjacency matrix', ru: 'Матрица смежности' },
@@ -340,6 +355,15 @@ const I18N: I18nService = {
     'col_stroke': { en: 'Stroke', ru: 'Обводка' },
     'move_up': { en: 'Move up', ru: 'Переместить вверх' },
     'move_down': { en: 'Move down', ru: 'Переместить вниз' },
+    'matrix_node_hint': { en: 'Click to select node; click again to rename', ru: 'Нажмите, чтобы выбрать узел; повторно — чтобы переименовать' },
+    'matrix_cell_hint': { en: 'Click to select edge(s); click again to edit weights', ru: 'Нажмите, чтобы выбрать рёбра; повторно — чтобы изменить веса' },
+    'edge_id_hint': { en: 'Click to select edge; edit to change ID', ru: 'Нажмите, чтобы выбрать ребро; измените поле, чтобы сменить ID' },
+    'edge_from_hint': { en: 'Source: {node} — type a node label or ID to reassign', ru: 'Источник: {node} — введите метку или ID узла, чтобы переназначить' },
+    'edge_to_hint': { en: 'Target: {node} — type a node label or ID to reassign', ru: 'Цель: {node} — введите метку или ID узла, чтобы переназначить' },
+    'edit_weight': { en: 'Edit weight', ru: 'Изменить вес' },
+    'edit_label': { en: 'Edit label', ru: 'Изменить метку' },
+    'edit_type': { en: 'Edit type', ru: 'Изменить тип' },
+    'edge_color': { en: 'Edge color', ru: 'Цвет ребра' },
     'sort_edge_id': { en: 'Sort by ID', ru: 'Сорт. по ID' },
     'sort_edge_from': { en: 'Sort by from', ru: 'Сорт. по источнику' },
     'sort_edge_to': { en: 'Sort by to', ru: 'Сорт. по цели' },
@@ -353,6 +377,8 @@ const I18N: I18nService = {
     'close': { en: 'Close', ru: 'Закрыть' },
     'presets_desc': { en: 'Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.', ru: 'Кликните по пресету для применения стиля к выделению. Используйте "Сохранить из выделения" с выбранным узлом или ребром для создания нового пресета.' },
     'no_presets': { en: 'No presets yet. Select a node or edge and click "Save from selection".', ru: 'Пресетов пока нет. Выберите узел или ребро и нажмите "Сохранить из выделения".' },
+    'delete_preset': { en: 'Delete preset', ru: 'Удалить пресет' },
+    'apply_preset': { en: 'Apply preset to selection', ru: 'Применить пресет к выделению' },
 
     // --- Export modal ---
     'append': { en: 'Append', ru: 'Добавить' },
@@ -372,6 +398,7 @@ const I18N: I18nService = {
     'redone': { en: 'Redone', ru: 'Повторено' },
     'node_added_circle': { en: 'Node added on circle', ru: 'Узел добавлен по кругу' },
     'inserted_n_before': { en: 'Inserted {n} node(s) before selected, arranged in a circle', ru: 'Вставлено {n} узл(ов) перед выбранными по кругу' },
+    'select_matrix_labels_first': { en: 'Select one or more matrix row or column labels first.', ru: 'Сначала выберите одну или несколько меток строк или столбцов матрицы.' },
     'matrix_expanded': { en: 'Matrix expanded to {n}×{n}; existing graph preserved', ru: 'Матрица расширена до {n}×{n}; существующий граф сохранён' },
     'matrix_view_set': { en: 'Matrix view set to {n}×{n}; existing {m}-node graph preserved', ru: 'Вид матрицы установлен {n}×{n}; существующий {m}-узл. граф сохранён' },
     'matrix_unchanged': { en: 'Matrix set to {n}×{n}; graph unchanged', ru: 'Матрица установлена {n}×{n}; граф без изменений' },
@@ -398,6 +425,7 @@ const I18N: I18nService = {
     'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
     'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
     'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
+    'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
     'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },
     'copied': { en: 'Copied', ru: 'Скопировано' },
     'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание "{name}" — если ничего не произошло, нажмите "Копировать"' },
@@ -468,7 +496,7 @@ const I18N: I18nService = {
     let s = entry[this.current] || entry.en || key;
     if (params) {
       for (const [k, v] of Object.entries(params)) {
-        s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), v);
+        s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), () => String(v));
       }
     }
     return s;
@@ -485,6 +513,10 @@ const I18N: I18nService = {
       const key = el.dataset.i18nTitle;
       el.setAttribute('title', this.t(key));
     });
+    document.querySelectorAll<HTMLElement>('[data-i18n-aria-label]').forEach(el => {
+      const key = el.dataset.i18nAriaLabel;
+      el.setAttribute('aria-label', this.t(key));
+    });
     document.querySelectorAll<HTMLElement>('[data-i18n-placeholder]').forEach(el => {
       const key = el.dataset.i18nPlaceholder;
       el.setAttribute('placeholder', this.t(key));
@@ -498,9 +530,9 @@ const I18N: I18nService = {
       const key = el.dataset.i18nHtml;
       el.innerHTML = this.t(key);
     });
-    // Обновить кнопку языка
-    const btn = document.getElementById('btnLang');
-    if (btn) btn.textContent = '🌐 ' + (this.current === 'en' ? 'RU' : 'EN');
+    // Show the language the button will switch to without replacing its SVG.
+    const langCode = document.getElementById('langCode');
+    if (langCode) langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
     // Обновить title документа
     const titleInput = document.getElementById('docTitleInput') as HTMLInputElement | null;
     if (titleInput && (titleInput.value === 'untitled' || titleInput.value === 'безымянный')) {

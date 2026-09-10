@@ -2,29 +2,88 @@
     svg.addEventListener('selectstart', ev => ev.preventDefault());
     svg.addEventListener('contextmenu', ev => ev.preventDefault());
     svg.addEventListener('auxclick', ev => ev.preventDefault());
-    $$('.tab').forEach(btn => btn.addEventListener('click', () => {
-      // Mobile-app style: tapping a tab opens its panel as a bottom sheet;
-      // tapping the active tab again closes the sheet. Both the bottom tab
-      // bar and the sheet-header tabs share this handler and stay in sync.
-      const target = btn.dataset.tab;
-      const panel = $(`#panel-${target}`);
-      const opening = !panel.classList.contains('active');
-      $$('.tab-panel').forEach(p => p.classList.remove('active'));
-      $$('.tab').forEach(b => b.classList.toggle('active', opening && b.dataset.tab === target));
-      if(opening) panel.classList.add('active');
-      const sidebarEl = document.querySelector('.sidebar');
-      if(sidebarEl) sidebarEl.classList.toggle('open', opening);
-    }));
-    // Hamburger menu: opens/closes the panel sheet (tabs live in the sheet
-    // header, so the menu button just re-triggers the active tab).
+
+    // One non-modal tools surface: a bottom sheet on portrait phones and a
+    // right drawer elsewhere. The uncovered graph stays fully interactive;
+    // only the off-screen drawer itself becomes inert when closed.
+    const sidebarEl = $('#toolsPanel');
     const menuBtn = $('#btnMenu');
-    if(menuBtn){
-      menuBtn.addEventListener('click', () => {
-        const tab = document.querySelector<HTMLElement>('.sidebar .tabs .tab.active')
-          || document.querySelector<HTMLElement>('.sidebar .tabs .tab[data-tab="edit"]');
-        if(tab) tab.click();
+    const panelCloseBtn = $('#btnPanelClose');
+    let panelReturnFocus: HTMLElement | null = null;
+    const panelTabs = $$('.sidebar .tab');
+    const panelSections = $$('.tab-panel');
+    const activePanelName = () => document.querySelector<HTMLElement>('.sidebar .tab.active')?.dataset.tab || 'edit';
+    const activatePanel = (target: string) => {
+      panelSections.forEach(panel => {
+        const selected = panel.id === `panel-${target}`;
+        panel.classList.toggle('active', selected);
+        panel.setAttribute('aria-hidden', String(!selected));
       });
-    }
+      panelTabs.forEach(tab => {
+        const selected = tab.dataset.tab === target;
+        tab.classList.toggle('active', selected);
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+    };
+    const openPanels = (target = activePanelName(), trigger: HTMLElement | null = null) => {
+      panelReturnFocus = trigger || document.activeElement as HTMLElement;
+      activatePanel(target);
+      sidebarEl.inert = false;
+      sidebarEl.setAttribute('aria-hidden', 'false');
+      sidebarEl.classList.add('open');
+      menuBtn.classList.add('active');
+      menuBtn.setAttribute('aria-expanded', 'true');
+      menuBtn.setAttribute('aria-label', I18N.t('panel_close'));
+      menuBtn.title = I18N.t('panel_close');
+      const activeTab = document.querySelector<HTMLElement>(`.sidebar .tab[data-tab="${target}"]`);
+      activeTab?.focus({preventScroll:true});
+    };
+    const closePanels = (restoreFocus = true) => {
+      if(!sidebarEl.classList.contains('open')) return;
+      sidebarEl.classList.remove('open');
+      sidebarEl.setAttribute('aria-hidden', 'true');
+      sidebarEl.inert = true;
+      menuBtn.classList.remove('active');
+      menuBtn.setAttribute('aria-expanded', 'false');
+      menuBtn.setAttribute('aria-label', I18N.t('menu_open'));
+      menuBtn.title = I18N.t('menu_open');
+      if(restoreFocus && panelReturnFocus?.isConnected) panelReturnFocus.focus({preventScroll:true});
+      panelReturnFocus = null;
+    };
+    panelTabs.forEach(btn => btn.addEventListener('click', () => {
+      const target = btn.dataset.tab || 'edit';
+      if(!sidebarEl.classList.contains('open')) openPanels(target, btn);
+      else activatePanel(target);
+    }));
+    menuBtn.addEventListener('click', () => {
+      if(sidebarEl.classList.contains('open')) closePanels();
+      else openPanels(activePanelName(), menuBtn);
+    });
+    panelCloseBtn.addEventListener('click', () => closePanels());
+    sidebarEl.addEventListener('keydown', ev => {
+      if((ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && (ev.target as HTMLElement)?.matches('.tab')){
+        ev.preventDefault();
+        const current = panelTabs.indexOf(ev.target);
+        const offset = ev.key === 'ArrowRight' ? 1 : -1;
+        const next = panelTabs[(current + offset + panelTabs.length) % panelTabs.length];
+        activatePanel(next.dataset.tab || 'edit');
+        next.focus();
+      }
+    });
+    window.addEventListener('keydown', ev => {
+      if(ev.key !== 'Escape') return;
+      const presets = $('#presetsOverlay');
+      if(presets.classList.contains('open')){
+        ev.preventDefault(); ev.stopImmediatePropagation(); togglePresetsOverlay(false); return;
+      }
+      if(sidebarEl.classList.contains('open')){
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        closePanels(sidebarEl.contains(document.activeElement));
+      }
+    });
+    activatePanel('edit');
+
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
@@ -61,7 +120,12 @@
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0,60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value,12),4,72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
     $('#edgeDirected').addEventListener('change', e => { state.settings.directed = e.target.checked; saveSoon(); });
-    $('#optAutosave').addEventListener('change', e => { state.settings.autosave = e.target.checked; if(e.target.checked) saveSoon(); pushHistory('autosave'); });
+    $('#optAutosave').addEventListener('change', e => {
+      state.settings.autosave = e.target.checked;
+      persistAutosavePreference(e.target.checked);
+      if(e.target.checked) saveSoon();
+      pushHistory('autosave');
+    });
     $('#optInheritDefaults').addEventListener('change', e => { state.settings.inheritDefaults = e.target.checked; pushHistory('inherit defaults'); });
     $('#optNoLabel').addEventListener('change', e => { state.settings.noLabel = e.target.checked; pushHistory('no label'); });
     $('#optSnap').addEventListener('change', e => { state.settings.snap = e.target.checked; pushHistory('snap grid'); });
@@ -74,8 +138,18 @@
     $('#btnUndo').addEventListener('click', undo); $('#btnRedo').addEventListener('click', redo);
     $('#btnDelete').addEventListener('click', deleteSelected);
     // Presets overlay
-    $('#btnPresets').addEventListener('click', togglePresetsOverlay);
-    $('#btnPresetClose').addEventListener('click', togglePresetsOverlay);
+    $('#btnPresets').addEventListener('click', () => togglePresetsOverlay());
+    $('#btnPresetClose').addEventListener('click', () => togglePresetsOverlay(false));
+    $('#presetsOverlay').addEventListener('click', ev => { if(ev.target === ev.currentTarget) togglePresetsOverlay(false); });
+    $('#presetsOverlay').addEventListener('keydown', ev => {
+      if(ev.key !== 'Tab') return;
+      const focusable = $$('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])', ev.currentTarget)
+        .filter(isKeyboardVisible);
+      if(!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
+      else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
+    });
     $('#btnPresetSave').addEventListener('click', savePresetFromSelection);
     $('#presetsGrid').addEventListener('click', ev => {
       const del = ev.target.closest('[data-preset-del]');
@@ -84,7 +158,7 @@
       if(card){ applyPresetToSelection(parseInt(card.dataset.presetIdx, 10)); }
     });
     $('#btnClear').addEventListener('click', () => { if(!state.nodes.length && !state.edges.length) return; if(confirm(I18N.t('clear_entire'))){ state.nodes=[]; state.edges=[]; state.selected=null; state.selection={nodes: [], edges: []}; state.nextNode=1; state.nextEdge=1; pushHistory('clear'); queueRender(true, true); } });
-    $('#btnSample').addEventListener('click', addSample);
+    $('#btnSample').addEventListener('click', () => { addSample(); closePanels(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
     $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
@@ -340,8 +414,15 @@
       const VIEW_CLASS: Record<string, string> = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
       const syncViewButtons = () => {
         document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => {
-          b.classList.toggle('active', mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || ''));
+          const active = mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || '');
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-pressed', String(active));
         });
+        const orient = $('#btnViewOrient');
+        if(orient){
+          const count = ['graph','matrix','edges'].filter(v => mainEl.classList.contains(VIEW_CLASS[v])).length;
+          orient.disabled = count < 2;
+        }
       };
       const visibleViewCount = () =>
         ['graph','matrix','edges'].filter(v => mainEl.classList.contains(VIEW_CLASS[v])).length;
@@ -361,9 +442,12 @@
       let syncOrientBtn: (() => void) | null = null;
       if(orientBtn){
         syncOrientBtn = () => {
-          orientBtn.textContent = mainEl.dataset.orient === 'h' ? '↕' : '↔';
-          orientBtn.classList.toggle('active', mainEl.dataset.orient === 'h');
-          orientBtn.title = I18N.t(mainEl.dataset.orient === 'h' ? 'orient_to_v' : 'orient_to_h');
+          const horizontal = mainEl.dataset.orient === 'h';
+          orientBtn.classList.toggle('active', horizontal);
+          orientBtn.setAttribute('aria-pressed', String(horizontal));
+          const label = I18N.t(horizontal ? 'orient_to_v' : 'orient_to_h');
+          orientBtn.title = label;
+          orientBtn.setAttribute('aria-label', label);
         };
         orientBtn.addEventListener('click', () => {
           const cur = mainEl.dataset.orient || 'v';

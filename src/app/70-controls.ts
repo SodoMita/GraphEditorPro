@@ -11,8 +11,9 @@
       wrap.appendChild(input);
       handle = document.createElement('span');
       handle.className = 'drag-handle';
-      handle.textContent = '\u21C6';
-      handle.title = 'Drag horizontally to change (Shift = fine)';
+      handle.innerHTML = '<svg class="ui-icon" aria-hidden="true"><use href="#icon-scrub"></use></svg>';
+      handle.title = I18N.t('drag_hint');
+      handle.setAttribute('aria-hidden', 'true');
       wrap.appendChild(handle);
     }
     if(handle._dragBound) return;
@@ -469,21 +470,22 @@
   }
 
   // === Style presets ===
+  let presetsReturnFocus: HTMLElement | null = null;
   function renderPresetsGrid(){
     const grid = $('#presetsGrid'); if(!grid) return;
     const presets = state.settings.stylePresets || [];
     if(!presets.length){
-      grid.innerHTML = '<div class="tiny muted" style="grid-column:1/-1;text-align:center;padding:20px">No presets yet. Select a node or edge and click "Save from selection".</div>';
+      grid.innerHTML = `<div class="tiny muted" style="grid-column:1/-1;text-align:center;padding:20px">${esc(I18N.t('no_presets'))}</div>`;
       return;
     }
     grid.innerHTML = presets.map((p, i) => {
       const preview = presetPreviewSvg(p);
       return `<div class="preset-card-wrap">
-        <button class="preset-delete" data-preset-del="${i}" title="Delete preset">×</button>
-        <div class="preset-card" data-preset-idx="${i}" title="Apply to selection">
-          <div class="preset-preview">${preview}</div>
-          <div class="preset-name">${esc(p.name || 'preset')}</div>
-        </div>
+        <button class="preset-delete" data-preset-del="${i}" title="${esc(I18N.t('delete_preset'))}" aria-label="${esc(I18N.t('delete_preset'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button>
+        <button class="preset-card" data-preset-idx="${i}" title="${esc(I18N.t('apply_preset'))}" aria-label="${esc(I18N.t('apply_preset'))}: ${esc(p.name || 'preset')}">
+          <span class="preset-preview">${preview}</span>
+          <span class="preset-name">${esc(p.name || 'preset')}</span>
+        </button>
       </div>`;
     }).join('');
   }
@@ -551,8 +553,8 @@
     }
     pushHistory('apply preset'); queueRender(false); saveSoon();
     const what = [];
-    if(p.node && nodeIds.length) what.push(`${nodeIds.length} node${nodeIds.length===1?'':'s'}`);
-    if(p.edge && edgeIds.length) what.push(`${edgeIds.length} edge${edgeIds.length===1?'':'s'}`);
+    if(p.node && nodeIds.length) what.push(I18N.current === 'ru' ? `${nodeIds.length} узл(ов)` : `${nodeIds.length} node${nodeIds.length===1?'':'s'}`);
+    if(p.edge && edgeIds.length) what.push(I18N.current === 'ru' ? `${edgeIds.length} ребр(о)` : `${edgeIds.length} edge${edgeIds.length===1?'':'s'}`);
     toast(I18N.t('preset_applied', {name: p.name, what: what.join(I18N.current==='ru'?' и ':' and ')}));
   }
   function savePresetFromSelection(){
@@ -605,9 +607,20 @@
     state.settings.stylePresets.splice(idx, 1);
     pushHistory('delete preset'); saveSoon(); renderPresetsGrid();
   }
-  function togglePresetsOverlay(){
+  function togglePresetsOverlay(force?: boolean){
     const overlay = $('#presetsOverlay');
     if(!overlay) return;
-    const isOpen = overlay.classList.toggle('open');
-    if(isOpen) renderPresetsGrid();
+    const isOpen = force == null ? !overlay.classList.contains('open') : force;
+    if(isOpen){
+      presetsReturnFocus = document.activeElement as HTMLElement;
+      overlay.classList.add('open');
+      overlay.setAttribute('aria-hidden', 'false');
+      renderPresetsGrid();
+      setTimeout(() => $('#btnPresetClose').focus({preventScroll:true}), 0);
+    } else {
+      overlay.classList.remove('open');
+      overlay.setAttribute('aria-hidden', 'true');
+      if(presetsReturnFocus?.isConnected) presetsReturnFocus.focus({preventScroll:true});
+      presetsReturnFocus = null;
+    }
   }

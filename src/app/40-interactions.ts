@@ -208,7 +208,7 @@
       const hit = hitTestSelection(draft, false);
       setSelection(hit.nodes, hit.edges, null, draft.combine || 'replace');
       toast(I18N.t('polygon_selected', {n: hit.nodes.length, m: hit.edges.length}));
-    } else if(!cancel) toast('Polygon needs at least 3 points');
+    } else if(!cancel) toast(I18N.t('polygon_needs_3'));
     setStatusOnly();
   }
 

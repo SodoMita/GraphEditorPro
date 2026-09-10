@@ -499,7 +499,7 @@
     setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
   }
-  function setStatusOnly(){ setText($('#statusPill'), statusText()); }
+  function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by
   // the render passes so hot paths (drag geometry, selection sync) never pay a
   // document-wide id lookup. getElementById remains as a safety fallback.
@@ -1275,15 +1275,15 @@
   function adjacencyMatrixHtml(nodes=matrixNodes()){
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
-    const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly title="Click to select node; click again to rename"></th>`).join('');
+    const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>`).join('');
     let html = '<table><thead><tr><th></th>' + header + '</tr></thead><tbody>';
     nodes.forEach((row,i) => {
-      html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly title="Click to select node; click again to rename"></th>` +
+      html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>` +
         values[i].map((cell,j) => {
           const to = nodes[j].id;
           const ids = edgeIds[i][j];
           const selected = ids.some(id => edgeSel.has(id));
-          return `<td><input class="matrix-input${selected?' matrix-selected':''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly title="Click to select edge(s); click again to edit weights"></td>`;
+          return `<td><input class="matrix-input${selected?' matrix-selected':''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly aria-label="${esc(I18N.t('col_from'))} ${esc(row.id)}, ${esc(I18N.t('col_to'))} ${esc(to)}" title="${esc(I18N.t('matrix_cell_hint'))}"></td>`;
         }).join('') + '</tr>';
     });
     return html + '</tbody></table>';
@@ -1320,19 +1320,19 @@
       const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle===s?' selected':''}>${I18N.t('stroke_' + s)}</option>`).join('');
       html += `<tr>
         <td style="white-space:nowrap">
-          <button class="btn small icon edge-up" data-edge-id="${esc(e.id)}" title="Move up" style="min-height:26px;width:24px;padding:0">↑</button>
-          <button class="btn small icon edge-down" data-edge-id="${esc(e.id)}" title="Move down" style="min-height:26px;width:24px;padding:0">↓</button>
+          <button class="btn small icon edge-up" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button>
+          <button class="btn small icon edge-down" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button>
         </td>
         <td>${i+1}</td>
-        <td><input class="matrix-input edge-id" data-edge-id="${esc(e.id)}" value="${esc(e.id)}" title="Click to select edge; edit to change ID" style="width:60px"></td>
-        <td><input class="matrix-input edge-from" data-edge-id="${esc(e.id)}" value="${esc(a?.label || e.from)}" title="Source: ${esc(e.from)} — type node label or ID to reassign" style="width:64px"></td>
-        <td><input class="matrix-input edge-to" data-edge-id="${esc(e.id)}" value="${esc(b?.label || e.to)}" title="Target: ${esc(e.to)} — type node label or ID to reassign" style="width:64px"></td>
-        <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" title="Edit weight" style="width:52px"></td>
-        <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" title="Edit label" style="width:72px"></td>
-        <td><input class="matrix-input edge-type" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" placeholder="none" data-i18n-placeholder="none_placeholder" title="Edit type" style="width:64px"></td>
-        <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed?'checked':''} title="Directed"></td>
-        <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" title="Edge color" style="width:32px;height:26px;padding:2px"></td>
-        <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" style="width:68px">${strokeOpts}</select></td>
+        <td><input class="matrix-input edge-id" data-edge-id="${esc(e.id)}" value="${esc(e.id)}" aria-label="${esc(I18N.t('col_id'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_id_hint'))}" style="width:60px"></td>
+        <td><input class="matrix-input edge-from" data-edge-id="${esc(e.id)}" value="${esc(a?.label || e.from)}" aria-label="${esc(I18N.t('col_from'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_from_hint', {node: e.from}))}" style="width:64px"></td>
+        <td><input class="matrix-input edge-to" data-edge-id="${esc(e.id)}" value="${esc(b?.label || e.to)}" aria-label="${esc(I18N.t('col_to'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_to_hint', {node: e.to}))}" style="width:64px"></td>
+        <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" aria-label="${esc(I18N.t('weight'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_weight'))}" style="width:52px"></td>
+        <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" aria-label="${esc(I18N.t('label'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_label'))}" style="width:72px"></td>
+        <td><input class="matrix-input edge-type" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="none" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
+        <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed?'checked':''} aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"></td>
+        <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
+        <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
       </tr>`;
     });
     html += '</tbody></table>';
