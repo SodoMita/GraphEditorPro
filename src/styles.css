@@ -135,13 +135,14 @@
       overflow:hidden;
     }
     .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0}
+    /* The canvas background color lives on this div; the grid LINES are drawn
+       inside the SVG (world-anchored #gridRect pattern) so grid and graph are
+       always painted by the same pass. No promoted layers on the camera path:
+       a composited grid/background layer could show a stale tile for one frame
+       at gesture begin/end while the SVG already displays the new camera. */
     .grid-layer{
-      --grid:40px; --major-grid:200px; --grid-minor-color:rgba(148,163,184,.105); --grid-major-color:rgba(148,163,184,.16);
-      position:absolute; inset:0; pointer-events:none; contain:strict;
+      position:absolute; inset:0; pointer-events:none;
       background-color:#020617;
-      background-image:linear-gradient(var(--grid-minor-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-minor-color) 1px,transparent 1px),linear-gradient(var(--grid-major-color) 1px,transparent 1px),linear-gradient(90deg,var(--grid-major-color) 1px,transparent 1px);
-      background-size:var(--grid) var(--grid),var(--grid) var(--grid),var(--major-grid) var(--major-grid),var(--major-grid) var(--major-grid);
-      will-change:background-position,background-size;
     }
     #graphCanvas{
       position:relative; width:100%; height:100%; display:block; background:transparent;
@@ -149,9 +150,16 @@
       overscroll-behavior:none;
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
-    #gridRect{display:none}
-    /* Only the outer camera group is compositor-promoted. The inner scene
-       group changes solely at camera commits to cancel the outer transform. */
+    #gridRect{pointer-events:none}
+    /* The outer camera group is the ONLY promoted layer: gesture previews
+       scroll/scale its rasterized bitmap without repainting the (potentially
+       thousands of) vector elements every frame. The inner scene group and the
+       world-locked grid pattern ride inside that same layer, so every commit
+       repaints grid+graph together and a stale composited bitmap can only ever
+       show the whole old camera for one frame — never a half-applied mix.
+       There is deliberately no second promoted layer (the old CSS-background
+       grid div): two layers update on two clocks, and the slower one showed
+       the previous camera for a frame at pan/zoom begin and end. */
     #cameraLayer{will-change:transform}
     .canvas-hud{position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; max-width:60%}
     .canvas-hud > *{pointer-events:auto}

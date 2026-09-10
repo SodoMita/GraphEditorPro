@@ -384,8 +384,6 @@
   function renderCanvas(){
     beginRenderPass();
     applyViewBox();
-    gridPattern.setAttribute('width', state.settings.gridSizeX);
-    gridPattern.setAttribute('height', state.settings.gridSizeY);
     const paths = state.nodes.length;
     $('#canvasWrap').classList.toggle('empty', paths === 0);
     setText($('#statsPill'), I18N.t('n_nodes_m_edges', {n: state.nodes.length, m: state.edges.length}));
@@ -479,8 +477,6 @@
     } else {
       sceneLayer.setAttribute('transform', cameraMatrixText(compensation));
     }
-    // Remove stale inline transforms left by older saved/self-contained builds.
-    gridLayer.style.transform = '';
   }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
@@ -495,29 +491,23 @@
   function invalidateGridCache(){ gridSig = ''; }
   function updateGridBackground(vb=state.viewBox, cachedRect=null){
     const settings = state.settings;
-    // The gradient geometry depends only on (viewBox, viewport size, grid
-    // settings); it is recomputed only when one of them changes. Viewport
-    // resizes invalidate the cache via invalidateGridCache().
-    const sig = `${vb.x},${vb.y},${vb.w},${vb.h}|${settings.gridSizeX},${settings.gridSizeY},${settings.gridSize}|${settings.canvasBgColor},${settings.gridMinorColor},${settings.gridMajorColor},${settings.gridMinorAlpha},${settings.gridMajorAlpha}`;
-    if(sig === gridSig) return;
     const rect = cachedRect || svg.getBoundingClientRect();
     if(!rect.width || !rect.height) return;
-    gridSig = sig;
+    setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
     const gx = settings.gridSizeX || settings.gridSize || 40;
     const gy = settings.gridSizeY || settings.gridSize || 40;
 
-    // The grid is a sibling layer, so repainting it does not invalidate the
-    // potentially thousands of vector elements in the SVG scene.
-    setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
-    const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
-    const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-    if(gridLayer.style.getPropertyValue('--grid-minor-color') !== minorColor) gridLayer.style.setProperty('--grid-minor-color', minorColor);
-    if(gridLayer.style.getPropertyValue('--grid-major-color') !== majorColor) gridLayer.style.setProperty('--grid-major-color', majorColor);
-
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
-    const offsetX = (rect.width - vb.w * scale) / 2;
-    const offsetY = (rect.height - vb.h * scale) / 2;
+    // The grid renders as a world-anchored SVG pattern (#gridRect inside
+    // #sceneLayer), so grid and graph share one paint pipeline: any camera
+    // change — gesture preview or commit — updates both atomically. The
+    // former CSS-background grid on a separate div was a second, independent
+    // paint system whose composited layer updates could land a frame after
+    // the SVG paint, displaying the old camera for exactly one frame at
+    // pan/zoom begin and end. The div now only carries the static background
+    // color.
+    //
     // Zoom-adaptive grid: when a cell would shrink below the readable minimum
     // in screen pixels, the grid decimates to every k-th cell. Integer
     // multiples keep the lines locked to world coordinates, so the grid never
@@ -529,18 +519,44 @@
     const GRID_MIN_PX = 8;
     const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / (gx * scale)));
     const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / (gy * scale)));
-    const cellX = stepX * scale, cellY = stepY * scale;
-    const majorXSize = stepX * Math.max(2, Math.ceil((gx * 5) / stepX)) * scale;
-    const majorYSize = stepY * Math.max(2, Math.ceil((gy * 5) / stepY)) * scale;
-    const mod = (value, size) => ((value % size) + size) % size;
-    const minorX = mod(offsetX - vb.x * scale, cellX);
-    const minorY = mod(offsetY - vb.y * scale, cellY);
-    const majorX = mod(offsetX - vb.x * scale, majorXSize);
-    const majorY = mod(offsetY - vb.y * scale, majorYSize);
-    const size = `${cellX}px ${cellY}px,${cellX}px ${cellY}px,${majorXSize}px ${majorYSize}px,${majorXSize}px ${majorYSize}px`;
-    const position = `${minorX}px ${minorY}px,${minorX}px ${minorY}px,${majorX}px ${majorY}px,${majorX}px ${majorY}px`;
-    setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
-    setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
+    // Major sizes are world units (pattern space); the SVG raster maps them
+    // to screen pixels with the same camera transform as the graph.
+    const majorXSize = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
+    const majorYSize = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
+    const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
+    const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
+    // One pattern tile spans a full major period and holds every minor line
+    // inside it; majors sit on the tile edges. patternUnits=userSpaceOnUse
+    // anchors the tile to the world origin, so no per-frame offset math is
+    // needed: panning never rebuilds the pattern, and zooming rebuilds it only
+    // when the decimated step actually changes.
+    const sig = `${stepX},${stepY},${majorXSize.toFixed(6)},${majorYSize.toFixed(6)},${minorColor},${majorColor}`;
+    if(sig === gridSig) return;
+    gridSig = sig;
+    gridPattern.setAttribute('width', String(majorXSize));
+    gridPattern.setAttribute('height', String(majorYSize));
+    gridPattern.setAttribute('data-minor-x', String(stepX));
+    gridPattern.setAttribute('data-minor-y', String(stepY));
+    // vector-effect keeps strokes at a constant screen width at every zoom
+    // (the old CSS grid was always 1px), so line width needs no per-frame
+    // scale compensation.
+    while(gridPattern.firstChild) gridPattern.removeChild(gridPattern.firstChild);
+    const line = (d, color, width) => {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', color);
+      p.setAttribute('stroke-width', String(width));
+      p.setAttribute('vector-effect', 'non-scaling-stroke');
+      gridPattern.appendChild(p);
+    };
+    // Minor lines at every interior step (the tile edges carry the majors).
+    let minors = '';
+    for(let x = stepX; x < majorXSize - 1e-9; x += stepX) minors += `M ${x} 0 V ${majorYSize} `;
+    for(let y = stepY; y < majorYSize - 1e-9; y += stepY) minors += `M 0 ${y} H ${majorXSize} `;
+    if(minors) line(minors.trim(), minorColor, 1);
+    line(`M 0 0 V ${majorYSize}`, majorColor, 1.3);
+    line(`M 0 0 H ${majorXSize}`, majorColor, 1.3);
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by

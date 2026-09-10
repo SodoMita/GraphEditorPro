@@ -117,7 +117,14 @@ test('wheel zoom commits without changing its promoted matrix at the boundary', 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during the wheel burst');
   assert.match(camera.getAttribute('transform'), /^matrix\(/, 'zoom preview rides on the promoted camera layer');
   assert.equal(scene.getAttribute('transform'), null);
-  assert.equal(grid.style.transform, '', 'grid properties update directly instead of using a handoff transform');
+  assert.equal(grid.style.transform, '', 'the grid never uses a handoff transform');
+  const gridRect = dom.window.document.querySelector('#gridRect');
+  assert.ok(gridRect, 'the SVG grid rect exists');
+  assert.equal(gridRect.parentNode.getAttribute('id'), 'sceneLayer', 'the grid renders inside the camera scene, so grid and graph share one paint pipeline');
+  const pattern = dom.window.document.querySelector('#gridPattern');
+  const patternWidthBefore = pattern.getAttribute('width');
+  assert.ok(patternWidthBefore, 'the grid pattern geometry is initialized');
+  assert.equal(grid.style.backgroundPosition, '', 'no CSS background grid is used (a separate composited layer could show a stale frame)');
   const previewMatrix = camera.getAttribute('transform');
 
   await settle(dom.window, 250); // let the commit debounce fire
