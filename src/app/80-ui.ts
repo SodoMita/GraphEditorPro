@@ -516,7 +516,7 @@
       if(pendingEdgeFrom){ pendingEdgeFrom = null; changed = true; }
       if(pendingNodeTap){ pendingNodeTap = null; changed = true; }
       if(selectDraft){ finishSelectionDraft(true); changed = true; }
-      if(navigationChanged){ clearFastPanTransform(); applyViewBox(); saveSoon(); }
+      if(navigationChanged){ rebaseCameraTransform(); applyViewBox(); saveSoon(); }
       if(changed){ syncSelectionDom(); setStatusOnly(); $('#canvasWrap').classList.remove('panning'); activePointers.clear(); }
     }
     window.addEventListener('blur', resetInteractionState);

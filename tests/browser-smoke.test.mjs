@@ -246,11 +246,13 @@ test('large edge lists render in bounded pages', async () => {
   dom.window.close();
 });
 
-test('pan uses a scene preview and commits the viewBox only once', async () => {
+test('pan keeps its promoted matrix stable while the viewBox commits', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
+  const grid = dom.window.document.querySelector('#gridLayer');
   setCanvasRect(svg);
   dom.window.document.querySelector('#modeMove').click();
 
@@ -266,20 +268,25 @@ test('pan uses a scene preview and commits the viewBox only once', async () => {
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pan');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/);
+  assert.equal(camera.getAttribute('transform'), 'matrix(1 0 0 1 80 40)');
+  assert.equal(scene.getAttribute('transform'), null, 'no compensation is needed before commit');
+  assert.equal(grid.style.transform, '', 'the grid never uses a temporary compositor transform');
+  const previewMatrix = camera.getAttribute('transform');
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(scene.getAttribute('transform'), null);
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'the promoted property is untouched at the commit boundary');
+  assert.equal(scene.getAttribute('transform'), 'matrix(1 0 0 1 -80 -40)', 'the inner inverse cancels the persistent outer matrix');
   assert.equal(svg.getAttribute('viewBox'), '-580 -370 1000 660');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('pinch also keeps the root viewBox frozen until gesture end', async () => {
+test('pinch also rebases without clearing its promoted preview matrix', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
 
@@ -296,11 +303,13 @@ test('pinch also keeps the root viewBox frozen until gesture end', async () => {
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pinch');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/);
+  assert.match(camera.getAttribute('transform'), /^matrix\(/);
+  const previewMatrix = camera.getAttribute('transform');
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(scene.getAttribute('transform'), null);
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'commit does not clear or replace the promoted matrix');
+  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'inner compensation is installed for the committed viewBox');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

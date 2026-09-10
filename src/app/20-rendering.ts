@@ -415,31 +415,71 @@
     updateGridBackground(state.viewBox);
     syncCameraInputs();
   }
+
+  // The promoted camera layer is never reset when a gesture ends. Resetting a
+  // compositor transform in the same frame as changing the root viewBox lets
+  // some browsers display both changes for one frame (the movement/zoom is
+  // applied twice, then snaps back). Instead, an inner SVG group receives the
+  // exact inverse of the outer matrix while the viewBox commits. The outer
+  // compositor property does not change at that boundary, and outer × inner is
+  // identity under the new viewBox.
+  const IDENTITY_CAMERA_MATRIX = {scale:1, tx:0, ty:0};
+  let committedCameraMatrix = {...IDENTITY_CAMERA_MATRIX};
+  let visualCameraMatrix = {...IDENTITY_CAMERA_MATRIX};
+  function cameraMatrixText(matrix){
+    const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
+    return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
+  }
+  function composeCameraMatrices(outer, inner){
+    return {
+      scale:outer.scale * inner.scale,
+      tx:outer.scale * inner.tx + outer.tx,
+      ty:outer.scale * inner.ty + outer.ty
+    };
+  }
+  function inverseCameraMatrix(matrix){
+    const scale = 1 / matrix.scale;
+    return {scale, tx:-matrix.tx * scale, ty:-matrix.ty * scale};
+  }
+  function viewBoxDeltaMatrix(preview, base, viewport){
+    // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings. This
+    // remains exact even when camera width/height or the viewport aspect ratio
+    // differ (fit view and numeric camera controls can both do that).
+    const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const previewPixels = Math.min(viewport.width / preview.w, viewport.height / preview.h);
+    const scale = previewPixels / basePixels;
+    const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
+    const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
+    const previewOffsetX = (viewport.width - preview.w * previewPixels) / 2;
+    const previewOffsetY = (viewport.height - preview.h * previewPixels) / 2;
+    return {
+      scale,
+      tx:base.x + (previewOffsetX - baseOffsetX) / basePixels - scale * preview.x,
+      ty:base.y + (previewOffsetY - baseOffsetY) / basePixels - scale * preview.y
+    };
+  }
   function applyPreviewViewBox(preview, base=state.viewBox, rect=null){
     const viewport = rect || svg.getBoundingClientRect();
-    const scale = base.w / preview.w;
-    const tx = base.x - scale * preview.x;
-    const ty = base.y - scale * preview.y;
+    const delta = viewBoxDeltaMatrix(preview, base, viewport);
+    visualCameraMatrix = composeCameraMatrices(delta, committedCameraMatrix);
+    cameraLayer.setAttribute('transform', cameraMatrixText(visualCameraMatrix));
 
-    // Scene: one world-space transform on the promoted <g> parent is far cheaper
-    // than rewriting the root viewBox (which re-rasterizes every SVG child), and
-    // it avoids compositing the whole <svg> root — the source of the one-frame
-    // zoom flash at gesture end. The scene stays clipped to the viewBox
-    // (overflow:hidden), so off-camera content is never rasterized.
-    sceneLayer.setAttribute('transform', `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`);
-
-    // Grid: the oversized grid layer is rasterized once, then moved/scaled by the
-    // compositor. Repainting four CSS gradients every frame was the largest
-    // navigation cost, so the grid rides a pixel-space CSS transform instead.
-    const pixelScale = Math.min(viewport.width / base.w, viewport.height / base.h);
-    const offsetX = (viewport.width - base.w * pixelScale) / 2;
-    const offsetY = (viewport.height - base.h * pixelScale) / 2;
-    const screenX = (1 - scale) * offsetX + pixelScale * (tx + (scale - 1) * base.x);
-    const screenY = (1 - scale) * offsetY + pixelScale * (ty + (scale - 1) * base.y);
-    gridLayer.style.transform = `matrix(${scale},0,0,${scale},${screenX},${screenY})`;
+    // The viewport-sized CSS grid updates directly. There is deliberately no
+    // grid transform to clear at release, so it cannot show a stale transformed
+    // frame over the newly committed camera.
+    updateGridBackground(preview, viewport);
   }
-  function clearFastPanTransform(){
-    sceneLayer.removeAttribute('transform');
+  function rebaseCameraTransform(){
+    // Rebase without touching cameraLayer: changing only the non-promoted inner
+    // group together with the root viewBox makes the handoff visually atomic.
+    committedCameraMatrix = {...visualCameraMatrix};
+    const compensation = inverseCameraMatrix(committedCameraMatrix);
+    if(Math.abs(compensation.scale - 1) < 1e-12 && Math.abs(compensation.tx) < 1e-12 && Math.abs(compensation.ty) < 1e-12){
+      sceneLayer.removeAttribute('transform');
+    } else {
+      sceneLayer.setAttribute('transform', cameraMatrixText(compensation));
+    }
+    // Remove stale inline transforms left by older saved/self-contained builds.
     gridLayer.style.transform = '';
   }
   function hexToRgba(hex, alpha){
@@ -493,15 +533,12 @@
     const majorXSize = stepX * Math.max(2, Math.ceil((gx * 5) / stepX)) * scale;
     const majorYSize = stepY * Math.max(2, Math.ceil((gy * 5) / stepY)) * scale;
     const mod = (value, size) => ((value % size) + size) % size;
-    const extensionX = rect.width;
-    const extensionY = rect.height;
-    const minorX = mod(offsetX - vb.x * scale, cellX) + extensionX;
-    const minorY = mod(offsetY - vb.y * scale, cellY) + extensionY;
-    const majorX = mod(offsetX - vb.x * scale, majorXSize) + extensionX;
-    const majorY = mod(offsetY - vb.y * scale, majorYSize) + extensionY;
+    const minorX = mod(offsetX - vb.x * scale, cellX);
+    const minorY = mod(offsetY - vb.y * scale, cellY);
+    const majorX = mod(offsetX - vb.x * scale, majorXSize);
+    const majorY = mod(offsetY - vb.y * scale, majorYSize);
     const size = `${cellX}px ${cellY}px,${cellX}px ${cellY}px,${majorXSize}px ${majorYSize}px,${majorXSize}px ${majorYSize}px`;
     const position = `${minorX}px ${minorY}px,${minorX}px ${minorY}px,${majorX}px ${majorY}px,${majorX}px ${majorY}px`;
-    setStyleIfChanged(gridLayer.style, 'transformOrigin', `${extensionX}px ${extensionY}px`);
     setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
   }

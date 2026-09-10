@@ -30,7 +30,7 @@ test('source template has no duplicate element IDs', () => {
 
 test('key graph editor controls remain in the generated page', () => {
   for (const id of [
-    'graphCanvas', 'gridLayer', 'sceneLayer', 'nodesLayer', 'edgesLayer', 'modeSelect', 'modeNode',
+    'graphCanvas', 'gridLayer', 'cameraLayer', 'sceneLayer', 'nodesLayer', 'edgesLayer', 'modeSelect', 'modeNode',
     'modeEdge', 'matrixHost', 'edgeListHost', 'btnUndo', 'btnRedo',
     'btnExportJson', 'fileImport', 'optMatrixLimit', 'optEdgeListPageSize', 'algoOutput',
   ]) {
