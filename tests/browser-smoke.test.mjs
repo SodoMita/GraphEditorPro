@@ -246,7 +246,7 @@ test('large edge lists render in bounded pages', async () => {
   dom.window.close();
 });
 
-test('pan keeps its promoted matrix stable while the viewBox commits', async () => {
+test('pan uses one camera during preview and commit', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
@@ -267,22 +267,22 @@ test('pan keeps its promoted matrix stable while the viewBox commits', async () 
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: 180, clientY: 140 });
   await nextFrame(dom.window);
 
-  assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pan');
-  assert.equal(camera.getAttribute('transform'), 'matrix(1 0 0 1 80 40)');
+  assert.equal(viewBoxWrites, 1, 'pan writes the camera once per frame');
+  assert.equal(camera.getAttribute('transform'), null);
   assert.equal(scene.getAttribute('transform'), null, 'no compensation is needed before commit');
   assert.equal(grid.style.transform, '', 'the grid never uses a temporary compositor transform');
   const previewMatrix = camera.getAttribute('transform');
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'the promoted property is untouched at the commit boundary');
-  assert.equal(scene.getAttribute('transform'), 'matrix(1 0 0 1 -80 -40)', 'the inner inverse cancels the persistent outer matrix');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'no second camera is introduced at commit');
+  assert.equal(scene.getAttribute('transform'), null, 'the scene remains untransformed');
   assert.equal(svg.getAttribute('viewBox'), '-580 -370 1000 660');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('pinch also rebases without clearing its promoted preview matrix', async () => {
+test('pinch uses one camera during preview and commit', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
@@ -302,14 +302,14 @@ test('pinch also rebases without clearing its promoted preview matrix', async ()
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   await nextFrame(dom.window);
 
-  assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pinch');
-  assert.match(camera.getAttribute('transform'), /^matrix\(/);
+  assert.equal(viewBoxWrites, 1, 'pinch writes the camera once per frame');
+  assert.equal(camera.getAttribute('transform'), null);
   const previewMatrix = camera.getAttribute('transform');
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'commit does not clear or replace the promoted matrix');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'inner compensation is installed for the committed viewBox');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'commit leaves the scene untransformed');
+  assert.equal(scene.getAttribute('transform'), null);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

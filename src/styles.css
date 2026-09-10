@@ -150,9 +150,6 @@
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     #gridRect{display:none}
-    /* Only the outer camera group is compositor-promoted. The inner scene
-       group changes solely at camera commits to cancel the outer transform. */
-    #cameraLayer{will-change:transform}
     .canvas-hud{position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; max-width:60%}
     .canvas-hud > *{pointer-events:auto}
     .status-pill{

@@ -157,9 +157,6 @@
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     #gridRect{display:none}
-    /* Only the outer camera group is compositor-promoted. The inner scene
-       group changes solely at camera commits to cancel the outer transform. */
-    #cameraLayer{will-change:transform}
     .canvas-hud{position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; max-width:60%}
     .canvas-hud > *{pointer-events:auto}
     .status-pill{
@@ -1974,10 +1971,6 @@ const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '
 const svg = $('#graphCanvas');
 const gridLayer = $('#gridLayer');
 const gridRect = $('#gridRect');
-// Navigation previews move only this promoted outer group. sceneLayer is an
-// inner compensation group used to make the final viewBox handoff atomic.
-const cameraLayer = $('#cameraLayer');
-const sceneLayer = $('#sceneLayer');
 const edgesLayer = $('#edgesLayer');
 const nodesLayer = $('#nodesLayer');
 const dragLine = $('#dragLine');
@@ -3038,78 +3031,20 @@ function statusText() {
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', { tool: state.selectTool });
 }
 function applyViewBox() {
-    // Commit any in-flight composited zoom preview before the camera changes
+    // Commit any in-flight zoom preview before the camera changes
     // underneath it (fit view, camera inputs, undo, import, ...).
     flushZoomPreview();
     setAttr(svg, 'viewBox', `${state.viewBox.x} ${state.viewBox.y} ${state.viewBox.w} ${state.viewBox.h}`);
     updateGridBackground(state.viewBox);
     syncCameraInputs();
 }
-// The promoted camera layer is never reset when a gesture ends. Resetting a
-// compositor transform in the same frame as changing the root viewBox lets
-// some browsers display both changes for one frame (the movement/zoom is
-// applied twice, then snaps back). Instead, an inner SVG group receives the
-// exact inverse of the outer matrix while the viewBox commits. The outer
-// compositor property does not change at that boundary, and outer × inner is
-// identity under the new viewBox.
-const IDENTITY_CAMERA_MATRIX = { scale: 1, tx: 0, ty: 0 };
-let committedCameraMatrix = { ...IDENTITY_CAMERA_MATRIX };
-let visualCameraMatrix = { ...IDENTITY_CAMERA_MATRIX };
-function cameraMatrixText(matrix) {
-    const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
-    return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
-}
-function composeCameraMatrices(outer, inner) {
-    return {
-        scale: outer.scale * inner.scale,
-        tx: outer.scale * inner.tx + outer.tx,
-        ty: outer.scale * inner.ty + outer.ty
-    };
-}
-function inverseCameraMatrix(matrix) {
-    const scale = 1 / matrix.scale;
-    return { scale, tx: -matrix.tx * scale, ty: -matrix.ty * scale };
-}
-function viewBoxDeltaMatrix(preview, base, viewport) {
-    // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings. This
-    // remains exact even when camera width/height or the viewport aspect ratio
-    // differ (fit view and numeric camera controls can both do that).
-    const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
-    const previewPixels = Math.min(viewport.width / preview.w, viewport.height / preview.h);
-    const scale = previewPixels / basePixels;
-    const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
-    const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
-    const previewOffsetX = (viewport.width - preview.w * previewPixels) / 2;
-    const previewOffsetY = (viewport.height - preview.h * previewPixels) / 2;
-    return {
-        scale,
-        tx: base.x + (previewOffsetX - baseOffsetX) / basePixels - scale * preview.x,
-        ty: base.y + (previewOffsetY - baseOffsetY) / basePixels - scale * preview.y
-    };
-}
+// Use one camera mechanism throughout navigation. Mixing a promoted transform
+// with a viewBox (even with an inverse compensation group) can expose stale
+// compositor frames at either boundary. Preview writes are rAF-coalesced by
+// the gesture handlers; committing the same viewBox is a deduplicated no-op.
 function applyPreviewViewBox(preview, base = state.viewBox, rect = null) {
-    const viewport = rect || svg.getBoundingClientRect();
-    const delta = viewBoxDeltaMatrix(preview, base, viewport);
-    visualCameraMatrix = composeCameraMatrices(delta, committedCameraMatrix);
-    cameraLayer.setAttribute('transform', cameraMatrixText(visualCameraMatrix));
-    // The viewport-sized CSS grid updates directly. There is deliberately no
-    // grid transform to clear at release, so it cannot show a stale transformed
-    // frame over the newly committed camera.
-    updateGridBackground(preview, viewport);
-}
-function rebaseCameraTransform() {
-    // Rebase without touching cameraLayer: changing only the non-promoted inner
-    // group together with the root viewBox makes the handoff visually atomic.
-    committedCameraMatrix = { ...visualCameraMatrix };
-    const compensation = inverseCameraMatrix(committedCameraMatrix);
-    if (Math.abs(compensation.scale - 1) < 1e-12 && Math.abs(compensation.tx) < 1e-12 && Math.abs(compensation.ty) < 1e-12) {
-        sceneLayer.removeAttribute('transform');
-    }
-    else {
-        sceneLayer.setAttribute('transform', cameraMatrixText(compensation));
-    }
-    // Remove stale inline transforms left by older saved/self-contained builds.
-    gridLayer.style.transform = '';
+    setAttr(svg, 'viewBox', `${preview.x} ${preview.y} ${preview.w} ${preview.h}`);
+    updateGridBackground(preview, rect || svg.getBoundingClientRect());
 }
 function hexToRgba(hex, alpha) {
     const h = String(hex || '#94a3b8').replace('#', '');
@@ -5131,7 +5066,6 @@ function beginPinch(a, b) {
     if (pan) {
         state.viewBox = { ...pan.previewViewBox };
         pan = null;
-        rebaseCameraTransform();
         applyViewBox();
     }
     pendingEdgeFrom = null;
@@ -5174,7 +5108,6 @@ function endPinch() {
     const done = pinch;
     state.viewBox = { ...done.previewViewBox };
     pinch = null;
-    rebaseCameraTransform();
     applyViewBox();
     $('#canvasWrap').classList.remove('panning');
     $('#canvasWrap').classList.remove('fast-interaction');
@@ -5662,8 +5595,8 @@ svg.addEventListener('dblclick', ev => {
 });
 svg.addEventListener('pointermove', ev => {
     updatePointer(ev);
-    // Pending wheel-zoom distorts clientToWorld (the preview lives in a scene
-    // transform, not the viewBox). Commit it before any gesture math.
+    // Pending wheel-zoom distorts clientToWorld (the logical camera is pending
+    // commit, not the viewBox). Commit it before any gesture math.
     if (zoomPreview)
         flushZoomPreview();
     if (pinch) {
@@ -5671,9 +5604,7 @@ svg.addEventListener('pointermove', ev => {
         return;
     }
     if (pan) {
-        // Keep the real SVG viewBox frozen for the whole gesture. Updating it on
-        // every pointer event forces a full vector layout/paint. Instead, move one
-        // scene group with a temporary matrix and commit the viewBox on pointerup.
+        // Coalesce pointer samples into one viewBox update per animation frame.
         const rect = pan.rect || svg.getBoundingClientRect();
         const start = pan.startViewBox;
         const scale = Math.min(rect.width / start.w, rect.height / start.h);
@@ -5843,7 +5774,6 @@ function finishPointer(ev, cancel = false) {
         const completedPan = pan;
         state.viewBox = { ...completedPan.previewViewBox };
         pan = null;
-        rebaseCameraTransform();
         applyViewBox();
         $('#canvasWrap').classList.remove('panning');
         $('#canvasWrap').classList.remove('fast-interaction');
@@ -5894,14 +5824,10 @@ function startPan(ev) {
     setStatusOnly();
 }
 svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, { passive: false });
-// === Composited wheel zoom ===
-// Changing the SVG viewBox re-lays-out and re-rasterizes every vector
-// element. Wheel events only drive a composited scene-transform preview
-// (the same mechanism panning uses); the real viewBox is applied exactly
-// once, when the wheel settles.
+// === Frame-coalesced wheel zoom ===
+// The visual camera is always the viewBox. Defer persistence/UI state until
+// the wheel settles, but never switch rendering mechanisms at that boundary.
 let zoomPreview = null; // {base, preview, rect, frame, timer}
-// Debounce the full-scene viewBox commit: a rapid scroll burst should resolve
-// to a single repaint once the wheel goes idle, not one per ~140ms pause.
 const ZOOM_COMMIT_DELAY = 220;
 function zoomAt(factor, clientX, clientY) {
     // A wheel arriving mid pan/pinch would fight the gesture's transform —
@@ -5909,7 +5835,6 @@ function zoomAt(factor, clientX, clientY) {
     if (pan) {
         state.viewBox = { ...pan.previewViewBox };
         pan = null;
-        rebaseCameraTransform();
         applyViewBox();
         $('#canvasWrap').classList.remove('panning');
     }
@@ -5956,7 +5881,6 @@ function commitZoomPreview() {
     zoomPreview = null;
     clearTimeout(z.timer);
     state.viewBox = { ...z.preview };
-    rebaseCameraTransform();
     applyViewBox();
     $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
@@ -8967,7 +8891,6 @@ function wireUi() {
             changed = true;
         }
         if (navigationChanged) {
-            rebaseCameraTransform();
             applyViewBox();
             saveSoon();
         }
