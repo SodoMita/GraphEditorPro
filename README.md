@@ -54,7 +54,7 @@ Runtime data is also validated before use. Imported graph state is size-limited,
 
 ## Performance design
 
-Navigation keeps the logical SVG `viewBox` frozen during a gesture and moves a promoted outer SVG group (`#cameraLayer`) with one matrix. The crisp vector `viewBox` is committed once when navigation ends. The promoted matrix is deliberately **not cleared at that boundary**: an inverse matrix is installed on the inner scene in the same render transaction as the new `viewBox`, so the two scene transforms cancel without ever exposing a frame where the preview and committed camera are both applied. Wheel zoom uses the same mechanism and commits after the wheel settles (~220 ms) or a pointer gesture adopts the camera. The viewport-sized CSS grid updates its world-locked position and size directly; it has no temporary transform that could go stale during the handoff.
+Navigation uses the root SVG `viewBox` as its only visual camera during pan, pinch, wheel zoom, and commit. Gesture events are coalesced to animation frames; no temporary scene transform or inverse compensation is applied. This avoids a compositor/viewBox handoff at gesture start or end, at the cost of repainting visible SVG content during navigation. Wheel state is committed after ~220 ms or on pointer adoption. The viewport-sized CSS grid updates its world-locked position and size directly.
 
 Beyond navigation, the hot interaction paths are engineered so their cost tracks *what changed*, not the total graph size:
 
@@ -77,7 +77,7 @@ The interactive-rendering model mirrors the mechanisms draw.io uses, verified ag
 | Mechanism | draw.io / mxGraph | This editor |
 | --- | --- | --- |
 | Panning | `mxGraph.prototype.panGraph` moves the canvas via a `transform` during the gesture; the view is revalidated once on release | A promoted outer SVG group previews the camera; the `viewBox` commits once on release while an inner inverse matrix prevents a compositor handoff flash |
-| Wheel zoom | `EditorUi.js` `lazyZoom` accumulates a `cumulativeZoomFactor`, previews with `mainGroup.style.transform = 'scale(f)'` anchored at the cursor, removes shape filters during the preview, and performs one real zoom after a debounce (`lazyZoomDelay` 20 ms / `wheelZoomDelay` 500 ms) | The same cumulative preview/one-commit architecture, with stable paint effects and an atomic outer/inner matrix rebase after ~220 ms or on pointer adoption |
+| Wheel zoom | `EditorUi.js` `lazyZoom` accumulates a `cumulativeZoomFactor`, previews with `mainGroup.style.transform = 'scale(f)'` anchored at the cursor, removes shape filters during the preview, and performs one real zoom after a debounce (`lazyZoomDelay` 20 ms / `wheelZoomDelay` 500 ms) | Frame-coalesced viewBox updates with stable paint effects; logical state commits after ~220 ms or on pointer adoption |
 | Indexed lookups | cells and view states are kept in `mxDictionary` hash maps | node/edge ids resolve through lazily rebuilt hash indexes |
 | Drag feedback | `mxGraphHandler.updateLivePreview` repaints moved states and all connected edges live | connected edges follow drags live up to a 2000-edge budget, then freeze until release |
 | Undo history | `mxUndoManager` caps at 100 entries (delta edits) | 100 entries plus a total-size cap, since this editor stores full-state snapshots |
