@@ -1,7 +1,11 @@
   function setMode(mode, render=true){
     if(mode !== 'edge') pendingEdgeFrom = null;
     state.mode = mode;
-    $$('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    $$('[data-mode]').forEach(b => {
+      const active = b.dataset.mode === mode;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-pressed', String(active));
+    });
     $('#canvasWrap').classList.toggle('move-mode', mode === 'move');
     // Selection tools float over the canvas only while Select mode is active
     $('#canvasWrap').classList.toggle('select-mode', mode === 'select');
@@ -14,17 +18,29 @@
       return;
     }
     state.selectTool = ['single','rect','brush','lasso','line','polygon'].includes(tool) ? tool : 'single';
-    $$('[data-selecttool]').forEach(b => b.classList.toggle('active', b.dataset.selecttool === state.selectTool));
+    $$('[data-selecttool]').forEach(b => {
+      const active = b.dataset.selecttool === state.selectTool;
+      b.classList.toggle('active', active);
+      if(!['adjacent','directedAdjacent'].includes(b.dataset.selecttool)) b.setAttribute('aria-pressed', String(active));
+    });
     if(render) { setMode('select'); saveSoon(); }
   }
   function setSelectCombine(mode, render=true){
     state.selectCombine = ['replace','add','subtract'].includes(mode) ? mode : 'replace';
-    $$('[data-selectcombine]').forEach(b => b.classList.toggle('active', b.dataset.selectcombine === state.selectCombine));
+    $$('[data-selectcombine]').forEach(b => {
+      const active = b.dataset.selectcombine === state.selectCombine;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-pressed', String(active));
+    });
     if(render) saveSoon();
   }
   function setHitTestMode(mode, render=true){
     state.settings.hitTestMode = ['any','center'].includes(mode) ? mode : 'any';
-    $$('[data-hittest]').forEach(b => b.classList.toggle('active', b.dataset.hittest === state.settings.hitTestMode));
+    $$('[data-hittest]').forEach(b => {
+      const active = b.dataset.hittest === state.settings.hitTestMode;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-pressed', String(active));
+    });
     if(render) { setStatusOnly(); saveSoon(); }
   }
   function effectiveSelectCombine(ev=null){ return ev?.shiftKey ? 'add' : (state.selectCombine || 'replace'); }
@@ -266,6 +282,18 @@
     return {x:x + step * 13, y};
   }
 
+  function applyNewNodeDefaults(n: GraphNode){
+    const s = state.settings;
+    if(s.nodeType) n.type = s.nodeType;
+    // Inherit mode deliberately leaves visual properties unset so later
+    // changes to Style-tab defaults (or the node's type style) remain live.
+    if(s.inheritDefaults !== false) return;
+    n.shape = s.nodeShape; n.color = s.nodeColor;
+    n.width = s.nodeWidth; n.height = s.nodeHeight;
+    n.strokeColor = s.nodeStrokeColor; n.strokeSize = s.nodeStrokeSize; n.strokeStyle = s.nodeStrokeStyle;
+    n.labelColor = s.nodeLabelColor; n.labelFont = s.nodeLabelFont; n.labelSize = s.nodeLabelSize; n.labelPosition = s.nodeLabelPosition;
+  }
+
   function addNode(x,y){
     ({x, y} = snapPointToEnabled(x, y));
     ({x, y} = findFreeNodePosition(x, y));
@@ -275,35 +303,7 @@
     const s = state.settings;
     const label = s.noLabel ? '' : (custom ? (custom.length <= 3 ? custom : custom.slice(0,80)) : labelFromNumber(state.nextNode));
     const n: GraphNode = { id:'n' + state.nextNode++, label, x, y, type:'', order: state.nodes.length };
-    if(s.nodeType){
-      n.type = s.nodeType;
-      // If a type style exists for this type, leave style props unset so
-      // the type style takes effect (nodeVisual falls through to typeStyles).
-      const ts = state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[s.nodeType];
-      if(ts){
-        if(!ts.shape) n.shape = s.nodeShape; else n.shape = '';
-        if(!ts.color) n.color = s.nodeColor; else n.color = '';
-        if(ts.width == null) n.width = s.nodeWidth;
-        if(ts.height == null) n.height = s.nodeHeight;
-        if(!ts.strokeColor) n.strokeColor = s.nodeStrokeColor; else n.strokeColor = '';
-        if(ts.strokeSize == null) n.strokeSize = s.nodeStrokeSize;
-        if(!ts.strokeStyle) n.strokeStyle = s.nodeStrokeStyle; else n.strokeStyle = '';
-        if(!ts.labelColor) n.labelColor = s.nodeLabelColor; else n.labelColor = '';
-        if(ts.labelSize == null) n.labelSize = s.nodeLabelSize;
-        if(!ts.labelFont) n.labelFont = s.nodeLabelFont;
-        if(!ts.labelPosition) n.labelPosition = s.nodeLabelPosition; else n.labelPosition = '';
-      } else {
-        n.shape = s.nodeShape; n.color = s.nodeColor;
-        n.width = s.nodeWidth; n.height = s.nodeHeight;
-        n.strokeColor = s.nodeStrokeColor; n.strokeSize = s.nodeStrokeSize; n.strokeStyle = s.nodeStrokeStyle;
-        n.labelColor = s.nodeLabelColor; n.labelFont = s.nodeLabelFont; n.labelSize = s.nodeLabelSize; n.labelPosition = s.nodeLabelPosition;
-      }
-    } else {
-      n.shape = s.nodeShape; n.color = s.nodeColor;
-      n.width = s.nodeWidth; n.height = s.nodeHeight;
-      n.strokeColor = s.nodeStrokeColor; n.strokeSize = s.nodeStrokeSize; n.strokeStyle = s.nodeStrokeStyle;
-      n.labelColor = s.nodeLabelColor; n.labelFont = s.nodeLabelFont; n.labelSize = s.nodeLabelSize; n.labelPosition = s.nodeLabelPosition;
-    }
+    applyNewNodeDefaults(n);
     state.nodes.push(n); setSelection([n.id], [], {type:'node', id:n.id}, false); pushHistory('add node'); queueRender(true, true);
   }
   function addEdge(from,to){
@@ -361,12 +361,7 @@
     const s = state.settings;
     const autoLabel = s.noLabel ? '' : (label || labelFromNumber(idx));
     const n: GraphNode = { id:'n' + idx, label:autoLabel, x, y, type:'', order: state.nodes.length };
-    // Always bake edit-tab placement values
-    if(s.nodeType) n.type = s.nodeType;
-    n.shape = s.nodeShape; n.color = s.nodeColor;
-    n.width = s.nodeWidth; n.height = s.nodeHeight;
-    n.strokeColor = s.nodeStrokeColor; n.strokeSize = s.nodeStrokeSize; n.strokeStyle = s.nodeStrokeStyle;
-    n.labelColor = s.nodeLabelColor; n.labelFont = s.nodeLabelFont; n.labelSize = s.nodeLabelSize; n.labelPosition = s.nodeLabelPosition;
+    applyNewNodeDefaults(n);
     return n;
   }
   function addNodeFromMatrix(){
@@ -383,7 +378,7 @@
   }
   function insertNodeFromMatrix(){
     const selected = new Set(state.selection?.nodes || []);
-    if(!selected.size){ toast('Select one or more matrix row/column labels first. Insert adds before each selected node.'); return; }
+    if(!selected.size){ toast(I18N.t('select_matrix_labels_first')); return; }
     const selectedNodes = state.nodes.filter(n => selected.has(n.id));
     const positions = circlePositionsForNewNodes(selectedNodes.length, selectedNodes);
     let posIndex = 0;
@@ -421,7 +416,7 @@
     pushHistory('set matrix view');
     queueRender(true);
     if(count < current) toast(I18N.t('matrix_view_set', {n: count, m: current}));
-    else toast(`Matrix set to ${count}×${count}; graph unchanged`);
+    else toast(I18N.t('matrix_unchanged', {n: count}));
   }
   function setNodeLabelFromMatrix(id, label){
     const n = nodeById(id); if(!n) return;

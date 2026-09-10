@@ -1,5 +1,6 @@
   const NS = 'http://www.w3.org/2000/svg';
   const STORAGE_KEY = 'graph-editor-pro-v2';
+  const AUTOSAVE_PREF_KEY = 'graph-editor-pro-autosave';
   const R = 25;
   // All connected edges follow a dragged node live while their count stays
   // under this budget; beyond it, edges stay frozen until release. Each live
@@ -22,6 +23,8 @@
     return element;
   };
   const $$ = (selector: string, root: ParentNode = document): any[] => Array.from(root.querySelectorAll(selector));
+  const isKeyboardVisible = (el: HTMLElement): boolean =>
+    el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
   const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
   const esc = (value: unknown): string => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
   const svg = $('#graphCanvas');
@@ -130,6 +133,7 @@
       else if(validEdges.length) state.selected = {type:'edge', id:validEdges[0]};
     }
     syncControls();
+    persistAutosavePreference(Boolean(state.settings.autosave));
     queueRender(true, true);
     saveSoon();
   }
@@ -162,9 +166,16 @@
   }
   function undo(){ if(appHistoryIndex <= 0) return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
   function redo(){ if(appHistoryIndex >= appHistory.length - 1) return; appHistoryIndex++; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('redone')); }
+  function updateCommandStates(){
+    const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
+    $('#btnDelete').disabled = !hasSelection;
+    $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
+    $('#btnMatrixClear').disabled = !state.edges.length;
+  }
   function updateUndoRedo(){
     $('#btnUndo').disabled = appHistoryIndex <= 0;
     $('#btnRedo').disabled = appHistoryIndex >= appHistory.length - 1;
+    updateCommandStates();
   }
 
   function sanitizeState(input: unknown): GraphState {

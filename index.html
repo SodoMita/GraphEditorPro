@@ -7,13 +7,13 @@
   <style>
     /* =====================================================================
        Graph Editor Pro — mobile-first app UI (2026 redesign)
-       Phone shell: full-bleed canvas, floating tool switcher, bottom
-       sheet panels over the canvas, bottom tab bar, safe-area aware.
+       Phone shell: full-bleed canvas, floating tool switcher, accessible
+       bottom-sheet panels over the canvas, safe-area aware.
        Base styles ARE the phone layout; desktop builds up via media queries.
        ===================================================================== */
     :root{
       --bg:#04070f; --panel:#0a101d; --panel-2:#0d1524; --panel-3:#101a2e;
-      --text:#e2e8f0; --muted:#8fa3bd; --dim:#5c6f8c; --line:#1e2a3f; --line-2:#26344d;
+      --text:#e2e8f0; --muted:#a1b2c8; --dim:#7f92ad; --line:#1e2a3f; --line-2:#2d3d58;
       --accent:#22d3ee; --accent-2:#38bdf8; --good:#34d399; --warn:#fbbf24; --bad:#fb7185;
       --ink:#02131a;
       --radius:16px; --radius-s:10px;
@@ -38,11 +38,20 @@
     button,input,select,textarea{font:inherit}
     button{cursor:pointer}
     ::selection{background:rgba(34,211,238,.28)}
+    .icon-sprite{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
+    .ui-icon{
+      width:18px;height:18px;display:block;flex:0 0 auto;
+      fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;
+    }
+    :where(button,input,select,textarea,[tabindex]):focus-visible{
+      outline:2px solid var(--accent); outline-offset:2px;
+    }
+    :where(input,select,textarea):focus-visible{outline-offset:1px}
 
     /* ---------- App shell ---------- */
     .app{
-      height:100dvh; display:grid; grid-template-rows:auto minmax(0,1fr) auto;
-      grid-template-areas:"appbar" "workspace" "tabbar";
+      height:100dvh; display:grid; grid-template-rows:auto minmax(0,1fr);
+      grid-template-areas:"appbar" "workspace";
       overflow:hidden;
     }
     .panel{
@@ -73,15 +82,18 @@
 
     /* Hamburger menu button (mobile) — opens the panel sheet */
     .menu-btn{
-      flex:0 0 auto; min-height:34px; width:38px; border-radius:9px; font-size:17px;
+      flex:0 0 auto; min-height:36px; width:40px; border-radius:9px;
       border-color:rgba(34,211,238,.4); color:var(--accent);
       background:rgba(34,211,238,.10);
     }
-    /* Orientation toggle: highlight when horizontal split is active */
+    .lang-btn .ui-icon{width:16px;height:16px}
+    /* Orientation toggle: rotate/highlight when the side-by-side split is active. */
+    #btnViewOrient .orient-icon{transition:transform .16s ease}
     #btnViewOrient.active{
       border-color:var(--accent); color:var(--accent);
       box-shadow:0 0 0 1px rgba(34,211,238,.35) inset, 0 0 12px rgba(34,211,238,.18);
     }
+    #btnViewOrient.active .orient-icon{transform:rotate(90deg)}
 
     /* ---------- Buttons ---------- */
     .btn{
@@ -94,6 +106,9 @@
     }
     .btn.icon{width:38px; padding:0; font-size:16px}
     .btn.small{min-height:32px; padding:0 10px; border-radius:8px; font-size:12px}
+    .btn.symbol-only{width:40px; min-width:40px; padding:0}
+    .btn.small.symbol-only{width:36px; min-width:36px; padding:0}
+    .unicode-symbol{font-size:21px;line-height:1;font-weight:700}
     .btn:hover{filter:brightness(1.12); border-color:#33507a}
     .btn:active{transform:translateY(1px)}
     .btn.active{
@@ -105,13 +120,15 @@
 
     /* Toolbar inside the app bar. Mobile: compact grid under the title.
        Desktop: one flex row. */
-    .toolbar{margin-left:auto; display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:5px; flex:1 1 100%; min-width:0}
+    .toolbar{margin-left:auto; display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:5px; flex:1 1 100%; min-width:0}
     .toolbar .btn{min-width:0; padding:0 4px; font-size:11.5px}
-    .toolbar .btn.icon{width:auto}
+    .toolbar .btn.icon,.toolbar .btn.symbol-only{width:auto}
+    .toolbar .btn.symbol-only{padding:0}
     .view-toggle{display:none}
     /* Mobile copy of the view switcher (shown inside the Data sheet) */
     .view-toggle.sheet-toggle{display:flex; align-items:center; gap:4px; flex-wrap:wrap}
-    .view-toggle.sheet-toggle .btn.small{min-height:32px; font-size:11.5px; padding:0 9px}
+    .view-toggle.sheet-toggle .btn.small{min-height:36px}
+    .view-toggle .symbol-only .ui-icon{width:17px;height:17px}
 
     /* ---------- Canvas ---------- */
     .workspace{
@@ -160,15 +177,16 @@
     /* ---------- Floating tool switcher (mode FAB) ---------- */
     .mode-fab{
       position:absolute; left:50%; transform:translateX(-50%); bottom:12px; z-index:12;
-      display:flex; align-items:center; gap:3px; padding:4px;
+      display:flex; align-items:center; gap:3px; padding:4px; max-width:calc(100% - 16px);
       background:rgba(10,16,29,.92); border:1px solid var(--line-2); border-radius:999px;
       box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.06) inset;
       backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     }
     .mode-fab .seg{
-      border:none; background:transparent; color:var(--muted); min-height:40px;
-      min-width:54px; padding:0 12px; border-radius:999px; font-size:12.5px; font-weight:700; white-space:nowrap;
+      border:none; background:transparent; color:var(--muted); min-height:44px;
+      width:48px; min-width:48px; padding:0; border-radius:999px; font-size:12.5px; font-weight:700;
     }
+    .mode-fab .seg .ui-icon{width:18px;height:18px}
     .mode-fab .seg:hover{color:var(--text); background:rgba(148,163,184,.12)}
     .mode-fab .seg.active{
       background:linear-gradient(135deg,var(--accent),#0ea5e9); color:var(--ink);
@@ -178,15 +196,17 @@
     /* ---------- Floating selection tools (Select mode only) ---------- */
     .sel-tools{
       position:absolute; left:50%; transform:translateX(-50%); bottom:72px; z-index:11;
-      display:none; align-items:center; gap:2px; padding:4px;
+      display:none; align-items:center; gap:2px; padding:4px; max-width:calc(100% - 16px);
+      overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:none;
       background:rgba(10,16,29,.94); border:1px solid var(--line-2); border-radius:999px;
       box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.05) inset;
       backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     }
+    .sel-tools::-webkit-scrollbar{display:none}
     .canvas-wrap.select-mode .sel-tools{display:flex}
     .canvas-wrap.select-mode .empty-hint{bottom:132px}
     .sel-tools .btn{
-      width:38px; min-height:38px; padding:0; border:none; border-radius:999px;
+      width:40px; min-height:40px; flex:0 0 40px; padding:0; border:none; border-radius:999px;
       background:transparent; color:var(--muted); box-shadow:none;
     }
     .sel-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
@@ -197,42 +217,39 @@
     }
     .sel-tools svg{width:17px; height:17px; display:block}
 
-    /* ---------- Bottom tab bar ---------- */
-    .tabbar{
-      grid-area:tabbar; display:flex; align-items:stretch; justify-content:space-around;
-      gap:2px; padding:6px 8px calc(6px + var(--sa-bottom));
-      padding-left:calc(8px + var(--sa-left)); padding-right:calc(8px + var(--sa-right));
-      border-width:1px 0 0; border-radius:0; z-index:20;
-    }
+    /* ---------- Tool tabs ---------- */
     .tab{
-      flex:1; min-width:0; border:none; background:transparent; color:var(--dim);
-      display:flex; flex-direction:column; align-items:center; justify-content:center;
-      gap:2px; padding:4px 2px; border-radius:12px; font-size:10.5px; font-weight:700;
+      flex:1; min-width:0; min-height:44px; border:none; background:transparent; color:var(--dim);
+      display:flex; align-items:center; justify-content:center;
+      padding:4px; border-radius:11px;
       transition:color .12s, background .12s; -webkit-tap-highlight-color:transparent;
     }
-    .tab-ico{font-size:20px; line-height:1; display:block}
+    .tab-ico{width:20px;height:20px}
     .tab:hover{color:var(--text); background:rgba(148,163,184,.08)}
-    .tab.active{color:var(--accent); background:rgba(34,211,238,.12)}
+    .tab.active{color:var(--accent); background:rgba(34,211,238,.13)}
 
-    /* ---------- Sidebar: bottom sheet over the canvas ---------- */
+    /* ---------- Sidebar: non-modal bottom sheet / drawer over the canvas ---------- */
     .sidebar{
       position:absolute; left:0; right:0; bottom:0; z-index:30;
-      max-height:min(76%, calc(100% - 64px)); display:flex; flex-direction:column;
+      max-height:min(78%, calc(100% - 16px)); display:flex; flex-direction:column;
       background:linear-gradient(180deg,#0d1524,#080d18); border:1px solid var(--line-2);
       border-bottom:0; border-radius:18px 18px 0 0;
       box-shadow:0 -18px 50px rgba(0,0,0,.55);
-      transform:translateY(calc(100% + 40px)); transition:transform .24s cubic-bezier(.32,.72,.32,1);
-      overflow:hidden; pointer-events:none;
+      transform:translateY(calc(100% + 24px));
+      transition:transform .24s cubic-bezier(.32,.72,.32,1), visibility 0s linear .24s;
+      overflow:hidden; visibility:hidden; pointer-events:none;
     }
-    .sidebar.open{transform:translateY(0); pointer-events:auto}
+    .sidebar.open{transform:translateY(0); visibility:visible; pointer-events:auto;transition-delay:0s}
     .sheet-grabber{flex:0 0 auto; display:flex; justify-content:center; padding:8px 0 2px}
     .sheet-grabber::before{
-      content:""; width:44px; height:4.5px; border-radius:999px; background:#334155; display:block;
+      content:""; width:44px; height:4px; border-radius:999px; background:#41536f; display:block;
     }
-    .tabs{flex:0 0 auto; display:grid; grid-template-columns:repeat(5,1fr); gap:4px; padding:6px 10px}
+    .sheet-nav-row{display:flex;align-items:center;gap:4px;flex:0 0 auto;padding:2px 8px 6px;border-bottom:1px solid rgba(51,65,85,.4)}
+    .tabs{flex:1 1 auto; min-width:0; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px}
+    .sheet-close{flex:0 0 40px;width:40px;min-height:40px;color:var(--muted)}
     .tab-panels{
       flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain;
-      padding:2px 10px 10px; -webkit-overflow-scrolling:touch;
+      padding:8px 10px 10px; -webkit-overflow-scrolling:touch;
     }
     .tab-panel{display:none; min-width:0; overflow-x:hidden}
     .tab-panel.active{display:block}
@@ -291,9 +308,12 @@
     .row + .row{margin-top:7px}
     .tiny{font-size:12px} .muted{color:var(--muted)} .dim{color:var(--dim)} .nowrap{white-space:nowrap}
 
-    /* ---------- Import/export grid ---------- */
-    .io-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; min-width:0}
-    .io-grid .btn{min-height:44px; padding:4px 4px; font-size:11.5px; line-height:1.2; text-align:center; white-space:normal; word-break:normal}
+    /* ---------- Import/export: format names plus compact symbolic actions ---------- */
+    .io-grid{display:grid;gap:6px;min-width:0}
+    .io-row{display:grid;grid-template-columns:minmax(72px,1fr) repeat(4,40px);align-items:center;gap:6px;min-width:0}
+    .io-format{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace}
+    .io-row .btn.small.symbol-only{width:40px;min-width:40px;min-height:40px}
+    .help-actions{display:flex;justify-content:flex-end;margin:0 0 6px}
 
     /* ---------- View toggles ----------
        Each view button shows/hides its own panel independently via a
@@ -312,6 +332,7 @@
        blank half-screen space, and big ones scroll inside the panel. */
     .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
+    .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0}
     .bottom-pane{min-width:0; padding:9px 10px; overflow:auto; -webkit-overflow-scrolling:touch; container-type:inline-size}
     .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2)}
     /* Narrow panes (side-by-side): single scrollable control row */
@@ -399,7 +420,7 @@
     .preset-card-wrap{position:relative}
     .preset-card{
       background:rgba(15,23,42,.95); border:1px solid var(--line-2); border-radius:10px; padding:8px;
-      cursor:pointer; display:flex; flex-direction:column; gap:6px; min-height:90px;
+      cursor:pointer; display:flex; flex-direction:column; gap:6px; min-height:90px; width:100%; color:inherit;
       transition:border-color .12s, transform .06s;
     }
     .preset-card:hover{border-color:var(--accent); transform:translateY(-1px)}
@@ -407,19 +428,21 @@
     .preset-name{font-size:11px; color:#cbd5e1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600}
     .preset-delete{
       position:absolute; top:2px; right:4px; background:rgba(251,113,133,.2); border:none; color:#fb7185;
-      cursor:pointer; font-size:14px; padding:0 5px; border-radius:5px; line-height:1;
+      cursor:pointer; padding:3px; border-radius:6px; line-height:1; width:24px; height:24px; display:grid; place-items:center; z-index:2;
     }
+    .preset-delete .ui-icon{width:14px;height:14px}
     .preset-delete:hover{background:rgba(251,113,133,.4)}
 
     /* ---------- Toasts ---------- */
     .toast-stack{
       position:fixed; right:12px; bottom:calc(78px + var(--sa-bottom)); z-index:70;
-      display:grid; gap:8px; max-width:min(400px,calc(100vw - 24px));
+      display:grid; gap:8px; max-width:min(400px,calc(100vw - 24px)); pointer-events:none;
       right:calc(12px + var(--sa-right));
     }
     .toast{
       background:rgba(15,23,42,.97); border:1px solid var(--line-2); box-shadow:var(--shadow);
       border-radius:12px; padding:10px 12px; color:#e2e8f0; font-size:13px; animation:pop .16s ease-out;
+      transition:opacity .18s ease, transform .18s ease;
     }
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
 
@@ -469,11 +492,10 @@
     *{scrollbar-width:thin; scrollbar-color:#24334d transparent}
 
     /* =====================================================================
-       Mobile (≤950px): tabs live behind the hamburger; the bottom tab bar
-       is hidden to give the canvas full height.
+       Mobile (≤950px): tools live behind the hamburger so the canvas keeps
+       the full available height.
        ===================================================================== */
     @media (max-width:950px){
-      .tabbar{display:none}
       .toast-stack{bottom:calc(72px + var(--sa-bottom))}
       /* Panes are flex columns: title + controls fixed, table area fills
          and scrolls inside the capped height — no dead space */
@@ -492,8 +514,20 @@
       th,td{padding:3px 5px}
       td .matrix-input, th .matrix-label-input{min-height:24px; font-size:12px; padding:2px 4px}
     }
+    /* Phone command bar: two rows of four comfortably sized actions instead
+       of eight narrow buttons whose labels collide. */
+    @media (max-width:700px) and (orientation:portrait){
+      .toolbar{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+      .toolbar .btn{min-height:40px;font-size:12px}
+      .menu-btn{min-height:40px;height:40px}
+      .zoom-controls .btn{min-height:38px}
+      .mode-fab{width:auto}
+      .mode-fab .seg{flex:0 0 48px;min-width:48px;padding:0}
+      .toast-stack{top:calc(160px + var(--sa-top));bottom:auto}
+    }
+
     /* Portrait: canvas on top, panels below — stacked full-width, sized
-       by content (max 50%). The ↔ toggle switches matrix + edge list to
+       by content (max 50%). The split toggle switches matrix + edge list to
        side-by-side (and back). */
     @media (max-width:950px) and (orientation:portrait){
       .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
@@ -512,10 +546,10 @@
     }
 
     /* =====================================================================
-       Tablets / small landscape (561px – 950px): roomier toolbar row.
+       Tablets / large portrait screens (701px – 950px): roomier toolbar row.
        ===================================================================== */
-    @media (min-width:561px) and (max-width:950px){
-      .toolbar{grid-template-columns:repeat(9,minmax(0,1fr))}
+    @media (min-width:701px) and (max-width:950px){
+      .toolbar{grid-template-columns:repeat(7,minmax(0,1fr))}
       .toolbar .btn{font-size:12px}
       .appbar{gap:6px 10px}
     }
@@ -560,17 +594,25 @@
     @media (min-width:951px){
       .app{gap:8px; padding:8px}
       .appbar{flex-wrap:nowrap; gap:10px; padding:7px 10px; border-width:1px; border-radius:var(--radius)}
-      .menu-btn{display:none}
       .brand{font-size:13px}
       .brand-name{display:inline}
       .title-input{flex:0 1 220px; width:min(220px,26vw); min-width:120px}
       .toolbar{display:flex; flex:0 0 auto; margin-left:auto; gap:6px; justify-content:flex-end}
       .toolbar .btn{min-height:32px; padding:0 10px; font-size:12.5px}
-      .toolbar .btn.icon{width:32px; padding:0; font-size:15px}
+      .toolbar .btn.icon,.toolbar .btn.symbol-only{width:32px; min-width:32px; padding:0; font-size:15px; flex:0 0 32px}
       .view-toggle{display:flex; align-items:center; gap:3px; flex:0 0 auto; flex-wrap:wrap}
-      .view-toggle .btn.small{min-height:27px; padding:0 8px; font-size:11.5px}
+      .view-toggle .btn.small{min-height:30px}
+      .view-toggle .btn.small.symbol-only{width:30px;min-width:30px;padding:0}
       .view-toggle.sheet-toggle{display:none}
       .workspace{gap:8px}
+      .sidebar{
+        left:auto;right:0;top:0;bottom:0;width:min(430px,calc(100% - 24px));height:100%;max-height:none;
+        border-width:1px;border-radius:16px 0 0 16px;transform:translateX(calc(100% + 16px));
+        box-shadow:-18px 0 50px rgba(0,0,0,.52);
+      }
+      .sidebar.open{transform:translateX(0)}
+      .sheet-grabber{display:none}
+      .sheet-nav-row{padding:8px}
       .canvas-wrap{border-radius:var(--radius); border-width:1px}
       .mode-fab{bottom:20px}
       .sel-tools{bottom:82px}
@@ -590,29 +632,75 @@
       .table-scroll{max-height:calc(26vh - 58px)}
     }
 
+    /* Compact desktop: the badge is enough branding beside symbolic commands. */
+    @media (min-width:951px) and (max-width:1050px){
+      .brand-name{display:none}
+    }
+
     /* =====================================================================
        Short / landscape screens: tighter bars so the canvas stays usable.
        ===================================================================== */
-    @media (max-height:560px){
+    @media (max-height:560px) and (orientation:landscape){
       .appbar{flex-wrap:nowrap; padding-top:calc(3px + var(--sa-top)); padding-bottom:3px; gap:6px}
       .brand-name{display:none}
       .title-input{flex:0 1 150px; min-width:80px; max-width:150px}
-      .toolbar{display:flex; flex:0 0 auto; grid-template-columns:none; gap:4px; margin-left:auto}
-      .toolbar .btn{min-height:30px; font-size:11px; padding:0 6px}
-      .toolbar .btn.icon{width:32px}
-      .tabbar{padding-top:3px}
-      .tab-ico{font-size:17px}
+      .toolbar{display:flex; flex:0 1 auto; min-width:0; grid-template-columns:none; gap:4px; margin-left:auto; overflow-x:auto; scrollbar-width:none}
+      .toolbar::-webkit-scrollbar{display:none}
+      .toolbar .btn{min-height:30px; font-size:11px; padding:0 6px; flex:0 0 auto}
+      .toolbar .btn.icon,.toolbar .btn.symbol-only{width:32px;min-width:32px;padding:0}
       .tab{padding:2px}
-      .mode-fab .seg{min-height:34px; min-width:44px; padding:0 9px; font-size:11.5px}
+      .mode-fab .seg{width:44px;min-height:36px;min-width:44px;padding:0}
       .mode-fab{bottom:8px}
       .sel-tools{bottom:58px}
       .canvas-wrap.select-mode .empty-hint{bottom:104px}
       .empty-hint{inset:auto 14px 76px 14px}
       .field input:not([type="checkbox"]),.field select,.field textarea{font-size:14px; min-height:30px; padding:5px 8px}
     }
+
+    @media (prefers-reduced-motion:reduce){
+      *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+    }
   </style>
 </head>
 <body>
+  <!-- Inline icon sprite: controls never depend on emoji or symbol-font coverage. -->
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="icon-undo" viewBox="0 0 24 24"><path d="M9 7H5V3M5.5 7.2A8 8 0 1 1 4 13"/></symbol>
+    <symbol id="icon-redo" viewBox="0 0 24 24"><path d="M15 7h4V3m-.5 4.2A8 8 0 1 0 20 13"/></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"/></symbol>
+    <symbol id="icon-sample" viewBox="0 0 24 24"><circle cx="6" cy="16" r="2.5"/><circle cx="12" cy="6" r="2.5"/><circle cx="19" cy="15" r="2.5"/><path d="m7.3 13.9 3.4-5.8m3.4-.5 3.2 5.2M8.5 15.7h8"/></symbol>
+    <symbol id="icon-clear" viewBox="0 0 24 24"><path d="m4 15 9-9 6 6-7 7H8l-4-4Zm6 4h10M9.5 9.5l6 6"/></symbol>
+    <symbol id="icon-star" viewBox="0 0 24 24"><path d="m12 3 2.65 5.37 5.93.86-4.29 4.18 1.01 5.91L12 16.53l-5.3 2.79 1.01-5.91-4.29-4.18 5.93-.86L12 3Z"/></symbol>
+    <symbol id="icon-split" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M12 4v16M8.5 12 6 9.5 3.5 12m17 0L18 9.5 15.5 12"/></symbol>
+    <symbol id="icon-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21M12 3C9.8 5.5 8.7 8.5 8.7 12S9.8 18.5 12 21"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="icon-cursor" viewBox="0 0 24 24"><path d="m5 3 13 9-6.3 1.4L9 20 5 3Z"/><path d="m12 13.5 4 5"/></symbol>
+    <symbol id="icon-hand" viewBox="0 0 24 24"><path d="M8.5 11V6.5a1.5 1.5 0 0 1 3 0V10m0-4.5a1.5 1.5 0 0 1 3 0V10m0-3a1.5 1.5 0 0 1 3 0v4m0-2a1.5 1.5 0 0 1 3 0v4.2c0 4.3-2.8 7.8-7.2 7.8-2.1 0-3.6-.8-5-2.5L4 13.3a1.7 1.7 0 0 1 2.5-2.2l2 1.9"/></symbol>
+    <symbol id="icon-node" viewBox="0 0 24 24"><circle cx="10" cy="12" r="6.5"/><path d="M18.5 8v8M14.5 12h8"/></symbol>
+    <symbol id="icon-edge" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h8m-3-3 3 3-3 3"/></symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4Zm9.5-13.5 4 4M13 20h7"/></symbol>
+    <symbol id="icon-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18h1.2a1.8 1.8 0 0 0 1.2-3.1 1.8 1.8 0 0 1 1.2-3.1H18A3 3 0 0 0 21 12a9 9 0 0 0-9-9Z"/><circle cx="7.5" cy="10" r=".8"/><circle cx="10" cy="6.8" r=".8"/><circle cx="14" cy="6.8" r=".8"/><circle cx="17" cy="10" r=".8"/></symbol>
+    <symbol id="icon-algorithm" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="m10.7 7.2-4.4 8.6m7-8.6 4.4 8.6M7.5 18h9"/></symbol>
+    <symbol id="icon-data" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6m-15 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></symbol>
+    <symbol id="icon-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.7 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.2 1-1.2 2.2M12 17.5h.01"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="icon-up" viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></symbol>
+    <symbol id="icon-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="icon-scrub" viewBox="0 0 24 24"><path d="M5 12h14m-11-3-3 3 3 3m8-6 3 3-3 3"/></symbol>
+    <symbol id="icon-matrix" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.3 4v16m5.4-16v16M4 9.3h16M4 14.7h16"/></symbol>
+    <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="icon-paste" viewBox="0 0 24 24"><path d="M9 5h6m-5-2h4a2 2 0 0 1 2 2v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2Z"/></symbol>
+    <symbol id="icon-export" viewBox="0 0 24 24"><path d="M12 4v11m-4-4 4 4 4-4M5 17v3h14v-3"/></symbol>
+    <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 20V9m-4 4 4-4 4 4M5 7V4h14v3"/></symbol>
+    <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
+    <symbol id="icon-brush" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" stroke-dasharray="3 2.2"/></symbol>
+    <symbol id="icon-adjacent" viewBox="0 0 24 24"><path d="m10.5 10.3-4-4m7-2.3v5.2m2 1.2 3.5-4m-3.4 7.2 3.5 3.8m-8.7-3.7-3.6 3.8"/><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="5" cy="5" r="2"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/><circle cx="5" cy="19" r="2"/></symbol>
+    <symbol id="icon-directed-adjacent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="18" r="2"/><circle cx="4" cy="18" r="2"/><path d="M12 9V6m-1.6 1.5L12 6l1.6 1.5m.8 6.2 3.3 2.6m-2.2.1 2.2-.1-.5-2.1m-7.6-.5-3.3 2.6m2.2.1-2.2-.1.5-2.1"/></symbol>
+  </svg>
+
   <div class="app">
 
     <!-- ================= App command bar — every core action is one click away ================= -->
@@ -622,39 +710,56 @@
         <span class="brand-name" data-i18n="brand_name">Graph Editor Pro</span>
       </div>
       <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
-      <button id="btnMenu" class="btn icon menu-btn" title="Open panels" data-i18n-title="menu_open" aria-label="Open panels">☰</button>
+      <button id="btnMenu" class="btn icon menu-btn" title="Open panels" data-i18n-title="menu_open" aria-label="Open panels" data-i18n-aria-label="menu_open" aria-controls="toolsPanel" aria-expanded="false">
+        <svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
+      </button>
 
-      <div class="toolbar">
+      <div class="toolbar" aria-label="Document commands">
         <div class="view-toggle" role="group" aria-label="View switcher">
-          <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
-          <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
-          <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
+          <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
+          <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
+          <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
         </div>
-        <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo">↶</button>
-        <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo">↷</button>
-        <button id="btnDelete" class="btn danger" title="Delete selected" data-i18n-title="delete_selected" data-i18n="delete_btn">Delete</button>
-        <button id="btnSample" class="btn" title="Add sample graph" data-i18n-title="add_sample" data-i18n="sample">Sample</button>
-        <button id="btnClear" class="btn danger" title="Clear graph" data-i18n-title="clear_graph" data-i18n="clear_sel">Clear</button>
-        <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open">★</button>
-        <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle">↔</button>
-        <button id="btnLang" class="btn small" title="Switch language / Сменить язык" data-i18n-title="lang_switch">🌐 EN</button>
+        <button id="btnUndo" class="btn icon" title="Undo" data-i18n-title="undo" aria-label="Undo" data-i18n-aria-label="undo">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-undo"></use></svg>
+        </button>
+        <button id="btnRedo" class="btn icon" title="Redo" data-i18n-title="redo" aria-label="Redo" data-i18n-aria-label="redo">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-redo"></use></svg>
+        </button>
+        <button id="btnDelete" class="btn symbol-only danger" title="Delete selected" data-i18n-title="delete_selected" aria-label="Delete selected" data-i18n-aria-label="delete_selected"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+        <button id="btnClear" class="btn symbol-only danger" title="Clear graph" data-i18n-title="clear_graph" aria-label="Clear graph" data-i18n-aria-label="clear_graph"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
+        <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open" aria-label="Open style presets" data-i18n-aria-label="presets_open">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-star"></use></svg>
+        </button>
+        <button id="btnViewOrient" class="btn small icon" title="Toggle split orientation (vertical/horizontal)" data-i18n-title="orient_toggle" aria-label="Toggle split orientation" data-i18n-aria-label="orient_toggle" aria-pressed="false">
+          <svg class="ui-icon orient-icon" aria-hidden="true"><use href="#icon-split"></use></svg>
+        </button>
+        <button id="btnLang" class="btn small lang-btn" title="Switch language / Сменить язык" data-i18n-title="lang_switch" aria-label="Switch language" data-i18n-aria-label="lang_switch">
+          <svg class="ui-icon" aria-hidden="true"><use href="#icon-globe"></use></svg><span id="langCode">RU</span>
+        </button>
       </div>
     </header>
 
     <div class="workspace">
-      <!-- ================= Sidebar: compact collapsible panels ================= -->
-      <aside class="panel sidebar">
-        <nav class="tabs" aria-label="Tool panels">
-          <button class="tab" data-tab="edit" title="Editor"><span class="tab-ico">✏️</span><span class="wide" data-i18n="tab_edit">Edit</span></button>
-          <button class="tab" data-tab="style" title="Default styles"><span class="tab-ico">🎨</span><span class="wide" data-i18n="tab_style">Style</span></button>
-          <button class="tab" data-tab="algo" title="Algorithms"><span class="tab-ico">🧠</span><span class="wide" data-i18n="tab_algo">Algo</span></button>
-          <button class="tab" data-tab="data" title="Data and export"><span class="tab-ico">📦</span><span class="wide" data-i18n="tab_data">Data</span></button>
-          <button class="tab" data-tab="help" title="Help"><span class="tab-ico">?</span><span class="wide" data-i18n="tab_help">Help</span></button>
-        </nav>
+      <!-- ================= Non-modal tools drawer / mobile bottom sheet ================= -->
+      <aside id="toolsPanel" class="panel sidebar" role="region" aria-label="Tools and properties" data-i18n-aria-label="tools_panel" aria-hidden="true" inert>
+        <div class="sheet-grabber" aria-hidden="true"></div>
+        <div class="sheet-nav-row">
+          <nav class="tabs" role="tablist" aria-label="Tool panels">
+            <button id="tab-edit" class="tab" data-tab="edit" role="tab" aria-selected="false" aria-controls="panel-edit" title="Edit" data-i18n-title="tab_edit" aria-label="Edit" data-i18n-aria-label="tab_edit"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-edit"></use></svg></button>
+            <button id="tab-style" class="tab" data-tab="style" role="tab" aria-selected="false" aria-controls="panel-style" title="Style" data-i18n-title="tab_style" aria-label="Style" data-i18n-aria-label="tab_style"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-palette"></use></svg></button>
+            <button id="tab-algo" class="tab" data-tab="algo" role="tab" aria-selected="false" aria-controls="panel-algo" title="Algorithms" data-i18n-title="tab_algo" aria-label="Algorithms" data-i18n-aria-label="tab_algo"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-algorithm"></use></svg></button>
+            <button id="tab-data" class="tab" data-tab="data" role="tab" aria-selected="false" aria-controls="panel-data" title="Data" data-i18n-title="tab_data" aria-label="Data" data-i18n-aria-label="tab_data"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-data"></use></svg></button>
+            <button id="tab-help" class="tab" data-tab="help" role="tab" aria-selected="false" aria-controls="panel-help" title="Help" data-i18n-title="tab_help" aria-label="Help" data-i18n-aria-label="tab_help"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-help"></use></svg></button>
+          </nav>
+          <button id="btnPanelClose" class="btn icon sheet-close" title="Close panels" data-i18n-title="panel_close" aria-label="Close panels" data-i18n-aria-label="panel_close">
+            <svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg>
+          </button>
+        </div>
 
         <div class="tab-panels thin-scroll">
           <!-- ================= EDIT ================= -->
-          <section id="panel-edit" class="tab-panel">
+          <section id="panel-edit" class="tab-panel" role="tabpanel" aria-labelledby="tab-edit" aria-hidden="true">
 
             <details class="section" open>
               <summary class="section-title">
@@ -663,7 +768,7 @@
               </summary>
               <div class="sec-body">
                 <label class="field col" for="nodeLabel"><span data-i18n="label_prefix">Label prefix / exact label</span>
-                  <input id="nodeLabel" type="text" placeholder="Auto: A, B, C..." />
+                  <input id="nodeLabel" type="text" placeholder="Auto: A, B, C…" data-i18n-placeholder="auto_label_placeholder" />
                 </label>
                 <div class="grid2" style="margin-top:6px">
                   <label class="field" for="nodeColor"><span data-i18n="color">Color</span>
@@ -756,7 +861,7 @@
                     <input id="edgeWeight" type="text" value="1" inputmode="decimal" />
                   </label>
                   <label class="field" for="edgeLabel"><span data-i18n="label">Label</span>
-                    <input id="edgeLabel" type="text" placeholder="Optional" />
+                    <input id="edgeLabel" type="text" placeholder="Optional" data-i18n-placeholder="optional_placeholder" />
                   </label>
                   <label class="field" for="edgeType"><span data-i18n="type">Type</span>
                     <input id="edgeType" type="text" list="edgeTypeListEdit" placeholder="none" data-i18n-placeholder="none_placeholder" />
@@ -797,17 +902,17 @@
                 <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="sel_tip">Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection.</span></p>
                 <div class="section-title" style="margin-top:8px" data-i18n="sel_result">Selection result</div>
                 <div class="grid3">
-                  <button class="btn active" data-selectcombine="replace" title="Replace current selection" data-i18n="sel_override">Override</button>
-                  <button class="btn" data-selectcombine="add" title="Add to current selection" data-i18n="sel_add">Add</button>
-                  <button class="btn" data-selectcombine="subtract" title="Remove from current selection" data-i18n="sel_subtract">Subtract</button>
+                  <button class="btn symbol-only active" data-selectcombine="replace" title="Replace current selection" data-i18n-title="sel_override_title" aria-label="Replace current selection" data-i18n-aria-label="sel_override_title"><span class="unicode-symbol" aria-hidden="true">↺</span></button>
+                  <button class="btn symbol-only" data-selectcombine="add" title="Add to current selection" data-i18n-title="sel_add_title" aria-label="Add to current selection" data-i18n-aria-label="sel_add_title"><span class="unicode-symbol" aria-hidden="true">＋</span></button>
+                  <button class="btn symbol-only" data-selectcombine="subtract" title="Remove from current selection" data-i18n-title="sel_subtract_title" aria-label="Remove from current selection" data-i18n-aria-label="sel_subtract_title"><span class="unicode-symbol" aria-hidden="true">−</span></button>
                 </div>
                 <label class="field" for="optBrushDiameter" style="margin-top:8px"><span data-i18n="brush_diameter">Brush diameter</span>
                   <input id="optBrushDiameter" type="number" min="10" max="400" step="5" value="80" />
                 </label>
                 <div class="section-title" style="margin-top:8px" data-i18n="hit_test">Selection hit target</div>
                 <div class="grid2">
-                  <button class="btn active" data-hittest="any" title="Select nodes/edges by any part of them" data-i18n-title="hit_any" data-i18n="hit_any">Any part</button>
-                  <button class="btn" data-hittest="center" title="Select only at the exact centre of nodes/edges" data-i18n-title="hit_center" data-i18n="hit_center">Centres</button>
+                  <button class="btn symbol-only active" data-hittest="any" title="Select nodes or edges by any part" data-i18n-title="hit_any_title" aria-label="Select nodes or edges by any part" data-i18n-aria-label="hit_any_title"><span class="unicode-symbol" aria-hidden="true">◌</span></button>
+                  <button class="btn symbol-only" data-hittest="center" title="Select only at exact centres" data-i18n-title="hit_center_title" aria-label="Select only at exact centres" data-i18n-aria-label="hit_center_title"><span class="unicode-symbol" aria-hidden="true">⊙</span></button>
                 </div>
               </div>
             </details>
@@ -819,7 +924,7 @@
           </section>
 
           <!-- ================= STYLE ================= -->
-          <section id="panel-style" class="tab-panel">
+          <section id="panel-style" class="tab-panel" role="tabpanel" aria-labelledby="tab-style" aria-hidden="true">
 
             <details class="section">
               <summary class="section-title">
@@ -950,9 +1055,9 @@
                   <label class="field" for="ntsLabelFont"><span data-i18n="label_font">Label font</span> <input id="ntsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                 </div>
                 <div class="row" style="margin-top:8px">
-                  <button id="btnSaveNodeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
-                  <button id="btnDelNodeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
-                  <button id="btnClearNodeOverrides" class="btn small warn" style="flex:1" title="Clear per-node color/shape overrides so type style takes effect" data-i18n-title="clear_per_node_title" data-i18n="clear_per_node">Clear per-node</button>
+                  <button id="btnSaveNodeTypeStyle" class="btn small symbol-only good" title="Save" data-i18n-title="save" aria-label="Save" data-i18n-aria-label="save"><svg class="ui-icon" aria-hidden="true"><use href="#icon-save"></use></svg></button>
+                  <button id="btnDelNodeTypeStyle" class="btn small symbol-only danger" title="Delete" data-i18n-title="delete_btn" aria-label="Delete" data-i18n-aria-label="delete_btn"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+                  <button id="btnClearNodeOverrides" class="btn small symbol-only warn" title="Clear per-node color/shape overrides so type style takes effect" data-i18n-title="clear_per_node_title" aria-label="Clear per-node color and shape overrides" data-i18n-aria-label="clear_per_node_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
                 </div>
               </div>
             </details>
@@ -975,16 +1080,16 @@
                   <label class="field" for="etsLabelFont"><span data-i18n="label_font">Label font</span> <input id="etsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                 </div>
                 <div class="row" style="margin-top:8px">
-                  <button id="btnSaveEdgeTypeStyle" class="btn small good" style="flex:1" data-i18n="save">Save</button>
-                  <button id="btnDelEdgeTypeStyle" class="btn small danger" style="flex:1" data-i18n="delete_btn">Delete</button>
-                  <button id="btnClearEdgeOverrides" class="btn small warn" style="flex:1" title="Clear per-edge color overrides so type style takes effect" data-i18n-title="clear_per_edge_title" data-i18n="clear_per_edge">Clear per-edge</button>
+                  <button id="btnSaveEdgeTypeStyle" class="btn small symbol-only good" title="Save" data-i18n-title="save" aria-label="Save" data-i18n-aria-label="save"><svg class="ui-icon" aria-hidden="true"><use href="#icon-save"></use></svg></button>
+                  <button id="btnDelEdgeTypeStyle" class="btn small symbol-only danger" title="Delete" data-i18n-title="delete_btn" aria-label="Delete" data-i18n-aria-label="delete_btn"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+                  <button id="btnClearEdgeOverrides" class="btn small symbol-only warn" title="Clear per-edge color overrides so type style takes effect" data-i18n-title="clear_per_edge_title" aria-label="Clear per-edge color overrides" data-i18n-aria-label="clear_per_edge_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
                 </div>
               </div>
             </details>
           </section>
 
           <!-- ================= ALGO ================= -->
-          <section id="panel-algo" class="tab-panel">
+          <section id="panel-algo" class="tab-panel" role="tabpanel" aria-labelledby="tab-algo" aria-hidden="true">
             <div class="section flat">
               <div class="section-title" data-i18n="run_algorithms">Run algorithms</div>
               <label class="field" for="algoStart"><span data-i18n="start_node">Start node</span>
@@ -1002,14 +1107,14 @@
             <div class="section flat">
               <div class="section-title">
                 <span data-i18n="results">Results</span>
-                <button id="btnCopyResults" class="btn small" data-i18n="copy">Copy</button>
+                <button id="btnCopyResults" class="btn small symbol-only" title="Copy" data-i18n-title="copy" aria-label="Copy" data-i18n-aria-label="copy"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
               </div>
               <div id="algoOutput" class="result-box" data-i18n="algo_output_init">Create a graph, choose a start node, then run an algorithm.</div>
             </div>
           </section>
 
           <!-- ================= DATA ================= -->
-          <section id="panel-data" class="tab-panel">
+          <section id="panel-data" class="tab-panel" role="tabpanel" aria-labelledby="tab-data" aria-hidden="true">
 
             <details class="section" open>
               <summary class="section-title">
@@ -1018,27 +1123,45 @@
               <div class="sec-body">
                 <label class="chk" for="optImportAppend" style="margin-bottom:6px"><input id="optImportAppend" type="checkbox" /> <span data-i18n="append_mode">Append to current graph</span></label>
                 <div class="io-grid">
-                  <button id="btnExportJson" class="btn small good" data-i18n="export_json">Export JSON</button>
-                  <button id="btnCopyJson" class="btn small" data-i18n="copy_json">Copy JSON</button>
-                  <button id="btnPasteJson" class="btn small" data-i18n="paste_json">Paste JSON</button>
-                  <button id="btnImportJson" class="btn small" data-i18n="import_json">Import JSON</button>
-                  <button id="btnExportDot" class="btn small good" data-i18n="export_dot">Export DOT</button>
-                  <button id="btnCopyDot" class="btn small" data-i18n="copy_dot">Copy DOT</button>
-                  <button id="btnPasteDot" class="btn small" data-i18n="paste_dot">Paste DOT</button>
-                  <button id="btnImportDot" class="btn small" data-i18n="import_dot">Import DOT</button>
-                  <button id="btnExportGraphml" class="btn small good" data-i18n="graphml">GraphML</button>
-                  <button id="btnCopyGraphml" class="btn small" data-i18n="copy_graphml">Copy GraphML</button>
-                  <button id="btnPasteGraphml" class="btn small" data-i18n="paste_graphml">Paste GraphML</button>
-                  <button id="btnImportGraphml" class="btn small" data-i18n="import_graphml">Import GraphML</button>
-                  <button id="btnExportEdgesCsv" class="btn small good" data-i18n="export_edges_csv">Edges CSV</button>
-                  <button id="btnCopyEdgeCsv" class="btn small" data-i18n="copy_edges">Copy Edges</button>
-                  <button id="btnPasteEdgesCsv" class="btn small" data-i18n="paste_edges">Paste Edges</button>
-                  <button id="btnExportMatrixCsv" class="btn small good" data-i18n="export_matrix_csv">Matrix CSV</button>
-                  <button id="btnCopyMatrixCsv" class="btn small" data-i18n="copy_matrix">Copy Matrix</button>
-                  <button id="btnPasteMatrixCsv" class="btn small" data-i18n="paste_matrix">Paste Matrix</button>
-                  <button id="btnExportNodesCsv" class="btn small good" data-i18n="export_nodes_csv">Nodes CSV</button>
-                  <button id="btnCopyNodesCsv" class="btn small" data-i18n="copy_nodes">Copy Nodes</button>
-                  <button id="btnPasteNodesCsv" class="btn small" data-i18n="paste_nodes">Paste Nodes</button>
+                  <div class="io-row">
+                    <span class="io-format">JSON</span>
+                    <button id="btnExportJson" class="btn small symbol-only good" title="Export JSON" data-i18n-title="export_json" aria-label="Export JSON" data-i18n-aria-label="export_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyJson" class="btn small symbol-only" title="Copy JSON" data-i18n-title="copy_json" aria-label="Copy JSON" data-i18n-aria-label="copy_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteJson" class="btn small symbol-only" title="Paste JSON" data-i18n-title="paste_json" aria-label="Paste JSON" data-i18n-aria-label="paste_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportJson" class="btn small symbol-only" title="Import JSON" data-i18n-title="import_json" aria-label="Import JSON" data-i18n-aria-label="import_json"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format">DOT</span>
+                    <button id="btnExportDot" class="btn small symbol-only good" title="Export DOT" data-i18n-title="export_dot" aria-label="Export DOT" data-i18n-aria-label="export_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyDot" class="btn small symbol-only" title="Copy DOT" data-i18n-title="copy_dot" aria-label="Copy DOT" data-i18n-aria-label="copy_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteDot" class="btn small symbol-only" title="Paste DOT" data-i18n-title="paste_dot" aria-label="Paste DOT" data-i18n-aria-label="paste_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportDot" class="btn small symbol-only" title="Import DOT" data-i18n-title="import_dot" aria-label="Import DOT" data-i18n-aria-label="import_dot"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format">GraphML</span>
+                    <button id="btnExportGraphml" class="btn small symbol-only good" title="Export GraphML" data-i18n-title="export_graphml" aria-label="Export GraphML" data-i18n-aria-label="export_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyGraphml" class="btn small symbol-only" title="Copy GraphML" data-i18n-title="copy_graphml" aria-label="Copy GraphML" data-i18n-aria-label="copy_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteGraphml" class="btn small symbol-only" title="Paste GraphML" data-i18n-title="paste_graphml" aria-label="Paste GraphML" data-i18n-aria-label="paste_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportGraphml" class="btn small symbol-only" title="Import GraphML" data-i18n-title="import_graphml" aria-label="Import GraphML" data-i18n-aria-label="import_graphml"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format" data-i18n="edges_csv">Edges CSV</span>
+                    <button id="btnExportEdgesCsv" class="btn small symbol-only good" title="Export Edges CSV" data-i18n-title="export_edges_csv" aria-label="Export Edges CSV" data-i18n-aria-label="export_edges_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyEdgeCsv" class="btn small symbol-only" title="Copy Edges" data-i18n-title="copy_edges" aria-label="Copy Edges" data-i18n-aria-label="copy_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteEdgesCsv" class="btn small symbol-only" title="Paste Edges" data-i18n-title="paste_edges" aria-label="Paste Edges" data-i18n-aria-label="paste_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format" data-i18n="matrix_csv">Matrix CSV</span>
+                    <button id="btnExportMatrixCsv" class="btn small symbol-only good" title="Export Matrix CSV" data-i18n-title="export_matrix_csv" aria-label="Export Matrix CSV" data-i18n-aria-label="export_matrix_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyMatrixCsv" class="btn small symbol-only" title="Copy Matrix" data-i18n-title="copy_matrix" aria-label="Copy Matrix" data-i18n-aria-label="copy_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteMatrixCsv" class="btn small symbol-only" title="Paste Matrix" data-i18n-title="paste_matrix" aria-label="Paste Matrix" data-i18n-aria-label="paste_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                  </div>
+                  <div class="io-row">
+                    <span class="io-format" data-i18n="nodes_csv">Nodes CSV</span>
+                    <button id="btnExportNodesCsv" class="btn small symbol-only good" title="Export Nodes CSV" data-i18n-title="export_nodes_csv" aria-label="Export Nodes CSV" data-i18n-aria-label="export_nodes_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+                    <button id="btnCopyNodesCsv" class="btn small symbol-only" title="Copy Nodes" data-i18n-title="copy_nodes" aria-label="Copy Nodes" data-i18n-aria-label="copy_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+                    <button id="btnPasteNodesCsv" class="btn small symbol-only" title="Paste Nodes" data-i18n-title="paste_nodes" aria-label="Paste Nodes" data-i18n-aria-label="paste_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                  </div>
                 </div>
                 <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml" hidden />
               </div>
@@ -1050,9 +1173,9 @@
               </summary>
               <div class="sec-body">
                 <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher">
-                  <button class="btn small active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" data-i18n="view_graph">Graph</button>
-                  <button class="btn small active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" data-i18n="view_matrix">Matrix</button>
-                  <button class="btn small active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" data-i18n="view_edges">Edges</button>
+                  <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
+                  <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
+                  <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
                 </div>
                 <div class="grid2" style="margin-top:8px">
                   <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
@@ -1103,12 +1226,15 @@
           </section>
 
           <!-- ================= HELP ================= -->
-          <section id="panel-help" class="tab-panel">
+          <section id="panel-help" class="tab-panel" role="tabpanel" aria-labelledby="tab-help" aria-hidden="true">
             <details class="section" open>
               <summary class="section-title">
                 <span data-i18n="quick_help">Quick help</span>
               </summary>
               <div class="sec-body">
+                <div class="help-actions">
+                  <button id="btnSample" class="btn symbol-only good" title="Add sample graph" data-i18n-title="add_sample" aria-label="Add sample graph" data-i18n-aria-label="add_sample"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
+                </div>
                 <p class="tiny muted"><span data-i18n-html="help_node"><b>Node:</b> choose Node mode, then click the canvas. In Node mode you can also drag existing nodes to reposition them (Blender-style).</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_edge"><b>Edge:</b> choose Edge mode, then drag from a source node to a target node. On touch screens, tap a source node, then tap a target node.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_move_nodes"><b>Move nodes:</b> choose Select or Node mode and drag nodes.</span></p>
@@ -1147,7 +1273,7 @@
       <main class="main v-canvas">
         <section id="canvasWrap" class="panel canvas-wrap empty">
           <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
-          <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor">
+          <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor canvas" data-i18n-aria-label="graph_canvas">
             <defs>
               <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
                 <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(148,163,184,.12)" stroke-width="1" />
@@ -1174,56 +1300,49 @@
             <div id="statsPill" class="status-pill">0 nodes · 0 edges</div>
           </div>
 
-          <div class="mobile-modebar" aria-label="Quick edit modes">
-            <button class="btn active" data-mode="select" title="Select/move nodes">↖</button>
-            <button class="btn" data-mode="move" title="Move canvas">✋</button>
-            <button class="btn" data-mode="node" title="Add node">＋</button>
-            <button class="btn" data-mode="edge" title="Add edge">↔</button>
-          </div>
-
-          <div class="zoom-controls">
-            <button id="btnZoomIn" class="btn icon" title="Zoom in" data-i18n-title="zoom_in">＋</button>
-            <button id="btnZoomOut" class="btn icon" title="Zoom out" data-i18n-title="zoom_out">−</button>
+          <div class="zoom-controls" role="group" aria-label="Zoom controls">
+            <button id="btnZoomIn" class="btn icon" title="Zoom in" data-i18n-title="zoom_in" aria-label="Zoom in" data-i18n-aria-label="zoom_in"><svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
+            <button id="btnZoomOut" class="btn icon" title="Zoom out" data-i18n-title="zoom_out" aria-label="Zoom out" data-i18n-aria-label="zoom_out"><svg class="ui-icon" aria-hidden="true"><use href="#icon-minus"></use></svg></button>
             <button id="btnZoomReset" class="btn" title="Reset zoom" data-i18n-title="reset_zoom">100%</button>
           </div>
 
-          <!-- Floating tool switcher — always thumb-reachable above the tab bar -->
+          <!-- Floating tool switcher — always thumb-reachable -->
           <div class="mode-fab" role="group" aria-label="Edit modes">
-            <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" data-i18n="mode_select">↖ Select</button>
-            <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" data-i18n="mode_move">✋ Move</button>
-            <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" data-i18n="mode_node">＋ Node</button>
-            <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" data-i18n="mode_edge">↔ Edge</button>
+            <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" aria-label="Select and move nodes" data-i18n-aria-label="mode_select_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cursor"></use></svg></button>
+            <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" aria-label="Pan the canvas by dragging" data-i18n-aria-label="mode_move_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-hand"></use></svg></button>
+            <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" aria-label="Click canvas to add nodes" data-i18n-aria-label="mode_node_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-node"></use></svg></button>
+            <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from node to node" data-i18n-title="mode_edge_title" aria-label="Drag from node to node" data-i18n-aria-label="mode_edge_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-edge"></use></svg></button>
           </div>
 
           <!-- Floating selection tools — icon-only, visible in Select mode -->
           <div class="sel-tools" role="group" aria-label="Selection tools">
-            <button class="btn" data-selecttool="single" title="Single select" data-i18n-title="sel_single">
+            <button class="btn" data-selecttool="single" title="Single select" data-i18n-title="sel_single" aria-label="Single select" data-i18n-aria-label="sel_single" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3.5 2.5v11.2l3.4-2.9 2.2 4.4 1.9-.9-2.2-4.4H13z" fill="currentColor"/></svg>
             </button>
-            <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n-title="sel_rect">
+            <button class="btn" data-selecttool="rect" title="Drag a rectangle" data-i18n-title="sel_rect" aria-label="Rectangle selection" data-i18n-aria-label="sel_rect" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3.2 2.2"/></svg>
             </button>
-            <button class="btn" data-selecttool="brush" title="Brush over items" data-i18n-title="sel_brush">
-              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="5.5" cy="13.5" r="2.1" fill="currentColor"/><circle cx="9.8" cy="9.6" r="2.7" fill="currentColor" opacity=".72"/><circle cx="13.6" cy="5.4" r="1.7" fill="currentColor" opacity=".45"/></svg>
+            <button class="btn" data-selecttool="brush" title="Brush over items" data-i18n-title="sel_brush" aria-label="Brush selection" data-i18n-aria-label="sel_brush" aria-pressed="false">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-brush"></use></svg>
             </button>
-            <button class="btn" data-selecttool="lasso" title="Freehand lasso" data-i18n-title="sel_lasso">
+            <button class="btn" data-selecttool="lasso" title="Freehand lasso" data-i18n-title="sel_lasso" aria-label="Lasso selection" data-i18n-aria-label="sel_lasso" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M5 12.5c-.6-3.6 1.2-7 4.4-7 2.8 0 4.8 2 4.6 4.4-.2 2.4-2.4 3.6-4.4 3.2-1.3-.3-1.8-1.2-1.6-2.2.2-1 1.2-1.5 2.1-1.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </button>
-            <button class="btn" data-selecttool="line" title="Select near a line" data-i18n-title="sel_line">
+            <button class="btn" data-selecttool="line" title="Select near a line" data-i18n-title="sel_line" aria-label="Line selection" data-i18n-aria-label="sel_line" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 14L14 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="4" cy="14" r="1.7" fill="currentColor"/><circle cx="14" cy="4" r="1.7" fill="currentColor"/></svg>
             </button>
-            <button class="btn" data-selecttool="polygon" title="Polygon-style drag selection" data-i18n-title="sel_polygon">
+            <button class="btn" data-selecttool="polygon" title="Polygon-style drag selection" data-i18n-title="sel_polygon" aria-label="Polygon selection" data-i18n-aria-label="sel_polygon" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2.6l6.4 3.9-2.4 7.4H5L2.6 6.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
             </button>
-            <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n-title="sel_adjacent">
-              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.1" fill="currentColor"/><path d="M9 11.1v3.2M9 6.9V3.7M11.1 9h3.2M6.9 9H3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="9" cy="14.3" r="1.15" fill="currentColor"/><circle cx="9" cy="3.7" r="1.15" fill="currentColor"/><circle cx="14.3" cy="9" r="1.15" fill="currentColor"/><circle cx="3.7" cy="9" r="1.15" fill="currentColor"/></svg>
+            <button class="btn" data-selecttool="adjacent" title="Expand to adjacent nodes" data-i18n-title="sel_adjacent" aria-label="Expand to adjacent nodes" data-i18n-aria-label="sel_adjacent">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-adjacent"></use></svg>
             </button>
-            <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n-title="sel_directed_adj">
-              <svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.1" fill="currentColor"/><path d="M9 11.1v2.4M9 6.9V4.5M11.1 9h2.4M6.9 9H4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M9 14.6l-1.7-1.9h3.4z" fill="currentColor"/><path d="M9 3.4l1.7 1.9H7.3z" fill="currentColor"/><path d="M14.6 9l-1.9 1.7V7.3z" fill="currentColor"/><path d="M3.4 9l1.9-1.7v3.4z" fill="currentColor"/></svg>
+            <button class="btn" data-selecttool="directedAdjacent" title="Expand along outgoing directed edges" data-i18n-title="sel_directed_adj" aria-label="Expand along directed edges" data-i18n-aria-label="sel_directed_adj">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-directed-adjacent"></use></svg>
             </button>
           </div>
 
-          <div class="empty-hint" data-i18n="empty_hint">Start by selecting Node mode and clicking the canvas, or press Sample.</div>
+          <div class="empty-hint" data-i18n="empty_hint">Choose Node, then click the canvas — or open Help to load the sample graph.</div>
         </section>
 
         <section class="panel bottom">
@@ -1242,7 +1361,7 @@
             <div class="matrix-controls tiny muted">
               <span class="tiny muted range-label" data-i18n="visible_range">Visible range (by order):</span>
               <label class="field" for="visRangeStart"><span data-i18n="range_start">Start</span> <input id="visRangeStart" class="matrix-input" type="number" min="0" placeholder="0" title="Start of visible node order range" data-i18n-title="range_start_title"></label>
-              <label class="field" for="visRangeEnd"><span data-i18n="range_end">End</span> <input id="visRangeEnd" class="matrix-input" type="number" min="0" placeholder="end" title="End of visible node order range (inclusive)" data-i18n-title="range_end_title"></label>
+              <label class="field" for="visRangeEnd"><span data-i18n="range_end">End</span> <input id="visRangeEnd" class="matrix-input" type="number" min="0" placeholder="end" data-i18n-placeholder="end_placeholder" title="End of visible node order range (inclusive)" data-i18n-title="range_end_title"></label>
               <button id="btnVisRangeApply" class="btn small good" title="Apply visible range filter to matrix, edge list, and graph" data-i18n-title="apply_range_title" data-i18n="apply">Apply</button>
               <button id="btnVisRangeAll" class="btn small" title="Show all nodes (clear visible range)" data-i18n-title="show_all_title" data-i18n="show_all">Show all</button>
               <span id="visRangeNote" class="tiny muted"></span>
@@ -1263,22 +1382,13 @@
       </main>
     </div>
 
-    <!-- Bottom tab bar — always visible; tap to slide up a panel sheet -->
-    <nav class="tabbar panel" aria-label="Tool panels">
-      <button class="tab" data-tab="edit" title="Editor"><span class="tab-ico">✏️</span><span data-i18n="tab_edit">Edit</span></button>
-      <button class="tab" data-tab="style" title="Default styles"><span class="tab-ico">🎨</span><span data-i18n="tab_style">Style</span></button>
-      <button class="tab" data-tab="algo" title="Algorithms"><span class="tab-ico">🧠</span><span data-i18n="tab_algo">Algo</span></button>
-      <button class="tab" data-tab="data" title="Data and export"><span class="tab-ico">📦</span><span data-i18n="tab_data">Data</span></button>
-      <button class="tab" data-tab="help" title="Help"><span class="tab-ico">?</span><span data-i18n="tab_help">Help</span></button>
-    </nav>
-
     <!-- Style presets overlay — covers the whole app -->
-    <div id="presetsOverlay" class="presets-overlay">
+    <div id="presetsOverlay" class="presets-overlay" role="dialog" aria-modal="true" aria-labelledby="presetsTitle" aria-hidden="true" tabindex="-1">
       <div class="presets-header">
-        <h3 data-i18n="style_presets">Style presets</h3>
+        <h3 id="presetsTitle" data-i18n="style_presets">Style presets</h3>
         <div style="display:flex; gap:6px; flex-wrap:wrap">
-          <button id="btnPresetSave" class="btn small good" title="Save current selection's style as a new preset" data-i18n="save_from_sel">Save from selection</button>
-          <button id="btnPresetClose" class="btn small danger" data-i18n="close">Close</button>
+          <button id="btnPresetSave" class="btn small symbol-only good" title="Save current selection's style as a new preset" data-i18n-title="save_from_sel" aria-label="Save from selection" data-i18n-aria-label="save_from_sel"><svg class="ui-icon" aria-hidden="true"><use href="#icon-save"></use></svg></button>
+          <button id="btnPresetClose" class="btn small symbol-only danger" title="Close" data-i18n-title="close" aria-label="Close" data-i18n-aria-label="close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button>
         </div>
       </div>
       <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
@@ -1326,14 +1436,16 @@ const I18N = {
         'tab_data': { en: 'Data', ru: 'Данные' },
         'tab_help': { en: 'Help', ru: 'Справка' },
         // --- Navigation ---
-        'menu_open': { en: 'Open panels', ru: 'Открыть панели' },
+        'menu_open': { en: 'Open tools and properties', ru: 'Открыть инструменты и свойства' },
+        'panel_close': { en: 'Close panels', ru: 'Закрыть панели' },
+        'tools_panel': { en: 'Tools and properties', ru: 'Инструменты и свойства' },
         'behavior_grid': { en: 'Behavior & grid', ru: 'Поведение и сетка' },
         // --- Edit tab: Mode ---
         'mode_title': { en: 'Mode', ru: 'Режим' },
-        'mode_select': { en: '↖ Select', ru: '↖ Выбор' },
-        'mode_move': { en: '✋ Move', ru: '✋ Перемещение' },
-        'mode_node': { en: '＋ Node', ru: '＋ Узел' },
-        'mode_edge': { en: '↔ Edge', ru: '↔ Ребро' },
+        'mode_select': { en: 'Select', ru: 'Выбор' },
+        'mode_move': { en: 'Move', ru: 'Перемещение' },
+        'mode_node': { en: 'Node', ru: 'Узел' },
+        'mode_edge': { en: 'Edge', ru: 'Ребро' },
         'mode_select_title': { en: 'Select and move nodes', ru: 'Выбирать и перемещать узлы' },
         'mode_move_title': { en: 'Pan the canvas by dragging', ru: 'Панорамировать холст перетаскиванием' },
         'mode_node_title': { en: 'Click canvas to add nodes', ru: 'Клик по холсту добавляет узлы' },
@@ -1353,10 +1465,15 @@ const I18N = {
         'sel_override': { en: 'Override', ru: 'Замена' },
         'sel_add': { en: 'Add', ru: 'Добавить' },
         'sel_subtract': { en: 'Subtract', ru: 'Вычесть' },
+        'sel_override_title': { en: 'Replace current selection', ru: 'Заменить текущее выделение' },
+        'sel_add_title': { en: 'Add to current selection', ru: 'Добавить к текущему выделению' },
+        'sel_subtract_title': { en: 'Remove from current selection', ru: 'Вычесть из текущего выделения' },
         'brush_diameter': { en: 'Brush diameter', ru: 'Диаметр кисти' },
         'hit_test': { en: 'Selection hit target', ru: 'Область попадания' },
         'hit_any': { en: 'Any part', ru: 'Любая часть' },
         'hit_center': { en: 'Centres', ru: 'Центры' },
+        'hit_any_title': { en: 'Select nodes or edges by any part', ru: 'Выбирать узлы и рёбра по любой части' },
+        'hit_center_title': { en: 'Select only at exact centres', ru: 'Выбирать только по точным центрам' },
         'sel_tip': { en: 'Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.', ru: 'Инструменты выделения работают в режиме Выбора. Используйте Замена/Добавить/Вычесть; Shift временно добавляет к текущему выделению. Многоугольник — кликами; клик по первой точке или двойной клик для замыкания.' },
         // --- Edit tab: Node placement ---
         'node_placement': { en: 'Node placement', ru: 'Размещение узла' },
@@ -1407,6 +1524,9 @@ const I18N = {
         'label': { en: 'Label', ru: 'Метка' },
         'directed_edge': { en: 'Directed edge', ru: 'Направленное ребро' },
         'none_placeholder': { en: 'none', ru: 'нет' },
+        'auto_label_placeholder': { en: 'Auto: A, B, C…', ru: 'Авто: А, Б, В…' },
+        'optional_placeholder': { en: 'Optional', ru: 'Необязательно' },
+        'end_placeholder': { en: 'end', ru: 'конец' },
         // --- Edit tab: Selection panel ---
         'selection': { en: 'Selection', ru: 'Выделение' },
         'nothing_selected': { en: 'Nothing selected.', ru: 'Ничего не выбрано.' },
@@ -1502,16 +1622,20 @@ const I18N = {
         'paste_dot': { en: 'Paste DOT', ru: 'Вставить DOT' },
         'import_dot': { en: 'Import DOT', ru: 'Импорт DOT' },
         'graphml': { en: 'GraphML', ru: 'GraphML' },
+        'export_graphml': { en: 'Export GraphML', ru: 'Экспорт GraphML' },
         'copy_graphml': { en: 'Copy GraphML', ru: 'Копировать GraphML' },
         'paste_graphml': { en: 'Paste GraphML', ru: 'Вставить GraphML' },
         'import_graphml': { en: 'Import GraphML', ru: 'Импорт GraphML' },
-        'export_edges_csv': { en: 'Edges CSV', ru: 'Рёбра CSV' },
+        'edges_csv': { en: 'Edges CSV', ru: 'Рёбра CSV' },
+        'export_edges_csv': { en: 'Export Edges CSV', ru: 'Экспорт рёбер CSV' },
         'copy_edges': { en: 'Copy Edges', ru: 'Копировать рёбра' },
         'paste_edges': { en: 'Paste Edges', ru: 'Вставить рёбра' },
-        'export_matrix_csv': { en: 'Matrix CSV', ru: 'Матрица CSV' },
+        'matrix_csv': { en: 'Matrix CSV', ru: 'Матрица CSV' },
+        'export_matrix_csv': { en: 'Export Matrix CSV', ru: 'Экспорт матрицы CSV' },
         'copy_matrix': { en: 'Copy Matrix', ru: 'Копировать матрицу' },
         'paste_matrix': { en: 'Paste Matrix', ru: 'Вставить матрицу' },
-        'export_nodes_csv': { en: 'Nodes CSV', ru: 'Узлы CSV' },
+        'nodes_csv': { en: 'Nodes CSV', ru: 'Узлы CSV' },
+        'export_nodes_csv': { en: 'Export Nodes CSV', ru: 'Экспорт узлов CSV' },
         'copy_nodes': { en: 'Copy Nodes', ru: 'Копировать узлы' },
         'paste_nodes': { en: 'Paste Nodes', ru: 'Вставить узлы' },
         'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Используйте "Добавить" для слияния импортированных узлов/рёбер с текущим графом без изменения стилей и фона.' },
@@ -1568,10 +1692,11 @@ const I18N = {
         'improved_7': { en: 'Matrix cells require a selection click before editing — no more mobile-keyboard surprises.', ru: 'Ячейки матрицы требуют клика выбора перед редактированием — больше никаких сюрпризов с мобильной клавиатурой.' },
         // --- Canvas HUD ---
         'ready': { en: 'Ready', ru: 'Готово' },
+        'graph_canvas': { en: 'Interactive graph editor canvas', ru: 'Интерактивный холст редактора графов' },
         'zoom_in': { en: 'Zoom in', ru: 'Приблизить' },
         'zoom_out': { en: 'Zoom out', ru: 'Отдалить' },
         'reset_zoom': { en: 'Reset zoom', ru: 'Сбросить зум' },
-        'empty_hint': { en: 'Start by selecting Node mode and clicking the canvas, or press Sample.', ru: 'Начните с выбора режима Узел и клика по холсту, либо нажмите Пример.' },
+        'empty_hint': { en: 'Choose Node, then click the canvas — or open Help to load the sample graph.', ru: 'Выберите Узел и нажмите на холст — либо откройте Справку, чтобы загрузить пример.' },
         // --- Matrix panel ---
         'adjacency_matrix': { en: 'Adjacency matrix', ru: 'Матрица смежности' },
         'matrix_view': { en: 'Matrix view', ru: 'Вид матрицы' },
@@ -1615,6 +1740,15 @@ const I18N = {
         'col_stroke': { en: 'Stroke', ru: 'Обводка' },
         'move_up': { en: 'Move up', ru: 'Переместить вверх' },
         'move_down': { en: 'Move down', ru: 'Переместить вниз' },
+        'matrix_node_hint': { en: 'Click to select node; click again to rename', ru: 'Нажмите, чтобы выбрать узел; повторно — чтобы переименовать' },
+        'matrix_cell_hint': { en: 'Click to select edge(s); click again to edit weights', ru: 'Нажмите, чтобы выбрать рёбра; повторно — чтобы изменить веса' },
+        'edge_id_hint': { en: 'Click to select edge; edit to change ID', ru: 'Нажмите, чтобы выбрать ребро; измените поле, чтобы сменить ID' },
+        'edge_from_hint': { en: 'Source: {node} — type a node label or ID to reassign', ru: 'Источник: {node} — введите метку или ID узла, чтобы переназначить' },
+        'edge_to_hint': { en: 'Target: {node} — type a node label or ID to reassign', ru: 'Цель: {node} — введите метку или ID узла, чтобы переназначить' },
+        'edit_weight': { en: 'Edit weight', ru: 'Изменить вес' },
+        'edit_label': { en: 'Edit label', ru: 'Изменить метку' },
+        'edit_type': { en: 'Edit type', ru: 'Изменить тип' },
+        'edge_color': { en: 'Edge color', ru: 'Цвет ребра' },
         'sort_edge_id': { en: 'Sort by ID', ru: 'Сорт. по ID' },
         'sort_edge_from': { en: 'Sort by from', ru: 'Сорт. по источнику' },
         'sort_edge_to': { en: 'Sort by to', ru: 'Сорт. по цели' },
@@ -1627,6 +1761,8 @@ const I18N = {
         'close': { en: 'Close', ru: 'Закрыть' },
         'presets_desc': { en: 'Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.', ru: 'Кликните по пресету для применения стиля к выделению. Используйте "Сохранить из выделения" с выбранным узлом или ребром для создания нового пресета.' },
         'no_presets': { en: 'No presets yet. Select a node or edge and click "Save from selection".', ru: 'Пресетов пока нет. Выберите узел или ребро и нажмите "Сохранить из выделения".' },
+        'delete_preset': { en: 'Delete preset', ru: 'Удалить пресет' },
+        'apply_preset': { en: 'Apply preset to selection', ru: 'Применить пресет к выделению' },
         // --- Export modal ---
         'append': { en: 'Append', ru: 'Добавить' },
         'import_btn': { en: 'Import', ru: 'Импорт' },
@@ -1643,6 +1779,7 @@ const I18N = {
         'redone': { en: 'Redone', ru: 'Повторено' },
         'node_added_circle': { en: 'Node added on circle', ru: 'Узел добавлен по кругу' },
         'inserted_n_before': { en: 'Inserted {n} node(s) before selected, arranged in a circle', ru: 'Вставлено {n} узл(ов) перед выбранными по кругу' },
+        'select_matrix_labels_first': { en: 'Select one or more matrix row or column labels first.', ru: 'Сначала выберите одну или несколько меток строк или столбцов матрицы.' },
         'matrix_expanded': { en: 'Matrix expanded to {n}×{n}; existing graph preserved', ru: 'Матрица расширена до {n}×{n}; существующий граф сохранён' },
         'matrix_view_set': { en: 'Matrix view set to {n}×{n}; existing {m}-node graph preserved', ru: 'Вид матрицы установлен {n}×{n}; существующий {m}-узл. граф сохранён' },
         'matrix_unchanged': { en: 'Matrix set to {n}×{n}; graph unchanged', ru: 'Матрица установлена {n}×{n}; граф без изменений' },
@@ -1669,6 +1806,7 @@ const I18N = {
         'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
         'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
         'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
+        'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
         'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },
         'copied': { en: 'Copied', ru: 'Скопировано' },
         'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание "{name}" — если ничего не произошло, нажмите "Копировать"' },
@@ -1738,7 +1876,7 @@ const I18N = {
         let s = entry[this.current] || entry.en || key;
         if (params) {
             for (const [k, v] of Object.entries(params)) {
-                s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), v);
+                s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), () => String(v));
             }
         }
         return s;
@@ -1754,6 +1892,10 @@ const I18N = {
             const key = el.dataset.i18nTitle;
             el.setAttribute('title', this.t(key));
         });
+        document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+            const key = el.dataset.i18nAriaLabel;
+            el.setAttribute('aria-label', this.t(key));
+        });
         document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
             const key = el.dataset.i18nPlaceholder;
             el.setAttribute('placeholder', this.t(key));
@@ -1767,10 +1909,10 @@ const I18N = {
             const key = el.dataset.i18nHtml;
             el.innerHTML = this.t(key);
         });
-        // Обновить кнопку языка
-        const btn = document.getElementById('btnLang');
-        if (btn)
-            btn.textContent = '🌐 ' + (this.current === 'en' ? 'RU' : 'EN');
+        // Show the language the button will switch to without replacing its SVG.
+        const langCode = document.getElementById('langCode');
+        if (langCode)
+            langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
         // Обновить title документа
         const titleInput = document.getElementById('docTitleInput');
         if (titleInput && (titleInput.value === 'untitled' || titleInput.value === 'безымянный')) {
@@ -1803,6 +1945,7 @@ const I18N = {
 window.I18N = I18N;
 const NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'graph-editor-pro-v2';
+const AUTOSAVE_PREF_KEY = 'graph-editor-pro-autosave';
 const R = 25;
 // All connected edges follow a dragged node live while their count stays
 // under this budget; beyond it, edges stay frozen until release. Each live
@@ -1826,6 +1969,7 @@ const $ = (selector, root = document) => {
     return element;
 };
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+const isKeyboardVisible = (el) => el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 const svg = $('#graphCanvas');
@@ -1935,6 +2079,7 @@ function applySnapshot(raw) {
             state.selected = { type: 'edge', id: validEdges[0] };
     }
     syncControls();
+    persistAutosavePreference(Boolean(state.settings.autosave));
     queueRender(true, true);
     saveSoon();
 }
@@ -1970,9 +2115,16 @@ function undo() { if (appHistoryIndex <= 0)
     return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
 function redo() { if (appHistoryIndex >= appHistory.length - 1)
     return; appHistoryIndex++; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('redone')); }
+function updateCommandStates() {
+    const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
+    $('#btnDelete').disabled = !hasSelection;
+    $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
+    $('#btnMatrixClear').disabled = !state.edges.length;
+}
 function updateUndoRedo() {
     $('#btnUndo').disabled = appHistoryIndex <= 0;
     $('#btnRedo').disabled = appHistoryIndex >= appHistory.length - 1;
+    updateCommandStates();
 }
 function sanitizeState(input) {
     const base = defaultState();
@@ -2977,7 +3129,7 @@ function updateGridBackground(vb = state.viewBox, cachedRect = null) {
     setStyleIfChanged(gridLayer.style, 'backgroundSize', size);
     setStyleIfChanged(gridLayer.style, 'backgroundPosition', position);
 }
-function setStatusOnly() { setText($('#statusPill'), statusText()); }
+function setStatusOnly() { setText($('#statusPill'), statusText()); updateCommandStates(); }
 // Id→element registries for rendered graph elements. They are maintained by
 // the render passes so hot paths (drag geometry, selection sync) never pay a
 // document-wide id lookup. getElementById remains as a safety fallback.
@@ -4060,15 +4212,15 @@ function matrixCellEdgeIds(from, to) {
 function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const { values, edgeIds } = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
-    const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id) ? ' matrix-selected' : ''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly title="Click to select node; click again to rename"></th>`).join('');
+    const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id) ? ' matrix-selected' : ''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>`).join('');
     let html = '<table><thead><tr><th></th>' + header + '</tr></thead><tbody>';
     nodes.forEach((row, i) => {
-        html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id) ? ' matrix-selected' : ''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly title="Click to select node; click again to rename"></th>` +
+        html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id) ? ' matrix-selected' : ''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>` +
             values[i].map((cell, j) => {
                 const to = nodes[j].id;
                 const ids = edgeIds[i][j];
                 const selected = ids.some(id => edgeSel.has(id));
-                return `<td><input class="matrix-input${selected ? ' matrix-selected' : ''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly title="Click to select edge(s); click again to edit weights"></td>`;
+                return `<td><input class="matrix-input${selected ? ' matrix-selected' : ''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly aria-label="${esc(I18N.t('col_from'))} ${esc(row.id)}, ${esc(I18N.t('col_to'))} ${esc(to)}" title="${esc(I18N.t('matrix_cell_hint'))}"></td>`;
             }).join('') + '</tr>';
     });
     return html + '</tbody></table>';
@@ -4110,19 +4262,19 @@ function edgeListHtml() {
         const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle === s ? ' selected' : ''}>${I18N.t('stroke_' + s)}</option>`).join('');
         html += `<tr>
         <td style="white-space:nowrap">
-          <button class="btn small icon edge-up" data-edge-id="${esc(e.id)}" title="Move up" style="min-height:26px;width:24px;padding:0">↑</button>
-          <button class="btn small icon edge-down" data-edge-id="${esc(e.id)}" title="Move down" style="min-height:26px;width:24px;padding:0">↓</button>
+          <button class="btn small icon edge-up" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button>
+          <button class="btn small icon edge-down" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button>
         </td>
         <td>${i + 1}</td>
-        <td><input class="matrix-input edge-id" data-edge-id="${esc(e.id)}" value="${esc(e.id)}" title="Click to select edge; edit to change ID" style="width:60px"></td>
-        <td><input class="matrix-input edge-from" data-edge-id="${esc(e.id)}" value="${esc(a?.label || e.from)}" title="Source: ${esc(e.from)} — type node label or ID to reassign" style="width:64px"></td>
-        <td><input class="matrix-input edge-to" data-edge-id="${esc(e.id)}" value="${esc(b?.label || e.to)}" title="Target: ${esc(e.to)} — type node label or ID to reassign" style="width:64px"></td>
-        <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" title="Edit weight" style="width:52px"></td>
-        <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" title="Edit label" style="width:72px"></td>
-        <td><input class="matrix-input edge-type" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" placeholder="none" data-i18n-placeholder="none_placeholder" title="Edit type" style="width:64px"></td>
-        <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed ? 'checked' : ''} title="Directed"></td>
-        <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" title="Edge color" style="width:32px;height:26px;padding:2px"></td>
-        <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" style="width:68px">${strokeOpts}</select></td>
+        <td><input class="matrix-input edge-id" data-edge-id="${esc(e.id)}" value="${esc(e.id)}" aria-label="${esc(I18N.t('col_id'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_id_hint'))}" style="width:60px"></td>
+        <td><input class="matrix-input edge-from" data-edge-id="${esc(e.id)}" value="${esc(a?.label || e.from)}" aria-label="${esc(I18N.t('col_from'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_from_hint', { node: e.from }))}" style="width:64px"></td>
+        <td><input class="matrix-input edge-to" data-edge-id="${esc(e.id)}" value="${esc(b?.label || e.to)}" aria-label="${esc(I18N.t('col_to'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_to_hint', { node: e.to }))}" style="width:64px"></td>
+        <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" aria-label="${esc(I18N.t('weight'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_weight'))}" style="width:52px"></td>
+        <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" aria-label="${esc(I18N.t('label'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_label'))}" style="width:72px"></td>
+        <td><input class="matrix-input edge-type" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="none" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
+        <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed ? 'checked' : ''} aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"></td>
+        <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
+        <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
       </tr>`;
     });
     html += '</tbody></table>';
@@ -4144,7 +4296,11 @@ function setMode(mode, render = true) {
     if (mode !== 'edge')
         pendingEdgeFrom = null;
     state.mode = mode;
-    $$('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    $$('[data-mode]').forEach(b => {
+        const active = b.dataset.mode === mode;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
+    });
     $('#canvasWrap').classList.toggle('move-mode', mode === 'move');
     // Selection tools float over the canvas only while Select mode is active
     $('#canvasWrap').classList.toggle('select-mode', mode === 'select');
@@ -4161,7 +4317,12 @@ function setSelectTool(tool, render = true) {
         return;
     }
     state.selectTool = ['single', 'rect', 'brush', 'lasso', 'line', 'polygon'].includes(tool) ? tool : 'single';
-    $$('[data-selecttool]').forEach(b => b.classList.toggle('active', b.dataset.selecttool === state.selectTool));
+    $$('[data-selecttool]').forEach(b => {
+        const active = b.dataset.selecttool === state.selectTool;
+        b.classList.toggle('active', active);
+        if (!['adjacent', 'directedAdjacent'].includes(b.dataset.selecttool))
+            b.setAttribute('aria-pressed', String(active));
+    });
     if (render) {
         setMode('select');
         saveSoon();
@@ -4169,13 +4330,21 @@ function setSelectTool(tool, render = true) {
 }
 function setSelectCombine(mode, render = true) {
     state.selectCombine = ['replace', 'add', 'subtract'].includes(mode) ? mode : 'replace';
-    $$('[data-selectcombine]').forEach(b => b.classList.toggle('active', b.dataset.selectcombine === state.selectCombine));
+    $$('[data-selectcombine]').forEach(b => {
+        const active = b.dataset.selectcombine === state.selectCombine;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
+    });
     if (render)
         saveSoon();
 }
 function setHitTestMode(mode, render = true) {
     state.settings.hitTestMode = ['any', 'center'].includes(mode) ? mode : 'any';
-    $$('[data-hittest]').forEach(b => b.classList.toggle('active', b.dataset.hittest === state.settings.hitTestMode));
+    $$('[data-hittest]').forEach(b => {
+        const active = b.dataset.hittest === state.settings.hitTestMode;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
+    });
     if (render) {
         setStatusOnly();
         saveSoon();
@@ -4474,6 +4643,26 @@ function findFreeNodePosition(x, y, ignoreIds = new Set()) {
     }
     return { x: x + step * 13, y };
 }
+function applyNewNodeDefaults(n) {
+    const s = state.settings;
+    if (s.nodeType)
+        n.type = s.nodeType;
+    // Inherit mode deliberately leaves visual properties unset so later
+    // changes to Style-tab defaults (or the node's type style) remain live.
+    if (s.inheritDefaults !== false)
+        return;
+    n.shape = s.nodeShape;
+    n.color = s.nodeColor;
+    n.width = s.nodeWidth;
+    n.height = s.nodeHeight;
+    n.strokeColor = s.nodeStrokeColor;
+    n.strokeSize = s.nodeStrokeSize;
+    n.strokeStyle = s.nodeStrokeStyle;
+    n.labelColor = s.nodeLabelColor;
+    n.labelFont = s.nodeLabelFont;
+    n.labelSize = s.nodeLabelSize;
+    n.labelPosition = s.nodeLabelPosition;
+}
 function addNode(x, y) {
     ({ x, y } = snapPointToEnabled(x, y));
     ({ x, y } = findFreeNodePosition(x, y));
@@ -4484,74 +4673,7 @@ function addNode(x, y) {
     const s = state.settings;
     const label = s.noLabel ? '' : (custom ? (custom.length <= 3 ? custom : custom.slice(0, 80)) : labelFromNumber(state.nextNode));
     const n = { id: 'n' + state.nextNode++, label, x, y, type: '', order: state.nodes.length };
-    if (s.nodeType) {
-        n.type = s.nodeType;
-        // If a type style exists for this type, leave style props unset so
-        // the type style takes effect (nodeVisual falls through to typeStyles).
-        const ts = state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[s.nodeType];
-        if (ts) {
-            if (!ts.shape)
-                n.shape = s.nodeShape;
-            else
-                n.shape = '';
-            if (!ts.color)
-                n.color = s.nodeColor;
-            else
-                n.color = '';
-            if (ts.width == null)
-                n.width = s.nodeWidth;
-            if (ts.height == null)
-                n.height = s.nodeHeight;
-            if (!ts.strokeColor)
-                n.strokeColor = s.nodeStrokeColor;
-            else
-                n.strokeColor = '';
-            if (ts.strokeSize == null)
-                n.strokeSize = s.nodeStrokeSize;
-            if (!ts.strokeStyle)
-                n.strokeStyle = s.nodeStrokeStyle;
-            else
-                n.strokeStyle = '';
-            if (!ts.labelColor)
-                n.labelColor = s.nodeLabelColor;
-            else
-                n.labelColor = '';
-            if (ts.labelSize == null)
-                n.labelSize = s.nodeLabelSize;
-            if (!ts.labelFont)
-                n.labelFont = s.nodeLabelFont;
-            if (!ts.labelPosition)
-                n.labelPosition = s.nodeLabelPosition;
-            else
-                n.labelPosition = '';
-        }
-        else {
-            n.shape = s.nodeShape;
-            n.color = s.nodeColor;
-            n.width = s.nodeWidth;
-            n.height = s.nodeHeight;
-            n.strokeColor = s.nodeStrokeColor;
-            n.strokeSize = s.nodeStrokeSize;
-            n.strokeStyle = s.nodeStrokeStyle;
-            n.labelColor = s.nodeLabelColor;
-            n.labelFont = s.nodeLabelFont;
-            n.labelSize = s.nodeLabelSize;
-            n.labelPosition = s.nodeLabelPosition;
-        }
-    }
-    else {
-        n.shape = s.nodeShape;
-        n.color = s.nodeColor;
-        n.width = s.nodeWidth;
-        n.height = s.nodeHeight;
-        n.strokeColor = s.nodeStrokeColor;
-        n.strokeSize = s.nodeStrokeSize;
-        n.strokeStyle = s.nodeStrokeStyle;
-        n.labelColor = s.nodeLabelColor;
-        n.labelFont = s.nodeLabelFont;
-        n.labelSize = s.nodeLabelSize;
-        n.labelPosition = s.nodeLabelPosition;
-    }
+    applyNewNodeDefaults(n);
     state.nodes.push(n);
     setSelection([n.id], [], { type: 'node', id: n.id }, false);
     pushHistory('add node');
@@ -4640,20 +4762,7 @@ function createNode(label = null, x = null, y = null) {
     const s = state.settings;
     const autoLabel = s.noLabel ? '' : (label || labelFromNumber(idx));
     const n = { id: 'n' + idx, label: autoLabel, x, y, type: '', order: state.nodes.length };
-    // Always bake edit-tab placement values
-    if (s.nodeType)
-        n.type = s.nodeType;
-    n.shape = s.nodeShape;
-    n.color = s.nodeColor;
-    n.width = s.nodeWidth;
-    n.height = s.nodeHeight;
-    n.strokeColor = s.nodeStrokeColor;
-    n.strokeSize = s.nodeStrokeSize;
-    n.strokeStyle = s.nodeStrokeStyle;
-    n.labelColor = s.nodeLabelColor;
-    n.labelFont = s.nodeLabelFont;
-    n.labelSize = s.nodeLabelSize;
-    n.labelPosition = s.nodeLabelPosition;
+    applyNewNodeDefaults(n);
     return n;
 }
 function addNodeFromMatrix() {
@@ -4671,7 +4780,7 @@ function addNodeFromMatrix() {
 function insertNodeFromMatrix() {
     const selected = new Set(state.selection?.nodes || []);
     if (!selected.size) {
-        toast('Select one or more matrix row/column labels first. Insert adds before each selected node.');
+        toast(I18N.t('select_matrix_labels_first'));
         return;
     }
     const selectedNodes = state.nodes.filter(n => selected.has(n.id));
@@ -4715,7 +4824,7 @@ function setMatrixDimension(count) {
     if (count < current)
         toast(I18N.t('matrix_view_set', { n: count, m: current }));
     else
-        toast(`Matrix set to ${count}×${count}; graph unchanged`);
+        toast(I18N.t('matrix_unchanged', { n: count }));
 }
 function setNodeLabelFromMatrix(id, label) {
     const n = nodeById(id);
@@ -5154,7 +5263,7 @@ function finishPolygonSelection(cancel = false) {
         toast(I18N.t('polygon_selected', { n: hit.nodes.length, m: hit.edges.length }));
     }
     else if (!cancel)
-        toast('Polygon needs at least 3 points');
+        toast(I18N.t('polygon_needs_3'));
     setStatusOnly();
 }
 function renderSelectionDraft() {
@@ -5385,7 +5494,7 @@ function onNodePointerDown(ev, id) {
         selectItem('node', id);
         edgeDraft = { from: id, x: p.x, y: p.y, startClientX: ev.clientX, startClientY: ev.clientY, moved: false };
         gestureActive = true;
-        updateDragLine(p);
+        updateDragLine(p, ev.clientX, ev.clientY);
         setStatusOnly();
         return;
     }
@@ -5560,7 +5669,7 @@ svg.addEventListener('pointermove', ev => {
         edgeDraft.y = p.y;
         if (Math.hypot(ev.clientX - edgeDraft.startClientX, ev.clientY - edgeDraft.startClientY) > 8)
             edgeDraft.moved = true;
-        updateDragLine(p);
+        updateDragLine(p, ev.clientX, ev.clientY);
         return;
     }
     if (drag) {
@@ -5698,12 +5807,26 @@ function finishPointer(ev, cancel = false) {
     gestureActive = false;
     unregisterPointer(ev);
 }
-function updateDragLine(p) {
+function updateDragLine(p, clientX, clientY) {
     const from = nodeById(edgeDraft.from);
     if (!from)
         return;
     dragLine.setAttribute('d', `M ${from.x} ${from.y} L ${p.x} ${p.y}`);
     dragLine.style.display = 'block';
+    // Detect if pointer is over a node and adjust line appearance
+    const target = document.elementFromPoint(clientX, clientY)?.closest?.('.node');
+    if (target && target.dataset.id) {
+        // Over a node: make line wider and brighter
+        dragLine.style.strokeWidth = '4';
+        dragLine.style.stroke = 'var(--accent)';
+        dragLine.style.opacity = '1';
+    }
+    else {
+        // Not over a node: revert to normal
+        dragLine.style.strokeWidth = '';
+        dragLine.style.stroke = '';
+        dragLine.style.opacity = '';
+    }
 }
 function startPan(ev) {
     ev.preventDefault();
@@ -5816,7 +5939,7 @@ function editEdgeQuick(id) { const e = edgeById(id); if (!e)
 // Standardized precision for all coordinate exports — 4 decimals prevents drift across round-trips
 function assertImportTextSize(text) {
     if (text.length > MAX_IMPORT_BYTES) {
-        throw new Error(`Import is too large (maximum ${Math.round(MAX_IMPORT_BYTES / 1024 / 1024)} MB)`);
+        throw new Error(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
     }
 }
 function fmtCoord(v) { return (Math.round(v * 10000) / 10000).toString(); }
@@ -5893,24 +6016,35 @@ function showExportPreview(name, content, type) {
         format = 'matrix-csv';
     else if (lowerName.includes('nodes'))
         format = 'nodes-csv';
+    document.querySelector('.export-modal')?.remove();
+    const returnFocus = document.activeElement;
     const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);display:grid;place-items:center;padding:16px';
+    modal.className = 'export-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'exportDialogTitle');
+    modal.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.72);display:grid;place-items:center;padding:16px';
     modal.innerHTML = `
-      <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:14px;max-width:600px;width:100%;max-height:80vh;display:flex;flex-direction:column;gap:8px">
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:14px;max-width:600px;width:100%;max-height:80vh;display:flex;flex-direction:column;gap:8px;box-shadow:0 24px 70px rgba(0,0,0,.55)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-weight:700;color:#e2e8f0">${esc(name)}</span>
+          <span id="exportDialogTitle" style="font-weight:700;color:#e2e8f0">${esc(name)}</span>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <label class="row tiny muted" style="gap:4px;margin:0"><input id="expAppendChk" type="checkbox" /> Append</label>
-            <button class="btn small good" id="expImportBtn" title="Parse the textarea content and import into the graph" data-i18n="import_btn">Import</button>
-            <button class="btn small" id="expCopyBtn" title="Copy textarea content to clipboard" data-i18n="copy">Copy</button>
-            <button class="btn small" id="expDlBtn" title="Download textarea content as a file" data-i18n="download">Download</button>
-            <button class="btn small danger" id="expCloseBtn" data-i18n="close">Close</button>
+            <label class="row tiny muted" style="gap:4px;margin:0"><input id="expAppendChk" type="checkbox" /> ${esc(I18N.t('append'))}</label>
+            <button class="btn small symbol-only good" id="expImportBtn" title="${esc(I18N.t('import_btn'))}" aria-label="${esc(I18N.t('import_btn'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
+            <button class="btn small symbol-only" id="expCopyBtn" title="${esc(I18N.t('copy'))}" aria-label="${esc(I18N.t('copy'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+            <button class="btn small symbol-only" id="expDlBtn" title="${esc(I18N.t('download'))}" aria-label="${esc(I18N.t('download'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
+            <button class="btn small symbol-only danger" id="expCloseBtn" title="${esc(I18N.t('close'))}" aria-label="${esc(I18N.t('close'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button>
           </div>
         </div>
-        <p class="tiny muted" style="margin:0"><span data-i18n="export_modal_desc">Editable — modify the text, or paste content here when clipboard read is blocked, then click Import.</span></p>
-        <textarea style="flex:1;min-height:240px;width:100%;background:#020617;border:1px solid #334155;color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical" spellcheck="false"></textarea>
+        <p class="tiny muted" style="margin:0">${esc(I18N.t('export_modal_desc'))}</p>
+        <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid #334155;color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical" spellcheck="false"></textarea>
       </div>`;
     document.body.appendChild(modal);
+    const closeModal = () => {
+        modal.remove();
+        if (returnFocus?.isConnected)
+            returnFocus.focus({ preventScroll: true });
+    };
     const ta = modal.querySelector('textarea');
     ta.value = content;
     // Sync the append checkbox with the global one
@@ -5940,7 +6074,7 @@ function showExportPreview(name, content, type) {
                 importMatrixCsv(text, appendChk.checked);
             else if (format === 'nodes-csv')
                 importNodesCsv(text, appendChk.checked);
-            modal.remove();
+            closeModal();
         }
         catch (err) {
             toast(I18N.t('import_failed', { msg: err.message }));
@@ -5948,11 +6082,40 @@ function showExportPreview(name, content, type) {
     });
     modal.querySelector('#expCopyBtn').addEventListener('click', () => { copyText(ta.value); });
     modal.querySelector('#expDlBtn').addEventListener('click', () => { downloadBlob(name, ta.value, type); });
-    modal.querySelector('#expCloseBtn').addEventListener('click', () => modal.remove());
+    modal.querySelector('#expCloseBtn').addEventListener('click', closeModal);
     modal.addEventListener('click', ev => { if (ev.target === modal)
-        modal.remove(); });
-    // Focus the textarea for immediate editing
-    setTimeout(() => ta.focus(), 0);
+        closeModal(); });
+    modal.addEventListener('keydown', ev => {
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            ev.stopPropagation();
+            closeModal();
+            return;
+        }
+        if (ev.key !== 'Tab')
+            return;
+        const focusable = $$('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])', modal)
+            .filter(isKeyboardVisible);
+        if (!focusable.length)
+            return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (ev.shiftKey && document.activeElement === first) {
+            ev.preventDefault();
+            last.focus();
+        }
+        else if (!ev.shiftKey && document.activeElement === last) {
+            ev.preventDefault();
+            first.focus();
+        }
+    });
+    // Focus at the beginning; assigning a long value leaves the caret at the
+    // end in some browsers and otherwise opens the preview scrolled to EOF.
+    setTimeout(() => {
+        ta.focus();
+        ta.setSelectionRange(0, 0);
+        ta.scrollTop = 0;
+        ta.scrollLeft = 0;
+    }, 0);
 }
 function fileBase() { return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'graph'; }
 function exportJson() { showExportPreview(`${fileBase()}.graph.json`, JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json;charset=utf-8'); }
@@ -6829,7 +6992,7 @@ function importFile(file, forcedFormat = 'auto') {
     if (!file)
         return;
     if (file.size > MAX_IMPORT_BYTES) {
-        alert(`Import is too large (maximum ${Math.round(MAX_IMPORT_BYTES / 1024 / 1024)} MB)`);
+        alert(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
         return;
     }
     const reader = new FileReader();
@@ -7089,10 +7252,16 @@ function addSample() {
     queueRender(true, true);
     toast(I18N.t('sample_loaded'));
 }
+function persistAutosavePreference(enabled) {
+    try {
+        localStorage.setItem(AUTOSAVE_PREF_KEY, enabled ? 'true' : 'false');
+    }
+    catch { }
+}
 function saveSoon() {
+    clearTimeout(saveTimer);
     if (!state.settings.autosave)
         return;
-    clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { try {
         localStorage.setItem(STORAGE_KEY, snapshot());
     }
@@ -7100,19 +7269,35 @@ function saveSoon() {
 }
 function loadSaved() {
     try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) {
-            state = { ...state, ...sanitizeState(JSON.parse(saved)), selected: null };
+        const preference = localStorage.getItem(AUTOSAVE_PREF_KEY);
+        // An explicit opt-out must be honored before reading an older graph
+        // snapshot; otherwise turning autosave off appears to do nothing after
+        // the next reload.
+        if (preference === 'false') {
+            state.settings.autosave = false;
+            return;
         }
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved)
+            state = { ...state, ...sanitizeState(JSON.parse(saved)), selected: null };
+        if (preference === 'true')
+            state.settings.autosave = true;
     }
     catch { }
 }
 function toast(message) {
+    const stack = $('#toastStack');
+    while (stack.children.length >= 4)
+        stack.firstElementChild?.remove();
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = message;
-    $('#toastStack').appendChild(el);
-    setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(6px)'; setTimeout(() => el.remove(), 180); }, 2300);
+    stack.appendChild(el);
+    setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(6px)';
+        setTimeout(() => el.remove(), 180);
+    }, 2300);
 }
 async function copyText(text) {
     try {
@@ -7154,8 +7339,9 @@ function attachDragNumber(input, options = {}) {
         wrap.appendChild(input);
         handle = document.createElement('span');
         handle.className = 'drag-handle';
-        handle.textContent = '\u21C6';
-        handle.title = 'Drag horizontally to change (Shift = fine)';
+        handle.innerHTML = '<svg class="ui-icon" aria-hidden="true"><use href="#icon-scrub"></use></svg>';
+        handle.title = I18N.t('drag_hint');
+        handle.setAttribute('aria-hidden', 'true');
         wrap.appendChild(handle);
     }
     if (handle._dragBound)
@@ -7773,23 +7959,24 @@ function applyTypeStyleToEdge(e) {
         delete e.labelFont;
 }
 // === Style presets ===
+let presetsReturnFocus = null;
 function renderPresetsGrid() {
     const grid = $('#presetsGrid');
     if (!grid)
         return;
     const presets = state.settings.stylePresets || [];
     if (!presets.length) {
-        grid.innerHTML = '<div class="tiny muted" style="grid-column:1/-1;text-align:center;padding:20px">No presets yet. Select a node or edge and click "Save from selection".</div>';
+        grid.innerHTML = `<div class="tiny muted" style="grid-column:1/-1;text-align:center;padding:20px">${esc(I18N.t('no_presets'))}</div>`;
         return;
     }
     grid.innerHTML = presets.map((p, i) => {
         const preview = presetPreviewSvg(p);
         return `<div class="preset-card-wrap">
-        <button class="preset-delete" data-preset-del="${i}" title="Delete preset">×</button>
-        <div class="preset-card" data-preset-idx="${i}" title="Apply to selection">
-          <div class="preset-preview">${preview}</div>
-          <div class="preset-name">${esc(p.name || 'preset')}</div>
-        </div>
+        <button class="preset-delete" data-preset-del="${i}" title="${esc(I18N.t('delete_preset'))}" aria-label="${esc(I18N.t('delete_preset'))}"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button>
+        <button class="preset-card" data-preset-idx="${i}" title="${esc(I18N.t('apply_preset'))}" aria-label="${esc(I18N.t('apply_preset'))}: ${esc(p.name || 'preset')}">
+          <span class="preset-preview">${preview}</span>
+          <span class="preset-name">${esc(p.name || 'preset')}</span>
+        </button>
       </div>`;
     }).join('');
 }
@@ -7892,9 +8079,9 @@ function applyPresetToSelection(idx) {
     saveSoon();
     const what = [];
     if (p.node && nodeIds.length)
-        what.push(`${nodeIds.length} node${nodeIds.length === 1 ? '' : 's'}`);
+        what.push(I18N.current === 'ru' ? `${nodeIds.length} узл(ов)` : `${nodeIds.length} node${nodeIds.length === 1 ? '' : 's'}`);
     if (p.edge && edgeIds.length)
-        what.push(`${edgeIds.length} edge${edgeIds.length === 1 ? '' : 's'}`);
+        what.push(I18N.current === 'ru' ? `${edgeIds.length} ребр(о)` : `${edgeIds.length} edge${edgeIds.length === 1 ? '' : 's'}`);
     toast(I18N.t('preset_applied', { name: p.name, what: what.join(I18N.current === 'ru' ? ' и ' : ' and ') }));
 }
 function savePresetFromSelection() {
@@ -7959,44 +8146,121 @@ function deletePreset(idx) {
     saveSoon();
     renderPresetsGrid();
 }
-function togglePresetsOverlay() {
+function togglePresetsOverlay(force) {
     const overlay = $('#presetsOverlay');
     if (!overlay)
         return;
-    const isOpen = overlay.classList.toggle('open');
-    if (isOpen)
+    const isOpen = force == null ? !overlay.classList.contains('open') : force;
+    if (isOpen) {
+        presetsReturnFocus = document.activeElement;
+        overlay.classList.add('open');
+        overlay.setAttribute('aria-hidden', 'false');
         renderPresetsGrid();
+        setTimeout(() => $('#btnPresetClose').focus({ preventScroll: true }), 0);
+    }
+    else {
+        overlay.classList.remove('open');
+        overlay.setAttribute('aria-hidden', 'true');
+        if (presetsReturnFocus?.isConnected)
+            presetsReturnFocus.focus({ preventScroll: true });
+        presetsReturnFocus = null;
+    }
 }
 function wireUi() {
     svg.addEventListener('selectstart', ev => ev.preventDefault());
     svg.addEventListener('contextmenu', ev => ev.preventDefault());
     svg.addEventListener('auxclick', ev => ev.preventDefault());
-    $$('.tab').forEach(btn => btn.addEventListener('click', () => {
-        // Mobile-app style: tapping a tab opens its panel as a bottom sheet;
-        // tapping the active tab again closes the sheet. Both the bottom tab
-        // bar and the sheet-header tabs share this handler and stay in sync.
-        const target = btn.dataset.tab;
-        const panel = $(`#panel-${target}`);
-        const opening = !panel.classList.contains('active');
-        $$('.tab-panel').forEach(p => p.classList.remove('active'));
-        $$('.tab').forEach(b => b.classList.toggle('active', opening && b.dataset.tab === target));
-        if (opening)
-            panel.classList.add('active');
-        const sidebarEl = document.querySelector('.sidebar');
-        if (sidebarEl)
-            sidebarEl.classList.toggle('open', opening);
-    }));
-    // Hamburger menu: opens/closes the panel sheet (tabs live in the sheet
-    // header, so the menu button just re-triggers the active tab).
+    // One non-modal tools surface: a bottom sheet on portrait phones and a
+    // right drawer elsewhere. The uncovered graph stays fully interactive;
+    // only the off-screen drawer itself becomes inert when closed.
+    const sidebarEl = $('#toolsPanel');
     const menuBtn = $('#btnMenu');
-    if (menuBtn) {
-        menuBtn.addEventListener('click', () => {
-            const tab = document.querySelector('.sidebar .tabs .tab.active')
-                || document.querySelector('.sidebar .tabs .tab[data-tab="edit"]');
-            if (tab)
-                tab.click();
+    const panelCloseBtn = $('#btnPanelClose');
+    let panelReturnFocus = null;
+    const panelTabs = $$('.sidebar .tab');
+    const panelSections = $$('.tab-panel');
+    const activePanelName = () => document.querySelector('.sidebar .tab.active')?.dataset.tab || 'edit';
+    const activatePanel = (target) => {
+        panelSections.forEach(panel => {
+            const selected = panel.id === `panel-${target}`;
+            panel.classList.toggle('active', selected);
+            panel.setAttribute('aria-hidden', String(!selected));
         });
-    }
+        panelTabs.forEach(tab => {
+            const selected = tab.dataset.tab === target;
+            tab.classList.toggle('active', selected);
+            tab.setAttribute('aria-selected', String(selected));
+            tab.tabIndex = selected ? 0 : -1;
+        });
+    };
+    const openPanels = (target = activePanelName(), trigger = null) => {
+        panelReturnFocus = trigger || document.activeElement;
+        activatePanel(target);
+        sidebarEl.inert = false;
+        sidebarEl.setAttribute('aria-hidden', 'false');
+        sidebarEl.classList.add('open');
+        menuBtn.classList.add('active');
+        menuBtn.setAttribute('aria-expanded', 'true');
+        menuBtn.setAttribute('aria-label', I18N.t('panel_close'));
+        menuBtn.title = I18N.t('panel_close');
+        const activeTab = document.querySelector(`.sidebar .tab[data-tab="${target}"]`);
+        activeTab?.focus({ preventScroll: true });
+    };
+    const closePanels = (restoreFocus = true) => {
+        if (!sidebarEl.classList.contains('open'))
+            return;
+        sidebarEl.classList.remove('open');
+        sidebarEl.setAttribute('aria-hidden', 'true');
+        sidebarEl.inert = true;
+        menuBtn.classList.remove('active');
+        menuBtn.setAttribute('aria-expanded', 'false');
+        menuBtn.setAttribute('aria-label', I18N.t('menu_open'));
+        menuBtn.title = I18N.t('menu_open');
+        if (restoreFocus && panelReturnFocus?.isConnected)
+            panelReturnFocus.focus({ preventScroll: true });
+        panelReturnFocus = null;
+    };
+    panelTabs.forEach(btn => btn.addEventListener('click', () => {
+        const target = btn.dataset.tab || 'edit';
+        if (!sidebarEl.classList.contains('open'))
+            openPanels(target, btn);
+        else
+            activatePanel(target);
+    }));
+    menuBtn.addEventListener('click', () => {
+        if (sidebarEl.classList.contains('open'))
+            closePanels();
+        else
+            openPanels(activePanelName(), menuBtn);
+    });
+    panelCloseBtn.addEventListener('click', () => closePanels());
+    sidebarEl.addEventListener('keydown', ev => {
+        if ((ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && ev.target?.matches('.tab')) {
+            ev.preventDefault();
+            const current = panelTabs.indexOf(ev.target);
+            const offset = ev.key === 'ArrowRight' ? 1 : -1;
+            const next = panelTabs[(current + offset + panelTabs.length) % panelTabs.length];
+            activatePanel(next.dataset.tab || 'edit');
+            next.focus();
+        }
+    });
+    window.addEventListener('keydown', ev => {
+        if (ev.key !== 'Escape')
+            return;
+        const presets = $('#presetsOverlay');
+        if (presets.classList.contains('open')) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            togglePresetsOverlay(false);
+            return;
+        }
+        if (sidebarEl.classList.contains('open')) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            closePanels(sidebarEl.contains(document.activeElement));
+        }
+    });
+    activatePanel('edit');
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
@@ -8033,8 +8297,13 @@ function wireUi() {
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0, 60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value, 12), 4, 72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
     $('#edgeDirected').addEventListener('change', e => { state.settings.directed = e.target.checked; saveSoon(); });
-    $('#optAutosave').addEventListener('change', e => { state.settings.autosave = e.target.checked; if (e.target.checked)
-        saveSoon(); pushHistory('autosave'); });
+    $('#optAutosave').addEventListener('change', e => {
+        state.settings.autosave = e.target.checked;
+        persistAutosavePreference(e.target.checked);
+        if (e.target.checked)
+            saveSoon();
+        pushHistory('autosave');
+    });
     $('#optInheritDefaults').addEventListener('change', e => { state.settings.inheritDefaults = e.target.checked; pushHistory('inherit defaults'); });
     $('#optNoLabel').addEventListener('change', e => { state.settings.noLabel = e.target.checked; pushHistory('no label'); });
     $('#optSnap').addEventListener('change', e => { state.settings.snap = e.target.checked; pushHistory('snap grid'); });
@@ -8048,8 +8317,27 @@ function wireUi() {
     $('#btnRedo').addEventListener('click', redo);
     $('#btnDelete').addEventListener('click', deleteSelected);
     // Presets overlay
-    $('#btnPresets').addEventListener('click', togglePresetsOverlay);
-    $('#btnPresetClose').addEventListener('click', togglePresetsOverlay);
+    $('#btnPresets').addEventListener('click', () => togglePresetsOverlay());
+    $('#btnPresetClose').addEventListener('click', () => togglePresetsOverlay(false));
+    $('#presetsOverlay').addEventListener('click', ev => { if (ev.target === ev.currentTarget)
+        togglePresetsOverlay(false); });
+    $('#presetsOverlay').addEventListener('keydown', ev => {
+        if (ev.key !== 'Tab')
+            return;
+        const focusable = $$('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])', ev.currentTarget)
+            .filter(isKeyboardVisible);
+        if (!focusable.length)
+            return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (ev.shiftKey && document.activeElement === first) {
+            ev.preventDefault();
+            last.focus();
+        }
+        else if (!ev.shiftKey && document.activeElement === last) {
+            ev.preventDefault();
+            first.focus();
+        }
+    });
     $('#btnPresetSave').addEventListener('click', savePresetFromSelection);
     $('#presetsGrid').addEventListener('click', ev => {
         const del = ev.target.closest('[data-preset-del]');
@@ -8074,7 +8362,7 @@ function wireUi() {
         pushHistory('clear');
         queueRender(true, true);
     } });
-    $('#btnSample').addEventListener('click', addSample);
+    $('#btnSample').addEventListener('click', () => { addSample(); closePanels(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
     $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
@@ -8431,8 +8719,15 @@ function wireUi() {
         const VIEW_CLASS = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
         const syncViewButtons = () => {
             document.querySelectorAll('[data-view-btn]').forEach(b => {
-                b.classList.toggle('active', mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || ''));
+                const active = mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || '');
+                b.classList.toggle('active', active);
+                b.setAttribute('aria-pressed', String(active));
             });
+            const orient = $('#btnViewOrient');
+            if (orient) {
+                const count = ['graph', 'matrix', 'edges'].filter(v => mainEl.classList.contains(VIEW_CLASS[v])).length;
+                orient.disabled = count < 2;
+            }
         };
         const visibleViewCount = () => ['graph', 'matrix', 'edges'].filter(v => mainEl.classList.contains(VIEW_CLASS[v])).length;
         document.querySelectorAll('[data-view-btn]').forEach(btn => {
@@ -8454,9 +8749,12 @@ function wireUi() {
         let syncOrientBtn = null;
         if (orientBtn) {
             syncOrientBtn = () => {
-                orientBtn.textContent = mainEl.dataset.orient === 'h' ? '↕' : '↔';
-                orientBtn.classList.toggle('active', mainEl.dataset.orient === 'h');
-                orientBtn.title = I18N.t(mainEl.dataset.orient === 'h' ? 'orient_to_v' : 'orient_to_h');
+                const horizontal = mainEl.dataset.orient === 'h';
+                orientBtn.classList.toggle('active', horizontal);
+                orientBtn.setAttribute('aria-pressed', String(horizontal));
+                const label = I18N.t(horizontal ? 'orient_to_v' : 'orient_to_h');
+                orientBtn.title = label;
+                orientBtn.setAttribute('aria-label', label);
             };
             orientBtn.addEventListener('click', () => {
                 const cur = mainEl.dataset.orient || 'v';

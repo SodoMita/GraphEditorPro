@@ -81,15 +81,39 @@
     state.nextNode = 8; state.nextEdge = 8; state.selected = null; state.selection = {nodes: [], edges: []}; pushHistory('sample'); fitView(); queueRender(true, true); toast(I18N.t('sample_loaded'));
   }
 
+  function persistAutosavePreference(enabled: boolean){
+    try { localStorage.setItem(AUTOSAVE_PREF_KEY, enabled ? 'true' : 'false'); } catch {}
+  }
   function saveSoon(){
+    clearTimeout(saveTimer);
     if(!state.settings.autosave) return;
-    clearTimeout(saveTimer); saveTimer = setTimeout(() => { try{ localStorage.setItem(STORAGE_KEY, snapshot()); }catch{} }, 250);
+    saveTimer = setTimeout(() => { try{ localStorage.setItem(STORAGE_KEY, snapshot()); }catch{} }, 250);
   }
   function loadSaved(){
-    try{ const saved = localStorage.getItem(STORAGE_KEY); if(saved) { state = {...state, ...sanitizeState(JSON.parse(saved)), selected:null}; } }catch{}
+    try{
+      const preference = localStorage.getItem(AUTOSAVE_PREF_KEY);
+      // An explicit opt-out must be honored before reading an older graph
+      // snapshot; otherwise turning autosave off appears to do nothing after
+      // the next reload.
+      if(preference === 'false'){
+        state.settings.autosave = false;
+        return;
+      }
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if(saved) state = {...state, ...sanitizeState(JSON.parse(saved)), selected:null};
+      if(preference === 'true') state.settings.autosave = true;
+    }catch{}
   }
   function toast(message){
-    const el = document.createElement('div'); el.className='toast'; el.textContent=message; $('#toastStack').appendChild(el); setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(6px)'; setTimeout(()=>el.remove(), 180); }, 2300);
+    const stack = $('#toastStack');
+    while(stack.children.length >= 4) stack.firstElementChild?.remove();
+    const el = document.createElement('div');
+    el.className = 'toast'; el.textContent = message;
+    stack.appendChild(el);
+    setTimeout(() => {
+      el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
+      setTimeout(() => el.remove(), 180);
+    }, 2300);
   }
   async function copyText(text){
     try{ await navigator.clipboard.writeText(text); toast(I18N.t('copied')); }

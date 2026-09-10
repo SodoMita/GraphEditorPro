@@ -1,12 +1,12 @@
     /* =====================================================================
        Graph Editor Pro — mobile-first app UI (2026 redesign)
-       Phone shell: full-bleed canvas, floating tool switcher, bottom
-       sheet panels over the canvas, bottom tab bar, safe-area aware.
+       Phone shell: full-bleed canvas, floating tool switcher, accessible
+       bottom-sheet panels over the canvas, safe-area aware.
        Base styles ARE the phone layout; desktop builds up via media queries.
        ===================================================================== */
     :root{
       --bg:#04070f; --panel:#0a101d; --panel-2:#0d1524; --panel-3:#101a2e;
-      --text:#e2e8f0; --muted:#8fa3bd; --dim:#5c6f8c; --line:#1e2a3f; --line-2:#26344d;
+      --text:#e2e8f0; --muted:#a1b2c8; --dim:#7f92ad; --line:#1e2a3f; --line-2:#2d3d58;
       --accent:#22d3ee; --accent-2:#38bdf8; --good:#34d399; --warn:#fbbf24; --bad:#fb7185;
       --ink:#02131a;
       --radius:16px; --radius-s:10px;
@@ -31,11 +31,20 @@
     button,input,select,textarea{font:inherit}
     button{cursor:pointer}
     ::selection{background:rgba(34,211,238,.28)}
+    .icon-sprite{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
+    .ui-icon{
+      width:18px;height:18px;display:block;flex:0 0 auto;
+      fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;
+    }
+    :where(button,input,select,textarea,[tabindex]):focus-visible{
+      outline:2px solid var(--accent); outline-offset:2px;
+    }
+    :where(input,select,textarea):focus-visible{outline-offset:1px}
 
     /* ---------- App shell ---------- */
     .app{
-      height:100dvh; display:grid; grid-template-rows:auto minmax(0,1fr) auto;
-      grid-template-areas:"appbar" "workspace" "tabbar";
+      height:100dvh; display:grid; grid-template-rows:auto minmax(0,1fr);
+      grid-template-areas:"appbar" "workspace";
       overflow:hidden;
     }
     .panel{
@@ -66,15 +75,18 @@
 
     /* Hamburger menu button (mobile) — opens the panel sheet */
     .menu-btn{
-      flex:0 0 auto; min-height:34px; width:38px; border-radius:9px; font-size:17px;
+      flex:0 0 auto; min-height:36px; width:40px; border-radius:9px;
       border-color:rgba(34,211,238,.4); color:var(--accent);
       background:rgba(34,211,238,.10);
     }
-    /* Orientation toggle: highlight when horizontal split is active */
+    .lang-btn .ui-icon{width:16px;height:16px}
+    /* Orientation toggle: rotate/highlight when the side-by-side split is active. */
+    #btnViewOrient .orient-icon{transition:transform .16s ease}
     #btnViewOrient.active{
       border-color:var(--accent); color:var(--accent);
       box-shadow:0 0 0 1px rgba(34,211,238,.35) inset, 0 0 12px rgba(34,211,238,.18);
     }
+    #btnViewOrient.active .orient-icon{transform:rotate(90deg)}
 
     /* ---------- Buttons ---------- */
     .btn{
@@ -87,6 +99,9 @@
     }
     .btn.icon{width:38px; padding:0; font-size:16px}
     .btn.small{min-height:32px; padding:0 10px; border-radius:8px; font-size:12px}
+    .btn.symbol-only{width:40px; min-width:40px; padding:0}
+    .btn.small.symbol-only{width:36px; min-width:36px; padding:0}
+    .unicode-symbol{font-size:21px;line-height:1;font-weight:700}
     .btn:hover{filter:brightness(1.12); border-color:#33507a}
     .btn:active{transform:translateY(1px)}
     .btn.active{
@@ -98,13 +113,15 @@
 
     /* Toolbar inside the app bar. Mobile: compact grid under the title.
        Desktop: one flex row. */
-    .toolbar{margin-left:auto; display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:5px; flex:1 1 100%; min-width:0}
+    .toolbar{margin-left:auto; display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:5px; flex:1 1 100%; min-width:0}
     .toolbar .btn{min-width:0; padding:0 4px; font-size:11.5px}
-    .toolbar .btn.icon{width:auto}
+    .toolbar .btn.icon,.toolbar .btn.symbol-only{width:auto}
+    .toolbar .btn.symbol-only{padding:0}
     .view-toggle{display:none}
     /* Mobile copy of the view switcher (shown inside the Data sheet) */
     .view-toggle.sheet-toggle{display:flex; align-items:center; gap:4px; flex-wrap:wrap}
-    .view-toggle.sheet-toggle .btn.small{min-height:32px; font-size:11.5px; padding:0 9px}
+    .view-toggle.sheet-toggle .btn.small{min-height:36px}
+    .view-toggle .symbol-only .ui-icon{width:17px;height:17px}
 
     /* ---------- Canvas ---------- */
     .workspace{
@@ -153,15 +170,16 @@
     /* ---------- Floating tool switcher (mode FAB) ---------- */
     .mode-fab{
       position:absolute; left:50%; transform:translateX(-50%); bottom:12px; z-index:12;
-      display:flex; align-items:center; gap:3px; padding:4px;
+      display:flex; align-items:center; gap:3px; padding:4px; max-width:calc(100% - 16px);
       background:rgba(10,16,29,.92); border:1px solid var(--line-2); border-radius:999px;
       box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.06) inset;
       backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     }
     .mode-fab .seg{
-      border:none; background:transparent; color:var(--muted); min-height:40px;
-      min-width:54px; padding:0 12px; border-radius:999px; font-size:12.5px; font-weight:700; white-space:nowrap;
+      border:none; background:transparent; color:var(--muted); min-height:44px;
+      width:48px; min-width:48px; padding:0; border-radius:999px; font-size:12.5px; font-weight:700;
     }
+    .mode-fab .seg .ui-icon{width:18px;height:18px}
     .mode-fab .seg:hover{color:var(--text); background:rgba(148,163,184,.12)}
     .mode-fab .seg.active{
       background:linear-gradient(135deg,var(--accent),#0ea5e9); color:var(--ink);
@@ -171,15 +189,17 @@
     /* ---------- Floating selection tools (Select mode only) ---------- */
     .sel-tools{
       position:absolute; left:50%; transform:translateX(-50%); bottom:72px; z-index:11;
-      display:none; align-items:center; gap:2px; padding:4px;
+      display:none; align-items:center; gap:2px; padding:4px; max-width:calc(100% - 16px);
+      overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:none;
       background:rgba(10,16,29,.94); border:1px solid var(--line-2); border-radius:999px;
       box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.05) inset;
       backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     }
+    .sel-tools::-webkit-scrollbar{display:none}
     .canvas-wrap.select-mode .sel-tools{display:flex}
     .canvas-wrap.select-mode .empty-hint{bottom:132px}
     .sel-tools .btn{
-      width:38px; min-height:38px; padding:0; border:none; border-radius:999px;
+      width:40px; min-height:40px; flex:0 0 40px; padding:0; border:none; border-radius:999px;
       background:transparent; color:var(--muted); box-shadow:none;
     }
     .sel-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
@@ -190,42 +210,39 @@
     }
     .sel-tools svg{width:17px; height:17px; display:block}
 
-    /* ---------- Bottom tab bar ---------- */
-    .tabbar{
-      grid-area:tabbar; display:flex; align-items:stretch; justify-content:space-around;
-      gap:2px; padding:6px 8px calc(6px + var(--sa-bottom));
-      padding-left:calc(8px + var(--sa-left)); padding-right:calc(8px + var(--sa-right));
-      border-width:1px 0 0; border-radius:0; z-index:20;
-    }
+    /* ---------- Tool tabs ---------- */
     .tab{
-      flex:1; min-width:0; border:none; background:transparent; color:var(--dim);
-      display:flex; flex-direction:column; align-items:center; justify-content:center;
-      gap:2px; padding:4px 2px; border-radius:12px; font-size:10.5px; font-weight:700;
+      flex:1; min-width:0; min-height:44px; border:none; background:transparent; color:var(--dim);
+      display:flex; align-items:center; justify-content:center;
+      padding:4px; border-radius:11px;
       transition:color .12s, background .12s; -webkit-tap-highlight-color:transparent;
     }
-    .tab-ico{font-size:20px; line-height:1; display:block}
+    .tab-ico{width:20px;height:20px}
     .tab:hover{color:var(--text); background:rgba(148,163,184,.08)}
-    .tab.active{color:var(--accent); background:rgba(34,211,238,.12)}
+    .tab.active{color:var(--accent); background:rgba(34,211,238,.13)}
 
-    /* ---------- Sidebar: bottom sheet over the canvas ---------- */
+    /* ---------- Sidebar: non-modal bottom sheet / drawer over the canvas ---------- */
     .sidebar{
       position:absolute; left:0; right:0; bottom:0; z-index:30;
-      max-height:min(76%, calc(100% - 64px)); display:flex; flex-direction:column;
+      max-height:min(78%, calc(100% - 16px)); display:flex; flex-direction:column;
       background:linear-gradient(180deg,#0d1524,#080d18); border:1px solid var(--line-2);
       border-bottom:0; border-radius:18px 18px 0 0;
       box-shadow:0 -18px 50px rgba(0,0,0,.55);
-      transform:translateY(calc(100% + 40px)); transition:transform .24s cubic-bezier(.32,.72,.32,1);
-      overflow:hidden; pointer-events:none;
+      transform:translateY(calc(100% + 24px));
+      transition:transform .24s cubic-bezier(.32,.72,.32,1), visibility 0s linear .24s;
+      overflow:hidden; visibility:hidden; pointer-events:none;
     }
-    .sidebar.open{transform:translateY(0); pointer-events:auto}
+    .sidebar.open{transform:translateY(0); visibility:visible; pointer-events:auto;transition-delay:0s}
     .sheet-grabber{flex:0 0 auto; display:flex; justify-content:center; padding:8px 0 2px}
     .sheet-grabber::before{
-      content:""; width:44px; height:4.5px; border-radius:999px; background:#334155; display:block;
+      content:""; width:44px; height:4px; border-radius:999px; background:#41536f; display:block;
     }
-    .tabs{flex:0 0 auto; display:grid; grid-template-columns:repeat(5,1fr); gap:4px; padding:6px 10px}
+    .sheet-nav-row{display:flex;align-items:center;gap:4px;flex:0 0 auto;padding:2px 8px 6px;border-bottom:1px solid rgba(51,65,85,.4)}
+    .tabs{flex:1 1 auto; min-width:0; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px}
+    .sheet-close{flex:0 0 40px;width:40px;min-height:40px;color:var(--muted)}
     .tab-panels{
       flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain;
-      padding:2px 10px 10px; -webkit-overflow-scrolling:touch;
+      padding:8px 10px 10px; -webkit-overflow-scrolling:touch;
     }
     .tab-panel{display:none; min-width:0; overflow-x:hidden}
     .tab-panel.active{display:block}
@@ -284,9 +301,12 @@
     .row + .row{margin-top:7px}
     .tiny{font-size:12px} .muted{color:var(--muted)} .dim{color:var(--dim)} .nowrap{white-space:nowrap}
 
-    /* ---------- Import/export grid ---------- */
-    .io-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; min-width:0}
-    .io-grid .btn{min-height:44px; padding:4px 4px; font-size:11.5px; line-height:1.2; text-align:center; white-space:normal; word-break:normal}
+    /* ---------- Import/export: format names plus compact symbolic actions ---------- */
+    .io-grid{display:grid;gap:6px;min-width:0}
+    .io-row{display:grid;grid-template-columns:minmax(72px,1fr) repeat(4,40px);align-items:center;gap:6px;min-width:0}
+    .io-format{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace}
+    .io-row .btn.small.symbol-only{width:40px;min-width:40px;min-height:40px}
+    .help-actions{display:flex;justify-content:flex-end;margin:0 0 6px}
 
     /* ---------- View toggles ----------
        Each view button shows/hides its own panel independently via a
@@ -305,6 +325,7 @@
        blank half-screen space, and big ones scroll inside the panel. */
     .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
+    .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0}
     .bottom-pane{min-width:0; padding:9px 10px; overflow:auto; -webkit-overflow-scrolling:touch; container-type:inline-size}
     .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2)}
     /* Narrow panes (side-by-side): single scrollable control row */
@@ -392,7 +413,7 @@
     .preset-card-wrap{position:relative}
     .preset-card{
       background:rgba(15,23,42,.95); border:1px solid var(--line-2); border-radius:10px; padding:8px;
-      cursor:pointer; display:flex; flex-direction:column; gap:6px; min-height:90px;
+      cursor:pointer; display:flex; flex-direction:column; gap:6px; min-height:90px; width:100%; color:inherit;
       transition:border-color .12s, transform .06s;
     }
     .preset-card:hover{border-color:var(--accent); transform:translateY(-1px)}
@@ -400,19 +421,21 @@
     .preset-name{font-size:11px; color:#cbd5e1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600}
     .preset-delete{
       position:absolute; top:2px; right:4px; background:rgba(251,113,133,.2); border:none; color:#fb7185;
-      cursor:pointer; font-size:14px; padding:0 5px; border-radius:5px; line-height:1;
+      cursor:pointer; padding:3px; border-radius:6px; line-height:1; width:24px; height:24px; display:grid; place-items:center; z-index:2;
     }
+    .preset-delete .ui-icon{width:14px;height:14px}
     .preset-delete:hover{background:rgba(251,113,133,.4)}
 
     /* ---------- Toasts ---------- */
     .toast-stack{
       position:fixed; right:12px; bottom:calc(78px + var(--sa-bottom)); z-index:70;
-      display:grid; gap:8px; max-width:min(400px,calc(100vw - 24px));
+      display:grid; gap:8px; max-width:min(400px,calc(100vw - 24px)); pointer-events:none;
       right:calc(12px + var(--sa-right));
     }
     .toast{
       background:rgba(15,23,42,.97); border:1px solid var(--line-2); box-shadow:var(--shadow);
       border-radius:12px; padding:10px 12px; color:#e2e8f0; font-size:13px; animation:pop .16s ease-out;
+      transition:opacity .18s ease, transform .18s ease;
     }
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
 
@@ -462,11 +485,10 @@
     *{scrollbar-width:thin; scrollbar-color:#24334d transparent}
 
     /* =====================================================================
-       Mobile (≤950px): tabs live behind the hamburger; the bottom tab bar
-       is hidden to give the canvas full height.
+       Mobile (≤950px): tools live behind the hamburger so the canvas keeps
+       the full available height.
        ===================================================================== */
     @media (max-width:950px){
-      .tabbar{display:none}
       .toast-stack{bottom:calc(72px + var(--sa-bottom))}
       /* Panes are flex columns: title + controls fixed, table area fills
          and scrolls inside the capped height — no dead space */
@@ -485,8 +507,20 @@
       th,td{padding:3px 5px}
       td .matrix-input, th .matrix-label-input{min-height:24px; font-size:12px; padding:2px 4px}
     }
+    /* Phone command bar: two rows of four comfortably sized actions instead
+       of eight narrow buttons whose labels collide. */
+    @media (max-width:700px) and (orientation:portrait){
+      .toolbar{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+      .toolbar .btn{min-height:40px;font-size:12px}
+      .menu-btn{min-height:40px;height:40px}
+      .zoom-controls .btn{min-height:38px}
+      .mode-fab{width:auto}
+      .mode-fab .seg{flex:0 0 48px;min-width:48px;padding:0}
+      .toast-stack{top:calc(160px + var(--sa-top));bottom:auto}
+    }
+
     /* Portrait: canvas on top, panels below — stacked full-width, sized
-       by content (max 50%). The ↔ toggle switches matrix + edge list to
+       by content (max 50%). The split toggle switches matrix + edge list to
        side-by-side (and back). */
     @media (max-width:950px) and (orientation:portrait){
       .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
@@ -505,10 +539,10 @@
     }
 
     /* =====================================================================
-       Tablets / small landscape (561px – 950px): roomier toolbar row.
+       Tablets / large portrait screens (701px – 950px): roomier toolbar row.
        ===================================================================== */
-    @media (min-width:561px) and (max-width:950px){
-      .toolbar{grid-template-columns:repeat(9,minmax(0,1fr))}
+    @media (min-width:701px) and (max-width:950px){
+      .toolbar{grid-template-columns:repeat(7,minmax(0,1fr))}
       .toolbar .btn{font-size:12px}
       .appbar{gap:6px 10px}
     }
@@ -553,17 +587,25 @@
     @media (min-width:951px){
       .app{gap:8px; padding:8px}
       .appbar{flex-wrap:nowrap; gap:10px; padding:7px 10px; border-width:1px; border-radius:var(--radius)}
-      .menu-btn{display:none}
       .brand{font-size:13px}
       .brand-name{display:inline}
       .title-input{flex:0 1 220px; width:min(220px,26vw); min-width:120px}
       .toolbar{display:flex; flex:0 0 auto; margin-left:auto; gap:6px; justify-content:flex-end}
       .toolbar .btn{min-height:32px; padding:0 10px; font-size:12.5px}
-      .toolbar .btn.icon{width:32px; padding:0; font-size:15px}
+      .toolbar .btn.icon,.toolbar .btn.symbol-only{width:32px; min-width:32px; padding:0; font-size:15px; flex:0 0 32px}
       .view-toggle{display:flex; align-items:center; gap:3px; flex:0 0 auto; flex-wrap:wrap}
-      .view-toggle .btn.small{min-height:27px; padding:0 8px; font-size:11.5px}
+      .view-toggle .btn.small{min-height:30px}
+      .view-toggle .btn.small.symbol-only{width:30px;min-width:30px;padding:0}
       .view-toggle.sheet-toggle{display:none}
       .workspace{gap:8px}
+      .sidebar{
+        left:auto;right:0;top:0;bottom:0;width:min(430px,calc(100% - 24px));height:100%;max-height:none;
+        border-width:1px;border-radius:16px 0 0 16px;transform:translateX(calc(100% + 16px));
+        box-shadow:-18px 0 50px rgba(0,0,0,.52);
+      }
+      .sidebar.open{transform:translateX(0)}
+      .sheet-grabber{display:none}
+      .sheet-nav-row{padding:8px}
       .canvas-wrap{border-radius:var(--radius); border-width:1px}
       .mode-fab{bottom:20px}
       .sel-tools{bottom:82px}
@@ -583,23 +625,31 @@
       .table-scroll{max-height:calc(26vh - 58px)}
     }
 
+    /* Compact desktop: the badge is enough branding beside symbolic commands. */
+    @media (min-width:951px) and (max-width:1050px){
+      .brand-name{display:none}
+    }
+
     /* =====================================================================
        Short / landscape screens: tighter bars so the canvas stays usable.
        ===================================================================== */
-    @media (max-height:560px){
+    @media (max-height:560px) and (orientation:landscape){
       .appbar{flex-wrap:nowrap; padding-top:calc(3px + var(--sa-top)); padding-bottom:3px; gap:6px}
       .brand-name{display:none}
       .title-input{flex:0 1 150px; min-width:80px; max-width:150px}
-      .toolbar{display:flex; flex:0 0 auto; grid-template-columns:none; gap:4px; margin-left:auto}
-      .toolbar .btn{min-height:30px; font-size:11px; padding:0 6px}
-      .toolbar .btn.icon{width:32px}
-      .tabbar{padding-top:3px}
-      .tab-ico{font-size:17px}
+      .toolbar{display:flex; flex:0 1 auto; min-width:0; grid-template-columns:none; gap:4px; margin-left:auto; overflow-x:auto; scrollbar-width:none}
+      .toolbar::-webkit-scrollbar{display:none}
+      .toolbar .btn{min-height:30px; font-size:11px; padding:0 6px; flex:0 0 auto}
+      .toolbar .btn.icon,.toolbar .btn.symbol-only{width:32px;min-width:32px;padding:0}
       .tab{padding:2px}
-      .mode-fab .seg{min-height:34px; min-width:44px; padding:0 9px; font-size:11.5px}
+      .mode-fab .seg{width:44px;min-height:36px;min-width:44px;padding:0}
       .mode-fab{bottom:8px}
       .sel-tools{bottom:58px}
       .canvas-wrap.select-mode .empty-hint{bottom:104px}
       .empty-hint{inset:auto 14px 76px 14px}
       .field input:not([type="checkbox"]),.field select,.field textarea{font-size:14px; min-height:30px; padding:5px 8px}
+    }
+
+    @media (prefers-reduced-motion:reduce){
+      *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
     }
