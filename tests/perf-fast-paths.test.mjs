@@ -81,6 +81,7 @@ test('wheel zoom previews on the compositor and commits the viewBox once', async
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
 
   let viewBoxWrites = 0;
@@ -96,11 +97,11 @@ test('wheel zoom previews on the compositor and commits the viewBox once', async
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during the wheel burst');
-  assert.match(svg.style.transform, /^matrix\(/, 'zoom preview rides on a CSS transform');
+  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'zoom preview rides on the scene transform');
 
   await settle(dom.window, 250); // let the commit debounce fire
   assert.equal(viewBoxWrites, 1, 'exactly one viewBox write commits the zoom');
-  assert.equal(svg.style.transform, '', 'preview transform is cleared on commit');
+  assert.equal(scene.getAttribute('transform'), null, 'preview transform is cleared on commit');
   const vb = svg.getAttribute('viewBox').split(' ').map(Number);
   assert.ok(vb[2] < 1000, 'zooming in shrinks the viewBox width');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -111,15 +112,16 @@ test('a pointer gesture during pending zoom adopts the committed camera', async 
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
 
   svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
   await nextFrame(dom.window);
-  assert.match(svg.style.transform, /^matrix\(/);
+  assert.match(scene.getAttribute('transform'), /^matrix\(/);
 
   // Any pointer gesture must flush the preview before doing hit-test math.
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
-  assert.equal(svg.style.transform, '', 'pointerdown flushes the zoom preview');
+  assert.equal(scene.getAttribute('transform'), null, 'pointerdown flushes the zoom preview');
   assert.equal(svg.getAttribute('viewBox').split(' ')[2], String(1000 * 0.88), 'flushed preview becomes the real viewBox');
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 100, clientY: 100 });
   assert.deepEqual(errors.map(error => error.message), []);

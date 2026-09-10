@@ -505,7 +505,7 @@
   });
   svg.addEventListener('pointermove', ev => {
     updatePointer(ev);
-    // Pending wheel-zoom distorts clientToWorld (the preview lives in a CSS
+    // Pending wheel-zoom distorts clientToWorld (the preview lives in a scene
     // transform, not the viewBox). Commit it before any gesture math.
     if(zoomPreview) flushZoomPreview();
     if(pinch){ updatePinch(); return; }
@@ -693,7 +693,7 @@
   svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, {passive:false});
   // === Composited wheel zoom ===
   // Changing the SVG viewBox re-lays-out and re-rasterizes every vector
-  // element. Wheel events only drive a GPU-composited CSS transform preview
+  // element. Wheel events only drive a composited scene-transform preview
   // (the same mechanism panning uses); the real viewBox is applied exactly
   // once, when the wheel settles.
   let zoomPreview = null; // {base, preview, rect, frame, timer}
