@@ -421,19 +421,25 @@
     const tx = base.x - scale * preview.x;
     const ty = base.y - scale * preview.y;
 
-    // The oversized grid is rasterized once, then moved/scaled by the compositor.
-    // Repainting four CSS gradients every frame was the largest navigation cost.
+    // Scene: one world-space transform on the promoted <g> parent is far cheaper
+    // than rewriting the root viewBox (which re-rasterizes every SVG child), and
+    // it avoids compositing the whole <svg> root — the source of the one-frame
+    // zoom flash at gesture end. The scene stays clipped to the viewBox
+    // (overflow:hidden), so off-camera content is never rasterized.
+    sceneLayer.setAttribute('transform', `matrix(${scale} 0 0 ${scale} ${tx} ${ty})`);
+
+    // Grid: the oversized grid layer is rasterized once, then moved/scaled by the
+    // compositor. Repainting four CSS gradients every frame was the largest
+    // navigation cost, so the grid rides a pixel-space CSS transform instead.
     const pixelScale = Math.min(viewport.width / base.w, viewport.height / base.h);
     const offsetX = (viewport.width - base.w * pixelScale) / 2;
     const offsetY = (viewport.height - base.h * pixelScale) / 2;
     const screenX = (1 - scale) * offsetX + pixelScale * (tx + (scale - 1) * base.x);
     const screenY = (1 - scale) * offsetY + pixelScale * (ty + (scale - 1) * base.y);
-    const transform = `matrix(${scale},0,0,${scale},${screenX},${screenY})`;
-    svg.style.transform = transform;
-    gridLayer.style.transform = transform;
+    gridLayer.style.transform = `matrix(${scale},0,0,${scale},${screenX},${screenY})`;
   }
   function clearFastPanTransform(){
-    svg.style.transform = '';
+    sceneLayer.removeAttribute('transform');
     gridLayer.style.transform = '';
   }
   function hexToRgba(hex, alpha){

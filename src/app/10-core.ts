@@ -30,6 +30,7 @@
   const svg = $('#graphCanvas');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
+  const sceneLayer = $('#sceneLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');

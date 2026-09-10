@@ -250,6 +250,7 @@ test('pan uses a scene preview and commits the viewBox only once', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
   dom.window.document.querySelector('#modeMove').click();
 
@@ -265,11 +266,11 @@ test('pan uses a scene preview and commits the viewBox only once', async () => {
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pan');
-  assert.match(svg.style.transform, /^matrix\(/);
+  assert.match(scene.getAttribute('transform'), /^matrix\(/);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(svg.style.transform, '');
+  assert.equal(scene.getAttribute('transform'), null);
   assert.equal(svg.getAttribute('viewBox'), '-580 -370 1000 660');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
@@ -279,6 +280,7 @@ test('pinch also keeps the root viewBox frozen until gesture end', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
 
   let viewBoxWrites = 0;
@@ -294,11 +296,11 @@ test('pinch also keeps the root viewBox frozen until gesture end', async () => {
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pinch');
-  assert.match(svg.style.transform, /^matrix\(/);
+  assert.match(scene.getAttribute('transform'), /^matrix\(/);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   assert.equal(viewBoxWrites, 1);
-  assert.equal(svg.style.transform, '');
+  assert.equal(scene.getAttribute('transform'), null);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
