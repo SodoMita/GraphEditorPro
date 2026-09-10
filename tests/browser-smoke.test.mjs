@@ -271,6 +271,9 @@ test('pan keeps its promoted matrix stable while the viewBox commits', async () 
   assert.equal(camera.getAttribute('transform'), 'matrix(1 0 0 1 80 40)');
   assert.equal(scene.getAttribute('transform'), null, 'no compensation is needed before commit');
   assert.equal(grid.style.transform, '', 'the grid never uses a temporary compositor transform');
+  const pattern = dom.window.document.querySelector('#gridPattern');
+  const patternWidthBefore = pattern.getAttribute('width');
+  assert.ok(patternWidthBefore, 'the world-locked grid pattern is initialized');
   const previewMatrix = camera.getAttribute('transform');
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
@@ -278,6 +281,7 @@ test('pan keeps its promoted matrix stable while the viewBox commits', async () 
   assert.equal(camera.getAttribute('transform'), previewMatrix, 'the promoted property is untouched at the commit boundary');
   assert.equal(scene.getAttribute('transform'), 'matrix(1 0 0 1 -80 -40)', 'the inner inverse cancels the persistent outer matrix');
   assert.equal(svg.getAttribute('viewBox'), '-580 -370 1000 660');
+  assert.equal(pattern.getAttribute('width'), patternWidthBefore, 'panning never rebuilds the world-locked grid pattern');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

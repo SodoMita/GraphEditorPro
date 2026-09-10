@@ -200,41 +200,50 @@ test('grid decimates instead of clamping at low zoom, staying world-locked', asy
   const doc = dom.window.document;
   const svg = doc.querySelector('#graphCanvas');
   setCanvasRect(svg);
-  const grid = doc.getElementById('gridLayer');
+  const gridRect = doc.getElementById('gridRect');
+  assert.equal(gridRect.parentNode.getAttribute('id'), 'sceneLayer', 'the grid rides the camera scene, so grid and graph are painted by one pass');
 
   const zoomTo = async width => {
     const camW = doc.getElementById('cameraW');
     camW.value = String(width);
     camW.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await nextFrame(dom.window);
-    return grid.style.backgroundSize.split(',').map(layer => layer.trim().split(/\s+/).map(parseFloat));
+    const pattern = doc.getElementById('gridPattern');
+    // Pattern geometry is in world units: tile = major period, minor step is
+    // exposed via data attributes.
+    return {
+      minor: parseFloat(pattern.getAttribute('data-minor-x')),
+      major: parseFloat(pattern.getAttribute('width')),
+      paths: pattern.querySelectorAll('path').length,
+    };
   };
 
   // 1000×660 canvas over a 1000-wide viewBox → scale 1: base grid unchanged.
   const at1000 = await zoomTo(1000);
-  assert.equal(at1000[0][0], 40, 'minor cell at 100% is the raw grid size');
-  assert.equal(at1000[2][0], 200, 'major cell is every 5th minor at 100%');
+  assert.equal(at1000.minor, 40, 'minor cell at 100% is the raw grid size');
+  assert.equal(at1000.major, 200, 'major cell is every 5th minor at 100%');
 
-  // scale 1/12: raw minor cell 3.33px < 8px minimum → decimate to every 3rd cell
-  // (120 world → 10px on screen); majors stay on every 2nd decimated step (240 → 20px).
+  // scale 1/12: raw minor cell 3.33px < 8px minimum → decimate to every 3rd
+  // cell (120 world → 10px on screen); majors on every 2nd decimated step
+  // (240 world → 20px on screen).
   const at12000 = await zoomTo(12000);
-  assert.equal(at12000[0][0], 10, 'minor grid decimates to a whole world multiple, not a 4px clamp');
-  assert.equal(at12000[0][1], 10);
-  assert.equal(at12000[2][0], 20, 'major grid remains an integer multiple of the minor step');
-  assert.ok(at12000[2][0] >= 2 * at12000[0][0], 'majors are at least 2× the minor spacing');
+  assert.equal(at12000.minor, 120, 'minor grid decimates to a whole world multiple, not a 4px clamp');
+  assert.equal(at12000.major, 240, 'major grid remains an integer multiple of the minor step');
+  assert.ok(at12000.major >= 2 * at12000.minor, 'majors are at least 2× the minor spacing');
 
-  // scale 1/20: raw minor 2px → every 4th cell (160 world → 8px), majors every 320 → 16px.
+  // scale 1/20: raw minor 2px → every 4th cell (160 world → 8px), majors 320 → 16px.
   const at20000 = await zoomTo(20000);
-  assert.equal(at20000[0][0], 8);
-  assert.equal(at20000[2][0], 16);
+  assert.equal(at20000.minor, 160);
+  assert.equal(at20000.major, 320);
 
   // Every decimated cell is an integer multiple of the raw 40-unit grid, so
   // rendered lines stay anchored to world coordinates at any zoom (the old
   // hard 4px clamp rescaled the pattern off the world grid, which made it
   // drift diagonally relative to the nodes).
-  const worldStep = (layers, width) => layers[0][0] * width / 1000; // cellPx / scale, scale = 1000/width
-  assert.equal(worldStep(at12000, 12000) / 40, 3, '12000 zoom decimates to every 3rd grid cell');
-  assert.equal(worldStep(at20000, 20000) / 40, 4, '20000 zoom decimates to every 4th grid cell');
+  assert.equal(at12000.minor / 40, 3, '12000 zoom decimates to every 3rd grid cell');
+  assert.equal(at20000.minor / 40, 4, '20000 zoom decimates to every 4th grid cell');
+  // One tile: minor interior lines (one combined path), plus two major paths.
+  assert.equal(at1000.paths, 3, 'the pattern holds the minor lines plus the two major axes');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
