@@ -49,6 +49,7 @@ function dispatchPointer(window, target, type, options) {
     button: options.button ?? 0,
     clientX: options.clientX,
     clientY: options.clientY,
+    shiftKey: Boolean(options.shiftKey), // shift is the add-to-selection modifier
   });
   Object.defineProperties(event, {
     pointerId: { value: options.pointerId },
@@ -59,6 +60,28 @@ function dispatchPointer(window, target, type, options) {
 
 const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30));
 const settle = (window, ms) => new Promise(resolve => window.setTimeout(resolve, ms));
+
+// The tip highlight is the arrowhead's own triangle, enlarged about its centre
+// and drawn behind it — so both triangles must share a centroid. Averaging the
+// three points is enough: the accent's centroid is the tip's by construction.
+function pointsOf(polygon) {
+  return polygon.getAttribute('points').trim().split(/\s+/).map(part => part.split(',').map(Number));
+}
+function centroidOf(polygon) {
+  const points = pointsOf(polygon);
+  return points.reduce((acc, [x, y]) => [acc[0] + x / points.length, acc[1] + y / points.length], [0, 0]);
+}
+function assertCentresMatch(accent, shape) {
+  const [ax, ay] = centroidOf(accent);
+  const [sx, sy] = centroidOf(shape);
+  assert.ok(Math.abs(ax - sx) < 1e-6 && Math.abs(ay - sy) < 1e-6,
+    `accent centre (${ax}, ${ay}) must be anchored to the shape centre (${sx}, ${sy})`);
+  // Same shape, just bigger: every corner of the accent is further from that
+  // shared centre than the corner it grows out of.
+  const reach = ([cx, cy], points) => Math.max(...points.map(([x, y]) => Math.hypot(x - cx, y - cy)));
+  assert.ok(reach([ax, ay], pointsOf(accent)) > reach([sx, sy], pointsOf(shape)),
+    'the tip accent is a larger copy of the tip');
+}
 
 // === Camera contract ===
 // The root viewBox is a fixed world reference frame written once; the whole
@@ -252,24 +275,99 @@ test('click selection toggles classes without a full re-render and stays consist
   await nextFrame(dom.window);
   assert.equal(nodeA.classList.contains('selected'), true, 'node gets the selected class on click');
 
-  // Selecting the edge paints its arrow in the accent color.
+  // Selecting an edge must not repaint its tip. The highlight sits BEHIND the
+  // edge — a wide accent line on the edge's own path plus a larger copy of the
+  // tip triangle — so the edge keeps its colours and still shows what is marked.
   dispatchPointer(dom.window, edgeE1, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
   await nextFrame(dom.window);
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientY: 330, clientX: 500 });
   await nextFrame(dom.window);
+  const line = edgeE1.querySelector('.edge-line');
+  const ring = edgeE1.querySelector('.edge-sel');
+  const tipRing = edgeE1.querySelector('.edge-sel-arrow');
+  const order = [...edgeE1.children];
   assert.equal(edgeE1.classList.contains('selected'), true);
   assert.equal(nodeA.classList.contains('selected'), false, 'replace-mode selection drops the node');
-  assert.equal(arrow.getAttribute('fill'), '#22d3ee', 'selected arrow uses the accent color');
+  assert.equal(arrow.getAttribute('fill'), line.getAttribute('stroke'), 'selected arrow keeps the edge colour');
+  assert.ok(ring, 'selection adds an accent behind the edge');
+  assert.equal(ring.getAttribute('d'), line.getAttribute('d'), 'the accent reuses the edge path as-is');
+  assert.ok(Number(ring.getAttribute('stroke-width')) > Number(line.getAttribute('stroke-width')),
+    'the accent is a wide line rather than an outline of the edge');
+  assert.equal(order.indexOf(ring) < order.indexOf(line), true, 'the accent is behind the line');
+  assert.ok(tipRing, 'selection adds an accent behind the tip');
+  assert.equal(order.indexOf(tipRing) < order.indexOf(arrow), true, 'the tip accent is behind the arrowhead');
+  assertCentresMatch(tipRing, arrow);
 
-  // Deselect via empty canvas restores the regular edge color.
-  const line = edgeE1.querySelector('.edge-line');
-  const lineStroke = line.getAttribute('stroke');
+  // Deselect via empty canvas drops the accent and leaves the edge paint alone.
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 30, clientY: 30 });
   await nextFrame(dom.window);
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 30, clientY: 30 });
   await nextFrame(dom.window);
   assert.equal(edgeE1.classList.contains('selected'), false);
-  assert.equal(arrow.getAttribute('fill'), lineStroke, 'deselected arrow returns to the edge color');
+  assert.equal(arrow.getAttribute('fill'), line.getAttribute('stroke'), 'deselected arrow still uses the edge colour');
+  assert.equal(edgeE1.querySelectorAll('.edge-sel, .edge-sel-arrow').length, 0,
+    'unselected edges carry no accent elements');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('the selected-edge highlight rides the edge through a group drag', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const { window, document } = dom.window;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  const edgeE1 = document.getElementById('edge-e1');
+  const nodeA = document.getElementById('node-a');
+  const nodeB = document.getElementById('node-b');
+
+  // Select the edge, then add both of its endpoints to the selection, so the
+  // drag that follows moves the whole edge rather than one end of it.
+  dispatchPointer(window, edgeE1, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 500, clientY: 330 });
+  await nextFrame(window);
+  for (const [id, x] of [['node-a', 300], ['node-b', 700]]) {
+    dispatchPointer(window, document.getElementById(id), 'pointerdown', { pointerId: 1, clientX: x, clientY: 330, shiftKey: true });
+    await nextFrame(window);
+    dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: x, clientY: 330 });
+    await nextFrame(window);
+  }
+  const ring = edgeE1.querySelector('.edge-sel');
+  const tipRing = edgeE1.querySelector('.edge-sel-arrow');
+  assert.ok(ring && tipRing, 'the selected edge carries both accent parts');
+
+  dispatchPointer(window, nodeA, 'pointerdown', { pointerId: 1, clientX: 300, clientY: 330, shiftKey: true });
+  await nextFrame(window);
+  for (let step = 1; step <= 5; step++) {
+    dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 300 + step * 12, clientY: 330 + step * 24 });
+    await nextFrame(window);
+    // The drag patches edge geometry in place and skips the release re-render,
+    // so this fast path is the only writer able to keep the highlight on screen.
+    assert.equal(ring.getAttribute('d'), edgeE1.querySelector('.edge-line').getAttribute('d'),
+      `frame ${step}: the accent line follows the moving edge instead of being left behind`);
+    assertCentresMatch(tipRing, edgeE1.querySelector('.edge-arrow'));
+  }
+  assert.notEqual(ring.getAttribute('d'), 'M -173 0 L 157 0', 'the accent no longer sits at the old position');
+
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 360, clientY: 450 });
+  await nextFrame(window);
+  assert.equal(ring.getAttribute('d'), edgeE1.querySelector('.edge-line').getAttribute('d'),
+    'the release that skips the re-render still leaves the accent on the edge');
+
+  // A selection change is applied by the delta path, with no render pass at all:
+  // the accent has to be rebuilt from the edge's current geometry.
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 30, clientY: 620 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 30, clientY: 620 });
+  await nextFrame(window);
+  assert.equal(edgeE1.querySelectorAll('.edge-sel, .edge-sel-arrow').length, 0, 'deselect removes both accent parts');
+  dispatchPointer(window, edgeE1, 'pointerdown', { pointerId: 1, clientX: 560, clientY: 420 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 560, clientY: 420 });
+  await nextFrame(window);
+  assert.equal(edgeE1.querySelector('.edge-sel').getAttribute('d'), edgeE1.querySelector('.edge-line').getAttribute('d'),
+    're-selecting after a drag highlights where the edge is now, not where it was');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

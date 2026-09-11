@@ -128,11 +128,9 @@
       if(!es.has(id)){
         const el = edgeEl(id); if(!el) continue;
         toggleClass(el, 'selected', false);
-        const e = edgeById(id);
-        const ev = e ? edgeRenderStyleC(e) : null;
-        if(e) syncEdgeSelRing(el, e, ev, null, false);
-        const arrow = (el as any).__arrow;
-        if(arrow && e && e.directed && ev) setAttr(arrow, 'fill', ev.color);
+        // Dropping the accent is all it takes: the edge line and its tip were
+        // never repainted, so the arrow keeps the colour the render gave it.
+        syncEdgeSelRing(el, edgeById(id), null, null, false);
       }
     }
     for(const id of es){
@@ -140,9 +138,10 @@
         const el = edgeEl(id); if(!el) continue;
         toggleClass(el, 'selected', true);
         const e = edgeById(id);
-        if(e){ const v = edgeRenderStyleC(e); syncEdgeSelRing(el, e, v, null, true); }
-        const arrow = (el as any).__arrow;
-        if(arrow && e && e.directed) setAttr(arrow, 'fill', '#22d3ee');
+        // Stroke width of the accent follows the edge's own width, so the
+        // merged style is read here (and cached for this pass) only for the
+        // edges whose selection actually changed.
+        if(e) syncEdgeSelRing(el, e, edgeRenderStyleC(e), null, true);
       }
     }
     domSelectedNodes = ns; domSelectedEdges = es;
