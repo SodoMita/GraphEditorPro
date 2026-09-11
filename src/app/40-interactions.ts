@@ -55,8 +55,7 @@
     if(pan){
       state.viewBox = {...pan.previewViewBox};
       pan = null;
-      rebaseCameraTransform();
-      applyViewBox();
+      applyCamera();
     }
     pendingEdgeFrom = null; pendingNodeTap = null;
     const c = centerClient(a,b);
@@ -84,7 +83,7 @@
     };
     if(!pinch.frame){
       pinch.frame = true;
-      requestAnimationFrame(() => { if(pinch){ pinch.frame = false; applyPreviewViewBox(pinch.previewViewBox, pinch.startViewBox, pinch.rect); } });
+      requestAnimationFrame(() => { if(pinch){ pinch.frame = false; applyPreviewCamera(pinch.previewViewBox, pinch.rect); } });
     }
   }
   function endPinch(){
@@ -92,8 +91,7 @@
     const done = pinch;
     state.viewBox = {...done.previewViewBox};
     pinch = null;
-    rebaseCameraTransform();
-    applyViewBox();
+    applyCamera();
     $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction');
     gestureActive = false;
     saveSoon();
@@ -505,14 +503,14 @@
   });
   svg.addEventListener('pointermove', ev => {
     updatePointer(ev);
-    // Pending wheel-zoom distorts clientToWorld (the preview lives in a scene
-    // transform, not the viewBox). Commit it before any gesture math.
+    // A pending wheel-zoom distorts clientToWorld (the device camera is the
+    // preview, not state.viewBox). Commit it before any gesture math.
     if(zoomPreview) flushZoomPreview();
     if(pinch){ updatePinch(); return; }
     if(pan){
-      // Keep the real SVG viewBox frozen for the whole gesture. Updating it on
-      // every pointer event forces a full vector layout/paint. Instead, move one
-      // scene group with a temporary matrix and commit the viewBox on pointerup.
+      // Pan only moves the logical camera and re-applies the composited camera
+      // matrix: the root viewBox never changes, so no style or layout work is
+      // triggered over the scene while the pointer moves.
       const rect = pan.rect || svg.getBoundingClientRect();
       const start = pan.startViewBox;
       const scale = Math.min(rect.width / start.w, rect.height / start.h);
@@ -524,7 +522,7 @@
         requestAnimationFrame(() => {
           if(pan){
             pan.frame = false;
-            applyPreviewViewBox(pan.previewViewBox, pan.startViewBox, pan.rect);
+            applyPreviewCamera(pan.previewViewBox, pan.rect);
           }
         });
       }
@@ -646,8 +644,7 @@
       const completedPan = pan;
       state.viewBox = {...completedPan.previewViewBox};
       pan = null;
-      rebaseCameraTransform();
-      applyViewBox();
+      applyCamera();
       $('#canvasWrap').classList.remove('panning'); $('#canvasWrap').classList.remove('fast-interaction'); saveSoon(); setStatusOnly();
     }
     gestureActive = false;
@@ -691,14 +688,14 @@
   }
 
   svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, {passive:false});
-  // === Composited wheel zoom ===
-  // Changing the SVG viewBox re-lays-out and re-rasterizes every vector
-  // element. Wheel events only drive a composited scene-transform preview
-  // (the same mechanism panning uses); the real viewBox is applied exactly
-  // once, when the wheel settles.
-  let zoomPreview = null; // {base, preview, rect, frame, timer}
-  // Debounce the full-scene viewBox commit: a rapid scroll burst should resolve
-  // to a single repaint once the wheel goes idle, not one per ~140ms pause.
+  // === Wheel zoom ===
+  // Wheel events update the logical camera and re-apply the composited camera
+  // matrix (the same mechanism panning uses), so the wheel never re-lays-out
+  // the scene. The camera is then committed to state exactly once, when the
+  // wheel settles.
+  let zoomPreview = null; // {preview, rect, frame, timer}
+  // Debounce the commit: a rapid scroll burst should settle (persist the camera,
+  // refresh the numeric camera fields) once the wheel goes idle, not per pause.
   const ZOOM_COMMIT_DELAY = 220;
   function zoomAt(factor, clientX, clientY){
     // A wheel arriving mid pan/pinch would fight the gesture's transform —
@@ -706,12 +703,10 @@
     if(pan){
       state.viewBox = {...pan.previewViewBox};
       pan = null;
-      rebaseCameraTransform();
-      applyViewBox();
+      applyCamera();
       $('#canvasWrap').classList.remove('panning');
     }
     if(pinch) endPinch();
-    const base = zoomPreview ? zoomPreview.base : {...state.viewBox};
     const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
     const r = zoomPreview ? zoomPreview.rect : svg.getBoundingClientRect();
     const anchor = clientToWorld(clientX, clientY, cur, r);
@@ -727,14 +722,14 @@
       w:nw,
       h:nh
     };
-    if(!zoomPreview){ zoomPreview = { base, preview, rect: r, frame: false, timer: null }; $('#canvasWrap').classList.add('fast-interaction'); }
+    if(!zoomPreview){ zoomPreview = { preview, rect: r, frame: false, timer: null }; $('#canvasWrap').classList.add('fast-interaction'); }
     else zoomPreview.preview = preview;
     if(!zoomPreview.frame){
       zoomPreview.frame = true;
       requestAnimationFrame(() => {
         if(!zoomPreview) return;
         zoomPreview.frame = false;
-        applyPreviewViewBox(zoomPreview.preview, zoomPreview.base, zoomPreview.rect);
+        applyPreviewCamera(zoomPreview.preview, zoomPreview.rect);
       });
     }
     clearTimeout(zoomPreview.timer);
@@ -745,8 +740,7 @@
     const z = zoomPreview; zoomPreview = null;
     clearTimeout(z.timer);
     state.viewBox = {...z.preview};
-    rebaseCameraTransform();
-    applyViewBox();
+    applyCamera();
     $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
   }

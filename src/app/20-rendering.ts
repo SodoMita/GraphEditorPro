@@ -383,7 +383,7 @@
   function markSidebarDirty(){ sidebarDirty = true; }
   function renderCanvas(){
     beginRenderPass();
-    applyViewBox();
+    applyCamera();
     const paths = state.nodes.length;
     $('#canvasWrap').classList.toggle('empty', paths === 0);
     setText($('#statsPill'), I18N.t('n_nodes_m_edges', {n: state.nodes.length, m: state.edges.length}));
@@ -405,78 +405,71 @@
     if(state.mode === 'edge') return I18N.t('edge_mode_drag');
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: state.selectTool});
   }
-  function applyViewBox(){
-    // Commit any in-flight composited zoom preview before the camera changes
-    // underneath it (fit view, camera inputs, undo, import, ...).
+  function applyCamera(){
+    // Adopt any in-flight zoom preview before the camera changes underneath it
+    // (fit view, camera inputs, undo, import, ...).
     flushZoomPreview();
-    setAttr(svg, 'viewBox', `${state.viewBox.x} ${state.viewBox.y} ${state.viewBox.w} ${state.viewBox.h}`);
+    applyCameraTransform(state.viewBox);
     updateGridBackground(state.viewBox);
     syncCameraInputs();
   }
 
-  // The promoted camera layer is never reset when a gesture ends. Resetting a
-  // compositor transform in the same frame as changing the root viewBox lets
-  // some browsers display both changes for one frame (the movement/zoom is
-  // applied twice, then snaps back). Instead, an inner SVG group receives the
-  // exact inverse of the outer matrix while the viewBox commits. The outer
-  // compositor property does not change at that boundary, and outer × inner is
-  // identity under the new viewBox.
-  const IDENTITY_CAMERA_MATRIX = {scale:1, tx:0, ty:0};
-  let committedCameraMatrix = {...IDENTITY_CAMERA_MATRIX};
-  let visualCameraMatrix = {...IDENTITY_CAMERA_MATRIX};
+  // === Camera ===
+  // The root viewBox is a fixed world reference frame, written once. The logical
+  // camera (state.viewBox) is applied as a matrix on the promoted #cameraLayer,
+  // which holds the grid and the whole graph scene. Gesture previews and
+  // committed cameras therefore share ONE mechanism: the composited property
+  // simply moves, and a commit is the same write with the final value (a no-op
+  // when the preview already reached it), so there is no mechanism handoff — and
+  // no handoff boundary — anywhere in navigation.
+  //
+  // Never drive the camera through the root viewBox: rewriting it re-resolves
+  // style and re-runs layout for every node, edge, label and grid cell in the
+  // scene on each camera update (measured ~13 ms of style+layout per update at
+  // 100 nodes and ~19 ms at 1200 nodes on a software-raster Chromium, i.e. the
+  // main thread saturated for the whole gesture), while a promoted transform
+  // update measured ~0.1 ms at every size.
+  const REFERENCE_VIEWBOX = {x:-500, y:-330, w:1000, h:660};
+  let referenceViewBoxInstalled = false;
   function cameraMatrixText(matrix){
     const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
     return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
   }
-  function composeCameraMatrices(outer, inner){
-    return {
-      scale:outer.scale * inner.scale,
-      tx:outer.scale * inner.tx + outer.tx,
-      ty:outer.scale * inner.ty + outer.ty
-    };
-  }
-  function inverseCameraMatrix(matrix){
-    const scale = 1 / matrix.scale;
-    return {scale, tx:-matrix.tx * scale, ty:-matrix.ty * scale};
-  }
-  function viewBoxDeltaMatrix(preview, base, viewport){
-    // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings. This
-    // remains exact even when camera width/height or the viewport aspect ratio
-    // differ (fit view and numeric camera controls can both do that).
+  function cameraDeltaMatrix(camera, base, viewport){
+    // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings (the
+    // reference frame and the camera). This stays exact even when camera
+    // width/height or the viewport aspect ratio differ, which fit view and the
+    // numeric camera controls both produce.
     const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
-    const previewPixels = Math.min(viewport.width / preview.w, viewport.height / preview.h);
-    const scale = previewPixels / basePixels;
+    const cameraPixels = Math.min(viewport.width / camera.w, viewport.height / camera.h);
+    const scale = cameraPixels / basePixels;
     const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
     const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
-    const previewOffsetX = (viewport.width - preview.w * previewPixels) / 2;
-    const previewOffsetY = (viewport.height - preview.h * previewPixels) / 2;
+    const cameraOffsetX = (viewport.width - camera.w * cameraPixels) / 2;
+    const cameraOffsetY = (viewport.height - camera.h * cameraPixels) / 2;
     return {
       scale,
-      tx:base.x + (previewOffsetX - baseOffsetX) / basePixels - scale * preview.x,
-      ty:base.y + (previewOffsetY - baseOffsetY) / basePixels - scale * preview.y
+      tx:base.x + (cameraOffsetX - baseOffsetX) / basePixels - scale * camera.x,
+      ty:base.y + (cameraOffsetY - baseOffsetY) / basePixels - scale * camera.y
     };
   }
-  function applyPreviewViewBox(preview, base=state.viewBox, rect=null){
-    const viewport = rect || svg.getBoundingClientRect();
-    const delta = viewBoxDeltaMatrix(preview, base, viewport);
-    visualCameraMatrix = composeCameraMatrices(delta, committedCameraMatrix);
-    cameraLayer.setAttribute('transform', cameraMatrixText(visualCameraMatrix));
-
-    // The viewport-sized CSS grid updates directly. There is deliberately no
-    // grid transform to clear at release, so it cannot show a stale transformed
-    // frame over the newly committed camera.
-    updateGridBackground(preview, viewport);
-  }
-  function rebaseCameraTransform(){
-    // Rebase without touching cameraLayer: changing only the non-promoted inner
-    // group together with the root viewBox makes the handoff visually atomic.
-    committedCameraMatrix = {...visualCameraMatrix};
-    const compensation = inverseCameraMatrix(committedCameraMatrix);
-    if(Math.abs(compensation.scale - 1) < 1e-12 && Math.abs(compensation.tx) < 1e-12 && Math.abs(compensation.ty) < 1e-12){
-      sceneLayer.removeAttribute('transform');
-    } else {
-      sceneLayer.setAttribute('transform', cameraMatrixText(compensation));
+  function applyCameraTransform(camera=state.viewBox, rect=null){
+    // The reference frame does not depend on the viewport, so it is installed
+    // even when the canvas has no size yet (hidden tab, pre-layout render).
+    if(!referenceViewBoxInstalled){
+      referenceViewBoxInstalled = true;
+      setAttr(svg, 'viewBox', `${REFERENCE_VIEWBOX.x} ${REFERENCE_VIEWBOX.y} ${REFERENCE_VIEWBOX.w} ${REFERENCE_VIEWBOX.h}`);
     }
+    const viewport = rect || svg.getBoundingClientRect();
+    if(!viewport.width || !viewport.height) return null;
+    // Always derived from the fixed reference frame, never composed with the
+    // previous frame's matrix, so no drift can accumulate across gestures.
+    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, viewport)));
+    return viewport;
+  }
+  function applyPreviewCamera(preview, rect=null){
+    const viewport = applyCameraTransform(preview, rect);
+    if(viewport) updateGridBackground(preview, viewport);
   }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
@@ -499,14 +492,11 @@
 
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
-    // The grid renders as a world-anchored SVG pattern (#gridRect inside
-    // #sceneLayer), so grid and graph share one paint pipeline: any camera
-    // change — gesture preview or commit — updates both atomically. The
-    // former CSS-background grid on a separate div was a second, independent
-    // paint system whose composited layer updates could land a frame after
-    // the SVG paint, displaying the old camera for exactly one frame at
-    // pan/zoom begin and end. The div now only carries the static background
-    // color.
+    // The grid renders as a world-anchored SVG pattern (#gridRect inside the
+    // camera scene), so the grid rides the camera matrix and is painted by the
+    // same raster as the graph. A viewport-sized CSS-background grid on a layer
+    // of its own was a second paint system whose updates could land a frame off
+    // the graph's; the div now only carries the static background color.
     //
     // Zoom-adaptive grid: when a cell would shrink below the readable minimum
     // in screen pixels, the grid decimates to every k-th cell. Integer

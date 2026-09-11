@@ -72,6 +72,57 @@ function dispatchPointer(window, target, type, options) {
 
 const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30));
 
+// === Camera contract ===
+// The root viewBox is a fixed world reference frame written once; the camera
+// lives in a single matrix on #cameraLayer (which holds the grid and the graph)
+// for gesture previews AND for the committed camera. These helpers re-derive
+// that mapping independently of the implementation.
+const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
+const VIEWPORT = { width: 1000, height: 660 };
+
+function cameraScale(camera) {
+  const match = camera.getAttribute('transform')?.match(/^matrix\(([^)]+)\)$/);
+  assert.ok(match, `expected a camera matrix on #${camera.id}`);
+  return match[1].trim().split(/[ ,]+/).map(Number)[0];
+}
+
+function assertCameraRendersViewBox(camera, viewBox, viewport = VIEWPORT) {
+  const match = camera.getAttribute('transform')?.match(/^matrix\(([^)]+)\)$/);
+  assert.ok(match, `expected a camera matrix on #${camera.id}`);
+  const [scale, skewX, skewY, , tx, ty] = match[1].trim().split(/[ ,]+/).map(Number);
+  assert.equal(skewX, 0, 'the camera matrix has no rotation');
+  assert.equal(skewY, 0, 'the camera matrix has no rotation');
+  const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
+  const baseOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
+  const baseOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
+  // user space -> screen space is the fixed reference frame mapped with
+  // preserveAspectRatio="xMidYMid meet": subtract the reference origin first.
+  const toClient = (x, y) => ({
+    x: (scale * x + tx - REFERENCE_VIEWBOX.x) * basePixels + baseOffsetX,
+    y: (scale * y + ty - REFERENCE_VIEWBOX.y) * basePixels + baseOffsetY,
+  });
+  const cameraPixels = Math.min(viewport.width / viewBox.w, viewport.height / viewBox.h);
+  const offsetX = (viewport.width - viewBox.w * cameraPixels) / 2;
+  const offsetY = (viewport.height - viewBox.h * cameraPixels) / 2;
+  const topLeft = toClient(viewBox.x, viewBox.y);
+  const bottomRight = toClient(viewBox.x + viewBox.w, viewBox.y + viewBox.h);
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  assert.ok(near(topLeft.x, offsetX) && near(topLeft.y, offsetY),
+    `camera top-left (${topLeft.x}, ${topLeft.y}) must land on the letterboxed corner (${offsetX}, ${offsetY})`);
+  assert.ok(near(bottomRight.x, viewport.width - offsetX) && near(bottomRight.y, viewport.height - offsetY),
+    `camera bottom-right (${bottomRight.x}, ${bottomRight.y}) must land on the letterboxed corner`);
+}
+
+function trackViewBoxWrites(svg) {
+  const writes = { count: 0 };
+  const setAttribute = svg.setAttribute.bind(svg);
+  svg.setAttribute = (name, value) => {
+    if (name === 'viewBox') writes.count++;
+    return setAttribute(name, value);
+  };
+  return writes;
+}
+
 test('generated page initializes without runtime errors', async () => {
   const { dom, errors } = createEditorDom();
   await new Promise(resolve => dom.window.setTimeout(resolve, 50));
@@ -246,7 +297,7 @@ test('large edge lists render in bounded pages', async () => {
   dom.window.close();
 });
 
-test('pan keeps its promoted matrix stable while the viewBox commits', async () => {
+test('pan moves only the composited camera and never rewrites the root viewBox', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
@@ -254,22 +305,18 @@ test('pan keeps its promoted matrix stable while the viewBox commits', async () 
   const scene = dom.window.document.querySelector('#sceneLayer');
   const grid = dom.window.document.querySelector('#gridLayer');
   setCanvasRect(svg);
+  const viewBoxWrites = trackViewBoxWrites(svg);
   dom.window.document.querySelector('#modeMove').click();
-
-  let viewBoxWrites = 0;
-  const setAttribute = svg.setAttribute.bind(svg);
-  svg.setAttribute = (name, value) => {
-    if (name === 'viewBox') viewBoxWrites++;
-    return setAttribute(name, value);
-  };
 
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: 180, clientY: 140 });
   await nextFrame(dom.window);
 
-  assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pan');
-  assert.equal(camera.getAttribute('transform'), 'matrix(1 0 0 1 80 40)');
-  assert.equal(scene.getAttribute('transform'), null, 'no compensation is needed before commit');
+  // Dragged 80 px right and 40 px down at 1:1 — the camera moves left and up by
+  // the same world distance.
+  assert.equal(viewBoxWrites.count, 0, 'the root viewBox is a reference frame, not a camera write');
+  assertCameraRendersViewBox(camera, { x: -580, y: -370, w: 1000, h: 660 });
+  assert.equal(scene.getAttribute('transform'), null, 'the scene group is never transformed');
   assert.equal(grid.style.transform, '', 'the grid never uses a temporary compositor transform');
   const pattern = dom.window.document.querySelector('#gridPattern');
   const patternWidthBefore = pattern.getAttribute('width');
@@ -277,43 +324,45 @@ test('pan keeps its promoted matrix stable while the viewBox commits', async () 
   const previewMatrix = camera.getAttribute('transform');
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
-  assert.equal(viewBoxWrites, 1);
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'the promoted property is untouched at the commit boundary');
-  assert.equal(scene.getAttribute('transform'), 'matrix(1 0 0 1 -80 -40)', 'the inner inverse cancels the persistent outer matrix');
-  assert.equal(svg.getAttribute('viewBox'), '-580 -370 1000 660');
+  assert.equal(viewBoxWrites.count, 0, 'releasing the pan writes no viewBox: there is no commit boundary to cross');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'release keeps every pixel where the preview put it');
+  assertCameraRendersViewBox(camera, { x: -580, y: -370, w: 1000, h: 660 });
+  assert.equal(scene.getAttribute('transform'), null, 'still no compensation: nothing was handed off');
+  assert.equal(svg.getAttribute('viewBox'), `-500 -330 1000 660`, 'the reference frame is untouched');
   assert.equal(pattern.getAttribute('width'), patternWidthBefore, 'panning never rebuilds the world-locked grid pattern');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('pinch also rebases without clearing its promoted preview matrix', async () => {
+test('pinch preview and commit are the same composited camera write', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
   const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
-
-  let viewBoxWrites = 0;
-  const setAttribute = svg.setAttribute.bind(svg);
-  svg.setAttribute = (name, value) => {
-    if (name === 'viewBox') viewBoxWrites++;
-    return setAttribute(name, value);
-  };
+  const viewBoxWrites = trackViewBoxWrites(svg);
 
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100 });
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 300, clientY: 100 });
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   await nextFrame(dom.window);
 
-  assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during pinch');
-  assert.match(camera.getAttribute('transform'), /^matrix\(/);
+  assert.equal(viewBoxWrites.count, 0, 'the root viewBox stays the reference frame during a pinch');
+  const previewScale = cameraScale(camera);
+  assert.ok(previewScale > 1, 'pinching apart zooms in');
   const previewMatrix = camera.getAttribute('transform');
+  const committedWidthBefore = dom.window.document.querySelector('#cameraW').value;
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
-  assert.equal(viewBoxWrites, 1);
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'commit does not clear or replace the promoted matrix');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'inner compensation is installed for the committed viewBox');
+  assert.equal(viewBoxWrites.count, 0, 'committing the pinch writes no viewBox either');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'the commit paints exactly what the preview painted');
+  assert.equal(scene.getAttribute('transform'), null, 'no compensation transform is needed');
+  // The logical camera the sidebar now reports must be the camera that was on
+  // screen: the composited matrix scale and the committed viewBox width agree.
+  const committedWidth = Number(dom.window.document.querySelector('#cameraW').value);
+  assert.notEqual(committedWidthBefore, String(committedWidth));
+  assert.equal(committedWidth, Math.round(VIEWPORT.width / previewScale), 'the committed camera matches the previewed matrix');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

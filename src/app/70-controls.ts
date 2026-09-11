@@ -86,21 +86,21 @@
     const w = clamp(finite($('#cameraW').value, state.viewBox.w), 100, 20000);
     const h = clamp(finite($('#cameraH').value, state.viewBox.h), 90, 20000);
     state.viewBox = { x: cx - w/2, y: cy - h/2, w, h };
-    applyViewBox();
+    applyCamera();
     saveSoon();
     syncCameraInputs();
     toast(I18N.t('camera_updated'));
   }
   function resetCamera(){
     state.viewBox = {x:-500, y:-330, w:1000, h:660};
-    applyViewBox(); saveSoon(); syncCameraInputs();
+    applyCamera(); saveSoon(); syncCameraInputs();
     toast(I18N.t('camera_reset'));
   }
   function centerOnNode(n){
     if(!n) return;
     state.viewBox.x = n.x - state.viewBox.w/2;
     state.viewBox.y = n.y - state.viewBox.h/2;
-    applyViewBox(); saveSoon(); syncCameraInputs();
+    applyCamera(); saveSoon(); syncCameraInputs();
   }
   function centerOnSelection(){
     const nodes = selectedNodeIds();
