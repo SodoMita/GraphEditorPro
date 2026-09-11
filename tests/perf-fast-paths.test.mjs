@@ -60,20 +60,57 @@ function dispatchPointer(window, target, type, options) {
 const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30));
 const settle = (window, ms) => new Promise(resolve => window.setTimeout(resolve, ms));
 
-function matrixValues(element) {
+// === Camera contract ===
+// The root viewBox is a fixed world reference frame written once; the whole
+// camera lives in a single matrix on #cameraLayer, which holds the grid and the
+// graph. These helpers re-derive that mapping independently of the
+// implementation: world -> user space is the matrix, user -> screen space is the
+// fixed reference frame mapped with preserveAspectRatio="xMidYMid meet".
+const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
+const VIEWPORT = { width: 1000, height: 660 };
+
+function cameraMatrix(element) {
   const match = element.getAttribute('transform')?.match(/^matrix\(([^)]+)\)$/);
-  assert.ok(match, `expected a matrix transform on #${element.id}`);
-  return match[1].trim().split(/[ ,]+/).map(Number);
+  assert.ok(match, `expected a camera matrix on #${element.id}`);
+  const values = match[1].trim().split(/[ ,]+/).map(Number);
+  assert.equal(values[1], 0, 'the camera matrix has no rotation');
+  assert.equal(values[2], 0, 'the camera matrix has no rotation');
+  return { scale: values[0], tx: values[4], ty: values[5] };
 }
 
-function assertCameraPairCancels(camera, scene) {
-  const outer = matrixValues(camera), inner = matrixValues(scene);
-  const scale = outer[0] * inner[0];
-  const tx = outer[0] * inner[4] + outer[4];
-  const ty = outer[3] * inner[5] + outer[5];
-  assert.ok(Math.abs(scale - 1) < 1e-9, `outer × inner scale must be identity, got ${scale}`);
-  assert.ok(Math.abs(tx) < 1e-9, `outer × inner x must cancel, got ${tx}`);
-  assert.ok(Math.abs(ty) < 1e-9, `outer × inner y must cancel, got ${ty}`);
+function assertCameraRendersViewBox(camera, viewBox, viewport = VIEWPORT) {
+  const { scale, tx, ty } = cameraMatrix(camera);
+  const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
+  const baseOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
+  const baseOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
+  // user space -> screen space is the fixed reference frame mapped with
+  // preserveAspectRatio="xMidYMid meet": subtract the reference origin first.
+  const toClient = (x, y) => ({
+    x: (scale * x + tx - REFERENCE_VIEWBOX.x) * basePixels + baseOffsetX,
+    y: (scale * y + ty - REFERENCE_VIEWBOX.y) * basePixels + baseOffsetY,
+  });
+  const cameraPixels = Math.min(viewport.width / viewBox.w, viewport.height / viewBox.h);
+  const offsetX = (viewport.width - viewBox.w * cameraPixels) / 2;
+  const offsetY = (viewport.height - viewBox.h * cameraPixels) / 2;
+  const topLeft = toClient(viewBox.x, viewBox.y);
+  const bottomRight = toClient(viewBox.x + viewBox.w, viewBox.y + viewBox.h);
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  assert.ok(near(topLeft.x, offsetX) && near(topLeft.y, offsetY),
+    `camera top-left (${topLeft.x}, ${topLeft.y}) must land on the camera's letterboxed corner (${offsetX}, ${offsetY})`);
+  assert.ok(near(bottomRight.x, viewport.width - offsetX) && near(bottomRight.y, viewport.height - offsetY),
+    `camera bottom-right (${bottomRight.x}, ${bottomRight.y}) must land on the letterboxed corner`);
+}
+
+const referenceViewBox = () => `${REFERENCE_VIEWBOX.x} ${REFERENCE_VIEWBOX.y} ${REFERENCE_VIEWBOX.w} ${REFERENCE_VIEWBOX.h}`;
+
+function trackViewBoxWrites(svg) {
+  const writes = { count: 0 };
+  const setAttribute = svg.setAttribute.bind(svg);
+  svg.setAttribute = (name, value) => {
+    if (name === 'viewBox') writes.count++;
+    return setAttribute(name, value);
+  };
+  return writes;
 }
 
 function smallGraph() {
@@ -93,7 +130,7 @@ function smallGraph() {
   };
 }
 
-test('wheel zoom commits without changing its promoted matrix at the boundary', async () => {
+test('wheel zoom moves only the composited camera and never rewrites the root viewBox', async () => {
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
@@ -101,26 +138,27 @@ test('wheel zoom commits without changing its promoted matrix at the boundary', 
   const scene = dom.window.document.querySelector('#sceneLayer');
   const grid = dom.window.document.querySelector('#gridLayer');
   setCanvasRect(svg);
-
-  let viewBoxWrites = 0;
-  const setAttribute = svg.setAttribute.bind(svg);
-  svg.setAttribute = (name, value) => {
-    if (name === 'viewBox') viewBoxWrites++;
-    return setAttribute(name, value);
-  };
+  const viewBoxWrites = trackViewBoxWrites(svg);
 
   for (let i = 0; i < 6; i++) {
     svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
   }
   await nextFrame(dom.window);
 
-  assert.equal(viewBoxWrites, 0, 'the expensive root viewBox stays frozen during the wheel burst');
-  assert.match(camera.getAttribute('transform'), /^matrix\(/, 'zoom preview rides on the promoted camera layer');
-  assert.equal(scene.getAttribute('transform'), null);
+  // Six 0.88 steps anchored at the canvas centre: width and height scale, the
+  // centre stays put.
+  let w = 1000, h = 660;
+  for (let i = 0; i < 6; i++) { w *= 0.88; h *= 0.88; }
+  const zoomedCamera = { x: -w / 2, y: -h / 2, w, h };
+
+  assert.equal(viewBoxWrites.count, 0, 'the root viewBox is a reference frame, not a per-frame camera write');
+  assert.equal(svg.getAttribute('viewBox'), referenceViewBox(), 'the fixed reference frame is installed');
+  assertCameraRendersViewBox(camera, zoomedCamera);
+  assert.equal(scene.getAttribute('transform'), null, 'the scene group is never transformed: there is no handoff to compensate');
   assert.equal(grid.style.transform, '', 'the grid never uses a handoff transform');
   const gridRect = dom.window.document.querySelector('#gridRect');
   assert.ok(gridRect, 'the SVG grid rect exists');
-  assert.equal(gridRect.parentNode.getAttribute('id'), 'sceneLayer', 'the grid renders inside the camera scene, so grid and graph share one paint pipeline');
+  assert.equal(gridRect.parentNode.getAttribute('id'), 'sceneLayer', 'the grid rides the camera matrix, so grid and graph are painted by one pass');
   const pattern = dom.window.document.querySelector('#gridPattern');
   const patternWidthBefore = pattern.getAttribute('width');
   assert.ok(patternWidthBefore, 'the grid pattern geometry is initialized');
@@ -128,41 +166,45 @@ test('wheel zoom commits without changing its promoted matrix at the boundary', 
   const previewMatrix = camera.getAttribute('transform');
 
   await settle(dom.window, 250); // let the commit debounce fire
-  assert.equal(viewBoxWrites, 1, 'exactly one viewBox write commits the zoom');
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'commit leaves the compositor property untouched');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'the inner scene receives the inverse matrix');
-  assertCameraPairCancels(camera, scene);
-  const vb = svg.getAttribute('viewBox').split(' ').map(Number);
-  assert.ok(vb[2] < 1000, 'zooming in shrinks the viewBox width');
+  assert.equal(viewBoxWrites.count, 0, 'committing the camera is the same composited write, so the viewBox stays untouched');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'the commit changes nothing that is painted: the preview already showed the committed camera');
+  assertCameraRendersViewBox(camera, zoomedCamera);
+  assert.ok(cameraMatrix(camera).scale > 1, 'zooming in scales the camera matrix above 1');
+  assert.equal(pattern.getAttribute('width'), patternWidthBefore, 'the world-locked grid pattern needs no rebuild while zooming');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('a pointer gesture during pending zoom adopts the committed camera', async () => {
+test('a pointer gesture during pending zoom adopts the committed camera invisibly', async () => {
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
   const camera = dom.window.document.querySelector('#cameraLayer');
-  const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
+  const viewBoxWrites = trackViewBoxWrites(svg);
 
   svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
   await nextFrame(dom.window);
-  assert.match(camera.getAttribute('transform'), /^matrix\(/);
   const previewMatrix = camera.getAttribute('transform');
+  const zoomedCamera = { x: -440, y: -290.4, w: 880, h: 580.8 };
+  assertCameraRendersViewBox(camera, zoomedCamera);
 
-  // Any pointer gesture must flush the preview before doing hit-test math.
+  // Any pointer gesture must adopt the pending camera before doing hit-test
+  // math. Adopting it writes the same matrix, so nothing is repainted and no
+  // handoff boundary exists.
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'flush does not reset the promoted camera matrix');
-  assert.match(scene.getAttribute('transform'), /^matrix\(/, 'flush cancels it in the inner SVG group');
-  assertCameraPairCancels(camera, scene);
-  assert.equal(svg.getAttribute('viewBox').split(' ')[2], String(1000 * 0.88), 'flushed preview becomes the real viewBox');
+  assert.equal(camera.getAttribute('transform'), previewMatrix, 'adopting the pending camera does not change what is painted');
+  assertCameraRendersViewBox(camera, zoomedCamera, VIEWPORT);
+  // Hit-testing after the flush must use the camera that is on screen: the
+  // pointer lands on the same world point the matrix maps it to.
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 100, clientY: 100 });
+  assert.equal(viewBoxWrites.count, 0, 'the root viewBox is untouched for the whole cycle');
+  assert.equal(svg.getAttribute('viewBox'), referenceViewBox());
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('wheel zoom that interrupts a pan first commits the panned camera', async () => {
+test('wheel zoom that interrupts a pan adopts the panned camera and keeps one mechanism', async () => {
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const document = dom.window.document;
@@ -170,22 +212,26 @@ test('wheel zoom that interrupts a pan first commits the panned camera', async (
   const camera = document.querySelector('#cameraLayer');
   const scene = document.querySelector('#sceneLayer');
   setCanvasRect(svg);
+  const viewBoxWrites = trackViewBoxWrites(svg);
   document.querySelector('#modeMove').click();
 
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: 200, clientY: 100 });
   await nextFrame(dom.window);
   const panMatrix = camera.getAttribute('transform');
-  assert.equal(svg.getAttribute('viewBox'), '-500 -330 1000 660', 'viewBox is still the pre-pan camera during preview');
+  assertCameraRendersViewBox(camera, { x: -600, y: -330, w: 1000, h: 660 }, VIEWPORT);
 
+  // The wheel adopts the completed pan (100 world px left) and zooms 0.88 around
+  // the canvas centre: width 880, centre (-100, 0).
   svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
-  assert.equal(svg.getAttribute('viewBox'), '-600 -330 1000 660', 'wheel adopts the completed pan before starting zoom');
   await nextFrame(dom.window);
-  assert.notEqual(camera.getAttribute('transform'), panMatrix, 'zoom composes from the rebased pan matrix');
+  assert.notEqual(camera.getAttribute('transform'), panMatrix, 'zoom moves the camera from the adopted pan');
+  assertCameraRendersViewBox(camera, { x: -540, y: -290.4, w: 880, h: 580.8 }, VIEWPORT);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 200, clientY: 100 });
-  assert.equal(svg.getAttribute('viewBox').split(' ')[2], String(1000 * 0.88));
-  assertCameraPairCancels(camera, scene);
+  assert.equal(viewBoxWrites.count, 0, 'no camera state is ever written into the root viewBox');
+  assertCameraRendersViewBox(camera, { x: -540, y: -290.4, w: 880, h: 580.8 }, VIEWPORT);
+  assert.equal(scene.getAttribute('transform'), null, 'the scene group stays untransformed');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

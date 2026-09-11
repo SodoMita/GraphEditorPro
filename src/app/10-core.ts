@@ -30,11 +30,11 @@
   const svg = $('#graphCanvas');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
-  // Navigation previews move only the outer camera group. sceneLayer is an
-  // inner compensation group used to make the final viewBox handoff atomic.
-  // Neither group is compositor-promoted: both are ordinary SVG paint.
+  // Navigation moves only the camera group, which carries the composed camera
+  // matrix for previews and commits alike and is the single compositor-promoted
+  // layer on the canvas path. The scene group is an ordinary child holding the
+  // grid and the graph; nothing applies a transform to it.
   const cameraLayer = $('#cameraLayer');
-  const sceneLayer = $('#sceneLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');

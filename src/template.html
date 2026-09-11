@@ -631,12 +631,17 @@
                 <path d="M 1 1 L 11 6 L 1 11 z" fill="#22d3ee"></path>
               </marker>
             </defs>
+            <!-- #cameraLayer carries the camera matrix — the SAME write for
+                 gesture previews and for the committed camera — and is the only
+                 compositor-promoted layer. The root viewBox above it is a fixed
+                 world reference frame, so nothing on the camera path re-runs
+                 style or layout over the scene. -->
             <g id="cameraLayer">
               <g id="sceneLayer">
                 <!-- The grid is a world-anchored pattern INSIDE the camera
-                     scene: every preview or commit frame paints grid and graph
-                     in the same SVG paint pass, so the two can never desync for
-                     a frame (a separate CSS-background grid layer could). -->
+                     scene: it rides the camera matrix, so grid and graph are
+                     always painted by the same raster and can never desync by a
+                     frame (a separate CSS-background grid layer could). -->
                 <rect id="gridRect" x="-100000" y="-100000" width="200000" height="200000" fill="url(#gridPattern)"></rect>
                 <g id="edgesLayer"></g>
                 <path id="dragLine" class="drag-line" d="" style="display:none"></path>
