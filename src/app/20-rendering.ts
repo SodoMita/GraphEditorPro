@@ -277,27 +277,80 @@
     }
     return sel;
   }
+  // === Edge arrowhead geometry ===
+  // One place derives the tip triangle, so the arrow and its selection accent
+  // can never disagree. `scale` grows the triangle about its own centre (the
+  // centroid), which keeps the accent band even around the tip instead of only
+  // pushing the apex forward.
+  function edgeArrowPoints(d, scale = 1){
+    const aw = ARROW_HW, ang = d.arrowAngle;
+    const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
+    const lx = d.tx + px, ly = d.ty + py;
+    const rx = d.tx - px, ry = d.ty - py;
+    if(scale === 1) return `${d.tipX},${d.tipY} ${lx},${ly} ${rx},${ry}`;
+    const cx = (d.tipX + lx + rx) / 3, cy = (d.tipY + ly + ry) / 3;
+    return `${cx + (d.tipX - cx) * scale},${cy + (d.tipY - cy) * scale} ` +
+      `${cx + (lx - cx) * scale},${cy + (ly - cy) * scale} ` +
+      `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
+  }
+  function hasEdgeTip(e, d){
+    return Boolean(e && e.directed && d && d.tipX != null && d.arrowAngle != null);
+  }
   // === Edge selection ring ===
-  // Like nodes, a selected edge gets a slightly wider accent path placed BEHIND
-  // the edge line, so the edge's own colour stays visible while selection is
-  // clearly outlined. It exists only while selected.
+  // Like nodes, a selected edge gets an accent placed BEHIND itself, so the
+  // edge's own colour (line *and* arrowhead) stays visible. The body accent is
+  // a WIDE LINE: the identical path string as the line, just a thicker stroke.
+  // That is deliberately not an outline of the edge shape — nothing has to be
+  // derived or offset, so keeping it in sync costs one attribute write per part
+  // and the browser only ever inflates a path it already has. The tip accent is
+  // a larger copy of the tip triangle, centred on it and drawn behind it. Both
+  // parts exist only while the edge is selected.
+  const SEL_EDGE_HALO = 7, SEL_EDGE_MIN = 9; // accent width: edge + halo, never hairline
+  const SEL_TIP_SCALE = 1.75; // the tip accent is the tip triangle, this much bigger
   function syncEdgeSelRing(g: any, e: any, v: any, d: any, selected: boolean){
-    let sel = g.__sel;
-    if(selected){
-      const line = g.__line;
-      if(!sel){
-        sel = document.createElementNS(NS,'path');
-        sel.setAttribute('class','edge-sel');
-        sel.setAttribute('fill','none');
-        g.insertBefore(sel, line || g.firstChild); // behind the line
-        g.__sel = sel;
+    let sel: any = g.__sel, ring: any = g.__selArrow;
+    if(!selected){
+      if(sel){ sel.remove(); g.__sel = null; }
+      if(ring){ ring.remove(); g.__selArrow = null; }
+      return null;
+    }
+    const line = g.__line;
+    // During a render pass or a gesture the caller holds the fresh geometry; on
+    // a bare selection change it comes from the per-edge geometry cache, which
+    // is the very data the visible line was drawn from.
+    const geo = d || g.__geoData;
+    if(!sel){
+      sel = document.createElementNS(NS,'path');
+      sel.setAttribute('class','edge-sel');
+      sel.setAttribute('fill','none');
+      g.insertBefore(sel, line || g.firstChild); // behind the line
+      g.__sel = sel;
+    }
+    setAttr(sel, 'd', (geo && geo.path) || (line ? line.getAttribute('d') : '') || '');
+    setAttr(sel, 'stroke-width', Math.max(SEL_EDGE_MIN, (v && v.strokeSize ? v.strokeSize : 0) + SEL_EDGE_HALO));
+    if(hasEdgeTip(e, geo)){
+      if(!ring){
+        ring = document.createElementNS(NS,'polygon');
+        ring.setAttribute('class','edge-sel-arrow');
+        // Behind the arrowhead itself, so only its border shows as accent. When
+        // the arrow does not exist yet it is created right after this call and
+        // lands on top anyway.
+        if(g.__arrow) g.insertBefore(ring, g.__arrow); else g.appendChild(ring);
+        g.__selArrow = ring;
       }
-      setAttr(sel, 'd', d && d.path ? d.path : (line ? line.getAttribute('d') : ''));
-      setAttr(sel, 'stroke-width', Math.max(7, v.strokeSize + 5));
-    } else if(sel){
-      sel.remove(); g.__sel = null; sel = null;
+      setAttr(ring, 'points', edgeArrowPoints(geo, SEL_TIP_SCALE));
+    } else if(ring){
+      ring.remove(); g.__selArrow = null;
     }
     return sel;
+  }
+  // Geometry-only follow-up for a live gesture. A drag patches edge geometry in
+  // place and deliberately skips the release re-render, so this is the only
+  // writer able to keep the accent on the edge — without it the highlight stays
+  // behind at the shape the edge moved away from.
+  function moveEdgeSelRing(g: any, d: any){
+    if(g.__sel) setAttr(g.__sel, 'd', d.path);
+    if(g.__selArrow && d.tipX != null && d.arrowAngle != null) setAttr(g.__selArrow, 'points', edgeArrowPoints(d, SEL_TIP_SCALE));
   }
   function nodeRadiusC(n, vc){
     const c = vc || passVisuals;
@@ -582,6 +635,10 @@
     const el = edgeEl(e.id); if(!el) return;
     const g: any = el;
     const d = edgePath(a,b,e, vc || passVisuals);
+    // This is now the geometry the element shows, so it becomes the edge's
+    // current geometry; the cached signature was taken before the nodes moved
+    // and must not certify the older data (the selection accent reads it).
+    g.__geoData = d; g.__geoSig = null;
     const line = g.__line || el.querySelector('.edge-line'); if(line) setAttr(line, 'd', d.path);
     const hit = g.__hit || el.querySelector('.edge-hit'); if(hit) setAttr(hit, 'd', d.path);
     const label = g.__label || null;
@@ -602,15 +659,10 @@
     }
     // Update arrow tip position/angle during drag
     const arrow = g.__arrow || null;
-    if(arrow && e.directed && d.tipX != null && d.arrowAngle != null){
-      const aw = ARROW_HW, ang = d.arrowAngle;
-      const sin = Math.sin(ang), cos = Math.cos(ang);
-      const px = -sin, py = cos;
-      const baseX = d.tx, baseY = d.ty;
-      const leftX = baseX + px * aw, leftY = baseY + py * aw;
-      const rightX = baseX - px * aw, rightY = baseY - py * aw;
-      setAttr(arrow, 'points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
-    }
+    if(arrow && hasEdgeTip(e, d)) setAttr(arrow, 'points', edgeArrowPoints(d));
+    // ...and the selection accent with it, or the highlight would be left
+    // behind at the edge's old position for the rest of the gesture.
+    moveEdgeSelRing(g, d);
   }
   function scheduleFastNodeMove(id){
     if(!drag) return;
@@ -709,21 +761,15 @@
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
       if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
       else removeAttr(line, 'stroke-dasharray');
-      // Selection ring: wider accent path behind the line so the edge colour stays visible
+      // Selection accent: a wide line behind the path and a bigger copy of the
+      // tip behind the arrowhead. Neither repaints the edge itself.
       syncEdgeSelRing(g, e, v, d, selected);
-      // Update or create arrow
+      // Update or create arrow — the tip always keeps the edge's own colour
       let arrow = g.__arrow || null;
-      if(e.directed && d.tipX != null && d.arrowAngle != null){
-        const arrowColor = selected ? '#22d3ee' : v.color;
-        const aw = ARROW_HW, ang = d.arrowAngle;
-        const sin = Math.sin(ang), cos = Math.cos(ang);
-        const px = -sin, py = cos;
-        const baseX = d.tx, baseY = d.ty;
-        const leftX = baseX + px * aw, leftY = baseY + py * aw;
-        const rightX = baseX - px * aw, rightY = baseY - py * aw;
+      if(hasEdgeTip(e, d)){
         if(!arrow){ arrow = document.createElementNS(NS,'polygon'); arrow.setAttribute('class','edge-arrow'); g.appendChild(arrow); g.__arrow = arrow; }
-        setAttr(arrow, 'points', `${d.tipX},${d.tipY} ${leftX},${leftY} ${rightX},${rightY}`);
-        setAttr(arrow, 'fill', arrowColor);
+        setAttr(arrow, 'points', edgeArrowPoints(d));
+        setAttr(arrow, 'fill', v.color);
       } else if(arrow){
         arrow.remove(); g.__arrow = null; arrow = null;
       }
