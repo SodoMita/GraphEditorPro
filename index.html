@@ -477,13 +477,14 @@
     .canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
     .canvas-wrap.panning #graphCanvas{cursor:grabbing}
     .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
-    .edge-line{fill:none}
+    .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
     .edge-arrow{pointer-events:none}
     /* Edge selection: a wide accent LINE that reuses the edge's own path (no
        outline of the edge shape to derive, so a drag can keep it glued to the
        edge for free), plus the tip triangle enlarged about its own centre and
-       drawn behind the arrowhead. The edge keeps its own colours. */
-    .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:round; stroke-linecap:round; pointer-events:none}
+       drawn behind the arrowhead. The edge keeps its own colours.
+       Butt/miter caps are cheaper than round and avoid extra arc rasterization. */
+    .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:miter; stroke-linecap:butt; pointer-events:none}
     .edge-sel-arrow{fill:var(--accent); stroke:none; pointer-events:none}
     .edge-label{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     .edge-weight{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
@@ -2107,6 +2108,18 @@ function applySnapshot(raw) {
         else if (validEdges.length)
             state.selected = { type: 'edge', id: validEdges[0] };
     }
+    // Selection cache lives in 30-graph-editing.ts; bump it if present so
+    // selectedNodeIds/selectedEdgeIds don't return stale Sets after undo/redo/import.
+    try {
+        if (typeof invalidateSelectionCache === 'function')
+            invalidateSelectionCache();
+    }
+    catch { }
+    try {
+        if (typeof selCacheRev !== 'undefined')
+            selCacheRev++;
+    }
+    catch { }
     syncControls();
     persistAutosavePreference(Boolean(state.settings.autosave));
     queueRender(true, true);
@@ -2678,13 +2691,19 @@ function strokeDashArray(style, size) {
 // halo thickness for a 13px label and scales proportionally with the label
 // size, so outlines stay readable at any label size.
 function labelOutlineConf() {
+    const vc = passVisuals;
+    if (vc && vc.labelOutline)
+        return vc.labelOutline;
     const gd = state.settings.graphDefaults || {};
     const mode = gd.labelOutline;
-    return {
+    const conf = {
         mode: (mode === 'plate' || mode === 'none') ? mode : 'outline',
         color: gd.labelOutlineColor || '#020617',
         width: clamp(finite(gd.labelOutlineWidth, 4), 0, 10)
     };
+    if (vc)
+        vc.labelOutline = conf;
+    return conf;
 }
 function labelOutlineThickness(conf, labelSize) {
     return conf.width * (labelSize / 13);
@@ -2814,7 +2833,22 @@ function setText(el, text) {
 // reused by every edge that touches the item, keeping render passes and drag
 // frames free of repeated merges and short-lived allocations. Each render
 // pass (and each drag gesture) owns one cache.
-function newVisualCache() { return { node: new Map(), edge: new Map(), edgeStyle: new Map(), radius: new Map() }; }
+// Sorted-by-order cache — invalidated when nodes array identity/len or graphRev changes (reorder, add/remove)
+let sortedNodesCache = { arr: null, len: -1, rev: -1, sorted: [] };
+function sortedNodesByOrder() {
+    const arr = state.nodes;
+    if (sortedNodesCache.arr === arr && sortedNodesCache.len === arr.length && sortedNodesCache.rev === graphRev) {
+        return sortedNodesCache.sorted;
+    }
+    const sorted = [...arr].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    sortedNodesCache.arr = arr;
+    sortedNodesCache.len = arr.length;
+    sortedNodesCache.rev = graphRev;
+    sortedNodesCache.sorted = sorted;
+    return sorted;
+}
+// Per-pass visual cache includes visible nodes/ids and label outline config to avoid double work per renderCanvas
+function newVisualCache() { return { node: new Map(), edge: new Map(), edgeStyle: new Map(), radius: new Map(), visibleNodes: null, visibleIds: null, labelOutline: null, showLabels: null }; }
 let passVisuals = null;
 function beginRenderPass() { passVisuals = newVisualCache(); }
 function endRenderPass() { passVisuals = null; }
@@ -2961,13 +2995,10 @@ function syncEdgeSelRing(g, e, v, d, selected) {
         if (!ring) {
             ring = document.createElementNS(NS, 'polygon');
             ring.setAttribute('class', 'edge-sel-arrow');
-            // Behind the arrowhead itself, so only its border shows as accent. When
-            // the arrow does not exist yet it is created right after this call and
-            // lands on top anyway.
-            if (g.__arrow)
-                g.insertBefore(ring, g.__arrow);
-            else
-                g.appendChild(ring);
+            // Behind the arrowhead and the line, so only its border shows as accent
+            // and it never covers the edge itself. Insert before the selection line
+            // accent (or the edge line) so both accents stay behind the edge.
+            g.insertBefore(ring, sel || line || g.firstChild);
             g.__selArrow = ring;
         }
         setAttr(ring, 'points', edgeArrowPoints(geo, SEL_TIP_SCALE));
@@ -3000,26 +3031,55 @@ function nodeRadiusC(n, vc) {
     return r;
 }
 function shouldShowLabels() {
+    const vc = passVisuals;
+    if (vc && vc.showLabels != null)
+        return vc.showLabels;
     const policy = state.settings.graphDefaults?.labelsPolicy || 'auto';
+    let res;
     if (policy === 'off')
-        return false;
-    if (policy === 'on')
-        return true;
-    return state.nodes.length <= 30;
+        res = false;
+    else if (policy === 'on')
+        res = true;
+    else
+        res = state.nodes.length <= 30;
+    if (vc)
+        vc.showLabels = res;
+    return res;
 }
+// Type lists are cached by nodes/edges identity/len/rev — O(V) only when graph actually changes
+let nodeTypesCache = { arr: null, len: -1, rev: -1, types: [] };
 function existingNodeTypes() {
+    const arr = state.nodes;
+    if (nodeTypesCache.arr === arr && nodeTypesCache.len === arr.length && nodeTypesCache.rev === graphRev) {
+        return nodeTypesCache.types;
+    }
     const set = new Set();
-    for (const n of state.nodes)
+    for (const n of arr)
         if (n.type)
             set.add(n.type);
-    return [...set].sort();
+    const types = [...set].sort();
+    nodeTypesCache.arr = arr;
+    nodeTypesCache.len = arr.length;
+    nodeTypesCache.rev = graphRev;
+    nodeTypesCache.types = types;
+    return types;
 }
+let edgeTypesCache = { arr: null, len: -1, rev: -1, types: [] };
 function existingEdgeTypes() {
+    const arr = state.edges;
+    if (edgeTypesCache.arr === arr && edgeTypesCache.len === arr.length && edgeTypesCache.rev === graphRev) {
+        return edgeTypesCache.types;
+    }
     const set = new Set();
-    for (const e of state.edges)
+    for (const e of arr)
         if (e.type)
             set.add(e.type);
-    return [...set].sort();
+    const types = [...set].sort();
+    edgeTypesCache.arr = arr;
+    edgeTypesCache.len = arr.length;
+    edgeTypesCache.rev = graphRev;
+    edgeTypesCache.types = types;
+    return types;
 }
 function syncControls() {
     $('#docTitleInput').value = state.title;
@@ -4269,18 +4329,36 @@ function renderSelectionPanel() {
     }
 }
 // Returns nodes sorted by order, optionally filtered by the visible range setting.
-// When visibleRange.start is -1, all nodes are returned.
+// When visibleRange.start is -1, all nodes are returned. Sorted result is cached
+// globally (invalidated by graphRev), and per-pass visibleNodes/visibleIds are
+// cached inside passVisuals to avoid double sort in renderCanvas (renderEdges + renderNodes).
 function visibleNodes() {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const vc = passVisuals;
+    if (vc && vc.visibleNodes)
+        return vc.visibleNodes;
+    const sorted = sortedNodesByOrder();
     const vr = state.settings.visibleRange || { start: -1, end: -1 };
+    let result;
     if (vr.start < 0 && vr.end < 0)
-        return sorted;
-    const start = vr.start < 0 ? 0 : vr.start;
-    const end = vr.end < 0 ? sorted.length : Math.min(vr.end + 1, sorted.length);
-    return sorted.slice(Math.max(0, start), end);
+        result = sorted;
+    else {
+        const start = vr.start < 0 ? 0 : vr.start;
+        const end = vr.end < 0 ? sorted.length : Math.min(vr.end + 1, sorted.length);
+        result = sorted.slice(Math.max(0, start), end);
+    }
+    if (vc)
+        vc.visibleNodes = result;
+    return result;
 }
 function visibleNodeIds() {
-    return new Set(visibleNodes().map(n => n.id));
+    const vc = passVisuals;
+    if (vc && vc.visibleIds)
+        return vc.visibleIds;
+    const nodes = visibleNodes();
+    const ids = new Set(nodes.map((n) => n.id));
+    if (vc)
+        vc.visibleIds = ids;
+    return ids;
 }
 function matrixNodes() {
     const dim = clamp(parseInt(state.settings.matrixDimension, 10) || 0, 0, 300);
@@ -4354,18 +4432,27 @@ function matrixCellEdgeIds(from, to) {
 function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const { values, edgeIds } = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
+    // Use array push+join instead of repeated += to avoid O(n^2) string copying for large matrices
+    const parts = [];
     const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id) ? ' matrix-selected' : ''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>`).join('');
-    let html = '<table><thead><tr><th></th>' + header + '</tr></thead><tbody>';
-    nodes.forEach((row, i) => {
-        html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id) ? ' matrix-selected' : ''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>` +
-            values[i].map((cell, j) => {
-                const to = nodes[j].id;
-                const ids = edgeIds[i][j];
-                const selected = ids.some(id => edgeSel.has(id));
-                return `<td><input class="matrix-input${selected ? ' matrix-selected' : ''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly aria-label="${esc(I18N.t('col_from'))} ${esc(row.id)}, ${esc(I18N.t('col_to'))} ${esc(to)}" title="${esc(I18N.t('matrix_cell_hint'))}"></td>`;
-            }).join('') + '</tr>';
-    });
-    return html + '</tbody></table>';
+    parts.push('<table><thead><tr><th></th>', header, '</tr></thead><tbody>');
+    for (let i = 0; i < nodes.length; i++) {
+        const row = nodes[i];
+        const selRow = isNodeSelected(row.id) ? ' matrix-selected' : '';
+        parts.push(`<tr><th class="row-head"><input class="matrix-label-input${selRow}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>`);
+        const rowVals = values[i];
+        const rowEdgeIds = edgeIds[i];
+        for (let j = 0; j < rowVals.length; j++) {
+            const cell = rowVals[j];
+            const to = nodes[j].id;
+            const ids = rowEdgeIds[j];
+            const selected = ids.some(id => edgeSel.has(id));
+            parts.push(`<td><input class="matrix-input${selected ? ' matrix-selected' : ''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly aria-label="${esc(I18N.t('col_from'))} ${esc(row.id)}, ${esc(I18N.t('col_to'))} ${esc(to)}" title="${esc(I18N.t('matrix_cell_hint'))}"></td>`);
+        }
+        parts.push('</tr>');
+    }
+    parts.push('</tbody></table>');
+    return parts.join('');
 }
 function edgeListHtml() {
     if (!state.edges.length) {
@@ -4397,12 +4484,14 @@ function edgeListHtml() {
         $('#edgeListNote').textContent = filterNote + pageNote;
     }
     const selectedEdges = selectedEdgeIds();
-    let html = '<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>';
-    renderedEdges.forEach((e, i) => {
+    const parts = [];
+    parts.push('<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
+    for (let i = 0; i < renderedEdges.length; i++) {
+        const e = renderedEdges[i];
         const a = nodeById(e.from), b = nodeById(e.to);
         const sel = selectedEdges.has(e.id) ? ' matrix-selected' : '';
         const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle === s ? ' selected' : ''}>${I18N.t('stroke_' + s)}</option>`).join('');
-        html += `<tr>
+        parts.push(`<tr>
         <td style="white-space:nowrap">
           <button class="btn small icon edge-up" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button>
           <button class="btn small icon edge-down" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button>
@@ -4417,18 +4506,18 @@ function edgeListHtml() {
         <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed ? 'checked' : ''} aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"></td>
         <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
-      </tr>`;
-    });
-    html += '</tbody></table>';
+      </tr>`);
+    }
+    parts.push('</tbody></table>');
     if (renderedEdges.length < filteredEdges.length) {
         const remaining = filteredEdges.length - renderedEdges.length;
         const pageSize = configuredEdgeListPageSize();
         const label = I18N.current === 'ru'
             ? `Показать ещё ${Math.min(pageSize, remaining)}`
             : `Show ${Math.min(pageSize, remaining)} more`;
-        html += `<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`;
+        parts.push(`<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`);
     }
-    return html;
+    return parts.join('');
 }
 function showMoreEdgeRows() {
     edgeListRenderLimit += configuredEdgeListPageSize();
@@ -4493,10 +4582,24 @@ function setHitTestMode(mode, render = true) {
     }
 }
 function effectiveSelectCombine(ev = null) { return ev?.shiftKey ? 'add' : (state.selectCombine || 'replace'); }
-function selectedNodeIds() { return new Set(state.selection?.nodes || []); }
-function selectedEdgeIds() { return new Set(state.selection?.edges || []); }
-function isNodeSelected(id) { return selectedNodeIds().has(id); }
-function isEdgeSelected(id) { return selectedEdgeIds().has(id); }
+// Selection sets are cached by a revision counter — creating a new Set per
+// render pass is wasteful when selection hasn't changed, especially for
+// matrix rendering which checks isNodeSelected per cell.
+let selCacheRev = 0;
+let selCache = { rev: -1, nodes: new Set(), edges: new Set() };
+function invalidateSelectionCache() { selCacheRev++; }
+function getSelectionCache() {
+    if (selCache.rev !== selCacheRev) {
+        selCache.nodes = new Set(state.selection?.nodes || []);
+        selCache.edges = new Set(state.selection?.edges || []);
+        selCache.rev = selCacheRev;
+    }
+    return selCache;
+}
+function selectedNodeIds() { return getSelectionCache().nodes; }
+function selectedEdgeIds() { return getSelectionCache().edges; }
+function isNodeSelected(id) { return getSelectionCache().nodes.has(id); }
+function isEdgeSelected(id) { return getSelectionCache().edges.has(id); }
 // Shared selection-merge core: computes state.selection/state.selected from
 // the requested ids and combine mode. Callers decide how much DOM to update.
 function mergeSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
@@ -4513,6 +4616,7 @@ function mergeSelection(nodes = [], edges = [], primary = null, combine = 'repla
         edges.forEach(id => edgeById(id) && edgeSet.add(id));
     }
     state.selection = { nodes: [...nodeSet], edges: [...edgeSet] };
+    invalidateSelectionCache();
     if (primary && ((primary.type === 'node' && nodeSet.has(primary.id)) || (primary.type === 'edge' && edgeSet.has(primary.id))))
         state.selected = primary;
     else if (state.selection.nodes.length)
@@ -4750,16 +4854,47 @@ function snapAxisValue(axis, value, ignoreId = null) {
     return v;
 }
 function coordinateBounds(n) {
-    const xs = state.nodes.map(node => node.x).concat([state.viewBox.x, state.viewBox.x + state.viewBox.w, n.x]);
-    const ys = state.nodes.map(node => node.y).concat([state.viewBox.y, state.viewBox.y + state.viewBox.h, n.y]);
+    // Single pass min/max without intermediate arrays or spread — avoids O(n) allocations and call-stack blow-up on large graphs
+    let minX = state.viewBox.x, maxX = state.viewBox.x + state.viewBox.w;
+    let minY = state.viewBox.y, maxY = state.viewBox.y + state.viewBox.h;
+    // include the edited node's own position
+    if (n.x < minX)
+        minX = n.x;
+    if (n.x > maxX)
+        maxX = n.x;
+    if (n.y < minY)
+        minY = n.y;
+    if (n.y > maxY)
+        maxY = n.y;
+    for (let i = 0; i < state.nodes.length; i++) {
+        const node = state.nodes[i];
+        if (node.x < minX)
+            minX = node.x;
+        if (node.x > maxX)
+            maxX = node.x;
+        if (node.y < minY)
+            minY = node.y;
+        if (node.y > maxY)
+            maxY = node.y;
+    }
     return {
-        minX: Math.floor(Math.min(...xs) - 300), maxX: Math.ceil(Math.max(...xs) + 300),
-        minY: Math.floor(Math.min(...ys) - 300), maxY: Math.ceil(Math.max(...ys) + 300)
+        minX: Math.floor(minX - 300), maxX: Math.ceil(maxX + 300),
+        minY: Math.floor(minY - 300), maxY: Math.ceil(maxY + 300)
     };
 }
 function isPositionFree(x, y, ignoreIds = new Set()) {
     const minDistance = R * 2 + 14;
-    return state.nodes.every(n => ignoreIds.has(n.id) || Math.hypot(n.x - x, n.y - y) >= minDistance);
+    const minDist2 = minDistance * minDistance;
+    // Use squared distance to avoid sqrt per node — same result, cheaper
+    for (let i = 0; i < state.nodes.length; i++) {
+        const n = state.nodes[i];
+        if (ignoreIds.has(n.id))
+            continue;
+        const dx = n.x - x, dy = n.y - y;
+        if (dx * dx + dy * dy < minDist2)
+            return false;
+    }
+    return true;
 }
 function findFreeNodePosition(x, y, ignoreIds = new Set()) {
     if (isPositionFree(x, y, ignoreIds))
@@ -5143,6 +5278,7 @@ function deleteSelected() {
     state.edges = state.edges.filter(e => !edgeIds.has(e.id) && !nodeIds.has(e.from) && !nodeIds.has(e.to));
     state.selected = null;
     state.selection = { nodes: [], edges: [] };
+    invalidateSelectionCache();
     toast(I18N.t('deleted_n_m', { n: nodeIds.size, m: edgeIds.size }));
     pushHistory('delete');
     queueRender(true, true);

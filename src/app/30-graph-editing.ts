@@ -44,10 +44,24 @@
     if(render) { setStatusOnly(); saveSoon(); }
   }
   function effectiveSelectCombine(ev=null){ return ev?.shiftKey ? 'add' : (state.selectCombine || 'replace'); }
-  function selectedNodeIds(){ return new Set(state.selection?.nodes || []); }
-  function selectedEdgeIds(){ return new Set(state.selection?.edges || []); }
-  function isNodeSelected(id){ return selectedNodeIds().has(id); }
-  function isEdgeSelected(id){ return selectedEdgeIds().has(id); }
+  // Selection sets are cached by a revision counter — creating a new Set per
+  // render pass is wasteful when selection hasn't changed, especially for
+  // matrix rendering which checks isNodeSelected per cell.
+  let selCacheRev = 0;
+  let selCache = { rev: -1, nodes: new Set<string>(), edges: new Set<string>() };
+  function invalidateSelectionCache(){ selCacheRev++; }
+  function getSelectionCache(){
+    if(selCache.rev !== selCacheRev){
+      selCache.nodes = new Set(state.selection?.nodes || []);
+      selCache.edges = new Set(state.selection?.edges || []);
+      selCache.rev = selCacheRev;
+    }
+    return selCache;
+  }
+  function selectedNodeIds(){ return getSelectionCache().nodes; }
+  function selectedEdgeIds(){ return getSelectionCache().edges; }
+  function isNodeSelected(id){ return getSelectionCache().nodes.has(id); }
+  function isEdgeSelected(id){ return getSelectionCache().edges.has(id); }
   // Shared selection-merge core: computes state.selection/state.selected from
   // the requested ids and combine mode. Callers decide how much DOM to update.
   function mergeSelection(
@@ -68,6 +82,7 @@
       edges.forEach(id => edgeById(id) && edgeSet.add(id));
     }
     state.selection = { nodes:[...nodeSet], edges:[...edgeSet] };
+    invalidateSelectionCache();
     if(primary && ((primary.type === 'node' && nodeSet.has(primary.id)) || (primary.type === 'edge' && edgeSet.has(primary.id)))) state.selected = primary;
     else if(state.selection.nodes.length) state.selected = {type:'node', id:state.selection.nodes[0]};
     else if(state.selection.edges.length) state.selected = {type:'edge', id:state.selection.edges[0]};
@@ -252,17 +267,34 @@
     return v;
   }
   function coordinateBounds(n){
-    const xs = state.nodes.map(node => node.x).concat([state.viewBox.x, state.viewBox.x + state.viewBox.w, n.x]);
-    const ys = state.nodes.map(node => node.y).concat([state.viewBox.y, state.viewBox.y + state.viewBox.h, n.y]);
+    // Single pass min/max without intermediate arrays or spread — avoids O(n) allocations and call-stack blow-up on large graphs
+    let minX = state.viewBox.x, maxX = state.viewBox.x + state.viewBox.w;
+    let minY = state.viewBox.y, maxY = state.viewBox.y + state.viewBox.h;
+    // include the edited node's own position
+    if(n.x < minX) minX = n.x; if(n.x > maxX) maxX = n.x;
+    if(n.y < minY) minY = n.y; if(n.y > maxY) maxY = n.y;
+    for(let i=0;i<state.nodes.length;i++){
+      const node = state.nodes[i];
+      if(node.x < minX) minX = node.x; if(node.x > maxX) maxX = node.x;
+      if(node.y < minY) minY = node.y; if(node.y > maxY) maxY = node.y;
+    }
     return {
-      minX: Math.floor(Math.min(...xs) - 300), maxX: Math.ceil(Math.max(...xs) + 300),
-      minY: Math.floor(Math.min(...ys) - 300), maxY: Math.ceil(Math.max(...ys) + 300)
+      minX: Math.floor(minX - 300), maxX: Math.ceil(maxX + 300),
+      minY: Math.floor(minY - 300), maxY: Math.ceil(maxY + 300)
     };
   }
 
   function isPositionFree(x, y, ignoreIds=new Set()){
     const minDistance = R * 2 + 14;
-    return state.nodes.every(n => ignoreIds.has(n.id) || Math.hypot(n.x - x, n.y - y) >= minDistance);
+    const minDist2 = minDistance * minDistance;
+    // Use squared distance to avoid sqrt per node — same result, cheaper
+    for(let i=0;i<state.nodes.length;i++){
+      const n = state.nodes[i];
+      if(ignoreIds.has(n.id)) continue;
+      const dx = n.x - x, dy = n.y - y;
+      if(dx*dx + dy*dy < minDist2) return false;
+    }
+    return true;
   }
   function findFreeNodePosition(x, y, ignoreIds=new Set()){
     if(isPositionFree(x, y, ignoreIds)) return {x, y};
@@ -550,6 +582,7 @@
     state.edges = state.edges.filter(e => !edgeIds.has(e.id) && !nodeIds.has(e.from) && !nodeIds.has(e.to));
     state.selected = null;
     state.selection = {nodes: [], edges: []};
+    invalidateSelectionCache();
     toast(I18N.t('deleted_n_m', {n: nodeIds.size, m: edgeIds.size}));
     pushHistory('delete'); queueRender(true, true);
   }
