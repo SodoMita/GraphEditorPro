@@ -470,13 +470,14 @@
     .canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
     .canvas-wrap.panning #graphCanvas{cursor:grabbing}
     .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
-    .edge-line{fill:none}
+    .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
     .edge-arrow{pointer-events:none}
     /* Edge selection: a wide accent LINE that reuses the edge's own path (no
        outline of the edge shape to derive, so a drag can keep it glued to the
        edge for free), plus the tip triangle enlarged about its own centre and
-       drawn behind the arrowhead. The edge keeps its own colours. */
-    .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:round; stroke-linecap:round; pointer-events:none}
+       drawn behind the arrowhead. The edge keeps its own colours.
+       Butt/miter caps are cheaper than round and avoid extra arc rasterization. */
+    .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:miter; stroke-linecap:butt; pointer-events:none}
     .edge-sel-arrow{fill:var(--accent); stroke:none; pointer-events:none}
     .edge-label{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     .edge-weight{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
