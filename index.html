@@ -345,7 +345,11 @@
        blank half-screen space, and big ones scroll inside the panel. */
     .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
-    .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0}
+    .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0;grid-template-rows:minmax(0,1fr)}
+    .main:not(.v-canvas) .bottom-pane{height:100%;min-height:0}
+    .main:not(.v-canvas).v-matrix .bottom-pane:nth-child(1),
+    .main:not(.v-canvas).v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; overflow:hidden}
+    .main:not(.v-canvas) .table-scroll{flex:1 1 auto; min-height:0; max-height:none}
     .bottom-pane{min-width:0; padding:9px 10px; overflow:auto; -webkit-overflow-scrolling:touch; container-type:inline-size}
     .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2)}
     /* Narrow panes (side-by-side): single scrollable control row */
@@ -596,6 +600,12 @@
       .main[data-orient="h"] .bottom{grid-template-rows:minmax(0,1fr); max-height:none}
       .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
+      .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
+      .main:not(.v-canvas) .bottom{max-height:none; height:100%; min-height:0}
+      .main:not(.v-canvas) .table-scroll{max-height:none}
       .toast-stack{bottom:calc(12px + var(--sa-bottom))}
     }
 
@@ -636,12 +646,19 @@
       .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
       .main.v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1.05fr .95fr}
       .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      .main.v-matrix .bottom-pane:nth-child(1),
+      .main.v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden}
+      .main:not(.v-canvas) .bottom{max-height:none; height:100%; min-height:0; grid-template-rows:minmax(0,1fr)}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1.05fr .95fr}
+      .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
+      .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
       /* Horizontal split (↔): canvas left, panels right for every view */
       .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .table-scroll{max-height:none}
-      .table-scroll{max-height:calc(26vh - 58px)}
+      .main:not(.v-canvas) .table-scroll{max-height:none}
+      .table-scroll{flex:1 1 auto; min-height:0; max-height:calc(26vh - 58px)}
     }
 
     /* Compact desktop: the badge is enough branding beside symbolic commands. */
@@ -1022,7 +1039,10 @@
                   <label class="field" for="defNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defNodeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
                   <label class="field" for="defNodeLabelPos"><span data-i18n="label_pos">Label position</span> <select id="defNodeLabelPos"><option value="center" data-i18n="pos_center">Center</option><option value="top" data-i18n="pos_top">Top</option><option value="bottom" data-i18n="pos_bottom">Bottom</option><option value="left" data-i18n="pos_left">Left</option><option value="right" data-i18n="pos_right">Right</option></select></label>
                 </div>
-                <button id="btnApplyNodeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_nodes">Apply defaults to all nodes</button>
+                <div class="row" style="margin-top:8px">
+                  <button id="btnApplyNodeDefaults" class="btn small good" style="flex:1" data-i18n="apply_to_all_nodes">Apply defaults to all nodes</button>
+                  <button id="btnApplyNodeDefaultsSel" class="btn small" style="flex:1" data-i18n="apply_to_sel_nodes">Apply defaults to selected</button>
+                </div>
               </div>
             </details>
 
@@ -1040,7 +1060,10 @@
                   <label class="field" for="defEdgeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defEdgeLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                   <label class="field" for="defEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defEdgeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
                 </div>
-                <button id="btnApplyEdgeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_edges">Apply defaults to all edges</button>
+                <div class="row" style="margin-top:8px">
+                  <button id="btnApplyEdgeDefaults" class="btn small good" style="flex:1" data-i18n="apply_to_all_edges">Apply defaults to all edges</button>
+                  <button id="btnApplyEdgeDefaultsSel" class="btn small" style="flex:1" data-i18n="apply_to_sel_edges">Apply defaults to selected</button>
+                </div>
               </div>
             </details>
 
@@ -1613,7 +1636,13 @@ const I18N = {
         'node_defaults': { en: 'Node defaults', ru: 'Умолчания узлов' },
         'edge_defaults_style': { en: 'Edge defaults', ru: 'Умолчания рёбер' },
         'apply_to_all_nodes': { en: 'Apply defaults to all nodes', ru: 'Применить умолчания ко всем узлам' },
+        'apply_to_sel_nodes': { en: 'Apply defaults to selected', ru: 'Применить умолчания к выделению' },
         'apply_to_all_edges': { en: 'Apply defaults to all edges', ru: 'Применить умолчания ко всем рёбрам' },
+        'apply_to_sel_edges': { en: 'Apply defaults to selected', ru: 'Применить умолчания к выделению' },
+        'node_defaults_applied_sel': { en: 'Node defaults applied to {count} node(s)', ru: 'Умолчания узлов применены к {count} узл.' },
+        'edge_defaults_applied_sel': { en: 'Edge defaults applied to {count} edge(s)', ru: 'Умолчания рёбер применены к {count} рёбр.' },
+        'no_nodes_selected': { en: 'No nodes selected', ru: 'Нет выбранных узлов' },
+        'no_edges_selected': { en: 'No edges selected', ru: 'Нет выбранных рёбер' },
         'type_styles_sub': { en: '(per-type overrides)', ru: '(переопределения по типу)' },
         'type_styles_desc': { en: 'Type a name, set style, then Save. Nodes with this type (and no per-node override) will use these visuals. Use "Clear per-node" to force type style to take effect.', ru: 'Введите имя, задайте стиль, затем Сохранить. Узлы этого типа (без покрывающих переопределений) будут использовать этот вид. Используйте "Очистить покр. узлы" для применения стиля типа.' },
         'type_styles_desc_edge': { en: 'Type a name, set style, then Save. Edges with this type (and no per-edge override) will use these visuals.', ru: 'Введите имя, задайте стиль, затем Сохранить. Рёбра этого типа (без покрывающих переопределений) будут использовать этот вид.' },
@@ -2544,34 +2573,38 @@ function nodeById(id) { return indexFor(nodeIndex, state.nodes).get(id); }
 function edgeById(id) { return indexFor(edgeIndex, state.edges).get(id); }
 // === Visual resolution: merge per-item overrides → type styles → defaults ===
 function nodeVisual(n) {
-    const d = state.settings.nodeDefaults;
+    const d = state.settings.nodeDefaults || {};
+    const effectiveType = n.type || d.type || '';
     const ts = (n.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[n.type]) || {};
+    const dts = (d.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[d.type]) || {};
     return {
-        shape: n.shape || ts.shape || d.shape,
-        color: n.color || ts.color || d.color,
-        type: n.type || '',
-        width: n.width != null ? n.width : (ts.width != null ? ts.width : d.width),
-        height: n.height != null ? n.height : (ts.height != null ? ts.height : d.height),
-        strokeColor: n.strokeColor || ts.strokeColor || d.strokeColor,
-        strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : d.strokeSize),
-        strokeStyle: n.strokeStyle || ts.strokeStyle || d.strokeStyle,
-        labelColor: n.labelColor || ts.labelColor || d.labelColor,
-        labelSize: n.labelSize || ts.labelSize || d.labelSize,
-        labelPosition: n.labelPosition || ts.labelPosition || d.labelPosition,
-        labelFont: n.labelFont || ts.labelFont || d.labelFont
+        shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
+        color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+        type: effectiveType,
+        width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
+        height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
+        strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
+        strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+        strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+        labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+        labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+        labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
+        labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
     };
 }
 function edgeVisual(e) {
-    const d = state.settings.edgeDefaults;
+    const d = state.settings.edgeDefaults || {};
+    const effectiveType = e.type || d.type || '';
     const ts = (e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type]) || {};
+    const dts = (d.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[d.type]) || {};
     return {
-        color: e.color || ts.color || d.color,
-        type: e.type || '',
-        strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : d.strokeSize),
-        strokeStyle: e.strokeStyle || ts.strokeStyle || d.strokeStyle,
-        labelColor: e.labelColor || ts.labelColor || d.labelColor,
-        labelSize: e.labelSize || ts.labelSize || d.labelSize,
-        labelFont: e.labelFont || ts.labelFont || d.labelFont
+        color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+        type: effectiveType,
+        strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+        strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+        labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+        labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+        labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
     };
 }
 // === Edge weight visualization helpers ===
@@ -3455,7 +3488,8 @@ function renderEdges() {
                         }
                     }
                 }
-                selectItem('edge', e.id);
+                const combine = effectiveSelectCombine(ev);
+                setSelection([], [e.id], { type: 'edge', id: e.id }, combine);
             });
             g.addEventListener('dblclick', ev => { ev.stopPropagation(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
                 finishPolygonSelection(false);
@@ -3942,16 +3976,23 @@ function renderSelectionPanel() {
             const labelPosOptions = ['<option value="">' + I18N.t('stroke_inherit') + '</option>', '<option value="center">' + I18N.t('pos_center') + '</option>', '<option value="top">' + I18N.t('pos_top') + '</option>', '<option value="bottom">' + I18N.t('pos_bottom') + '</option>', '<option value="left">' + I18N.t('pos_left') + '</option>', '<option value="right">' + I18N.t('pos_right') + '</option>'].join('');
             html += `<div class="section-title">${I18N.t('nodes_n', { n: nodeCount })} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>
           <div class="grid2">
+            <label class="field" for="mulNodeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulNodeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList">${existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
             <label class="field" for="mulNodeOrder"><span data-i18n="order">Order</span> <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
             <label class="field" for="mulNodeColor"><span data-i18n="color">Color</span> <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
             <label class="field" for="mulNodeShape"><span data-i18n="shape">Shape</span> <select id="mulNodeShape">${shapeOptions}</select></label>
+            <label class="field" for="mulNodeWidth"><span data-i18n="width">${I18N.t('width')}</span> <input id="mulNodeWidth" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
+            <label class="field" for="mulNodeHeight"><span data-i18n="height">${I18N.t('height')}</span> <input id="mulNodeHeight" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
             <label class="field" for="mulNodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span> <input id="mulNodeStrokeColor" type="color" value="#e2e8f0"></label>
             <label class="field" for="mulNodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="mulNodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal"></label>
             <label class="field" for="mulNodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulNodeStrokeStyle">${strokeOptions}</select></label>
             <label class="field" for="mulNodeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulNodeLabelColor" type="color" value="#f8fafc"></label>
             <label class="field" for="mulNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulNodeLabelSize" type="number" min="4" max="72" value="13" inputmode="decimal"></label>
             <label class="field" for="mulNodeLabelPos"><span data-i18n="label_pos">Label pos</span> <select id="mulNodeLabelPos">${labelPosOptions}</select></label>
+            <label class="field" for="mulNodeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulNodeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button id="mulResetNodeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
         }
         // Edge editing section (if any edges selected)
@@ -3959,6 +4000,8 @@ function renderSelectionPanel() {
             const strokeOptions = '<option value="">' + I18N.t('stroke_inherit') + '</option>' + STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
             html += `<div class="section-title">${I18N.t('edges_n', { n: edgeCount })} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>
           <div class="grid2">
+            <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
+            <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
             <label class="field" for="mulEdgeDirected"><span data-i18n="directed">Directed</span> <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
             <label class="field" for="mulEdgeColor"><span data-i18n="color">Color</span> <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
@@ -3966,6 +4009,10 @@ function renderSelectionPanel() {
             <label class="field" for="mulEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
             <label class="field" for="mulEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
             <label class="field" for="mulEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
+            <label class="field" for="mulEdgeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulEdgeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button id="mulResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
         }
         host.innerHTML = html;
@@ -3990,6 +4037,11 @@ function renderSelectionPanel() {
                 queueRender(false);
                 saveSoon();
             };
+            $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0, 80); for (const id of nodeIds) {
+                const n = nodeById(id);
+                if (n)
+                    n.label = v;
+            } pushHistory('multi node label'); queueRender(true); markSidebarDirty(); saveSoon(); });
             $('#mulNodeType').addEventListener('change', e => { const v = e.target.value.slice(0, 40); for (const id of nodeIds) {
                 const n = nodeById(id);
                 if (n) {
@@ -4014,6 +4066,18 @@ function renderSelectionPanel() {
                 if (n)
                     n.shape = v;
             } pushHistory('multi node shape'); queueRender(false); });
+            $('#mulNodeWidth').addEventListener('change', e => { const val = e.target.value; if (val === '')
+                return; const v = clamp(finite(val, 50), 10, 300); e.target.value = v; for (const id of nodeIds) {
+                const n = nodeById(id);
+                if (n)
+                    n.width = v;
+            } pushHistory('multi node width'); queueRender(false); saveSoon(); });
+            $('#mulNodeHeight').addEventListener('change', e => { const val = e.target.value; if (val === '')
+                return; const v = clamp(finite(val, 50), 10, 300); e.target.value = v; for (const id of nodeIds) {
+                const n = nodeById(id);
+                if (n)
+                    n.height = v;
+            } pushHistory('multi node height'); queueRender(false); saveSoon(); });
             $('#mulNodeStrokeColor').addEventListener('input', e => { for (const id of nodeIds) {
                 const n = nodeById(id);
                 if (n)
@@ -4046,10 +4110,57 @@ function renderSelectionPanel() {
                 if (n)
                     n.labelPosition = v;
             } pushHistory('multi label pos'); queueRender(false); });
+            $('#mulNodeLabelFont').addEventListener('change', e => { const v = e.target.value.trim().slice(0, 60); for (const id of nodeIds) {
+                const n = nodeById(id);
+                if (n)
+                    n.labelFont = v || undefined;
+            } pushHistory('multi node label font'); queueRender(false); saveSoon(); });
+            attachDragNumber($('#mulNodeWidth'), { min: 10, max: 300, step: 1, sensitivity: 0.5 });
+            attachDragNumber($('#mulNodeHeight'), { min: 10, max: 300, step: 1, sensitivity: 0.5 });
+            attachDragNumber($('#mulNodeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+            attachDragNumber($('#mulNodeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
+            $('#mulResetNodeStyle').addEventListener('click', () => {
+                for (const id of nodeIds) {
+                    const n = nodeById(id);
+                    if (!n)
+                        continue;
+                    delete n.shape;
+                    delete n.color;
+                    delete n.width;
+                    delete n.height;
+                    delete n.strokeColor;
+                    delete n.strokeSize;
+                    delete n.strokeStyle;
+                    delete n.labelColor;
+                    delete n.labelSize;
+                    delete n.labelPosition;
+                    delete n.labelFont;
+                    n.shape = '';
+                    n.color = '';
+                }
+                pushHistory('reset multi node style');
+                queueRender(true);
+                saveSoon();
+                renderSelectionPanel();
+            });
         }
         // Wire edge multi-edit controls
         if (edgeCount > 0) {
             const edgeIds = state.selection.edges;
+            $('#mulEdgeLabel').addEventListener('change', e => { const v = e.target.value.slice(0, 80); for (const id of edgeIds) {
+                const ed = edgeById(id);
+                if (ed)
+                    ed.label = v;
+            } pushHistory('multi edge label'); queueRender(true); saveSoon(); });
+            $('#mulEdgeWeight').addEventListener('change', e => { const v = e.target.value.slice(0, 50); for (const id of edgeIds) {
+                const ed = edgeById(id);
+                if (ed) {
+                    if (v === '')
+                        delete ed.weight;
+                    else
+                        ed.weight = v;
+                }
+            } pushHistory('multi edge weight'); queueRender(true); saveSoon(); });
             $('#mulEdgeType').addEventListener('change', e => { const v = e.target.value.slice(0, 40); for (const id of edgeIds) {
                 const ed = edgeById(id);
                 if (ed) {
@@ -4090,6 +4201,31 @@ function renderSelectionPanel() {
                 if (ed)
                     ed.labelSize = v;
             } pushHistory('multi edge label size'); queueRender(false); });
+            $('#mulEdgeLabelFont').addEventListener('change', e => { const v = e.target.value.trim().slice(0, 60); for (const id of edgeIds) {
+                const ed = edgeById(id);
+                if (ed)
+                    ed.labelFont = v || undefined;
+            } pushHistory('multi edge label font'); queueRender(false); saveSoon(); });
+            attachDragNumber($('#mulEdgeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+            attachDragNumber($('#mulEdgeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
+            $('#mulResetEdgeStyle').addEventListener('click', () => {
+                for (const id of edgeIds) {
+                    const ed = edgeById(id);
+                    if (!ed)
+                        continue;
+                    delete ed.color;
+                    delete ed.strokeSize;
+                    delete ed.strokeStyle;
+                    delete ed.labelColor;
+                    delete ed.labelSize;
+                    delete ed.labelFont;
+                    ed.color = '';
+                }
+                pushHistory('reset multi edge style');
+                queueRender(true);
+                saveSoon();
+                renderSelectionPanel();
+            });
         }
         return;
     }
@@ -4783,21 +4919,26 @@ function applyNewNodeDefaults(n) {
     const s = state.settings;
     if (s.nodeType)
         n.type = s.nodeType;
+    else if (s.nodeDefaults?.type)
+        n.type = s.nodeDefaults.type;
     // Inherit mode deliberately leaves visual properties unset so later
     // changes to Style-tab defaults (or the node's type style) remain live.
     if (s.inheritDefaults !== false)
         return;
-    n.shape = s.nodeShape;
-    n.color = s.nodeColor;
-    n.width = s.nodeWidth;
-    n.height = s.nodeHeight;
-    n.strokeColor = s.nodeStrokeColor;
-    n.strokeSize = s.nodeStrokeSize;
-    n.strokeStyle = s.nodeStrokeStyle;
-    n.labelColor = s.nodeLabelColor;
-    n.labelFont = s.nodeLabelFont;
-    n.labelSize = s.nodeLabelSize;
-    n.labelPosition = s.nodeLabelPosition;
+    const d = s.nodeDefaults;
+    const defType = n.type || d?.type;
+    const dts = (defType && s.nodeTypeStyles && s.nodeTypeStyles[defType]) || {};
+    n.shape = (defType && dts.shape) ? dts.shape : s.nodeShape;
+    n.color = (defType && dts.color) ? dts.color : s.nodeColor;
+    n.width = (defType && dts.width != null) ? dts.width : s.nodeWidth;
+    n.height = (defType && dts.height != null) ? dts.height : s.nodeHeight;
+    n.strokeColor = (defType && dts.strokeColor) ? dts.strokeColor : s.nodeStrokeColor;
+    n.strokeSize = (defType && dts.strokeSize != null) ? dts.strokeSize : s.nodeStrokeSize;
+    n.strokeStyle = (defType && dts.strokeStyle) ? dts.strokeStyle : s.nodeStrokeStyle;
+    n.labelColor = (defType && dts.labelColor) ? dts.labelColor : s.nodeLabelColor;
+    n.labelFont = (defType && dts.labelFont) ? dts.labelFont : s.nodeLabelFont;
+    n.labelSize = (defType && dts.labelSize != null) ? dts.labelSize : s.nodeLabelSize;
+    n.labelPosition = (defType && dts.labelPosition) ? dts.labelPosition : s.nodeLabelPosition;
 }
 function addNode(x, y) {
     ({ x, y } = snapPointToEnabled(x, y));
@@ -4819,12 +4960,13 @@ function addEdge(from, to) {
     if (!nodeById(from) || !nodeById(to))
         return;
     const s = state.settings;
-    const e = { id: 'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0, 80), directed: Boolean(s.directed), type: '' };
+    const defEdgeType = s.edgeDefaults?.type || '';
+    const effectiveType = s.edgeType || defEdgeType;
+    const e = { id: 'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0, 80), directed: Boolean(s.directed), type: effectiveType };
     if (s.edgeWeight !== '')
         e.weight = String(s.edgeWeight).slice(0, 50);
-    if (s.edgeType) {
-        e.type = s.edgeType;
-        const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[s.edgeType];
+    if (effectiveType) {
+        const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[effectiveType];
         if (ts) {
             if (!ts.color)
                 e.color = s.edgeColor;
@@ -7822,6 +7964,7 @@ function syncStyleControls() {
     populateTypeStyleSelects();
 }
 function applyNodeDefaultsToAll() {
+    const d = state.settings.nodeDefaults;
     for (const n of state.nodes) {
         delete n.width;
         delete n.height;
@@ -7832,14 +7975,59 @@ function applyNodeDefaultsToAll() {
         delete n.labelSize;
         delete n.labelPosition;
         delete n.labelFont;
-        n.shape = state.settings.nodeDefaults.shape;
-        n.color = state.settings.nodeDefaults.color;
+        if (d.type) {
+            n.type = d.type;
+            delete n.shape;
+            delete n.color;
+            applyTypeStyleToNode(n);
+        }
+        else {
+            n.shape = d.shape;
+            n.color = d.color;
+        }
     }
     pushHistory('apply node defaults');
     queueRender(true);
     toast(I18N.t('node_defaults_applied'));
 }
+function applyNodeDefaultsToSelected() {
+    const nodeIds = state.selection?.nodes || [];
+    if (!nodeIds.length) {
+        toast(I18N.t('no_nodes_selected'));
+        return;
+    }
+    const d = state.settings.nodeDefaults;
+    for (const id of nodeIds) {
+        const n = nodeById(id);
+        if (!n)
+            continue;
+        delete n.width;
+        delete n.height;
+        delete n.strokeColor;
+        delete n.strokeSize;
+        delete n.strokeStyle;
+        delete n.labelColor;
+        delete n.labelSize;
+        delete n.labelPosition;
+        delete n.labelFont;
+        if (d.type) {
+            n.type = d.type;
+            delete n.shape;
+            delete n.color;
+            applyTypeStyleToNode(n);
+        }
+        else {
+            n.shape = d.shape;
+            n.color = d.color;
+        }
+    }
+    pushHistory('apply node defaults to selected');
+    queueRender(true);
+    renderSelectionPanel();
+    toast(I18N.t('node_defaults_applied_sel', { count: nodeIds.length }));
+}
 function applyEdgeDefaultsToAll() {
+    const d = state.settings.edgeDefaults;
     for (const e of state.edges) {
         delete e.color;
         delete e.strokeSize;
@@ -7847,10 +8035,41 @@ function applyEdgeDefaultsToAll() {
         delete e.labelColor;
         delete e.labelSize;
         delete e.labelFont;
+        if (d.type) {
+            e.type = d.type;
+            applyTypeStyleToEdge(e);
+        }
     }
     pushHistory('apply edge defaults');
     queueRender(true);
     toast(I18N.t('edge_defaults_applied'));
+}
+function applyEdgeDefaultsToSelected() {
+    const edgeIds = state.selection?.edges || [];
+    if (!edgeIds.length) {
+        toast(I18N.t('no_edges_selected'));
+        return;
+    }
+    const d = state.settings.edgeDefaults;
+    for (const id of edgeIds) {
+        const e = edgeById(id);
+        if (!e)
+            continue;
+        delete e.color;
+        delete e.strokeSize;
+        delete e.strokeStyle;
+        delete e.labelColor;
+        delete e.labelSize;
+        delete e.labelFont;
+        if (d.type) {
+            e.type = d.type;
+            applyTypeStyleToEdge(e);
+        }
+    }
+    pushHistory('apply edge defaults to selected');
+    queueRender(true);
+    renderSelectionPanel();
+    toast(I18N.t('edge_defaults_applied_sel', { count: edgeIds.length }));
 }
 // === Type style management ===
 function populateTypeStyleSelects() {
@@ -7914,7 +8133,7 @@ function saveNodeTypeStyle() {
     state.settings.nodeTypeStyles[type] = o;
     // Apply type style to all existing nodes of this type (clears blocking overrides)
     for (const n of state.nodes) {
-        if (n.type === type)
+        if (n.type === type || (!n.type && state.settings.nodeDefaults?.type === type))
             applyTypeStyleToNode(n);
     }
     pushHistory('save node type style');
@@ -7944,7 +8163,7 @@ function saveEdgeTypeStyle() {
     state.settings.edgeTypeStyles[type] = o;
     // Apply type style to all existing edges of this type (clears blocking overrides)
     for (const e of state.edges) {
-        if (e.type === type)
+        if (e.type === type || (!e.type && state.settings.edgeDefaults?.type === type))
             applyTypeStyleToEdge(e);
     }
     pushHistory('save edge type style');
@@ -8806,7 +9025,7 @@ function wireUi() {
     $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveSoon(); });
     $('#gridMajorColor').addEventListener('change', () => pushHistory('grid major color'));
     $('#gridMajorAlpha').addEventListener('change', e => { state.settings.gridMajorAlpha = clamp(finite(e.target.value, 0.16), 0, 1); e.target.value = state.settings.gridMajorAlpha; pushHistory('grid major alpha'); updateGridBackground(); saveSoon(); });
-    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0, 40); pushHistory('default node type'); saveSoon(); });
+    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0, 40); pushHistory('default node type'); queueRender(false); saveSoon(); });
     $('#defNodeShape').addEventListener('change', e => { nd().shape = e.target.value; state.settings.nodeShape = e.target.value; const el = $('#nodeShape'); if (el)
         el.value = e.target.value; pushHistory('default node shape'); queueRender(false); });
     $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el = $('#nodeColor'); if (el)
@@ -8823,7 +9042,7 @@ function wireUi() {
     $('#defNodeLabelFont').addEventListener('change', e => { nd().labelFont = e.target.value; pushHistory('default label font'); queueRender(false); });
     $('#defNodeLabelSize').addEventListener('change', e => { nd().labelSize = clamp(finite(e.target.value, 13), 4, 72); e.target.value = nd().labelSize; pushHistory('default label size'); queueRender(false); });
     $('#defNodeLabelPos').addEventListener('change', e => { nd().labelPosition = e.target.value; pushHistory('default label position'); queueRender(false); });
-    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0, 40); pushHistory('default edge type'); saveSoon(); });
+    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0, 40); pushHistory('default edge type'); queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value, 2.4), 0, 20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
@@ -8833,7 +9052,13 @@ function wireUi() {
     $('#defEdgeLabelFont').addEventListener('change', e => { ed().labelFont = e.target.value; pushHistory('default edge label font'); queueRender(false); });
     $('#defEdgeLabelSize').addEventListener('change', e => { ed().labelSize = clamp(finite(e.target.value, 12), 4, 72); e.target.value = ed().labelSize; pushHistory('default edge label size'); queueRender(false); });
     $('#btnApplyNodeDefaults').addEventListener('click', applyNodeDefaultsToAll);
+    const btnApplyNodeDefSel = $('#btnApplyNodeDefaultsSel');
+    if (btnApplyNodeDefSel)
+        btnApplyNodeDefSel.addEventListener('click', applyNodeDefaultsToSelected);
     $('#btnApplyEdgeDefaults').addEventListener('click', applyEdgeDefaultsToAll);
+    const btnApplyEdgeDefSel = $('#btnApplyEdgeDefaultsSel');
+    if (btnApplyEdgeDefSel)
+        btnApplyEdgeDefSel.addEventListener('click', applyEdgeDefaultsToSelected);
     // Type style controls
     $('#nodeTypeStyleInput').addEventListener('change', e => loadNodeTypeStyleForm(e.target.value));
     $('#edgeTypeStyleInput').addEventListener('change', e => loadEdgeTypeStyleForm(e.target.value));

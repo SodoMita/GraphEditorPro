@@ -284,13 +284,24 @@
   function applyNewNodeDefaults(n: GraphNode){
     const s = state.settings;
     if(s.nodeType) n.type = s.nodeType;
+    else if(s.nodeDefaults?.type) n.type = s.nodeDefaults.type;
     // Inherit mode deliberately leaves visual properties unset so later
     // changes to Style-tab defaults (or the node's type style) remain live.
     if(s.inheritDefaults !== false) return;
-    n.shape = s.nodeShape; n.color = s.nodeColor;
-    n.width = s.nodeWidth; n.height = s.nodeHeight;
-    n.strokeColor = s.nodeStrokeColor; n.strokeSize = s.nodeStrokeSize; n.strokeStyle = s.nodeStrokeStyle;
-    n.labelColor = s.nodeLabelColor; n.labelFont = s.nodeLabelFont; n.labelSize = s.nodeLabelSize; n.labelPosition = s.nodeLabelPosition;
+    const d = s.nodeDefaults;
+    const defType = n.type || d?.type;
+    const dts = (defType && s.nodeTypeStyles && s.nodeTypeStyles[defType]) || {};
+    n.shape = (defType && dts.shape) ? dts.shape : s.nodeShape;
+    n.color = (defType && dts.color) ? dts.color : s.nodeColor;
+    n.width = (defType && dts.width != null) ? dts.width : s.nodeWidth;
+    n.height = (defType && dts.height != null) ? dts.height : s.nodeHeight;
+    n.strokeColor = (defType && dts.strokeColor) ? dts.strokeColor : s.nodeStrokeColor;
+    n.strokeSize = (defType && dts.strokeSize != null) ? dts.strokeSize : s.nodeStrokeSize;
+    n.strokeStyle = (defType && dts.strokeStyle) ? dts.strokeStyle : s.nodeStrokeStyle;
+    n.labelColor = (defType && dts.labelColor) ? dts.labelColor : s.nodeLabelColor;
+    n.labelFont = (defType && dts.labelFont) ? dts.labelFont : s.nodeLabelFont;
+    n.labelSize = (defType && dts.labelSize != null) ? dts.labelSize : s.nodeLabelSize;
+    n.labelPosition = (defType && dts.labelPosition) ? dts.labelPosition : s.nodeLabelPosition;
   }
 
   function addNode(x,y){
@@ -308,11 +319,12 @@
   function addEdge(from,to){
     if(!nodeById(from) || !nodeById(to)) return;
     const s = state.settings;
-    const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: Boolean(s.directed), type:'' };
+    const defEdgeType = s.edgeDefaults?.type || '';
+    const effectiveType = s.edgeType || defEdgeType;
+    const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: Boolean(s.directed), type: effectiveType };
     if(s.edgeWeight !== '') e.weight = String(s.edgeWeight).slice(0,50);
-    if(s.edgeType){
-      e.type = s.edgeType;
-      const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[s.edgeType];
+    if(effectiveType){
+      const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[effectiveType];
       if(ts){
         if(!ts.color) e.color = s.edgeColor; else e.color = '';
         if(ts.strokeSize == null) e.strokeSize = s.edgeStrokeSize;

@@ -1,32 +1,36 @@
   function nodeVisual(n){
-    const d = state.settings.nodeDefaults;
+    const d = state.settings.nodeDefaults || {};
+    const effectiveType = n.type || d.type || '';
     const ts = (n.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[n.type]) || {};
+    const dts = (d.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[d.type]) || {};
     return {
-      shape: n.shape || ts.shape || d.shape,
-      color: n.color || ts.color || d.color,
-      type: n.type || '',
-      width: n.width != null ? n.width : (ts.width != null ? ts.width : d.width),
-      height: n.height != null ? n.height : (ts.height != null ? ts.height : d.height),
-      strokeColor: n.strokeColor || ts.strokeColor || d.strokeColor,
-      strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : d.strokeSize),
-      strokeStyle: n.strokeStyle || ts.strokeStyle || d.strokeStyle,
-      labelColor: n.labelColor || ts.labelColor || d.labelColor,
-      labelSize: n.labelSize || ts.labelSize || d.labelSize,
-      labelPosition: n.labelPosition || ts.labelPosition || d.labelPosition,
-      labelFont: n.labelFont || ts.labelFont || d.labelFont
+      shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
+      color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+      type: effectiveType,
+      width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
+      height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
+      strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
+      strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+      strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+      labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+      labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+      labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
+      labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
     };
   }
   function edgeVisual(e){
-    const d = state.settings.edgeDefaults;
+    const d = state.settings.edgeDefaults || {};
+    const effectiveType = e.type || d.type || '';
     const ts = (e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type]) || {};
+    const dts = (d.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[d.type]) || {};
     return {
-      color: e.color || ts.color || d.color,
-      type: e.type || '',
-      strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : d.strokeSize),
-      strokeStyle: e.strokeStyle || ts.strokeStyle || d.strokeStyle,
-      labelColor: e.labelColor || ts.labelColor || d.labelColor,
-      labelSize: e.labelSize || ts.labelSize || d.labelSize,
-      labelFont: e.labelFont || ts.labelFont || d.labelFont
+      color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+      type: effectiveType,
+      strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+      strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+      labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+      labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+      labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
     };
   }
   // === Edge weight visualization helpers ===
@@ -728,7 +732,8 @@
               if(Math.hypot(p.x-mx, p.y-my) > Math.max(10, len*0.18)){ deselect(); return; }
             }
           }
-          selectItem('edge', e.id);
+          const combine = effectiveSelectCombine(ev);
+          setSelection([], [e.id], {type:'edge', id:e.id}, combine);
         });
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
         edgesLayer.appendChild(g);
@@ -1094,16 +1099,23 @@
         const labelPosOptions = ['<option value="">' + I18N.t('stroke_inherit') + '</option>','<option value="center">' + I18N.t('pos_center') + '</option>','<option value="top">' + I18N.t('pos_top') + '</option>','<option value="bottom">' + I18N.t('pos_bottom') + '</option>','<option value="left">' + I18N.t('pos_left') + '</option>','<option value="right">' + I18N.t('pos_right') + '</option>'].join('');
         html += `<div class="section-title">${I18N.t('nodes_n', {n: nodeCount})} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>
           <div class="grid2">
+            <label class="field" for="mulNodeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulNodeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList">${existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
             <label class="field" for="mulNodeOrder"><span data-i18n="order">Order</span> <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
             <label class="field" for="mulNodeColor"><span data-i18n="color">Color</span> <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
             <label class="field" for="mulNodeShape"><span data-i18n="shape">Shape</span> <select id="mulNodeShape">${shapeOptions}</select></label>
+            <label class="field" for="mulNodeWidth"><span data-i18n="width">${I18N.t('width')}</span> <input id="mulNodeWidth" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
+            <label class="field" for="mulNodeHeight"><span data-i18n="height">${I18N.t('height')}</span> <input id="mulNodeHeight" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
             <label class="field" for="mulNodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span> <input id="mulNodeStrokeColor" type="color" value="#e2e8f0"></label>
             <label class="field" for="mulNodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="mulNodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal"></label>
             <label class="field" for="mulNodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulNodeStrokeStyle">${strokeOptions}</select></label>
             <label class="field" for="mulNodeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulNodeLabelColor" type="color" value="#f8fafc"></label>
             <label class="field" for="mulNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulNodeLabelSize" type="number" min="4" max="72" value="13" inputmode="decimal"></label>
             <label class="field" for="mulNodeLabelPos"><span data-i18n="label_pos">Label pos</span> <select id="mulNodeLabelPos">${labelPosOptions}</select></label>
+            <label class="field" for="mulNodeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulNodeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button id="mulResetNodeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
       }
       // Edge editing section (if any edges selected)
@@ -1111,6 +1123,8 @@
         const strokeOptions = '<option value="">' + I18N.t('stroke_inherit') + '</option>' + STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
         html += `<div class="section-title">${I18N.t('edges_n', {n: edgeCount})} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>
           <div class="grid2">
+            <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
+            <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
             <label class="field" for="mulEdgeDirected"><span data-i18n="directed">Directed</span> <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
             <label class="field" for="mulEdgeColor"><span data-i18n="color">Color</span> <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
@@ -1118,6 +1132,10 @@
             <label class="field" for="mulEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
             <label class="field" for="mulEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
             <label class="field" for="mulEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
+            <label class="field" for="mulEdgeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulEdgeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button id="mulResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
       }
       host.innerHTML = html;
@@ -1132,11 +1150,14 @@
           for(const id of nodeIds){ const n = nodeById(id); if(n){ if(val === '' && isInput) n[prop] = ''; else if(val !== '') n[prop] = isInput ? val : val; } }
           pushHistory('multi-edit nodes'); queueRender(false); saveSoon();
         };
+        $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of nodeIds){ const n = nodeById(id); if(n) n.label = v; } pushHistory('multi node label'); queueRender(true); markSidebarDirty(); saveSoon(); });
         $('#mulNodeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of nodeIds){ const n = nodeById(id); if(n){ n.type = v; applyTypeStyleToNode(n); } } pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
         $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const ord = clamp(parseInt(v,10)||0, 0, 2147483647); for(const id of nodeIds){ const n = nodeById(id); if(n) n.order = ord; } pushHistory('multi node order'); queueRender(true); saveSoon(); });
         $('#mulNodeColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.color = e.target.value; } queueRender(false); saveSoon(); });
         $('#mulNodeColor').addEventListener('change', () => pushHistory('multi node color'));
         $('#mulNodeShape').addEventListener('change', e => { const v = e.target.value; for(const id of nodeIds){ const n = nodeById(id); if(n) n.shape = v; } pushHistory('multi node shape'); queueRender(false); });
+        $('#mulNodeWidth').addEventListener('change', e => { const val = e.target.value; if(val === '') return; const v = clamp(finite(val,50),10,300); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.width = v; } pushHistory('multi node width'); queueRender(false); saveSoon(); });
+        $('#mulNodeHeight').addEventListener('change', e => { const val = e.target.value; if(val === '') return; const v = clamp(finite(val,50),10,300); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.height = v; } pushHistory('multi node height'); queueRender(false); saveSoon(); });
         $('#mulNodeStrokeColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.strokeColor = e.target.value; } queueRender(false); saveSoon(); });
         $('#mulNodeStrokeColor').addEventListener('change', () => pushHistory('multi stroke color'));
         $('#mulNodeStrokeSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,2.2),0,20); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.strokeSize = v; } pushHistory('multi stroke size'); queueRender(false); });
@@ -1145,10 +1166,27 @@
         $('#mulNodeLabelColor').addEventListener('change', () => pushHistory('multi label color'));
         $('#mulNodeLabelSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,13),4,72); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.labelSize = v; } pushHistory('multi label size'); queueRender(false); });
         $('#mulNodeLabelPos').addEventListener('change', e => { const v = e.target.value; for(const id of nodeIds){ const n = nodeById(id); if(n) n.labelPosition = v; } pushHistory('multi label pos'); queueRender(false); });
+        $('#mulNodeLabelFont').addEventListener('change', e => { const v = e.target.value.trim().slice(0,60); for(const id of nodeIds){ const n = nodeById(id); if(n) n.labelFont = v || undefined; } pushHistory('multi node label font'); queueRender(false); saveSoon(); });
+        attachDragNumber($('#mulNodeWidth'), { min: 10, max: 300, step: 1, sensitivity: 0.5 });
+        attachDragNumber($('#mulNodeHeight'), { min: 10, max: 300, step: 1, sensitivity: 0.5 });
+        attachDragNumber($('#mulNodeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+        attachDragNumber($('#mulNodeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
+        $('#mulResetNodeStyle').addEventListener('click', () => {
+          for(const id of nodeIds){
+            const n = nodeById(id); if(!n) continue;
+            delete n.shape; delete n.color; delete n.width; delete n.height;
+            delete n.strokeColor; delete n.strokeSize; delete n.strokeStyle;
+            delete n.labelColor; delete n.labelSize; delete n.labelPosition; delete n.labelFont;
+            n.shape = ''; n.color = '';
+          }
+          pushHistory('reset multi node style'); queueRender(true); saveSoon(); renderSelectionPanel();
+        });
       }
       // Wire edge multi-edit controls
       if(edgeCount > 0){
         const edgeIds = state.selection.edges;
+        $('#mulEdgeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.label = v; } pushHistory('multi edge label'); queueRender(true); saveSoon(); });
+        $('#mulEdgeWeight').addEventListener('change', e => { const v = e.target.value.slice(0,50); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ if(v === '') delete ed.weight; else ed.weight = v; } } pushHistory('multi edge weight'); queueRender(true); saveSoon(); });
         $('#mulEdgeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ ed.type = v; applyTypeStyleToEdge(ed); } } pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
         $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const dir = v === 'true'; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.directed = dir; } pushHistory('multi edge directed'); queueRender(true); });
         $('#mulEdgeColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.color = e.target.value; } queueRender(false); saveSoon(); });
@@ -1158,6 +1196,18 @@
         $('#mulEdgeLabelColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelColor = e.target.value; } queueRender(false); saveSoon(); });
         $('#mulEdgeLabelColor').addEventListener('change', () => pushHistory('multi edge label color'));
         $('#mulEdgeLabelSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,12),4,72); e.target.value=v; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelSize = v; } pushHistory('multi edge label size'); queueRender(false); });
+        $('#mulEdgeLabelFont').addEventListener('change', e => { const v = e.target.value.trim().slice(0,60); for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelFont = v || undefined; } pushHistory('multi edge label font'); queueRender(false); saveSoon(); });
+        attachDragNumber($('#mulEdgeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+        attachDragNumber($('#mulEdgeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
+        $('#mulResetEdgeStyle').addEventListener('click', () => {
+          for(const id of edgeIds){
+            const ed = edgeById(id); if(!ed) continue;
+            delete ed.color; delete ed.strokeSize; delete ed.strokeStyle;
+            delete ed.labelColor; delete ed.labelSize; delete ed.labelFont;
+            ed.color = '';
+          }
+          pushHistory('reset multi edge style'); queueRender(true); saveSoon(); renderSelectionPanel();
+        });
       }
       return;
     }

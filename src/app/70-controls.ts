@@ -300,20 +300,68 @@
     populateTypeStyleSelects();
   }
   function applyNodeDefaultsToAll(){
+    const d = state.settings.nodeDefaults;
     for(const n of state.nodes){
       delete n.width; delete n.height; delete n.strokeColor; delete n.strokeSize; delete n.strokeStyle;
       delete n.labelColor; delete n.labelSize; delete n.labelPosition; delete n.labelFont;
-      n.shape = state.settings.nodeDefaults.shape;
-      n.color = state.settings.nodeDefaults.color;
+      if(d.type){
+        n.type = d.type;
+        delete n.shape; delete n.color;
+        applyTypeStyleToNode(n);
+      } else {
+        n.shape = d.shape;
+        n.color = d.color;
+      }
     }
     pushHistory('apply node defaults'); queueRender(true); toast(I18N.t('node_defaults_applied'));
   }
+  function applyNodeDefaultsToSelected(){
+    const nodeIds = state.selection?.nodes || [];
+    if(!nodeIds.length){ toast(I18N.t('no_nodes_selected')); return; }
+    const d = state.settings.nodeDefaults;
+    for(const id of nodeIds){
+      const n = nodeById(id); if(!n) continue;
+      delete n.width; delete n.height; delete n.strokeColor; delete n.strokeSize; delete n.strokeStyle;
+      delete n.labelColor; delete n.labelSize; delete n.labelPosition; delete n.labelFont;
+      if(d.type){
+        n.type = d.type;
+        delete n.shape; delete n.color;
+        applyTypeStyleToNode(n);
+      } else {
+        n.shape = d.shape;
+        n.color = d.color;
+      }
+    }
+    pushHistory('apply node defaults to selected'); queueRender(true); renderSelectionPanel();
+    toast(I18N.t('node_defaults_applied_sel', {count: nodeIds.length}));
+  }
   function applyEdgeDefaultsToAll(){
+    const d = state.settings.edgeDefaults;
     for(const e of state.edges){
       delete e.color; delete e.strokeSize; delete e.strokeStyle;
       delete e.labelColor; delete e.labelSize; delete e.labelFont;
+      if(d.type){
+        e.type = d.type;
+        applyTypeStyleToEdge(e);
+      }
     }
     pushHistory('apply edge defaults'); queueRender(true); toast(I18N.t('edge_defaults_applied'));
+  }
+  function applyEdgeDefaultsToSelected(){
+    const edgeIds = state.selection?.edges || [];
+    if(!edgeIds.length){ toast(I18N.t('no_edges_selected')); return; }
+    const d = state.settings.edgeDefaults;
+    for(const id of edgeIds){
+      const e = edgeById(id); if(!e) continue;
+      delete e.color; delete e.strokeSize; delete e.strokeStyle;
+      delete e.labelColor; delete e.labelSize; delete e.labelFont;
+      if(d.type){
+        e.type = d.type;
+        applyTypeStyleToEdge(e);
+      }
+    }
+    pushHistory('apply edge defaults to selected'); queueRender(true); renderSelectionPanel();
+    toast(I18N.t('edge_defaults_applied_sel', {count: edgeIds.length}));
   }
 
   // === Type style management ===
@@ -367,7 +415,9 @@
     if($('#ntsLabelFont').value.trim()) o.labelFont = $('#ntsLabelFont').value.trim().slice(0, 60);
     state.settings.nodeTypeStyles[type] = o;
     // Apply type style to all existing nodes of this type (clears blocking overrides)
-    for(const n of state.nodes){ if(n.type === type) applyTypeStyleToNode(n); }
+    for(const n of state.nodes){
+      if(n.type === type || (!n.type && state.settings.nodeDefaults?.type === type)) applyTypeStyleToNode(n);
+    }
     pushHistory('save node type style'); queueRender(true); saveSoon(); populateTypeStyleSelects();
     toast(I18N.t('saved_style_type', {type: type}));
   }
@@ -385,7 +435,9 @@
     if($('#etsLabelFont').value.trim()) o.labelFont = $('#etsLabelFont').value.trim().slice(0, 60);
     state.settings.edgeTypeStyles[type] = o;
     // Apply type style to all existing edges of this type (clears blocking overrides)
-    for(const e of state.edges){ if(e.type === type) applyTypeStyleToEdge(e); }
+    for(const e of state.edges){
+      if(e.type === type || (!e.type && state.settings.edgeDefaults?.type === type)) applyTypeStyleToEdge(e);
+    }
     pushHistory('save edge type style'); queueRender(true); saveSoon(); populateTypeStyleSelects();
     toast(I18N.t('saved_style_type', {type: type}));
   }

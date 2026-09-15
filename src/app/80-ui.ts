@@ -367,7 +367,7 @@
     $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveSoon(); });
     $('#gridMajorColor').addEventListener('change', () => pushHistory('grid major color'));
     $('#gridMajorAlpha').addEventListener('change', e => { state.settings.gridMajorAlpha = clamp(finite(e.target.value,0.16),0,1); e.target.value=state.settings.gridMajorAlpha; pushHistory('grid major alpha'); updateGridBackground(); saveSoon(); });
-    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0,40); pushHistory('default node type'); saveSoon(); });
+    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0,40); pushHistory('default node type'); queueRender(false); saveSoon(); });
     $('#defNodeShape').addEventListener('change', e => { nd().shape = e.target.value; state.settings.nodeShape = e.target.value; const el=$('#nodeShape'); if(el) el.value = e.target.value; pushHistory('default node shape'); queueRender(false); });
     $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el=$('#nodeColor'); if(el) el.value = e.target.value; queueRender(false); saveSoon(); });
     $('#defNodeColor').addEventListener('change', () => pushHistory('default node color'));
@@ -382,7 +382,7 @@
     $('#defNodeLabelFont').addEventListener('change', e => { nd().labelFont = e.target.value; pushHistory('default label font'); queueRender(false); });
     $('#defNodeLabelSize').addEventListener('change', e => { nd().labelSize = clamp(finite(e.target.value,13),4,72); e.target.value = nd().labelSize; pushHistory('default label size'); queueRender(false); });
     $('#defNodeLabelPos').addEventListener('change', e => { nd().labelPosition = e.target.value; pushHistory('default label position'); queueRender(false); });
-    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0,40); pushHistory('default edge type'); saveSoon(); });
+    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0,40); pushHistory('default edge type'); queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
@@ -392,7 +392,11 @@
     $('#defEdgeLabelFont').addEventListener('change', e => { ed().labelFont = e.target.value; pushHistory('default edge label font'); queueRender(false); });
     $('#defEdgeLabelSize').addEventListener('change', e => { ed().labelSize = clamp(finite(e.target.value,12),4,72); e.target.value = ed().labelSize; pushHistory('default edge label size'); queueRender(false); });
     $('#btnApplyNodeDefaults').addEventListener('click', applyNodeDefaultsToAll);
+    const btnApplyNodeDefSel = $('#btnApplyNodeDefaultsSel');
+    if(btnApplyNodeDefSel) btnApplyNodeDefSel.addEventListener('click', applyNodeDefaultsToSelected);
     $('#btnApplyEdgeDefaults').addEventListener('click', applyEdgeDefaultsToAll);
+    const btnApplyEdgeDefSel = $('#btnApplyEdgeDefaultsSel');
+    if(btnApplyEdgeDefSel) btnApplyEdgeDefSel.addEventListener('click', applyEdgeDefaultsToSelected);
     // Type style controls
     $('#nodeTypeStyleInput').addEventListener('change', e => loadNodeTypeStyleForm(e.target.value));
     $('#edgeTypeStyleInput').addEventListener('change', e => loadEdgeTypeStyleForm(e.target.value));
