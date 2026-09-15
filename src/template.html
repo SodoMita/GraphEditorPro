@@ -354,7 +354,10 @@
                   <label class="field" for="defNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defNodeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
                   <label class="field" for="defNodeLabelPos"><span data-i18n="label_pos">Label position</span> <select id="defNodeLabelPos"><option value="center" data-i18n="pos_center">Center</option><option value="top" data-i18n="pos_top">Top</option><option value="bottom" data-i18n="pos_bottom">Bottom</option><option value="left" data-i18n="pos_left">Left</option><option value="right" data-i18n="pos_right">Right</option></select></label>
                 </div>
-                <button id="btnApplyNodeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_nodes">Apply defaults to all nodes</button>
+                <div class="row" style="margin-top:8px">
+                  <button id="btnApplyNodeDefaults" class="btn small good" style="flex:1" data-i18n="apply_to_all_nodes">Apply defaults to all nodes</button>
+                  <button id="btnApplyNodeDefaultsSel" class="btn small" style="flex:1" data-i18n="apply_to_sel_nodes">Apply defaults to selected</button>
+                </div>
               </div>
             </details>
 
@@ -372,7 +375,10 @@
                   <label class="field" for="defEdgeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defEdgeLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                   <label class="field" for="defEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defEdgeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
                 </div>
-                <button id="btnApplyEdgeDefaults" class="btn small good" style="margin-top:8px; width:100%" data-i18n="apply_to_all_edges">Apply defaults to all edges</button>
+                <div class="row" style="margin-top:8px">
+                  <button id="btnApplyEdgeDefaults" class="btn small good" style="flex:1" data-i18n="apply_to_all_edges">Apply defaults to all edges</button>
+                  <button id="btnApplyEdgeDefaultsSel" class="btn small" style="flex:1" data-i18n="apply_to_sel_edges">Apply defaults to selected</button>
+                </div>
               </div>
             </details>
 

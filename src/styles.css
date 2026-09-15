@@ -338,7 +338,11 @@
        blank half-screen space, and big ones scroll inside the panel. */
     .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
-    .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0}
+    .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0;grid-template-rows:minmax(0,1fr)}
+    .main:not(.v-canvas) .bottom-pane{height:100%;min-height:0}
+    .main:not(.v-canvas).v-matrix .bottom-pane:nth-child(1),
+    .main:not(.v-canvas).v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; overflow:hidden}
+    .main:not(.v-canvas) .table-scroll{flex:1 1 auto; min-height:0; max-height:none}
     .bottom-pane{min-width:0; padding:9px 10px; overflow:auto; -webkit-overflow-scrolling:touch; container-type:inline-size}
     .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2)}
     /* Narrow panes (side-by-side): single scrollable control row */
@@ -589,6 +593,12 @@
       .main[data-orient="h"] .bottom{grid-template-rows:minmax(0,1fr); max-height:none}
       .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
+      .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
+      .main:not(.v-canvas) .bottom{max-height:none; height:100%; min-height:0}
+      .main:not(.v-canvas) .table-scroll{max-height:none}
       .toast-stack{bottom:calc(12px + var(--sa-bottom))}
     }
 
@@ -629,12 +639,19 @@
       .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
       .main.v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1.05fr .95fr}
       .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
+      .main.v-matrix .bottom-pane:nth-child(1),
+      .main.v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden}
+      .main:not(.v-canvas) .bottom{max-height:none; height:100%; min-height:0; grid-template-rows:minmax(0,1fr)}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1.05fr .95fr}
+      .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
+      .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
       /* Horizontal split (↔): canvas left, panels right for every view */
       .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .table-scroll{max-height:none}
-      .table-scroll{max-height:calc(26vh - 58px)}
+      .main:not(.v-canvas) .table-scroll{max-height:none}
+      .table-scroll{flex:1 1 auto; min-height:0; max-height:calc(26vh - 58px)}
     }
 
     /* Compact desktop: the badge is enough branding beside symbolic commands. */
