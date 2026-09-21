@@ -300,6 +300,7 @@
       if(t.matches && t.matches('input')){ t.readOnly = true; }
     });
     function chooseImport(format, accept){ const input = $('#fileImport'); input.dataset.format = format; input.accept = accept; input.click(); }
+    $('#btnFlipEdges').addEventListener('click', flipSelectedEdges);
     $('#btnExportJson').addEventListener('click', exportJson);
     $('#btnImportJson').addEventListener('click', () => chooseImport('json', 'application/json,.json'));
     $('#btnExportDot').addEventListener('click', exportDot);

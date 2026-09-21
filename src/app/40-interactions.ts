@@ -360,6 +360,11 @@
   }
 
   function pointFromEvent(ev){ return clientToWorld(ev.clientX, ev.clientY, state.viewBox); }
+  function isEmptyCanvasTarget(el: Element | null){
+    // Pointer capture retargets pointerup to the SVG even over toolbars or
+    // outside the canvas, so use the actual element under the pointer.
+    return Boolean(el && svg.contains(el) && !el.closest('.node,.edge'));
+  }
   function onNodePointerDown(ev, id){
     ev.preventDefault(); ev.stopPropagation(); try{ svg.setPointerCapture(ev.pointerId); }catch{}
     registerPointer(ev);
@@ -392,7 +397,7 @@
       }
       pendingEdgeFrom = null;
       selectItem('node', id);
-      edgeDraft = { from:id, x:p.x, y:p.y, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
+      edgeDraft = { pointerId:ev.pointerId, from:id, x:p.x, y:p.y, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
       gestureActive = true;
       updateDragLine(p, ev.clientX, ev.clientY); setStatusOnly(); return;
     }
@@ -470,6 +475,14 @@
     if(selectionToolNeedsDrag()){
       pendingEdgeFrom = null;
       beginSelectionDraft(ev);
+      return;
+    }
+    if(state.mode === 'edge' && pendingEdgeFrom){
+      const from = pendingEdgeFrom;
+      pendingEdgeFrom = null;
+      const p = pointFromEvent(ev);
+      pendingNodeTap = { mode:'edge', from, pointerId:ev.pointerId, startClientX:ev.clientX, startClientY:ev.clientY, x:p.x, y:p.y, moved:false };
+      try{ svg.setPointerCapture(ev.pointerId); }catch{}
       return;
     }
     if(state.mode === 'node'){
@@ -599,19 +612,28 @@
     if(pendingNodeTap && ev.pointerId === pendingNodeTap.pointerId){
       const tap = pendingNodeTap;
       pendingNodeTap = null;
-      if(!cancel && !tap.moved && tap.mode === 'node' && state.mode === 'node') addNode(tap.x, tap.y);
+      if(!cancel && !tap.moved && tap.mode === state.mode){
+        if(tap.mode === 'node') addNode(tap.x, tap.y);
+        else if(tap.mode === 'edge' && isEmptyCanvasTarget(document.elementFromPoint(ev.clientX, ev.clientY))){
+          const p = pointFromEvent(ev);
+          addConnectedNode(tap.from, p.x, p.y);
+        }
+      }
       unregisterPointer(ev);
       return;
     }
-    if(edgeDraft){
-      const elAtPoint = document.elementFromPoint(ev.clientX, ev.clientY);
+    if(edgeDraft && ev.pointerId === edgeDraft.pointerId){
+      const elAtPoint = cancel ? null : document.elementFromPoint(ev.clientX, ev.clientY);
       const target = elAtPoint?.closest?.('.node') as HTMLElement | null;
       const to = target?.dataset.id;
       const from = edgeDraft.from;
-      const wasTap = !edgeDraft.moved;
+      const wasTap = !edgeDraft.moved && Math.hypot(ev.clientX - edgeDraft.startClientX, ev.clientY - edgeDraft.startClientY) <= 8;
       edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d','');
-      if(!cancel && to && (!wasTap || to !== from)) addEdge(from,to);
-      else if(!cancel && wasTap && ev.pointerType === 'touch'){
+      if(!cancel && state.mode === 'edge' && to && (!wasTap || to !== from)) addEdge(from,to);
+      else if(!cancel && state.mode === 'edge' && !wasTap && isEmptyCanvasTarget(elAtPoint)){
+        const p = pointFromEvent(ev);
+        addConnectedNode(from, p.x, p.y);
+      } else if(!cancel && state.mode === 'edge' && wasTap && to === from && ev.pointerType === 'touch'){
         pendingEdgeFrom = from;
         state.selected = {type:'node', id:from};
         setStatusOnly();
