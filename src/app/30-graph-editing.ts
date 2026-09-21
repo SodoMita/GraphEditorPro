@@ -7,6 +7,7 @@
       b.setAttribute('aria-pressed', String(active));
     });
     $('#canvasWrap').classList.toggle('move-mode', mode === 'move');
+    $('#canvasWrap').classList.toggle('edge-mode', mode === 'edge');
     // Selection tools float over the canvas only while Select mode is active
     $('#canvasWrap').classList.toggle('select-mode', mode === 'select');
     if(render) { setStatusOnly(); saveSoon(); }
@@ -304,7 +305,8 @@
     n.labelPosition = (defType && dts.labelPosition) ? dts.labelPosition : s.nodeLabelPosition;
   }
 
-  function addNode(x,y){
+  // Shared placement path for standalone nodes and connection endpoints.
+  function createCanvasNode(x,y){
     ({x, y} = snapPointToEnabled(x, y));
     ({x, y} = findFreeNodePosition(x, y));
     ({x, y} = snapPointToEnabled(x, y));
@@ -314,7 +316,18 @@
     const label = s.noLabel ? '' : (custom ? (custom.length <= 3 ? custom : custom.slice(0,80)) : labelFromNumber(state.nextNode));
     const n: GraphNode = { id:'n' + state.nextNode++, label, x, y, type:'', order: state.nodes.length };
     applyNewNodeDefaults(n);
+    return n;
+  }
+  function addNode(x,y){
+    const n = createCanvasNode(x,y);
     state.nodes.push(n); setSelection([n.id], [], {type:'node', id:n.id}, false); pushHistory('add node'); queueRender(true, true);
+  }
+  function addConnectedNode(from, x, y){
+    if(!nodeById(from)) return;
+    const n = createCanvasNode(x,y);
+    state.nodes.push(n);
+    // addEdge records the node and edge together as one undoable action.
+    addEdge(from, n.id);
   }
   function addEdge(from,to){
     if(!nodeById(from) || !nodeById(to)) return;
@@ -341,6 +354,20 @@
       e.labelColor = s.edgeLabelColor; e.labelFont = s.edgeLabelFont; e.labelSize = s.edgeLabelSize;
     }
     state.edges.push(e); setSelection([], [e.id], {type:'edge', id:e.id}, false); pushHistory('add edge'); queueRender(true, true);
+  }
+  function flipSelectedEdges(){
+    let changed = false;
+    for(const id of selectedEdgeIds()){
+      const e = edgeById(id);
+      if(!e?.directed || e.from === e.to) continue;
+      [e.from, e.to] = [e.to, e.from];
+      changed = true;
+    }
+    if(!changed) return;
+    invalidateGraphIndex();
+    pushHistory('flip edge direction');
+    markSidebarDirty();
+    queueRender(true, true);
   }
   function graphCenter(nodes=state.nodes){
     if(nodes.length){

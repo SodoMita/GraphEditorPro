@@ -739,6 +739,8 @@
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
       }
+      setAttr(g, 'data-from', e.from);
+      setAttr(g, 'data-to', e.to);
       // Geometry cache: the path depends only on endpoint positions, node
       // radii, the parallel-edge lane, and direction. When none of these
       // changed (style-only or unrelated renders), the previous edgePath
