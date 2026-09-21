@@ -201,8 +201,12 @@
       box-shadow:0 3px 12px rgba(34,211,238,.4);
     }
 
-    /* ---------- Floating selection tools (Select mode only) ---------- */
-    .sel-tools{
+    /* ---------- Floating tool rows (mode-specific, above the switcher) ----------
+       Both rows are the same pill: selection tools in Select mode, edge tools in
+       Edge mode. A mode never widens the mode switcher itself — its extra tools
+       always get a row of their own, so the switcher keeps the same size and
+       position in every mode. */
+    .sel-tools,.edge-tools{
       position:absolute; left:50%; transform:translateX(-50%); bottom:72px; z-index:11;
       display:none; align-items:center; gap:2px; padding:4px; max-width:calc(100% - 16px);
       overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:none;
@@ -210,20 +214,23 @@
       box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.05) inset;
       backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     }
-    .sel-tools::-webkit-scrollbar{display:none}
+    .sel-tools::-webkit-scrollbar,.edge-tools::-webkit-scrollbar{display:none}
     .canvas-wrap.select-mode .sel-tools{display:flex}
-    .canvas-wrap.select-mode .empty-hint{bottom:132px}
-    .sel-tools .btn{
+    .canvas-wrap.edge-mode .edge-tools{display:flex}
+    .canvas-wrap.select-mode .empty-hint,
+    .canvas-wrap.edge-mode .empty-hint{bottom:132px}
+    /* Every tool row button shares one touch size, however few tools a row has. */
+    .sel-tools .btn,.edge-tools .btn{
       width:40px; min-height:40px; flex:0 0 40px; padding:0; border:none; border-radius:999px;
       background:transparent; color:var(--muted); box-shadow:none;
     }
-    .sel-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
-    .sel-tools .btn:active{transform:translateY(1px)}
-    .sel-tools .btn.active{
+    .sel-tools .btn:hover,.edge-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
+    .sel-tools .btn:active,.edge-tools .btn:active{transform:translateY(1px)}
+    .sel-tools .btn.active,.edge-tools .btn.active{
       color:var(--accent); background:rgba(34,211,238,.16);
       box-shadow:0 0 10px rgba(34,211,238,.22) inset;
     }
-    .sel-tools svg{width:17px; height:17px; display:block}
+    .sel-tools svg,.edge-tools svg{width:17px; height:17px; display:block}
 
     /* ---------- Tool tabs ---------- */
     .tab{
@@ -582,8 +589,9 @@
       .tab-panels{padding-top:6px}
       .mode-fab{left:12px; right:auto; transform:none; bottom:10px}
       .mode-fab .seg{min-height:34px; min-width:46px; padding:0 10px; font-size:11.5px}
-      .sel-tools{left:12px; right:auto; transform:none; bottom:64px}
-      .canvas-wrap.select-mode .empty-hint{bottom:110px}
+      .sel-tools,.edge-tools{left:12px; right:auto; transform:none; bottom:64px}
+      .canvas-wrap.select-mode .empty-hint,
+      .canvas-wrap.edge-mode .empty-hint{bottom:110px}
       .empty-hint{inset:auto 14px 76px 14px}
       /* Horizontal split (↔): canvas left, panels right, full height — the
          best use of a short wide screen. The pane is a flex column whose
@@ -632,9 +640,10 @@
       .sheet-nav-row{padding:8px}
       .canvas-wrap{border-radius:var(--radius); border-width:1px}
       .mode-fab{bottom:20px}
-      .sel-tools{bottom:82px}
+      .sel-tools,.edge-tools{bottom:82px}
       .empty-hint{inset:auto 26px 110px 26px}
-      .canvas-wrap.select-mode .empty-hint{bottom:136px}
+      .canvas-wrap.select-mode .empty-hint,
+      .canvas-wrap.edge-mode .empty-hint{bottom:136px}
       /* Default: canvas + both panels visible (all three v-* classes) */
       .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,26vh); grid-template-areas:"canvas" "bottom"}
       .main:not(.v-matrix):not(.v-edges){grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas"}
@@ -675,8 +684,9 @@
       .tab{padding:2px}
       .mode-fab .seg{width:44px;min-height:36px;min-width:44px;padding:0}
       .mode-fab{bottom:8px}
-      .sel-tools{bottom:58px}
-      .canvas-wrap.select-mode .empty-hint{bottom:104px}
+      .sel-tools,.edge-tools{bottom:58px}
+      .canvas-wrap.select-mode .empty-hint,
+      .canvas-wrap.edge-mode .empty-hint{bottom:104px}
       .empty-hint{inset:auto 14px 76px 14px}
       .field input:not([type="checkbox"]),.field select,.field textarea{font-size:14px; min-height:30px; padding:5px 8px}
     }

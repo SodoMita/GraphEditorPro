@@ -124,7 +124,19 @@ test('edge-mode flip control reverses only selected directed edges and supports 
   assert.equal(button.disabled, false);
   const before = exported(document);
   const oldArrow = document.querySelector('#edge-e1 .edge-arrow')?.outerHTML;
+  const oldAccent = document.querySelector('#edge-e1 .edge-sel-arrow')?.getAttribute('points');
+  assert.ok(oldAccent, 'the flipped edge is selected, so it has a tip accent to keep in sync');
   button.click();
+  // The flip is applied to the canvas in the click's own task: the path,
+  // arrowhead and selection accent are re-pointed before any frame, sidebar
+  // rebuild or render pass runs, so the direction never lags behind the click.
+  assert.equal(document.querySelector('#edge-e1').dataset.from, 'n2');
+  assert.equal(document.querySelector('#edge-e1').dataset.to, 'n1');
+  assert.notEqual(document.querySelector('#edge-e1 .edge-arrow')?.outerHTML, oldArrow);
+  assert.notEqual(document.querySelector('#edge-e1 .edge-sel-arrow')?.getAttribute('points'), oldAccent);
+  assert.equal(document.querySelector('#edge-e2').dataset.from, 'n1');
+  assert.equal(document.querySelector('#edge-e2').dataset.to, 'n2');
+  assert.equal(document.querySelector('#edge-e5').dataset.from, 'n1', 'unselected edges keep their direction');
   await settle(window, 90);
   const after = exported(document);
   assert.deepEqual(after.nodes, before.nodes);
@@ -141,6 +153,44 @@ test('edge-mode flip control reverses only selected directed edges and supports 
   assert.deepEqual(exported(document).edges, after.edges);
   document.querySelector('#modeSelect').click();
   assert.equal(window.getComputedStyle(button).display, 'none');
+});
+
+test('each mode keeps its extra tools in a floating row above the mode switcher', async t => {
+  const { window, document } = await setup(t);
+  const fab = document.querySelector('.mode-fab');
+  const edgeRow = document.querySelector('.edge-tools');
+  const selRow = document.querySelector('.sel-tools');
+  const button = document.querySelector('#btnFlipEdges');
+  const style = el => window.getComputedStyle(el);
+  // The switcher is one row of four modes in every mode — an extra tool never
+  // widens it, it gets a row of its own above it.
+  assert.equal(fab.children.length, 4);
+  assert.equal(fab.querySelector('#btnFlipEdges'), null);
+  assert.equal(button.parentElement, edgeRow);
+  assert.equal(edgeRow.parentElement, fab.parentElement);
+  assert.equal(edgeRow.previousElementSibling, fab);
+  assert.equal(selRow.previousElementSibling, edgeRow);
+  // The edge tools row is the same floating pill as the selection tools row.
+  for (const prop of ['position', 'bottom', 'left', 'padding', 'borderRadius', 'zIndex']) {
+    assert.equal(style(edgeRow)[prop], style(selRow)[prop], `.edge-tools matches .sel-tools on ${prop}`);
+  }
+  const toolBtn = document.querySelector('.sel-tools .btn');
+  for (const prop of ['width', 'minHeight', 'borderRadius', 'flex']) {
+    assert.equal(style(button)[prop], style(toolBtn)[prop], `flip control matches tool buttons on ${prop}`);
+  }
+  // Each mode shows exactly its own tools row.
+  assert.equal(style(edgeRow).display, 'flex');
+  assert.equal(style(selRow).display, 'none');
+  document.querySelector('#modeSelect').click();
+  assert.equal(style(edgeRow).display, 'none');
+  assert.equal(style(selRow).display, 'flex');
+  assert.equal(style(button).display, 'none');
+  assert.equal(fab.children.length, 4);
+  document.querySelector('#modeEdge').click();
+  assert.equal(style(edgeRow).display, 'flex');
+  assert.equal(style(selRow).display, 'none');
+  assert.equal(style(button).display, 'inline-flex');
+  assert.equal(fab.children.length, 4);
 });
 
 for (const pointerType of ['mouse', 'touch']) {
