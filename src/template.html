@@ -675,7 +675,12 @@
             <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" aria-label="Pan the canvas by dragging" data-i18n-aria-label="mode_move_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-hand"></use></svg></button>
             <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" aria-label="Click canvas to add nodes" data-i18n-aria-label="mode_node_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-node"></use></svg></button>
             <button id="modeEdge" class="btn seg" data-mode="edge" title="Drag from a node to another node or empty canvas" data-i18n-title="mode_edge_title" aria-label="Drag from a node to another node or empty canvas" data-i18n-aria-label="mode_edge_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-edge"></use></svg></button>
-            <button id="btnFlipEdges" class="btn seg" title="Flip selected directed edges" data-i18n-title="flip_selected_edges" aria-label="Flip selected directed edges" data-i18n-aria-label="flip_selected_edges" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-flip-edge"></use></svg></button>
+          </div>
+
+          <!-- Floating edge tools — a row of their own above the mode switcher,
+               visible in Edge mode, mirroring the selection tools row. -->
+          <div class="edge-tools" role="group" aria-label="Edge tools">
+            <button id="btnFlipEdges" class="btn" title="Flip selected directed edges" data-i18n-title="flip_selected_edges" aria-label="Flip selected directed edges" data-i18n-aria-label="flip_selected_edges" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-flip-edge"></use></svg></button>
           </div>
 
           <!-- Floating selection tools — icon-only, visible in Select mode -->

@@ -356,15 +356,26 @@
     state.edges.push(e); setSelection([], [e.id], {type:'edge', id:e.id}, false); pushHistory('add edge'); queueRender(true, true);
   }
   function flipSelectedEdges(){
-    let changed = false;
+    const flipped = [];
     for(const id of selectedEdgeIds()){
       const e = edgeById(id);
       if(!e?.directed || e.from === e.to) continue;
       [e.from, e.to] = [e.to, e.from];
-      changed = true;
+      flipped.push(e);
     }
-    if(!changed) return;
+    if(!flipped.length) return;
     invalidateGraphIndex();
+    // Paint the new direction in this same task. The queued render pass reaches
+    // the canvas a frame later, and on a large graph that frame also carries the
+    // sidebar rebuild, so the flip used to land visibly late. updateEdgeFast is
+    // the drag-time geometry writer: it re-points one edge's path, label/weight,
+    // arrowhead and selection accent in place and leaves its geometry cache
+    // stale for the next full pass to recompute.
+    for(const e of flipped){
+      const el = edgeEl(e.id);
+      if(el){ setAttr(el, 'data-from', e.from); setAttr(el, 'data-to', e.to); }
+      updateEdgeFast(e);
+    }
     pushHistory('flip edge direction');
     markSidebarDirty();
     queueRender(true, true);
