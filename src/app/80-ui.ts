@@ -299,7 +299,84 @@
       const t = ev.target;
       if(t.matches && t.matches('input')){ t.readOnly = true; }
     });
+    // Matrix per-node order controls (left/right for columns, up/down for rows)
+    $('#matrixHost').addEventListener('click', ev => {
+      const btn = ev.target.closest && ev.target.closest('[data-node-move]');
+      if(!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const id = btn.dataset.nodeMove;
+      const dir = parseInt(btn.dataset.dir, 10) || 0;
+      if(!id || !dir) return;
+      if(typeof moveNode === 'function') moveNode(id, dir);
+    });
     function chooseImport(format, accept){ const input = $('#fileImport'); input.dataset.format = format; input.accept = accept; input.click(); }
+    // Clipboard copy/paste/duplicate + preserve toggle
+    function bindClipboardButton(id, fn){ const el=document.getElementById(id); if(el) el.addEventListener('click', fn); }
+    bindClipboardButton('btnCopy', copySelectedNodes);
+    bindClipboardButton('btnCut', cutSelectedNodes);
+    bindClipboardButton('btnDuplicate', duplicateSelectedNodes);
+    bindClipboardButton('btnPaste', pasteFromSystemClipboard);
+    bindClipboardButton('btnCopy2', copySelectedNodes);
+    bindClipboardButton('btnCut2', cutSelectedNodes);
+    bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
+    bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
+    const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null;
+    if(chkPreserve){
+      chkPreserve.checked = state.settings.copyPreserveExternal !== false;
+      chkPreserve.addEventListener('change', e => { state.settings.copyPreserveExternal = (e.target as HTMLInputElement).checked; saveSoon(); });
+      // keep checkbox synced when state changes externally (undo/redo, load)
+      const syncPreserve = () => { const c=document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(c) c.checked = state.settings.copyPreserveExternal !== false; };
+      // patch global render hook to also sync preserve - expose for 20-rendering to call
+      (window as any).syncPreserve = syncPreserve;
+    }
+    // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
+    document.addEventListener('keydown', ev => {
+      const mod = ev.ctrlKey || ev.metaKey;
+      if(!mod) return;
+      const target = ev.target as HTMLElement;
+      const isInput = target && ((target as any).matches && ((target as HTMLElement).matches('input, textarea, [contenteditable]') || (target as any).isContentEditable));
+      // If focus is in matrix/edge input that is readonly (selection mode), we still want clipboard shortcuts
+      const readonlyInput = isInput && (target as HTMLInputElement).readOnly;
+      if(isInput && !readonlyInput && !((target as HTMLElement).matches && (target as HTMLElement).matches('.matrix-input,.matrix-label-input'))) {
+        // typing in a visible text field — don't hijack
+        return;
+      }
+      const key = ev.key.toLowerCase();
+      if(key === 'c' && !ev.shiftKey && !ev.altKey){
+        // Ctrl+C copy
+        if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
+          ev.preventDefault(); copySelectedNodes();
+        }
+      } else if(key === 'x' && !ev.shiftKey && !ev.altKey){
+        if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
+          ev.preventDefault(); cutSelectedNodes();
+        }
+      } else if(key === 'v' && !ev.shiftKey && !ev.altKey){
+        ev.preventDefault(); pasteFromSystemClipboard();
+      } else if(key === 'd' && !ev.shiftKey && !ev.altKey){
+        // Ctrl+D duplicate — prevent browser bookmark
+        if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
+          ev.preventDefault(); duplicateSelectedNodes();
+        }
+      }
+    });
+    // Handle system paste event (Ctrl+V via browser) when app has focus and clipboard contains our JSON
+    document.addEventListener('paste', async ev => {
+      // If user is editing a matrix cell label, let the default paste happen
+      const target = ev.target as HTMLElement;
+      const isEditingInput = target && (target as any).matches && (target as HTMLElement).matches('input:not([readonly]), textarea, [contenteditable]');
+      if(isEditingInput) return;
+      try {
+        const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+        if(!text) return;
+        const data = JSON.parse(text);
+        if(data && data.type === 'graph-editor-clipboard'){
+          ev.preventDefault();
+          handlePasteEventWithData(data);
+        }
+      } catch {}
+    });
     $('#btnFlipEdges').addEventListener('click', flipSelectedEdges);
     $('#btnExportJson').addEventListener('click', exportJson);
     $('#btnImportJson').addEventListener('click', () => chooseImport('json', 'application/json,.json'));

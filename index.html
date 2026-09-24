@@ -388,6 +388,18 @@
       border-radius:6px; padding:3px;
     }
     .matrix-label-input:focus{background:rgba(2,6,23,.55); border-color:var(--accent); outline:none}
+    .matrix-header-cell{display:flex; flex-direction:column; align-items:center; gap:3px; min-width:72px}
+    .matrix-header-cell.row-head-cell{flex-direction:row; justify-content:space-between; gap:6px; min-width:120px; padding:2px 0}
+    .matrix-header-cell .matrix-label-input{width:72px; min-width:56px}
+    .matrix-header-cell.row-head-cell .matrix-label-input{flex:1}
+    .matrix-node-controls{display:flex; align-items:center; gap:2px}
+    .matrix-node-controls .btn.small.icon{width:22px; min-width:22px; height:22px; min-height:22px; padding:0; display:grid; place-items:center; border-radius:6px}
+    .matrix-node-controls .btn.small.icon .ui-icon{width:12px;height:12px}
+    .matrix-node-controls .btn[disabled]{opacity:.35; pointer-events:none}
+    .matrix-order-badge{font-size:10px; color:var(--muted); background:rgba(2,6,23,.4); border:1px solid var(--line); border-radius:6px; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
+    .clipboard-controls .btn.small{flex:0 0 auto}
+    .field.checkbox{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted)}
+    .field.checkbox input[type="checkbox"]{width:14px; height:14px}
 
     /* ---------- Tables ---------- */
     table{border-collapse:separate; border-spacing:0; width:100%; font-size:12px; color:#dbeafe}
@@ -730,6 +742,10 @@
     <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
     <symbol id="icon-up" viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></symbol>
     <symbol id="icon-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="icon-left" viewBox="0 0 24 24"><path d="m14 7-5 5 5 5"/></symbol>
+    <symbol id="icon-right" viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></symbol>
+    <symbol id="icon-duplicate" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/><path d="M12 11h5M12 15h5"/></symbol>
+    <symbol id="icon-cut" viewBox="0 0 24 24"><path d="M4 7h16M8 7V4h8v3"/><path d="M9 14 7 16l-3-2 3-2 2 2Zm7 0 2-2 3 2-3 2-2-2Z"/><path d="M7 16 17 8"/></symbol>
     <symbol id="icon-scrub" viewBox="0 0 24 24"><path d="M5 12h14m-11-3-3 3 3 3m8-6 3 3-3 3"/></symbol>
     <symbol id="icon-matrix" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.3 4v16m5.4-16v16M4 9.3h16M4 14.7h16"/></symbol>
     <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></symbol>
@@ -769,6 +785,10 @@
           <svg class="ui-icon" aria-hidden="true"><use href="#icon-redo"></use></svg>
         </button>
         <button id="btnDelete" class="btn symbol-only danger" title="Delete selected" data-i18n-title="delete_selected" aria-label="Delete selected" data-i18n-aria-label="delete_selected"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+        <button id="btnCopy" class="btn symbol-only" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title" aria-label="Copy" data-i18n-aria-label="copy_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+        <button id="btnCut" class="btn symbol-only" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title" aria-label="Cut" data-i18n-aria-label="cut_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg></button>
+        <button id="btnDuplicate" class="btn symbol-only" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title" aria-label="Duplicate" data-i18n-aria-label="duplicate_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg></button>
+        <button id="btnPaste" class="btn symbol-only" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title" aria-label="Paste" data-i18n-aria-label="paste" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
         <button id="btnClear" class="btn symbol-only danger" title="Clear graph" data-i18n-title="clear_graph" aria-label="Clear graph" data-i18n-aria-label="clear_graph"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
         <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open" aria-label="Open style presets" data-i18n-aria-label="presets_open">
           <svg class="ui-icon" aria-hidden="true"><use href="#icon-star"></use></svg>
@@ -962,6 +982,13 @@
             <div class="section flat">
               <div class="section-title" data-i18n="selection">Selection</div>
               <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
+              <div class="clipboard-controls" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+                <button id="btnCopy2" class="btn small" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg> <span data-i18n="copy_selected">Copy</span></button>
+                <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
+                <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
+                <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
+              </div>
+              <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
             </div>
           </section>
 
@@ -1813,6 +1840,8 @@ const I18N = {
         'col_stroke': { en: 'Stroke', ru: 'Обводка' },
         'move_up': { en: 'Move up', ru: 'Переместить вверх' },
         'move_down': { en: 'Move down', ru: 'Переместить вниз' },
+        'move_left': { en: 'Move left', ru: 'Переместить влево' },
+        'move_right': { en: 'Move right', ru: 'Переместить вправо' },
         'matrix_node_hint': { en: 'Click to select node; click again to rename', ru: 'Нажмите, чтобы выбрать узел; повторно — чтобы переименовать' },
         'matrix_cell_hint': { en: 'Click to select edge(s); click again to edit weights', ru: 'Нажмите, чтобы выбрать рёбра; повторно — чтобы изменить веса' },
         'edge_id_hint': { en: 'Click to select edge; edit to change ID', ru: 'Нажмите, чтобы выбрать ребро; измените поле, чтобы сменить ID' },
@@ -1843,6 +1872,16 @@ const I18N = {
         'export_modal_desc': { en: 'Editable — modify the text, or paste content here when clipboard read is blocked, then click Import.', ru: 'Редактируемо — измените текст или вставьте содержимое здесь при блокировке чтения буфера, затем нажмите Импорт.' },
         // --- Multi-select panel ---
         'selected_n_m': { en: 'Selected {n} node(s) and {m} edge(s).', ru: 'Выбрано {n} узл(ов) и {m} ребр(о).' },
+        'copy_selected': { en: 'Copy', ru: 'Копировать' },
+        'cut_selected': { en: 'Cut', ru: 'Вырезать' },
+        'duplicate_selected': { en: 'Duplicate', ru: 'Дублировать' },
+        'paste': { en: 'Paste', ru: 'Вставить' },
+        'paste_title': { en: 'Paste copied nodes and edges (offset)', ru: 'Вставить скопированные узлы и рёбра (со смещением)' },
+        'copy_title': { en: 'Copy selected nodes and internal edges (Ctrl+C)', ru: 'Копировать выбранные узлы и внутренние рёбра (Ctrl+C)' },
+        'cut_title': { en: 'Cut selected (Ctrl+X)', ru: 'Вырезать выбранное (Ctrl+X)' },
+        'duplicate_title': { en: 'Duplicate selected (Ctrl+D)', ru: 'Дублировать выбранное (Ctrl+D)' },
+        'copy_preserve_label': { en: 'Preserve dangling edges on paste if target exists', ru: 'Сохранять висящие рёбра при вставке, если цель есть' },
+        'copy_preserve_title': { en: 'When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists', ru: 'Когда включено, рёбра с одним концом вне выделения восстанавливаются при вставке только если внешний узел существует' },
         'nodes_n': { en: 'Nodes ({n})', ru: 'Узлы ({n})' },
         'edges_n': { en: 'Edges ({n})', ru: 'Рёбра ({n})' },
     },
@@ -1872,6 +1911,13 @@ const I18N = {
         'imported': { en: '{label} imported', ru: '{label} импортирован' },
         'imported_n_edges': { en: 'Imported {n} edge(s)', ru: 'Импортировано {n} ребр(о)' },
         'imported_n_nodes': { en: 'Imported {n} node(s)', ru: 'Импортировано {n} узл(ов)' },
+        'nothing_to_copy': { en: 'Nothing to copy', ru: 'Нечего копировать' },
+        'copied_n_m': { en: 'Copied {n} node(s), {m} edge(s)', ru: 'Скопировано {n} узл(ов), {m} рёбер' },
+        'copied_edges': { en: 'Copied {n} edge(s)', ru: 'Скопировано {n} ребр(о)' },
+        'pasted_n_m': { en: 'Pasted {n} node(s), {m} edge(s)', ru: 'Вставлено {n} узл(ов), {m} ребр(о)' },
+        'pasted_edges': { en: 'Pasted {n} edge(s)', ru: 'Вставлено {n} ребр(о)' },
+        'nodes_reversed': { en: 'Node order reversed', ru: 'Порядок узлов обращён' },
+        'nodes_shuffled': { en: 'Node order shuffled', ru: 'Порядок узлов перемешан' },
         'no_edge_data': { en: 'No edge data', ru: 'Нет данных рёбер' },
         'no_matrix_data': { en: 'No matrix data', ru: 'Нет данных матрицы' },
         'no_node_data': { en: 'No node data', ru: 'Нет данных узлов' },
@@ -2084,6 +2130,8 @@ const defaultState = () => ({
         hitTestMode: 'any',
         inheritDefaults: true,
         noLabel: false, // when true, new nodes are created with empty labels
+        // Copy/paste: when true, pasting preserves edges that have only one endpoint in the clipboard if the other endpoint exists in the graph
+        copyPreserveExternal: true,
         // Visible range: filters matrix, edge list, and graph canvas to nodes within [start, end] by order.
         // -1 end means "to last". -1 start means "show all".
         visibleRange: { start: -1, end: -1 },
@@ -2125,6 +2173,9 @@ let appHistory = [], appHistoryIndex = -1;
 let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
 let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
 const activePointers = new Map();
+// Clipboard for copy/paste of nodes+edges
+let clipboardData = null;
+let pasteOffsetCount = 0;
 function snapshot() {
     flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
@@ -2199,6 +2250,22 @@ function updateCommandStates() {
     $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => edgeById(id)?.directed);
     $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
     $('#btnMatrixClear').disabled = !state.edges.length;
+    const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
+    const pasteBtn = document.getElementById('btnPaste');
+    const pasteExtBtn = document.getElementById('btnPasteWithExternal');
+    if (pasteBtn)
+        pasteBtn.disabled = !hasClipboard;
+    if (pasteExtBtn)
+        pasteExtBtn.disabled = !hasClipboard;
+    const copyBtn = document.getElementById('btnCopy');
+    const cutBtn = document.getElementById('btnCut');
+    const dupBtn = document.getElementById('btnDuplicate');
+    if (copyBtn)
+        copyBtn.disabled = !hasSelection;
+    if (cutBtn)
+        cutBtn.disabled = !hasSelection;
+    if (dupBtn)
+        dupBtn.disabled = !hasSelection;
 }
 function updateUndoRedo() {
     $('#btnUndo').disabled = appHistoryIndex <= 0;
@@ -2446,6 +2513,7 @@ function sanitizeState(input) {
     settings.snapX = Boolean(settings.snapX);
     settings.snapY = Boolean(settings.snapY);
     settings.autosave = settings.autosave !== false;
+    settings.copyPreserveExternal = settings.copyPreserveExternal !== false;
     // Canvas background and grid colors
     settings.canvasBgColor = validColor(settings.canvasBgColor) || '#020617';
     settings.gridMinorColor = validColor(settings.gridMinorColor) || '#94a3b8';
@@ -3116,6 +3184,11 @@ function syncControls() {
     const noLblEl = $('#optNoLabel');
     if (noLblEl)
         noLblEl.checked = Boolean(state.settings.noLabel);
+    const chkPreserve = document.getElementById('chkCopyPreserve');
+    if (chkPreserve)
+        chkPreserve.checked = state.settings.copyPreserveExternal !== false;
+    if (window.syncPreserve)
+        window.syncPreserve();
     syncStyleControls();
     syncEditTypeLists();
     setMode(state.mode, false);
@@ -4513,10 +4586,25 @@ function matrixCellEdgeIds(from, to) {
 function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const { values, edgeIds } = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
-    const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id) ? ' matrix-selected' : ''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>`).join('');
+    // Global order index for each node (for move boundaries)
+    const allSorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const orderPos = new Map(allSorted.map((n, i) => [n.id, i]));
+    const header = nodes.map((n, idx) => {
+        const pos = orderPos.get(n.id) ?? idx;
+        const isFirst = pos === 0;
+        const isLast = pos === allSorted.length - 1;
+        const upDisabled = isFirst ? ' disabled' : '';
+        const downDisabled = isLast ? ' disabled' : '';
+        return `<th><div class="matrix-header-cell"><input class="matrix-label-input${isNodeSelected(n.id) ? ' matrix-selected' : ''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="-1" title="${esc(I18N.t('move_left'))}" aria-label="${esc(I18N.t('move_left'))}: ${esc(n.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="${esc(I18N.t('order'))}">${n.order ?? 0}</span><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="1" title="${esc(I18N.t('move_right'))}" aria-label="${esc(I18N.t('move_right'))}: ${esc(n.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>`;
+    }).join('');
     let html = '<table><thead><tr><th></th>' + header + '</tr></thead><tbody>';
     nodes.forEach((row, i) => {
-        html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id) ? ' matrix-selected' : ''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>` +
+        const pos = orderPos.get(row.id) ?? i;
+        const isFirst = pos === 0;
+        const isLast = pos === allSorted.length - 1;
+        const upDisabled = isFirst ? ' disabled' : '';
+        const downDisabled = isLast ? ' disabled' : '';
+        html += `<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input${isNodeSelected(row.id) ? ' matrix-selected' : ''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="-1" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(row.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="1" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(row.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>` +
             values[i].map((cell, j) => {
                 const to = nodes[j].id;
                 const ids = edgeIds[i][j];
@@ -5282,13 +5370,17 @@ function clearMatrixEdges() {
 }
 // === Sorting and reordering ===
 function sortNodesById() {
-    state.nodes.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    const sorted = [...state.nodes].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    sorted.forEach((n, i) => { n.order = i; });
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     pushHistory('sort nodes by id');
     queueRender(true);
     toast(I18N.t('nodes_sorted_id'));
 }
 function sortNodesByLabel() {
-    state.nodes.sort((a, b) => (a.label || '').localeCompare(b.label || '', undefined, { numeric: true }));
+    const sorted = [...state.nodes].sort((a, b) => (a.label || '').localeCompare(b.label || '', undefined, { numeric: true }));
+    sorted.forEach((n, i) => { n.order = i; });
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     pushHistory('sort nodes by label');
     queueRender(true);
     toast(I18N.t('nodes_sorted_label'));
@@ -5296,10 +5388,64 @@ function sortNodesByLabel() {
 function renumberNodeOrder() {
     const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     sorted.forEach((n, i) => { n.order = i; });
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     pushHistory('renumber node order');
     queueRender(true);
     saveSoon();
     toast(I18N.t('node_order_renumbered'));
+}
+function moveNode(nodeId, dir) {
+    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const idx = sorted.findIndex(n => n.id === nodeId);
+    if (idx < 0)
+        return;
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= sorted.length)
+        return;
+    const [moved] = sorted.splice(idx, 1);
+    sorted.splice(newIdx, 0, moved);
+    sorted.forEach((n, i) => { n.order = i; });
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('move node');
+    queueRender(true);
+    saveSoon();
+}
+function moveNodeToPosition(nodeId, newPosition) {
+    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const idx = sorted.findIndex(n => n.id === nodeId);
+    if (idx < 0)
+        return;
+    newPosition = clamp(Math.trunc(newPosition), 0, sorted.length - 1);
+    if (idx === newPosition)
+        return;
+    const [moved] = sorted.splice(idx, 1);
+    sorted.splice(newPosition, 0, moved);
+    sorted.forEach((n, i) => { n.order = i; });
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('move node to position');
+    queueRender(true);
+    saveSoon();
+}
+function reverseNodeOrder() {
+    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    sorted.reverse();
+    sorted.forEach((n, i) => { n.order = i; });
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('reverse node order');
+    queueRender(true);
+    toast(I18N.t('nodes_reversed'));
+}
+function shuffleNodeOrder() {
+    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    for (let i = sorted.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [sorted[i], sorted[j]] = [sorted[j], sorted[i]];
+    }
+    sorted.forEach((n, i) => { n.order = i; });
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('shuffle node order');
+    queueRender(true);
+    toast(I18N.t('nodes_shuffled'));
 }
 function sortEdgesById() {
     state.edges.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
@@ -5355,6 +5501,297 @@ function deleteSelected() {
     toast(I18N.t('deleted_n_m', { n: nodeIds.size, m: edgeIds.size }));
     pushHistory('delete');
     queueRender(true, true);
+}
+// === Copy / Paste ===
+// clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
+function getSelectedNodeIdsForCopy() {
+    const ids = new Set(state.selection?.nodes || []);
+    if (state.selected?.type === 'node')
+        ids.add(state.selected.id);
+    // Also include nodes that have selected edges but no nodes selected? If only edges selected, don't auto-add their endpoints — edge copy will handle
+    return ids;
+}
+function getSelectedEdgeIdsForCopy() {
+    const ids = new Set(state.selection?.edges || []);
+    if (state.selected?.type === 'edge')
+        ids.add(state.selected.id);
+    return ids;
+}
+function copySelectedNodes() {
+    const nodeIds = getSelectedNodeIdsForCopy();
+    const edgeIds = getSelectedEdgeIdsForCopy();
+    if (!nodeIds.size && !edgeIds.size) {
+        toast(I18N.t('nothing_to_copy'));
+        return false;
+    }
+    // If no nodes selected but edges selected, copy those edges (both endpoints must exist on paste)
+    // If nodes selected, copy nodes + edges between them + candidate external edges
+    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(n => ({ ...n }));
+    const edges = [];
+    const externalEdges = [];
+    if (nodeIds.size) {
+        for (const e of state.edges) {
+            const fromIn = nodeIds.has(e.from);
+            const toIn = nodeIds.has(e.to);
+            const selected = edgeIds.has(e.id);
+            if (fromIn && toIn) {
+                edges.push({ ...e });
+            }
+            else if (fromIn || toIn) {
+                // Incident edge: store as external candidate (preserve optionally)
+                // If edge was explicitly selected, we also mark it external (it has exactly one endpoint in selection)
+                // If edge was not selected but incident, we still store it as external for optional preservation
+                externalEdges.push({ ...e });
+            }
+            else if (selected && !fromIn && !toIn) {
+                // Edge selected without its endpoints selected: treat as external requiring both endpoints exist
+                externalEdges.push({ ...e });
+            }
+        }
+        // If user explicitly selected edges whose both endpoints are in selection but edge wasn't captured above? Already captured as internal.
+        // For explicitly selected internal edges, they are already in edges.
+    }
+    else {
+        // No nodes selected: copy selected edges only
+        for (const e of state.edges) {
+            if (edgeIds.has(e.id))
+                edges.push({ ...e });
+        }
+    }
+    clipboardData = { nodes, edges, externalEdges };
+    // Deduplicate externalEdges that are duplicates of internal? Already separated
+    // Write to system clipboard as JSON for cross-tab paste
+    try {
+        const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges });
+        if (navigator.clipboard && navigator.clipboard.writeText)
+            navigator.clipboard.writeText(payload).catch(() => { });
+    }
+    catch { }
+    // Try to use copyText helper if available
+    if (nodes.length || edges.length || externalEdges.length) {
+        const internalCount = edges.length;
+        const externalCount = externalEdges.length;
+        const totalEdges = internalCount + externalCount;
+        if (nodes.length)
+            toast(I18N.t('copied_n_m', { n: nodes.length, m: totalEdges }) || `Copied ${nodes.length} node(s), ${totalEdges} edge(s)`);
+        else
+            toast(I18N.t('copied_edges', { n: edges.length }) || `Copied ${edges.length} edge(s)`);
+    }
+    // Update command states (paste now available)
+    updateCommandStates();
+    return true;
+}
+function cutSelectedNodes() {
+    if (!copySelectedNodes())
+        return;
+    deleteSelected();
+}
+function duplicateSelectedNodes() {
+    if (!copySelectedNodes())
+        return;
+    pasteClipboardInternal();
+}
+function pasteClipboardInternal(fromSystemClipboard) {
+    let data = clipboardData;
+    if (fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard') {
+        data = {
+            nodes: (fromSystemClipboard.nodes || []).map((n) => ({ ...n })),
+            edges: (fromSystemClipboard.edges || []).map((e) => ({ ...e })),
+            externalEdges: (fromSystemClipboard.externalEdges || []).map((e) => ({ ...e }))
+        };
+    }
+    if (!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)) {
+        toast(I18N.t('clipboard_empty'));
+        return false;
+    }
+    const preserveExternal = state.settings.copyPreserveExternal !== false;
+    const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
+    const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
+    let nextOrder = maxOrder + 1;
+    pasteOffsetCount = (pasteOffsetCount + 1) % 20;
+    const offsetDist = 40 + pasteOffsetCount * 10;
+    const idMap = new Map();
+    const newNodes = [];
+    const newNodeIds = [];
+    const existingNodeIds = new Set(originalExistingNodeIds);
+    const sortedCopyNodes = [...data.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const isFreeWithPlaced = (x, y, ignoreIds, placed) => {
+        if (!isPositionFree(x, y, ignoreIds))
+            return false;
+        for (const pn of placed) {
+            if (Math.hypot(pn.x - x, pn.y - y) < 50)
+                return false;
+        }
+        return true;
+    };
+    const findFreeForPaste = (x, y, ignoreIds, placed) => {
+        if (isFreeWithPlaced(x, y, ignoreIds, placed))
+            return { x, y };
+        const step = 50;
+        for (let ring = 1; ring <= 8; ring++) {
+            const radius = step * ring;
+            const count = Math.max(8, ring * 8);
+            for (let i = 0; i < count; i++) {
+                const a = i * Math.PI * 2 / count;
+                const px = x + Math.cos(a) * radius;
+                const py = y + Math.sin(a) * radius;
+                if (isFreeWithPlaced(px, py, ignoreIds, placed))
+                    return { x: px, y: py };
+            }
+        }
+        return { x: x + 80, y: y + 80 };
+    };
+    for (const orig of sortedCopyNodes) {
+        let newId = orig.id;
+        const used = new Set([...existingNodeIds, ...newNodeIds]);
+        if (used.has(newId)) {
+            let counter = state.nextNode;
+            while (used.has('n' + counter))
+                counter++;
+            newId = 'n' + counter;
+            state.nextNode = counter + 1;
+        }
+        else {
+            const num = Number((newId.match(/\d+$/) || [0])[0]);
+            if (Number.isFinite(num) && num >= state.nextNode)
+                state.nextNode = num + 1;
+        }
+        idMap.set(orig.id, newId);
+        const cloned = { ...orig, id: newId, order: nextOrder++ };
+        let nx = finite(orig.x, 0) + offsetDist;
+        let ny = finite(orig.y, 0) + offsetDist;
+        const ignoreSet = new Set([...existingNodeIds, ...newNodeIds, newId]);
+        const free = findFreeForPaste(nx, ny, ignoreSet, newNodes);
+        cloned.x = free.x;
+        cloned.y = free.y;
+        newNodes.push(cloned);
+        newNodeIds.push(newId);
+        existingNodeIds.add(newId);
+    }
+    const finalNewEdges = [];
+    const usedEdgeIds2 = new Set(state.edges.map(e => e.id));
+    const edgeIdMap = new Set();
+    const addEdgeWithNewId = (orig, from, to) => {
+        let nid = orig.id;
+        if (usedEdgeIds2.has(nid) || edgeIdMap.has(nid)) {
+            let c = state.nextEdge;
+            while (usedEdgeIds2.has('e' + c) || edgeIdMap.has('e' + c))
+                c++;
+            nid = 'e' + c;
+            state.nextEdge = c + 1;
+        }
+        else {
+            const num = Number((nid.match(/\d+$/) || [0])[0]);
+            if (Number.isFinite(num) && num >= state.nextEdge)
+                state.nextEdge = num + 1;
+        }
+        const ce = { ...orig, id: nid, from, to };
+        finalNewEdges.push(ce);
+        edgeIdMap.add(nid);
+        usedEdgeIds2.add(nid);
+    };
+    for (const orig of data.edges) {
+        const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
+        if (nf && nt) {
+            addEdgeWithNewId(orig, nf, nt);
+        }
+        else if (!nf && !nt) {
+            if (originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)) {
+                addEdgeWithNewId(orig, orig.from, orig.to);
+            }
+        }
+        else {
+            if (!preserveExternal)
+                continue;
+            if (nf && !nt) {
+                if (originalExistingNodeIds.has(orig.to))
+                    addEdgeWithNewId(orig, nf, orig.to);
+            }
+            else if (!nf && nt) {
+                if (originalExistingNodeIds.has(orig.from))
+                    addEdgeWithNewId(orig, orig.from, nt);
+            }
+        }
+    }
+    if (preserveExternal) {
+        for (const orig of data.externalEdges) {
+            const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
+            if (nf && nt) {
+                addEdgeWithNewId(orig, nf, nt);
+            }
+            else if (nf && !nt) {
+                if (originalExistingNodeIds.has(orig.to))
+                    addEdgeWithNewId(orig, nf, orig.to);
+            }
+            else if (!nf && nt) {
+                if (originalExistingNodeIds.has(orig.from))
+                    addEdgeWithNewId(orig, orig.from, nt);
+            }
+            else {
+                if (originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)) {
+                    addEdgeWithNewId(orig, orig.from, orig.to);
+                }
+            }
+        }
+    }
+    if (newNodes.length)
+        state.nodes.push(...newNodes);
+    if (finalNewEdges.length)
+        state.edges.push(...finalNewEdges);
+    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    if (finalNewEdges.length)
+        invalidateGraphIndex();
+    const selNodes = newNodes.map(n => n.id);
+    const selEdges = finalNewEdges.map(e => e.id);
+    if (selNodes.length || selEdges.length) {
+        setSelection(selNodes, selEdges, selNodes.length ? { type: 'node', id: selNodes[0] } : (selEdges.length ? { type: 'edge', id: selEdges[0] } : null), false);
+    }
+    pushHistory('paste');
+    queueRender(true, true);
+    const totalPastedEdges = finalNewEdges.length;
+    if (newNodes.length)
+        toast(I18N.t('pasted_n_m', { n: newNodes.length, m: totalPastedEdges }) || `Pasted ${newNodes.length} node(s), ${totalPastedEdges} edge(s)`);
+    else if (totalPastedEdges)
+        toast(I18N.t('pasted_edges', { n: totalPastedEdges }) || `Pasted ${totalPastedEdges} edge(s)`);
+    saveSoon();
+    return true;
+}
+async function pasteFromSystemClipboard() {
+    // Try internal clipboard first (fast path); if empty, try system clipboard
+    if (clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length)) {
+        pasteClipboardInternal();
+        return;
+    }
+    try {
+        const text = await navigator.clipboard.readText();
+        if (!text) {
+            toast(I18N.t('clipboard_empty'));
+            return;
+        }
+        const data = JSON.parse(text);
+        if (data && data.type === 'graph-editor-clipboard') {
+            pasteClipboardInternal(data);
+            return;
+        }
+        // Try to parse as generic graph JSON (whole graph paste)
+        // If it looks like a graph (has nodes), import as append?
+        if (data && Array.isArray(data.nodes)) {
+            // Use append import logic as fallback
+            toast(I18N.t('paste_failed', { msg: 'Not a node clipboard' }));
+            return;
+        }
+        toast(I18N.t('clipboard_empty'));
+    }
+    catch (e) {
+        toast(I18N.t('paste_failed', { msg: e.message }));
+    }
+}
+function handlePasteEventWithData(data) {
+    if (data && data.type === 'graph-editor-clipboard') {
+        pasteClipboardInternal(data);
+        return true;
+    }
+    return false;
 }
 let pointerRect = null; // viewport rect captured at pointerdown, reused for the whole gesture
 // True while a node/edge drag, pan, or pinch is in progress. Suppresses
@@ -9045,7 +9482,100 @@ function wireUi() {
             t.readOnly = true;
         }
     });
+    // Matrix per-node order controls (left/right for columns, up/down for rows)
+    $('#matrixHost').addEventListener('click', ev => {
+        const btn = ev.target.closest && ev.target.closest('[data-node-move]');
+        if (!btn)
+            return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const id = btn.dataset.nodeMove;
+        const dir = parseInt(btn.dataset.dir, 10) || 0;
+        if (!id || !dir)
+            return;
+        if (typeof moveNode === 'function')
+            moveNode(id, dir);
+    });
     function chooseImport(format, accept) { const input = $('#fileImport'); input.dataset.format = format; input.accept = accept; input.click(); }
+    // Clipboard copy/paste/duplicate + preserve toggle
+    function bindClipboardButton(id, fn) { const el = document.getElementById(id); if (el)
+        el.addEventListener('click', fn); }
+    bindClipboardButton('btnCopy', copySelectedNodes);
+    bindClipboardButton('btnCut', cutSelectedNodes);
+    bindClipboardButton('btnDuplicate', duplicateSelectedNodes);
+    bindClipboardButton('btnPaste', pasteFromSystemClipboard);
+    bindClipboardButton('btnCopy2', copySelectedNodes);
+    bindClipboardButton('btnCut2', cutSelectedNodes);
+    bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
+    bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
+    const chkPreserve = document.getElementById('chkCopyPreserve');
+    if (chkPreserve) {
+        chkPreserve.checked = state.settings.copyPreserveExternal !== false;
+        chkPreserve.addEventListener('change', e => { state.settings.copyPreserveExternal = e.target.checked; saveSoon(); });
+        // keep checkbox synced when state changes externally (undo/redo, load)
+        const syncPreserve = () => { const c = document.getElementById('chkCopyPreserve'); if (c)
+            c.checked = state.settings.copyPreserveExternal !== false; };
+        // patch global render hook to also sync preserve - expose for 20-rendering to call
+        window.syncPreserve = syncPreserve;
+    }
+    // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
+    document.addEventListener('keydown', ev => {
+        const mod = ev.ctrlKey || ev.metaKey;
+        if (!mod)
+            return;
+        const target = ev.target;
+        const isInput = target && (target.matches && (target.matches('input, textarea, [contenteditable]') || target.isContentEditable));
+        // If focus is in matrix/edge input that is readonly (selection mode), we still want clipboard shortcuts
+        const readonlyInput = isInput && target.readOnly;
+        if (isInput && !readonlyInput && !(target.matches && target.matches('.matrix-input,.matrix-label-input'))) {
+            // typing in a visible text field — don't hijack
+            return;
+        }
+        const key = ev.key.toLowerCase();
+        if (key === 'c' && !ev.shiftKey && !ev.altKey) {
+            // Ctrl+C copy
+            if (state.selection?.nodes?.length || state.selection?.edges?.length || state.selected) {
+                ev.preventDefault();
+                copySelectedNodes();
+            }
+        }
+        else if (key === 'x' && !ev.shiftKey && !ev.altKey) {
+            if (state.selection?.nodes?.length || state.selection?.edges?.length || state.selected) {
+                ev.preventDefault();
+                cutSelectedNodes();
+            }
+        }
+        else if (key === 'v' && !ev.shiftKey && !ev.altKey) {
+            ev.preventDefault();
+            pasteFromSystemClipboard();
+        }
+        else if (key === 'd' && !ev.shiftKey && !ev.altKey) {
+            // Ctrl+D duplicate — prevent browser bookmark
+            if (state.selection?.nodes?.length || state.selection?.edges?.length || state.selected) {
+                ev.preventDefault();
+                duplicateSelectedNodes();
+            }
+        }
+    });
+    // Handle system paste event (Ctrl+V via browser) when app has focus and clipboard contains our JSON
+    document.addEventListener('paste', async (ev) => {
+        // If user is editing a matrix cell label, let the default paste happen
+        const target = ev.target;
+        const isEditingInput = target && target.matches && target.matches('input:not([readonly]), textarea, [contenteditable]');
+        if (isEditingInput)
+            return;
+        try {
+            const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+            if (!text)
+                return;
+            const data = JSON.parse(text);
+            if (data && data.type === 'graph-editor-clipboard') {
+                ev.preventDefault();
+                handlePasteEventWithData(data);
+            }
+        }
+        catch { }
+    });
     $('#btnFlipEdges').addEventListener('click', flipSelectedEdges);
     $('#btnExportJson').addEventListener('click', exportJson);
     $('#btnImportJson').addEventListener('click', () => chooseImport('json', 'application/json,.json'));

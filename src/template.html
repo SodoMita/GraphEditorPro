@@ -33,6 +33,10 @@
     <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
     <symbol id="icon-up" viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></symbol>
     <symbol id="icon-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="icon-left" viewBox="0 0 24 24"><path d="m14 7-5 5 5 5"/></symbol>
+    <symbol id="icon-right" viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></symbol>
+    <symbol id="icon-duplicate" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/><path d="M12 11h5M12 15h5"/></symbol>
+    <symbol id="icon-cut" viewBox="0 0 24 24"><path d="M4 7h16M8 7V4h8v3"/><path d="M9 14 7 16l-3-2 3-2 2 2Zm7 0 2-2 3 2-3 2-2-2Z"/><path d="M7 16 17 8"/></symbol>
     <symbol id="icon-scrub" viewBox="0 0 24 24"><path d="M5 12h14m-11-3-3 3 3 3m8-6 3 3-3 3"/></symbol>
     <symbol id="icon-matrix" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.3 4v16m5.4-16v16M4 9.3h16M4 14.7h16"/></symbol>
     <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></symbol>
@@ -72,6 +76,10 @@
           <svg class="ui-icon" aria-hidden="true"><use href="#icon-redo"></use></svg>
         </button>
         <button id="btnDelete" class="btn symbol-only danger" title="Delete selected" data-i18n-title="delete_selected" aria-label="Delete selected" data-i18n-aria-label="delete_selected"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
+        <button id="btnCopy" class="btn symbol-only" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title" aria-label="Copy" data-i18n-aria-label="copy_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+        <button id="btnCut" class="btn symbol-only" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title" aria-label="Cut" data-i18n-aria-label="cut_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg></button>
+        <button id="btnDuplicate" class="btn symbol-only" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title" aria-label="Duplicate" data-i18n-aria-label="duplicate_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg></button>
+        <button id="btnPaste" class="btn symbol-only" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title" aria-label="Paste" data-i18n-aria-label="paste" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
         <button id="btnClear" class="btn symbol-only danger" title="Clear graph" data-i18n-title="clear_graph" aria-label="Clear graph" data-i18n-aria-label="clear_graph"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
         <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open" aria-label="Open style presets" data-i18n-aria-label="presets_open">
           <svg class="ui-icon" aria-hidden="true"><use href="#icon-star"></use></svg>
@@ -265,6 +273,13 @@
             <div class="section flat">
               <div class="section-title" data-i18n="selection">Selection</div>
               <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
+              <div class="clipboard-controls" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+                <button id="btnCopy2" class="btn small" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg> <span data-i18n="copy_selected">Copy</span></button>
+                <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
+                <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
+                <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
+              </div>
+              <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
             </div>
           </section>
 

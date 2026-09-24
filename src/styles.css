@@ -381,6 +381,18 @@
       border-radius:6px; padding:3px;
     }
     .matrix-label-input:focus{background:rgba(2,6,23,.55); border-color:var(--accent); outline:none}
+    .matrix-header-cell{display:flex; flex-direction:column; align-items:center; gap:3px; min-width:72px}
+    .matrix-header-cell.row-head-cell{flex-direction:row; justify-content:space-between; gap:6px; min-width:120px; padding:2px 0}
+    .matrix-header-cell .matrix-label-input{width:72px; min-width:56px}
+    .matrix-header-cell.row-head-cell .matrix-label-input{flex:1}
+    .matrix-node-controls{display:flex; align-items:center; gap:2px}
+    .matrix-node-controls .btn.small.icon{width:22px; min-width:22px; height:22px; min-height:22px; padding:0; display:grid; place-items:center; border-radius:6px}
+    .matrix-node-controls .btn.small.icon .ui-icon{width:12px;height:12px}
+    .matrix-node-controls .btn[disabled]{opacity:.35; pointer-events:none}
+    .matrix-order-badge{font-size:10px; color:var(--muted); background:rgba(2,6,23,.4); border:1px solid var(--line); border-radius:6px; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
+    .clipboard-controls .btn.small{flex:0 0 auto}
+    .field.checkbox{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted)}
+    .field.checkbox input[type="checkbox"]{width:14px; height:14px}
 
     /* ---------- Tables ---------- */
     table{border-collapse:separate; border-spacing:0; width:100%; font-size:12px; color:#dbeafe}
