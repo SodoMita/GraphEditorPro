@@ -45,16 +45,25 @@
     if(render) { setStatusOnly(); saveSoon(); }
   }
   function effectiveSelectCombine(ev=null){ return ev?.shiftKey ? 'add' : (state.selectCombine || 'replace'); }
-  // Selection sets are cached by a revision counter — creating a new Set per
-  // render pass is wasteful when selection hasn't changed, especially for
-  // matrix rendering which checks isNodeSelected per cell.
+  // Selection sets are cached — creating a new Set per render pass is
+  // wasteful when selection hasn't changed, especially for matrix rendering
+  // which checks isNodeSelected per cell. The cache rebuilds when the
+  // revision counter is bumped (mergeSelection/delete/undo) OR when the
+  // state.selection arrays themselves were replaced, which also covers the
+  // direct assignments in import/sample/clear that never bump the counter.
+  // Callers must treat the returned Sets as read-only: anyone who needs to
+  // add/remove ids copies first (mergeSelection, expandSelection).
   let selCacheRev = 0;
-  let selCache = { rev: -1, nodes: new Set<string>(), edges: new Set<string>() };
+  let selCache = { rev: -1, srcNodes: null as string[] | null, srcEdges: null as string[] | null, nodes: new Set<string>(), edges: new Set<string>() };
   function invalidateSelectionCache(){ selCacheRev++; }
   function getSelectionCache(){
-    if(selCache.rev !== selCacheRev){
-      selCache.nodes = new Set(state.selection?.nodes || []);
-      selCache.edges = new Set(state.selection?.edges || []);
+    const srcNodes = state.selection?.nodes || null;
+    const srcEdges = state.selection?.edges || null;
+    if(selCache.rev !== selCacheRev || selCache.srcNodes !== srcNodes || selCache.srcEdges !== srcEdges){
+      selCache.nodes = new Set<string>(srcNodes || []);
+      selCache.edges = new Set<string>(srcEdges || []);
+      selCache.srcNodes = srcNodes;
+      selCache.srcEdges = srcEdges;
       selCache.rev = selCacheRev;
     }
     return selCache;
@@ -73,8 +82,8 @@
   ){
     const selectionMode: SelectionCombine = combine === true ? 'add' :
       (combine === false || combine == null ? 'replace' : combine);
-    const nodeSet: Set<string> = selectionMode === 'replace' ? new Set<string>() : selectedNodeIds();
-    const edgeSet: Set<string> = selectionMode === 'replace' ? new Set<string>() : selectedEdgeIds();
+    const nodeSet: Set<string> = selectionMode === 'replace' ? new Set<string>() : new Set<string>(selectedNodeIds());
+    const edgeSet: Set<string> = selectionMode === 'replace' ? new Set<string>() : new Set<string>(selectedEdgeIds());
     if(selectionMode === 'subtract'){
       nodes.forEach(id => nodeSet.delete(id));
       edges.forEach(id => edgeSet.delete(id));
@@ -196,7 +205,7 @@
     }
   }
   function expandSelection(directedOnly=false){
-    const seeds = selectedNodeIds();
+    const seeds = new Set<string>(selectedNodeIds());
     if(!seeds.size && state.selected?.type === 'edge'){
       const e = edgeById(state.selected.id); if(e){ seeds.add(e.from); seeds.add(e.to); }
     }
@@ -822,8 +831,11 @@
       const cloned: GraphNode = {...orig, id: newId, order: nextOrder++};
       let nx = finite(orig.x, 0) + offsetDist;
       let ny = finite(orig.y, 0) + offsetDist;
-      const ignoreSet = new Set([...existingNodeIds, ...newNodeIds, newId]);
-      const free = findFreeForPaste(nx, ny, ignoreSet, newNodes);
+      // The clone is not in state.nodes yet, so nothing may be ignored:
+      // ignoring every existing id (as the merged branch did) disables the
+      // overlap check against the graph entirely. Already-placed clones are
+      // covered by findFreeForPaste's `placed` check.
+      const free = findFreeForPaste(nx, ny, new Set<string>(), newNodes);
       cloned.x = free.x;
       cloned.y = free.y;
       newNodes.push(cloned);
