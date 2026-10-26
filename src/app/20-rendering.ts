@@ -417,6 +417,8 @@
     $('#optEdgeListPageSize').value = state.settings.edgeListPageSize;
     const inhEl = $('#optInheritDefaults'); if(inhEl) inhEl.checked = state.settings.inheritDefaults !== false;
     const noLblEl = $('#optNoLabel'); if(noLblEl) noLblEl.checked = Boolean(state.settings.noLabel);
+    const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(chkPreserve) chkPreserve.checked = state.settings.copyPreserveExternal !== false;
+    if((window as any).syncPreserve) (window as any).syncPreserve();
     syncStyleControls();
     syncEditTypeLists();
     setMode(state.mode, false);
@@ -1422,10 +1424,25 @@
   function adjacencyMatrixHtml(nodes=matrixNodes()){
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
-    const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>`).join('');
+    // Global order index for each node (for move boundaries)
+    const allSorted = [...state.nodes].sort((a,b)=>(a.order??0)-(b.order??0));
+    const orderPos = new Map(allSorted.map((n,i)=>[n.id,i]));
+    const header = nodes.map((n, idx) => {
+      const pos = orderPos.get(n.id) ?? idx;
+      const isFirst = pos === 0;
+      const isLast = pos === allSorted.length - 1;
+      const upDisabled = isFirst ? ' disabled' : '';
+      const downDisabled = isLast ? ' disabled' : '';
+      return `<th><div class="matrix-header-cell"><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="-1" title="${esc(I18N.t('move_left'))}" aria-label="${esc(I18N.t('move_left'))}: ${esc(n.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="${esc(I18N.t('order'))}">${n.order??0}</span><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="1" title="${esc(I18N.t('move_right'))}" aria-label="${esc(I18N.t('move_right'))}: ${esc(n.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>`;
+    }).join('');
     let html = '<table><thead><tr><th></th>' + header + '</tr></thead><tbody>';
     nodes.forEach((row,i) => {
-      html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>` +
+      const pos = orderPos.get(row.id) ?? i;
+      const isFirst = pos === 0;
+      const isLast = pos === allSorted.length - 1;
+      const upDisabled = isFirst ? ' disabled' : '';
+      const downDisabled = isLast ? ' disabled' : '';
+      html += `<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="-1" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(row.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="1" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(row.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>` +
         values[i].map((cell,j) => {
           const to = nodes[j].id;
           const ids = edgeIds[i][j];

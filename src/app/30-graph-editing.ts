@@ -551,17 +551,63 @@
   }
   // === Sorting and reordering ===
   function sortNodesById(){
-    state.nodes.sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
+    const sorted = [...state.nodes].sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
+    sorted.forEach((n,i) => { n.order = i; });
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     pushHistory('sort nodes by id'); queueRender(true); toast(I18N.t('nodes_sorted_id'));
   }
   function sortNodesByLabel(){
-    state.nodes.sort((a,b) => (a.label||'').localeCompare(b.label||'', undefined, {numeric:true}));
+    const sorted = [...state.nodes].sort((a,b) => (a.label||'').localeCompare(b.label||'', undefined, {numeric:true}));
+    sorted.forEach((n,i) => { n.order = i; });
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     pushHistory('sort nodes by label'); queueRender(true); toast(I18N.t('nodes_sorted_label'));
   }
   function renumberNodeOrder(){
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     sorted.forEach((n,i) => { n.order = i; });
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     pushHistory('renumber node order'); queueRender(true); saveSoon(); toast(I18N.t('node_order_renumbered'));
+  }
+  function moveNode(nodeId, dir){
+    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const idx = sorted.findIndex(n => n.id === nodeId);
+    if(idx < 0) return;
+    const newIdx = idx + dir;
+    if(newIdx < 0 || newIdx >= sorted.length) return;
+    const [moved] = sorted.splice(idx, 1);
+    sorted.splice(newIdx, 0, moved);
+    sorted.forEach((n,i) => { n.order = i; });
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('move node'); queueRender(true); saveSoon();
+  }
+  function moveNodeToPosition(nodeId, newPosition){
+    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const idx = sorted.findIndex(n => n.id === nodeId);
+    if(idx < 0) return;
+    newPosition = clamp(Math.trunc(newPosition), 0, sorted.length - 1);
+    if(idx === newPosition) return;
+    const [moved] = sorted.splice(idx, 1);
+    sorted.splice(newPosition, 0, moved);
+    sorted.forEach((n,i) => { n.order = i; });
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('move node to position'); queueRender(true); saveSoon();
+  }
+  function reverseNodeOrder(){
+    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    sorted.reverse();
+    sorted.forEach((n,i) => { n.order = i; });
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('reverse node order'); queueRender(true); toast(I18N.t('nodes_reversed'));
+  }
+  function shuffleNodeOrder(){
+    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    for(let i = sorted.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [sorted[i], sorted[j]] = [sorted[j], sorted[i]];
+    }
+    sorted.forEach((n,i) => { n.order = i; });
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    pushHistory('shuffle node order'); queueRender(true); toast(I18N.t('nodes_shuffled'));
   }
   function sortEdgesById(){
     state.edges.sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
@@ -602,4 +648,253 @@
     state.selection = {nodes: [], edges: []};
     toast(I18N.t('deleted_n_m', {n: nodeIds.size, m: edgeIds.size}));
     pushHistory('delete'); queueRender(true, true);
+  }
+
+  // === Copy / Paste ===
+  // clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
+  function getSelectedNodeIdsForCopy(): Set<string> {
+    const ids = new Set(state.selection?.nodes || []);
+    if(state.selected?.type === 'node') ids.add(state.selected.id);
+    // Also include nodes that have selected edges but no nodes selected? If only edges selected, don't auto-add their endpoints — edge copy will handle
+    return ids;
+  }
+  function getSelectedEdgeIdsForCopy(): Set<string> {
+    const ids = new Set(state.selection?.edges || []);
+    if(state.selected?.type === 'edge') ids.add(state.selected.id);
+    return ids;
+  }
+  function copySelectedNodes(){
+    const nodeIds = getSelectedNodeIdsForCopy();
+    const edgeIds = getSelectedEdgeIdsForCopy();
+    if(!nodeIds.size && !edgeIds.size){
+      toast(I18N.t('nothing_to_copy'));
+      return false;
+    }
+    // If no nodes selected but edges selected, copy those edges (both endpoints must exist on paste)
+    // If nodes selected, copy nodes + edges between them + candidate external edges
+    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(n => ({...n}));
+    const edges: GraphEdge[] = [];
+    const externalEdges: GraphEdge[] = [];
+    if(nodeIds.size){
+      for(const e of state.edges){
+        const fromIn = nodeIds.has(e.from);
+        const toIn = nodeIds.has(e.to);
+        const selected = edgeIds.has(e.id);
+        if(fromIn && toIn){
+          edges.push({...e});
+        } else if(fromIn || toIn){
+          // Incident edge: store as external candidate (preserve optionally)
+          // If edge was explicitly selected, we also mark it external (it has exactly one endpoint in selection)
+          // If edge was not selected but incident, we still store it as external for optional preservation
+          externalEdges.push({...e});
+        } else if(selected && !fromIn && !toIn){
+          // Edge selected without its endpoints selected: treat as external requiring both endpoints exist
+          externalEdges.push({...e});
+        }
+      }
+      // If user explicitly selected edges whose both endpoints are in selection but edge wasn't captured above? Already captured as internal.
+      // For explicitly selected internal edges, they are already in edges.
+    } else {
+      // No nodes selected: copy selected edges only
+      for(const e of state.edges){
+        if(edgeIds.has(e.id)) edges.push({...e});
+      }
+    }
+    clipboardData = { nodes, edges, externalEdges };
+    // Deduplicate externalEdges that are duplicates of internal? Already separated
+    // Write to system clipboard as JSON for cross-tab paste
+    try {
+      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges });
+      if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(payload).catch(()=>{});
+    } catch {}
+    // Try to use copyText helper if available
+    if(nodes.length || edges.length || externalEdges.length){
+      const internalCount = edges.length;
+      const externalCount = externalEdges.length;
+      const totalEdges = internalCount + externalCount;
+      if(nodes.length) toast(I18N.t('copied_n_m', {n: nodes.length, m: totalEdges}) || `Copied ${nodes.length} node(s), ${totalEdges} edge(s)`);
+      else toast(I18N.t('copied_edges', {n: edges.length}) || `Copied ${edges.length} edge(s)`);
+    }
+    // Update command states (paste now available)
+    updateCommandStates();
+    return true;
+  }
+  function cutSelectedNodes(){
+    if(!copySelectedNodes()) return;
+    deleteSelected();
+  }
+  function duplicateSelectedNodes(){
+    if(!copySelectedNodes()) return;
+    pasteClipboardInternal();
+  }
+  function pasteClipboardInternal(fromSystemClipboard?: AnyRecord | null){
+    let data = clipboardData;
+    if(fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard'){
+      data = {
+        nodes: (fromSystemClipboard.nodes || []).map((n: AnyRecord) => ({...n})),
+        edges: (fromSystemClipboard.edges || []).map((e: AnyRecord) => ({...e})),
+        externalEdges: (fromSystemClipboard.externalEdges || []).map((e: AnyRecord) => ({...e}))
+      };
+    }
+    if(!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)){
+      toast(I18N.t('clipboard_empty'));
+      return false;
+    }
+    const preserveExternal = state.settings.copyPreserveExternal !== false;
+    const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
+    const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
+    let nextOrder = maxOrder + 1;
+    pasteOffsetCount = (pasteOffsetCount + 1) % 20;
+    const offsetDist = 40 + pasteOffsetCount * 10;
+    const idMap = new Map<string, string>();
+    const newNodes: GraphNode[] = [];
+    const newNodeIds: string[] = [];
+    const existingNodeIds = new Set(originalExistingNodeIds);
+    const sortedCopyNodes = [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const isFreeWithPlaced = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
+      if(!isPositionFree(x, y, ignoreIds)) return false;
+      for(const pn of placed){
+        if(Math.hypot(pn.x - x, pn.y - y) < 50) return false;
+      }
+      return true;
+    };
+    const findFreeForPaste = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
+      if(isFreeWithPlaced(x, y, ignoreIds, placed)) return {x, y};
+      const step = 50;
+      for(let ring=1; ring<=8; ring++){
+        const radius = step * ring;
+        const count = Math.max(8, ring * 8);
+        for(let i=0; i<count; i++){
+          const a = i * Math.PI*2 / count;
+          const px = x + Math.cos(a)*radius;
+          const py = y + Math.sin(a)*radius;
+          if(isFreeWithPlaced(px, py, ignoreIds, placed)) return {x:px, y:py};
+        }
+      }
+      return {x: x + 80, y: y + 80};
+    };
+    for(const orig of sortedCopyNodes){
+      let newId = orig.id;
+      const used = new Set([...existingNodeIds, ...newNodeIds]);
+      if(used.has(newId)){
+        let counter = state.nextNode;
+        while(used.has('n' + counter)) counter++;
+        newId = 'n' + counter;
+        state.nextNode = counter + 1;
+      } else {
+        const num = Number((newId.match(/\d+$/)||[0])[0]);
+        if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
+      }
+      idMap.set(orig.id, newId);
+      const cloned: GraphNode = {...orig, id: newId, order: nextOrder++};
+      let nx = finite(orig.x, 0) + offsetDist;
+      let ny = finite(orig.y, 0) + offsetDist;
+      const ignoreSet = new Set([...existingNodeIds, ...newNodeIds, newId]);
+      const free = findFreeForPaste(nx, ny, ignoreSet, newNodes);
+      cloned.x = free.x;
+      cloned.y = free.y;
+      newNodes.push(cloned);
+      newNodeIds.push(newId);
+      existingNodeIds.add(newId);
+    }
+    const finalNewEdges: GraphEdge[] = [];
+    const usedEdgeIds2 = new Set(state.edges.map(e=>e.id));
+    const edgeIdMap = new Set<string>();
+    const addEdgeWithNewId = (orig: GraphEdge, from: string, to: string) => {
+      let nid = orig.id;
+      if(usedEdgeIds2.has(nid) || edgeIdMap.has(nid)){
+        let c = state.nextEdge;
+        while(usedEdgeIds2.has('e'+c) || edgeIdMap.has('e'+c)) c++;
+        nid = 'e'+c;
+        state.nextEdge = c+1;
+      } else {
+        const num = Number((nid.match(/\d+$/)||[0])[0]);
+        if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
+      }
+      const ce: GraphEdge = {...orig, id: nid, from, to};
+      finalNewEdges.push(ce);
+      edgeIdMap.add(nid);
+      usedEdgeIds2.add(nid);
+    };
+    for(const orig of data.edges){
+      const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
+      if(nf && nt){
+        addEdgeWithNewId(orig, nf, nt);
+      } else if(!nf && !nt){
+        if(originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)){
+          addEdgeWithNewId(orig, orig.from, orig.to);
+        }
+      } else {
+        if(!preserveExternal) continue;
+        if(nf && !nt){
+          if(originalExistingNodeIds.has(orig.to)) addEdgeWithNewId(orig, nf, orig.to);
+        } else if(!nf && nt){
+          if(originalExistingNodeIds.has(orig.from)) addEdgeWithNewId(orig, orig.from, nt);
+        }
+      }
+    }
+    if(preserveExternal){
+      for(const orig of data.externalEdges){
+        const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
+        if(nf && nt){
+          addEdgeWithNewId(orig, nf, nt);
+        } else if(nf && !nt){
+          if(originalExistingNodeIds.has(orig.to)) addEdgeWithNewId(orig, nf, orig.to);
+        } else if(!nf && nt){
+          if(originalExistingNodeIds.has(orig.from)) addEdgeWithNewId(orig, orig.from, nt);
+        } else {
+          if(originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)){
+            addEdgeWithNewId(orig, orig.from, orig.to);
+          }
+        }
+      }
+    }
+    if(newNodes.length) state.nodes.push(...newNodes);
+    if(finalNewEdges.length) state.edges.push(...finalNewEdges);
+    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    if(finalNewEdges.length) invalidateGraphIndex();
+    const selNodes = newNodes.map(n=>n.id);
+    const selEdges = finalNewEdges.map(e=>e.id);
+    if(selNodes.length || selEdges.length){
+      setSelection(selNodes, selEdges, selNodes.length ? {type:'node', id: selNodes[0]} : (selEdges.length ? {type:'edge', id: selEdges[0]} : null), false);
+    }
+    pushHistory('paste'); queueRender(true, true);
+    const totalPastedEdges = finalNewEdges.length;
+    if(newNodes.length) toast(I18N.t('pasted_n_m', {n: newNodes.length, m: totalPastedEdges}) || `Pasted ${newNodes.length} node(s), ${totalPastedEdges} edge(s)`);
+    else if(totalPastedEdges) toast(I18N.t('pasted_edges', {n: totalPastedEdges}) || `Pasted ${totalPastedEdges} edge(s)`);
+    saveSoon();
+    return true;
+  }
+  async function pasteFromSystemClipboard(){
+    // Try internal clipboard first (fast path); if empty, try system clipboard
+    if(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length)){
+      pasteClipboardInternal();
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      if(!text) { toast(I18N.t('clipboard_empty')); return; }
+      const data = JSON.parse(text);
+      if(data && data.type === 'graph-editor-clipboard'){
+        pasteClipboardInternal(data);
+        return;
+      }
+      // Try to parse as generic graph JSON (whole graph paste)
+      // If it looks like a graph (has nodes), import as append?
+      if(data && Array.isArray(data.nodes)){
+        // Use append import logic as fallback
+        toast(I18N.t('paste_failed', {msg: 'Not a node clipboard'}));
+        return;
+      }
+      toast(I18N.t('clipboard_empty'));
+    } catch(e){
+      toast(I18N.t('paste_failed', {msg: (e as Error).message}));
+    }
+  }
+  function handlePasteEventWithData(data: AnyRecord){
+    if(data && data.type === 'graph-editor-clipboard'){
+      pasteClipboardInternal(data);
+      return true;
+    }
+    return false;
   }
