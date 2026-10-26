@@ -39,6 +39,7 @@
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');
   const selectionOverlayLayer = $('#selectionOverlayLayer');
+  const gizmoLayer = $('#gizmoLayer');
   const gridPattern = $('#gridPattern');
 
   const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
@@ -48,7 +49,7 @@
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
-    title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
+    title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', gizmoTool: 'move', nextNode: 1, nextEdge: 1,
     nodes: [], edges: [],
     selected: null, selection: {nodes: [], edges: []},
     settings: {
@@ -70,6 +71,9 @@
       noLabel: false, // when true, new nodes are created with empty labels
       // Copy/paste: when true, pasting preserves edges that have only one endpoint in the clipboard if the other endpoint exists in the graph
       copyPreserveExternal: true,
+      // Selection transform gizmo (translate/rotate/scale/rect handles around
+      // the selection). Can be hidden when its handles get in the way.
+      gizmoEnabled: true,
       // Visible range: filters matrix, edge list, and graph canvas to nodes within [start, end] by order.
       // -1 end means "to last". -1 start means "show all".
       visibleRange: {start: -1, end: -1},
@@ -110,6 +114,7 @@
   let appHistory: string[] = [], appHistoryIndex = -1;
   let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
+  let gizmoDrag = null; // active selection-gizmo gesture (40-interactions.ts)
   const activePointers = new Map();
   // Clipboard for copy/paste of nodes+edges
   let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[] } | null = null;
@@ -118,7 +123,7 @@
   function snapshot(){
     flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
-      title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, nextNode:state.nextNode, nextEdge:state.nextEdge,
+      title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, gizmoTool:state.gizmoTool, nextNode:state.nextNode, nextEdge:state.nextEdge,
       nodes:state.nodes, edges:state.edges, settings:state.settings, viewBox:state.viewBox,
       // Preserve user focus across undo/redo so editing the same object stays ergonomic
       selected:state.selected, selection:state.selection
@@ -399,6 +404,7 @@
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
     settings.copyPreserveExternal = settings.copyPreserveExternal !== false;
+    settings.gizmoEnabled = settings.gizmoEnabled !== false;
     // Canvas background and grid colors
     settings.canvasBgColor = validColor(settings.canvasBgColor) || '#020617';
     settings.gridMinorColor = validColor(settings.gridMinorColor) || '#94a3b8';
@@ -461,6 +467,7 @@
       mode: ['select','move','node','edge'].includes(source.mode) ? source.mode : 'select',
       selectTool: ['single','rect','brush','lasso','line','polygon'].includes(source.selectTool) ? source.selectTool : 'single',
       selectCombine: ['replace','add','subtract'].includes(source.selectCombine) ? source.selectCombine : 'replace',
+      gizmoTool: ['move','rotate','scale','rect'].includes(source.gizmoTool) ? source.gizmoTool : 'move',
       selection: {nodes: [], edges: []},
       nextNode: maxN + 1,
       nextEdge: maxE + 1,

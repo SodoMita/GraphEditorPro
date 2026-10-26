@@ -85,6 +85,7 @@
     activatePanel('edit');
 
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+    $$('[data-gizmotool]').forEach(btn => btn.addEventListener('click', () => setGizmoTool(btn.dataset.gizmotool)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
     $$('[data-hittest]').forEach(btn => btn.addEventListener('click', () => setHitTestMode(btn.dataset.hittest)));
@@ -128,6 +129,7 @@
     });
     $('#optInheritDefaults').addEventListener('change', e => { state.settings.inheritDefaults = e.target.checked; pushHistory('inherit defaults'); });
     $('#optNoLabel').addEventListener('change', e => { state.settings.noLabel = e.target.checked; pushHistory('no label'); });
+    $('#optGizmo').addEventListener('change', e => setGizmoEnabled(e.target.checked));
     $('#optSnap').addEventListener('change', e => { state.settings.snap = e.target.checked; pushHistory('snap grid'); });
     $('#optSnapX').addEventListener('change', e => { state.settings.snapX = e.target.checked; pushHistory('snap x'); });
     $('#optSnapY').addEventListener('change', e => { state.settings.snapY = e.target.checked; pushHistory('snap y'); });
@@ -565,13 +567,29 @@
       if(ctrl && matchesHotkey(ev, 'undo')){ ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
       if(ctrl && matchesHotkey(ev, 'redo')){ ev.preventDefault(); redo(); return; }
       if(typing) return;
-      if(matchesHotkey(ev, 'escape')){ ev.preventDefault(); if(selectDraft?.tool === 'polygon') finishPolygonSelection(true); else if(selectDraft) finishSelectionDraft(true); pendingEdgeFrom=null; pendingNodeTap=null; edgeDraft=null; dragLine.style.display='none'; setStatusOnly(); return; }
+      if(matchesHotkey(ev, 'escape')){ ev.preventDefault(); if(gizmoDrag) endGizmoDrag(false); else if(selectDraft?.tool === 'polygon') finishPolygonSelection(true); else if(selectDraft) finishSelectionDraft(true); pendingEdgeFrom=null; pendingNodeTap=null; edgeDraft=null; dragLine.style.display='none'; setStatusOnly(); return; }
       if(matchesHotkey(ev, 'delete')){ ev.preventDefault(); deleteSelected(); return; }
       if(matchesHotkey(ev, 'pan')){ spaceDown = true; setStatusOnly(); return; }
       if(matchesHotkey(ev, 'select')){ ev.preventDefault(); setMode('select'); return; }
       if(matchesHotkey(ev, 'move')){ ev.preventDefault(); setMode('move'); return; }
       if(matchesHotkey(ev, 'node')){ ev.preventDefault(); setMode('node'); return; }
       if(matchesHotkey(ev, 'edge')){ ev.preventDefault(); setMode('edge'); return; }
+      if(matchesHotkey(ev, 'gizmoMove')){ ev.preventDefault(); setMode('select'); setGizmoTool('move'); return; }
+      if(matchesHotkey(ev, 'gizmoRotate')){ ev.preventDefault(); setMode('select'); setGizmoTool('rotate'); return; }
+      if(matchesHotkey(ev, 'gizmoScale')){ ev.preventDefault(); setMode('select'); setGizmoTool('scale'); return; }
+      if(matchesHotkey(ev, 'gizmoRect')){ ev.preventDefault(); setMode('select'); setGizmoTool('rect'); return; }
+      if(matchesHotkey(ev, 'gizmoToggle')){ ev.preventDefault(); setGizmoEnabled(state.settings.gizmoEnabled === false); return; }
+      // Arrow keys nudge the gizmo target nodes (grid step while snap is on,
+      // otherwise 1 unit; Shift multiplies the step).
+      if(state.mode === 'select' && !ctrl && !ev.altKey && ev.key.startsWith('Arrow') && !(ev.target as HTMLElement)?.closest?.('#toolsPanel')){
+        const mult = ev.shiftKey ? (state.settings.snap ? 5 : 10) : 1;
+        const stepX = (state.settings.snap ? (state.settings.gridSizeX || 40) : 1) * mult;
+        const stepY = (state.settings.snap ? (state.settings.gridSizeY || 40) : 1) * mult;
+        const dx = ev.key === 'ArrowLeft' ? -stepX : ev.key === 'ArrowRight' ? stepX : 0;
+        const dy = ev.key === 'ArrowUp' ? -stepY : ev.key === 'ArrowDown' ? stepY : 0;
+        if((dx || dy) && nudgeSelection(dx, dy)) ev.preventDefault();
+        return;
+      }
     });
     window.addEventListener('keyup', ev => { if(matchesHotkey(ev, 'pan')){ spaceDown = false; setStatusOnly(); } });
     window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
@@ -587,6 +605,7 @@
     // (pointerup may be missed if a system alert steals focus or the window loses focus mid-drag)
     function resetInteractionState(){
       let changed = false, navigationChanged = false;
+      if(gizmoDrag){ endGizmoDrag(true); changed = true; }
       if(drag){
         if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
         if(drag.moved) pushHistory('move node');

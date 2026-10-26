@@ -206,7 +206,7 @@
        Edge mode. A mode never widens the mode switcher itself — its extra tools
        always get a row of their own, so the switcher keeps the same size and
        position in every mode. */
-    .sel-tools,.edge-tools{
+    .sel-tools,.edge-tools,.gizmo-tools{
       position:absolute; left:50%; transform:translateX(-50%); bottom:72px; z-index:11;
       display:none; align-items:center; gap:2px; padding:4px; max-width:calc(100% - 16px);
       overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:none;
@@ -214,23 +214,28 @@
       box-shadow:0 10px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.05) inset;
       backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     }
-    .sel-tools::-webkit-scrollbar,.edge-tools::-webkit-scrollbar{display:none}
+    .sel-tools::-webkit-scrollbar,.edge-tools::-webkit-scrollbar,.gizmo-tools::-webkit-scrollbar{display:none}
     .canvas-wrap.select-mode .sel-tools{display:flex}
     .canvas-wrap.edge-mode .edge-tools{display:flex}
+    /* The gizmo row stacks one pill-height above the selection tools and only
+       appears while a gizmo is on the canvas (Select mode + selected nodes);
+       renderGizmo owns the .gizmo-active class. */
+    .gizmo-tools{bottom:126px}
+    .canvas-wrap.select-mode.gizmo-active .gizmo-tools{display:flex}
     .canvas-wrap.select-mode .empty-hint,
     .canvas-wrap.edge-mode .empty-hint{bottom:132px}
     /* Every tool row button shares one touch size, however few tools a row has. */
-    .sel-tools .btn,.edge-tools .btn{
+    .sel-tools .btn,.edge-tools .btn,.gizmo-tools .btn{
       width:40px; min-height:40px; flex:0 0 40px; padding:0; border:none; border-radius:999px;
       background:transparent; color:var(--muted); box-shadow:none;
     }
-    .sel-tools .btn:hover,.edge-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
-    .sel-tools .btn:active,.edge-tools .btn:active{transform:translateY(1px)}
-    .sel-tools .btn.active,.edge-tools .btn.active{
+    .sel-tools .btn:hover,.edge-tools .btn:hover,.gizmo-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
+    .sel-tools .btn:active,.edge-tools .btn:active,.gizmo-tools .btn:active{transform:translateY(1px)}
+    .sel-tools .btn.active,.edge-tools .btn.active,.gizmo-tools .btn.active{
       color:var(--accent); background:rgba(34,211,238,.16);
       box-shadow:0 0 10px rgba(34,211,238,.22) inset;
     }
-    .sel-tools svg,.edge-tools svg{width:17px; height:17px; display:block}
+    .sel-tools svg,.edge-tools svg,.gizmo-tools svg{width:17px; height:17px; display:block}
 
     /* ---------- Tool tabs ---------- */
     .tab{
@@ -512,6 +517,51 @@
     .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:2; stroke-dasharray:6 5; pointer-events:none}
     .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
 
+    /* ---------- Selection transform gizmo ----------
+       Drawn in world coordinates inside the camera scene (so it pans/zooms
+       with the graph) with handle sizes computed in world units per screen
+       pixel, keeping handles a constant on-screen size at any zoom. Lines
+       use non-scaling-stroke hairlines like the grid. Only the .gizmo-hit
+       shapes take pointer events — the gizmo never blocks the nodes under
+       its frame. Axis colours follow the usual gizmo convention: X red,
+       Y green, free/rect accents in the app accent, rotation amber. */
+    .gizmo-bounds{fill:none; stroke:rgba(34,211,238,.5); stroke-width:1.5; stroke-dasharray:5 4; vector-effect:non-scaling-stroke; pointer-events:none}
+    .gizmo-rectbox{fill:rgba(34,211,238,.05); stroke:var(--accent); stroke-width:1.5; vector-effect:non-scaling-stroke; pointer-events:none}
+    .gizmo-vis{pointer-events:none}
+    .gizmo-hit{fill:transparent; stroke:transparent; pointer-events:all}
+    /* Lines and the rotate ring are grabbable by their stroke only, so the
+       (empty) area they enclose never blocks the nodes underneath. */
+    .gizmo-hit-stroke{fill:none; stroke:transparent; pointer-events:stroke}
+    .gizmo-axis{stroke-width:2.5; vector-effect:non-scaling-stroke}
+    .gizmo-axis-x{stroke:#fb7185}
+    .gizmo-axis-y{stroke:#4ade80}
+    .gizmo-arrow-x{fill:#fb7185; stroke:none}
+    .gizmo-arrow-y{fill:#4ade80; stroke:none}
+    .gizmo-ring{fill:none; stroke:#fbbf24; stroke-width:2; vector-effect:non-scaling-stroke}
+    .gizmo-spoke{stroke:rgba(251,191,36,.65); stroke-width:1.5; vector-effect:non-scaling-stroke}
+    .gizmo-handle-box{fill:#0b1220; stroke-width:2; vector-effect:non-scaling-stroke}
+    .gizmo-box-x{stroke:#fb7185}
+    .gizmo-box-y{stroke:#4ade80}
+    .gizmo-box-accent{stroke:var(--accent)}
+    .gizmo-box-amber{stroke:#fbbf24}
+    .gizmo-handle:hover .gizmo-handle-box{fill:#1e3a4c}
+    .gizmo-handle.active .gizmo-handle-box{fill:var(--accent); stroke:#e0f2fe}
+    .gizmo-handle:hover .gizmo-arrow-x,.gizmo-handle:hover .gizmo-arrow-y{filter:brightness(1.25)}
+    .gizmo-pivot-ring{fill:none; stroke:#f8fafc; stroke-width:1.6; vector-effect:non-scaling-stroke}
+    .gizmo-pivot-dot{fill:#f8fafc; stroke:none}
+    .gizmo-readout{
+      fill:#e2e8f0; font-weight:700; text-anchor:middle; pointer-events:none;
+      paint-order:stroke; stroke:#020617; stroke-width:3.5; stroke-linejoin:round; vector-effect:non-scaling-stroke;
+    }
+    .gizmo-axis-label{font-weight:800; pointer-events:none; paint-order:stroke; stroke:#020617; stroke-width:3; stroke-linejoin:round; vector-effect:non-scaling-stroke}
+    [data-gizmo="move-free"],[data-gizmo="rect-move"],[data-gizmo="pivot"]{cursor:move}
+    [data-gizmo="move-x"],[data-gizmo="scale-x"],[data-gizmo="rect-e"],[data-gizmo="rect-w"]{cursor:ew-resize}
+    [data-gizmo="move-y"],[data-gizmo="scale-y"],[data-gizmo="rect-n"],[data-gizmo="rect-s"]{cursor:ns-resize}
+    [data-gizmo="rect-nw"],[data-gizmo="rect-se"]{cursor:nwse-resize}
+    [data-gizmo="rect-ne"],[data-gizmo="rect-sw"]{cursor:nesw-resize}
+    [data-gizmo="rotate"]{cursor:grab}
+    [data-gizmo="scale-uniform"]{cursor:nwse-resize}
+
     /* .fast-interaction is an interaction-state marker only. It intentionally
        changes no paint property: switching filters or label effects at release
        forces a fresh SVG layer and can flash an enlarged/stale drag frame. */
@@ -603,6 +653,7 @@
       .mode-fab{left:12px; right:auto; transform:none; bottom:10px}
       .mode-fab .seg{min-height:34px; min-width:46px; padding:0 10px; font-size:11.5px}
       .sel-tools,.edge-tools{left:12px; right:auto; transform:none; bottom:64px}
+      .gizmo-tools{left:12px; right:auto; transform:none; bottom:118px}
       .canvas-wrap.select-mode .empty-hint,
       .canvas-wrap.edge-mode .empty-hint{bottom:110px}
       .empty-hint{inset:auto 14px 76px 14px}
@@ -654,6 +705,7 @@
       .canvas-wrap{border-radius:var(--radius); border-width:1px}
       .mode-fab{bottom:20px}
       .sel-tools,.edge-tools{bottom:82px}
+      .gizmo-tools{bottom:136px}
       .empty-hint{inset:auto 26px 110px 26px}
       .canvas-wrap.select-mode .empty-hint,
       .canvas-wrap.edge-mode .empty-hint{bottom:136px}
@@ -698,6 +750,7 @@
       .mode-fab .seg{width:44px;min-height:36px;min-width:44px;padding:0}
       .mode-fab{bottom:8px}
       .sel-tools,.edge-tools{bottom:58px}
+      .gizmo-tools{bottom:106px}
       .canvas-wrap.select-mode .empty-hint,
       .canvas-wrap.edge-mode .empty-hint{bottom:104px}
       .empty-hint{inset:auto 14px 76px 14px}

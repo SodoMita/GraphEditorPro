@@ -44,6 +44,7 @@
     if(pinch) return;
     gestureActive = true;
     if(edgeDraft){ edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d',''); }
+    if(gizmoDrag) endGizmoDrag(true);
     if(drag){
       if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
       if(drag.moved) pushHistory('move node');
@@ -107,6 +108,7 @@
     selectDraft = { tool:state.selectTool, pointerId:ev.pointerId, start:p, end:p, points:[p], combine:effectiveSelectCombine(ev), moved:false };
     $('#canvasWrap').classList.add('fast-interaction');
     renderSelectionDraft();
+    renderGizmo(); // hidden while a selection draft is live
     setStatusOnly();
   }
   function sampleSelectionDraftPoint(p){
@@ -174,6 +176,7 @@
       selectDraft = { tool:'polygon', points:[p], start:p, end:p, combine:effectiveSelectCombine(ev), moved:false };
       $('#canvasWrap').classList.add('fast-interaction');
       renderSelectionDraft();
+      renderGizmo();
       setStatusOnly();
       return true;
     }
@@ -456,6 +459,182 @@
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
   }
+  // === Selection transform gizmo gestures ===
+  // A gizmo gesture captures every target node's start position once, then
+  // recomputes positions from those starts on every pointermove, so a drag
+  // never accumulates drift and Escape can restore the gesture exactly.
+  // Only node x/y are written — widths, heights, shapes and every other
+  // visual parameter stay untouched; connected edges follow through the
+  // same live-edge fast path node drags use (moveDragFast).
+  let gizmoFrame = false;
+  function scheduleGizmoFrame(){
+    if(gizmoFrame) return;
+    gizmoFrame = true;
+    requestAnimationFrame(() => {
+      gizmoFrame = false;
+      if(!gizmoDrag) return;
+      if(gizmoDrag.handle !== 'pivot') moveDragFast(gizmoDrag);
+      renderGizmo();
+      setText($('#statusPill'), statusText()); // readout only; full command sync happens at gesture ends
+    });
+  }
+  function onGizmoPointerDown(ev){
+    const handleEl = (ev.target as Element)?.closest?.('[data-gizmo]') as HTMLElement | null;
+    if(!handleEl) return;
+    // Let pan/polygon/other in-flight gestures keep the pointer: the gizmo
+    // only claims a fresh primary-button press in Select mode.
+    if(state.mode !== 'select' || spaceDown || selectDraft || drag || gizmoDrag || pinch || pan) return;
+    ev.preventDefault(); ev.stopPropagation();
+    svg.focus();
+    try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    registerPointer(ev);
+    if(ev.button === 1 || ev.button === 2){ pendingEdgeFrom = null; startPan(ev); return; }
+    if(ev.button !== 0) return;
+    if(maybeStartPinch()) return;
+    const nodes = gizmoTargetNodes();
+    if(!nodes.length) return;
+    const p = pointFromEvent(ev);
+    const bounds = gizmoNodeBounds(nodes);
+    const key = nodes.map(n => n.id).join(',');
+    if(key !== gizmoPivotKey){ gizmoPivot = null; gizmoPivotKey = key; }
+    const pivot = gizmoPivot ? {...gizmoPivot} : {x:bounds.cx, y:bounds.cy};
+    const nodeIdSet = new Set<string>(nodes.map(n => n.id));
+    const affectedEdges = state.edges.filter(e => nodeIdSet.has(e.from) || nodeIdSet.has(e.to));
+    gizmoDrag = {
+      pointerId: ev.pointerId, handle: handleEl.dataset.gizmo || '', tool: state.gizmoTool || 'move',
+      nodes, starts: new Map(nodes.map(n => [n.id, {x:n.x, y:n.y}])),
+      nodeIdSet, pivot, bounds, startPointer: p, pointer: p,
+      unit: gizmoWorldPerPixel(),
+      startAngle: Math.atan2(p.y - pivot.y, p.x - pivot.x),
+      startDist: Math.hypot(p.x - pivot.x, p.y - pivot.y),
+      pivotWas: gizmoPivot ? {...gizmoPivot} : null,
+      moved: false, readout: '', affectedEdges,
+      liveEdges: affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT, vc: null,
+      historyLabel: 'gizmo ' + (state.gizmoTool || 'move')
+    };
+    gestureActive = true;
+    if(gizmoDrag.handle !== 'pivot') for(const n of nodes){ const el = nodeEl(n.id); if(el) toggleClass(el, 'dragging', true); }
+    $('#canvasWrap').classList.add('fast-interaction');
+    renderGizmo();
+    setStatusOnly();
+  }
+  function gizmoSafeRatio(num, den){ return Math.abs(den) > 1e-9 ? num / den : 1; }
+  function updateGizmoDrag(p, ev){
+    const g = gizmoDrag; if(!g) return;
+    g.pointer = p;
+    const P = g.pivot, S = g.startPointer;
+    const apply = (fn) => { for(const n of g.nodes){ const s = g.starts.get(n.id); const q = fn(s); n.x = q.x; n.y = q.y; } };
+    if(g.handle === 'pivot'){
+      // Snap onto a node centre when close (rotate around that node), else
+      // run through the ordinary snap settings (grid / X / Y alignment).
+      let best = null, bestD = snapThresholdWorld();
+      for(const n of state.nodes){ const d = Math.hypot(n.x - p.x, n.y - p.y); if(d <= bestD){ best = n; bestD = d; } }
+      gizmoPivot = best ? {x:best.x, y:best.y} : snapPointToEnabled(p.x, p.y, null);
+      g.moved = true;
+      g.readout = `${Math.round(gizmoPivot.x)}, ${Math.round(gizmoPivot.y)}`;
+      scheduleGizmoFrame();
+      return;
+    }
+    if(g.handle === 'move-free' || g.handle === 'rect-move' || g.handle === 'move-x' || g.handle === 'move-y'){
+      // Snapping applies to the gizmo origin; every node rides the same delta.
+      const snapped = snapPointToEnabled(P.x + (p.x - S.x), P.y + (p.y - S.y), g.nodeIdSet);
+      let dx = snapped.x - P.x, dy = snapped.y - P.y;
+      if(g.handle === 'move-x') dy = 0;
+      if(g.handle === 'move-y') dx = 0;
+      apply(s => ({x: s.x + dx, y: s.y + dy}));
+      g.readout = `Δ ${Math.round(dx)}, ${Math.round(dy)}`;
+    } else if(g.handle === 'rotate'){
+      // Sitting exactly on the pivot has no angle; keep the last frame's
+      // positions instead of snapping to atan2(0, 0).
+      if(Math.hypot(p.x - P.x, p.y - P.y) < 1e-6){ scheduleGizmoFrame(); return; }
+      let ang = Math.atan2(p.y - P.y, p.x - P.x) - g.startAngle;
+      if(ev.shiftKey){ const step = Math.PI / 12; ang = Math.round(ang / step) * step; }
+      const cos = Math.cos(ang), sin = Math.sin(ang);
+      apply(s => { const dx = s.x - P.x, dy = s.y - P.y; return {x: P.x + dx * cos - dy * sin, y: P.y + dx * sin + dy * cos}; });
+      let deg = ang * 180 / Math.PI;
+      while(deg > 180) deg -= 360;
+      while(deg <= -180) deg += 360;
+      g.readout = `${deg.toFixed(1)}°`;
+    } else if(g.handle === 'scale-uniform' || g.handle === 'scale-x' || g.handle === 'scale-y'){
+      let fx = 1, fy = 1;
+      if(g.handle === 'scale-uniform'){
+        // Radial drag distance maps linearly: 120 px out from the grab point doubles the spread.
+        fx = fy = clamp(1 + (Math.hypot(p.x - P.x, p.y - P.y) - g.startDist) / (120 * g.unit), 0.05, 20);
+      } else if(g.handle === 'scale-x'){
+        fx = clamp(gizmoSafeRatio(p.x - P.x, S.x - P.x), -20, 20);
+        if(ev.shiftKey) fy = fx;
+      } else {
+        fy = clamp(gizmoSafeRatio(p.y - P.y, S.y - P.y), -20, 20);
+        if(ev.shiftKey) fx = fy;
+      }
+      apply(s => ({x: P.x + (s.x - P.x) * fx, y: P.y + (s.y - P.y) * fy}));
+      g.readout = fx === fy ? `×${fx.toFixed(2)}` : `×${fx.toFixed(2)} · ×${fy.toFixed(2)}`;
+    } else if(g.handle.startsWith('rect-')){
+      // Stretch the start-of-gesture bounds: the dragged edge/corner follows
+      // the pointer, the opposite side stays anchored (Alt: centre anchored,
+      // both sides move). A factor per axis maps start positions into the
+      // new frame — node bodies keep their own sizes, only centres move.
+      const B = g.bounds, dir = g.handle.slice(5);
+      const hasX = dir.includes('e') || dir.includes('w');
+      const hasY = dir.includes('n') || dir.includes('s');
+      const ax = ev.altKey ? B.cx : (dir.includes('e') ? B.minX : dir.includes('w') ? B.maxX : B.cx);
+      const ay = ev.altKey ? B.cy : (dir.includes('s') ? B.minY : dir.includes('n') ? B.maxY : B.cy);
+      const hx = dir.includes('e') ? B.maxX : dir.includes('w') ? B.minX : B.cx;
+      const hy = dir.includes('s') ? B.maxY : dir.includes('n') ? B.minY : B.cy;
+      let fx = hasX ? clamp(gizmoSafeRatio(p.x - ax, hx - ax), -20, 20) : 1;
+      let fy = hasY ? clamp(gizmoSafeRatio(p.y - ay, hy - ay), -20, 20) : 1;
+      if(ev.shiftKey && hasX && hasY){ const f = Math.abs(fx - 1) >= Math.abs(fy - 1) ? fx : fy; fx = f; fy = f; }
+      apply(s => ({x: ax + (s.x - ax) * fx, y: ay + (s.y - ay) * fy}));
+      g.readout = `${Math.round(B.w * Math.abs(fx))} × ${Math.round(B.h * Math.abs(fy))}`;
+    }
+    g.moved = false;
+    for(const n of g.nodes){
+      const s = g.starts.get(n.id);
+      if(Math.abs(n.x - s.x) > 0.01 || Math.abs(n.y - s.y) > 0.01){ g.moved = true; break; }
+    }
+    scheduleGizmoFrame();
+  }
+  function endGizmoDrag(commit = true){
+    const g = gizmoDrag; if(!g) return;
+    gizmoDrag = null;
+    if(g.handle === 'pivot'){
+      if(!commit) gizmoPivot = g.pivotWas;
+    } else {
+      if(!commit) for(const n of g.nodes){ const s = g.starts.get(n.id); n.x = s.x; n.y = s.y; }
+      moveDragFast(g); // flush the final/restored frame synchronously
+      for(const n of g.nodes){ const el = nodeEl(n.id); if(el) toggleClass(el, 'dragging', false); }
+      if(commit && g.moved){ pushHistory(g.historyLabel); renderSidebar(); }
+      if(commit && g.moved && !g.liveEdges) queueRender(false);
+    }
+    $('#canvasWrap').classList.remove('fast-interaction');
+    gestureActive = false;
+    renderGizmo();
+    setStatusOnly();
+  }
+  // Keyboard counterpart of the translate gizmo: shift every gizmo target
+  // node by a fixed step, through the same live-edge fast path.
+  function nudgeSelection(dx, dy){
+    const nodes = gizmoTargetNodes();
+    if(!nodes.length) return false;
+    for(const n of nodes){ n.x += dx; n.y += dy; }
+    const idSet = new Set<string>(nodes.map(n => n.id));
+    const affectedEdges = state.edges.filter(e => idSet.has(e.from) || idSet.has(e.to));
+    const liveEdges = affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT;
+    moveDragFast({ nodes, affectedEdges, liveEdges, vc: null });
+    pushHistory('nudge selection');
+    if(!liveEdges) queueRender(false);
+    renderGizmo();
+    renderSidebar();
+    return true;
+  }
+  gizmoLayer.addEventListener('pointerdown', onGizmoPointerDown);
+  gizmoLayer.addEventListener('dblclick', ev => {
+    if(!(ev.target as Element)?.closest?.('[data-gizmo="pivot"]')) return;
+    ev.preventDefault(); ev.stopPropagation();
+    gizmoPivot = null;
+    renderGizmo();
+  });
+
   svg.addEventListener('pointerdown', ev => {
     svg.focus();
     registerPointer(ev);
@@ -556,6 +735,7 @@
       if(Math.hypot(ev.clientX - edgeDraft.startClientX, ev.clientY - edgeDraft.startClientY) > 8) edgeDraft.moved = true;
       updateDragLine(p, ev.clientX, ev.clientY); return;
     }
+    if(gizmoDrag && ev.pointerId === gizmoDrag.pointerId){ updateGizmoDrag(p, ev); return; }
     if(drag){
       const n = drag.node; if(!n) return;
       let x = p.x - drag.offsetX, y = p.y - drag.offsetY;
@@ -640,6 +820,11 @@
         toast(I18N.t('source_tap_target'));
         queueRender(false);
       } else queueRender(false);
+    }
+    if(gizmoDrag && ev.pointerId === gizmoDrag.pointerId){
+      endGizmoDrag(!cancel);
+      unregisterPointer(ev);
+      return;
     }
     if(drag){
       if(drag.fastNodeId) moveDragFast();

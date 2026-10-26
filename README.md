@@ -39,6 +39,23 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 
 `index.html` is generated and should not be edited directly.
 
+## Moving selections: transform gizmos
+
+In Select mode, a selection that contains nodes (or only edges — their endpoints are used) gets a transform gizmo: a floating toolbar row of its own above the selection tools, and handles drawn around the selection on the canvas. **Every gizmo tool rewrites only node `x`/`y` positions.** Node widths, heights, shapes, colors, labels — all visual parameters of the individual parts — are never touched; the node bodies simply ride to their new spots and connected edges follow through the same live-edge fast path as an ordinary node drag.
+
+| Tool | Handles | What it does to the selected positions |
+| --- | --- | --- |
+| Translate (`1`) | centre dot, X arrow, Y arrow | Free move, or move constrained to one axis. Existing snap settings (grid, Snap X/Y) apply to the gizmo origin |
+| Rotate (`2`) | ring around the pivot | Rotates positions around the pivot. `Shift` snaps to 15° steps |
+| Scale (`3`) | X/Y end squares, centre square | Scales positions from the pivot per axis (`Shift` = uniform from an axis handle) or uniformly from the centre. Node sizes do **not** scale |
+| Rect (`4`) | bounding-box corners/edges, centre | Stretches positions with the selection's bounding frame: the dragged side follows the pointer, the opposite side stays anchored. `Alt` stretches from the centre, `Shift` keeps the aspect ratio |
+
+The **pivot** defaults to the centre of the selection's bounding box. In Rotate/Scale (and Rect) it is the small white dot: drag it — it snaps onto node centres — to rotate or scale around any point, and double-click it to reset. It resets automatically when the set of selected nodes changes.
+
+A numeric readout (delta, angle, factor, or frame size) follows the drag on the canvas and in the status pill. `Esc` cancels a gizmo drag and restores the exact pre-gesture positions; a committed drag is a single undo step. Arrow keys nudge the selection (grid step while snap is on, otherwise 1 unit; `Shift` multiplies). `G` (or the *Show transform gizmo* option under Behavior & grid) hides the gizmo when its handles would get in the way. The digit/`G` bindings are remappable like the other hotkeys.
+
+Implementation notes: the gizmo lives in its own `#gizmoLayer` inside the camera scene, above the nodes, and is rebuilt only when its signature (tool, selection ids, pivot, bounds, screen-pixel size, drag state) changes. Handles are sized in world units per screen pixel, so they keep a constant on-screen size at any zoom; only handle shapes take pointer events (lines and the rotate ring are stroke-only), so the frame never blocks the nodes under it. During an ordinary group drag the whole gizmo follows with a single transform write on its root instead of a rebuild.
+
 ## Build and safety guarantees
 
 The build fails if any of these guarantees are broken:
