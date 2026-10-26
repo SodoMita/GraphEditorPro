@@ -10,6 +10,7 @@
     $('#canvasWrap').classList.toggle('edge-mode', mode === 'edge');
     // Selection tools float over the canvas only while Select mode is active
     $('#canvasWrap').classList.toggle('select-mode', mode === 'select');
+    scheduleGizmoUpdate();
     if(render) { setStatusOnly(); saveSoon(); }
   }
   function setSelectTool(tool, render=true){
@@ -83,6 +84,8 @@
     mergeSelection(nodes, edges, primary, combine);
     syncSelectionDom();
     renderSidebar();
+    syncGizmoControls();
+    scheduleGizmoUpdate();
     setStatusOnly();
   }
   // Live variant for per-frame selection tools (brush): identical state
@@ -95,6 +98,8 @@
     mergeSelection(nodes, edges, null, combine);
     syncSelectionDom();
     markSidebarDirty();
+    syncGizmoControls();
+    scheduleGizmoUpdate();
     setStatusOnly();
   }
   function selectItem(type,id){ setSelection(type === 'node' ? [id] : [], type === 'edge' ? [id] : [], {type,id}, false); }

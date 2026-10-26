@@ -311,6 +311,10 @@
       if(typeof moveNode === 'function') moveNode(id, dir);
     });
     function chooseImport(format, accept){ const input = $('#fileImport'); input.dataset.format = format; input.accept = accept; input.click(); }
+    // Transform gizmo modes — one handler for the floating bar and the sidebar.
+    $$('[data-gizmo-mode]').forEach(btn => {
+      btn.addEventListener('click', () => setGizmoMode(btn.dataset.gizmoMode));
+    });
     // Clipboard copy/paste/duplicate + preserve toggle
     function bindClipboardButton(id, fn){ const el=document.getElementById(id); if(el) el.addEventListener('click', fn); }
     bindClipboardButton('btnCopy', copySelectedNodes);
@@ -565,13 +569,20 @@
       if(ctrl && matchesHotkey(ev, 'undo')){ ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
       if(ctrl && matchesHotkey(ev, 'redo')){ ev.preventDefault(); redo(); return; }
       if(typing) return;
-      if(matchesHotkey(ev, 'escape')){ ev.preventDefault(); if(selectDraft?.tool === 'polygon') finishPolygonSelection(true); else if(selectDraft) finishSelectionDraft(true); pendingEdgeFrom=null; pendingNodeTap=null; edgeDraft=null; dragLine.style.display='none'; setStatusOnly(); return; }
+      if(matchesHotkey(ev, 'escape')){ ev.preventDefault(); if(gizmoDrag) cancelGizmoDrag(); if(selectDraft?.tool === 'polygon') finishPolygonSelection(true); else if(selectDraft) finishSelectionDraft(true); pendingEdgeFrom=null; pendingNodeTap=null; edgeDraft=null; dragLine.style.display='none'; setStatusOnly(); return; }
       if(matchesHotkey(ev, 'delete')){ ev.preventDefault(); deleteSelected(); return; }
       if(matchesHotkey(ev, 'pan')){ spaceDown = true; setStatusOnly(); return; }
       if(matchesHotkey(ev, 'select')){ ev.preventDefault(); setMode('select'); return; }
       if(matchesHotkey(ev, 'move')){ ev.preventDefault(); setMode('move'); return; }
       if(matchesHotkey(ev, 'node')){ ev.preventDefault(); setMode('node'); return; }
       if(matchesHotkey(ev, 'edge')){ ev.preventDefault(); setMode('edge'); return; }
+      // Transform gizmo shortcuts. They come after the configurable mode keys,
+      // so a user-defined hotkey always wins over these defaults.
+      if(!ctrl){
+        const gizmoKey: Record<string, GizmoMode> = { g:'translate', r:'rotate', k:'scale', b:'rect', '0':'off' };
+        const target = gizmoKey[ev.key.toLowerCase()];
+        if(target){ ev.preventDefault(); setGizmoMode(target); return; }
+      }
     });
     window.addEventListener('keyup', ev => { if(matchesHotkey(ev, 'pan')){ spaceDown = false; setStatusOnly(); } });
     window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
@@ -587,6 +598,7 @@
     // (pointerup may be missed if a system alert steals focus or the window loses focus mid-drag)
     function resetInteractionState(){
       let changed = false, navigationChanged = false;
+      if(gizmoDrag){ cancelGizmoDrag(); changed = true; }
       if(drag){
         if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
         if(drag.moved) pushHistory('move node');

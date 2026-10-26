@@ -232,6 +232,29 @@
     }
     .sel-tools svg,.edge-tools svg{width:17px; height:17px; display:block}
 
+    /* ---------- Transform gizmo mode bar + sidebar controls ---------- */
+    .gizmo-tools{
+      position:absolute; left:calc(10px + var(--sa-left)); top:calc(46px + var(--sa-top)); z-index:11;
+      display:none; align-items:center; gap:2px; padding:3px 5px; max-width:calc(100% - 20px);
+      background:rgba(10,16,29,.9); border:1px solid var(--line-2); border-radius:999px;
+      box-shadow:0 8px 22px rgba(0,0,0,.45); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    }
+    .canvas-wrap.select-mode .gizmo-tools{display:flex}
+    .gizmo-tools-label{font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); padding:0 5px 0 3px}
+    .gizmo-tools .btn{
+      width:30px; min-width:30px; min-height:30px; padding:0; border:none; border-radius:999px;
+      background:transparent; color:var(--muted); box-shadow:none;
+    }
+    .gizmo-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
+    .gizmo-tools .btn.active{color:var(--ink); background:linear-gradient(135deg,var(--accent),#0ea5e9); box-shadow:0 2px 9px rgba(34,211,238,.32)}
+    .gizmo-tools .ui-icon{width:16px; height:16px; display:block}
+    .gizmo-mode-grid{display:flex; flex-wrap:wrap; gap:5px}
+    .gizmo-mode-grid .btn{display:inline-flex; align-items:center; gap:5px; min-height:34px}
+    .gizmo-mode-grid .btn.active{border-color:var(--accent); color:var(--accent); box-shadow:0 0 0 1px rgba(34,211,238,.35) inset}
+    .gizmo-mode-grid .ui-icon{width:15px; height:15px}
+    .gizmo-sidebar-readout{margin-top:8px; padding:6px 8px; border-radius:8px; background:rgba(34,211,238,.07); border:1px solid rgba(34,211,238,.18); color:#cbd5e1}
+    .gizmo-note{margin:7px 0 0; line-height:1.45}
+
     /* ---------- Tool tabs ---------- */
     .tab{
       flex:1; min-width:0; min-height:44px; border:none; background:transparent; color:var(--dim);
@@ -511,6 +534,35 @@
     .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:2; stroke-dasharray:6 5; pointer-events:none}
     .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
 
+    /* ---------- On-canvas transform gizmo ----------
+       The layer itself never captures pointer events: only the transparent
+       hit shapes of the handles do, so nodes under the box stay clickable. */
+    .transform-gizmo *{box-sizing:border-box}
+    .gizmo-box{fill:none; stroke:var(--accent); stroke-width:1.4; stroke-dasharray:7 5; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.9}
+    .gizmo-box-hit{fill:none; stroke:transparent; pointer-events:stroke; cursor:move}
+    .gizmo-guide{fill:none; stroke:var(--accent); stroke-width:1.2; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.65}
+    .gizmo-axis{fill:none; stroke-width:2; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.8}
+    .gizmo-axis-x{stroke:#f87171}
+    .gizmo-axis-y{stroke:#4ade80}
+    .gizmo-pivot{fill:none; stroke:#e2e8f0; stroke-width:1.2; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.8}
+    .gizmo-handle-shape{fill:#0b1220; stroke:var(--accent); stroke-width:1.6; vector-effect:non-scaling-stroke; pointer-events:none}
+    .gizmo-handle-hit{fill:transparent; stroke:none; pointer-events:all}
+    .gizmo-handle{cursor:pointer}
+    .gizmo-handle:active .gizmo-handle-shape{fill:var(--accent)}
+    .gizmo-h-rotate .gizmo-handle-shape{fill:#1e293b; stroke:#a78bfa}
+    .gizmo-h-rotate{cursor:grab}
+    .gizmo-h-move-x .gizmo-handle-shape{stroke:#f87171}
+    .gizmo-h-move-y .gizmo-handle-shape{stroke:#4ade80}
+    .gizmo-h-n .gizmo-handle-shape,.gizmo-h-s .gizmo-handle-shape,.gizmo-h-e .gizmo-handle-shape,.gizmo-h-w .gizmo-handle-shape{stroke:#fbbf24}
+    .gizmo-h-n,.gizmo-h-s{cursor:ns-resize}
+    .gizmo-h-e,.gizmo-h-w{cursor:ew-resize}
+    .gizmo-h-nw,.gizmo-h-se{cursor:nwse-resize}
+    .gizmo-h-ne,.gizmo-h-sw{cursor:nesw-resize}
+    .gizmo-readout{
+      fill:#e2e8f0; stroke:rgba(2,6,23,.9); stroke-width:3px; paint-order:stroke;
+      font-weight:700; letter-spacing:.02em; pointer-events:none; user-select:none;
+    }
+
     /* .fast-interaction is an interaction-state marker only. It intentionally
        changes no paint property: switching filters or label effects at release
        forces a fresh SVG layer and can flash an enlarged/stale drag frame. */
@@ -554,6 +606,12 @@
       .mode-fab{width:auto}
       .mode-fab .seg{flex:0 0 48px;min-width:48px;padding:0}
       .toast-stack{top:calc(160px + var(--sa-top));bottom:auto}
+      /* HUD pills can wrap to three lines on phones. Dock the gizmo bar above
+         the floating selection tools instead of below the HUD, and drop the
+         label so it stays one compact row. */
+      .gizmo-tools{top:auto; bottom:calc(126px + var(--sa-bottom)); padding:2px 4px}
+      .gizmo-tools-label{display:none}
+      .gizmo-tools .btn{width:28px; min-width:28px; min-height:28px}
     }
 
     /* Portrait: canvas on top, panels below — stacked full-width, sized

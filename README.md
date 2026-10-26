@@ -28,6 +28,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 | `src/app/20-rendering.ts` | SVG, matrix, edge-list, and selection rendering |
 | `src/app/30-graph-editing.ts` | Graph mutations, selection, sorting, and matrix editing |
 | `src/app/40-interactions.ts` | Pointer, drag, pan, zoom, and canvas selection behavior |
+| `src/app/45-gizmo.ts` | Position-only translate/rotate/scale/rect transform gizmo |
 | `src/app/50-import-export.ts` | JSON, CSV, DOT, and GraphML import/export |
 | `src/app/60-algorithms.ts` | Graph algorithms and automatic layouts |
 | `src/app/70-controls.ts` | Style controls, presets, camera controls, and hotkeys |
@@ -51,6 +52,34 @@ The build fails if any of these guarantees are broken:
 - Static markup contains duplicate element IDs.
 
 Runtime data is also validated before use. Imported graph state is size-limited, malformed records and dangling edges are discarded, IDs are normalized and deduplicated, numeric/style values are clamped, unsafe map keys are isolated in prototype-free records, and required DOM elements fail with a descriptive error instead of causing a later null dereference.
+
+## Transform gizmo (positions only)
+
+When nodes are selected in Select mode, an on-canvas gizmo draws a bounding box
+with draggable handles. Pick a mode from the floating **Gizmo** bar at the top
+left of the canvas, from the Edit tab, or with the keyboard:
+
+| Mode | Key | Handles | Effect on the selection |
+| --- | --- | --- | --- |
+| Move (translate) | `G` | centre cross, X axis, Y axis, box border | Adds a delta to every selected node's `x`/`y`. Axis handles constrain to one axis; grid snapping applies to the pivot. |
+| Rotate | `R` | round handle above the box | Rotates each node **position** around the selection centre. `Shift` snaps to 15°. |
+| Scale | `K` | four corner squares | Uniformly scales the offsets of node positions from the centre. `Shift` snaps the factor to tenths. |
+| Rect | `B` | eight box handles + rotation handle | Corner handles scale X and Y independently, side handles scale one axis, the round handle rotates, and the border moves. `Shift` on a corner keeps the aspect ratio. |
+| Off | `0` | none | Hides the overlay; ordinary node dragging still works. |
+
+Rotation, scaling and rect transforms need at least two selected nodes (a
+single point has no offset from its own centre); with one node the box still
+offers translation and shows a hint instead of no-op handles.
+
+All four modes share one contract: **only node `x`/`y` are written.** Node
+width/height, shape, colour, label, font, type, order and every edge property
+are left exactly as they were — connected edges simply follow their moved
+endpoints through the existing live-drag writer. The gizmo is a UI preference
+stored in `localStorage`, never in the document, so it is invisible to
+import/export and to undo snapshots. A completed gesture is a single undo step
+(`Ctrl+Z`); `Escape` or a second touch cancels it and restores the original
+positions. The overlay lives inside the composited camera layer, so it pans and
+zooms with the graph without a second render clock.
 
 ## Performance design
 

@@ -47,6 +47,11 @@
     <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
     <symbol id="icon-brush" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" stroke-dasharray="3 2.2"/></symbol>
     <symbol id="icon-adjacent" viewBox="0 0 24 24"><path d="m10.5 10.3-4-4m7-2.3v5.2m2 1.2 3.5-4m-3.4 7.2 3.5 3.8m-8.7-3.7-3.6 3.8"/><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="5" cy="5" r="2"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/><circle cx="5" cy="19" r="2"/></symbol>
+    <symbol id="icon-gizmo-off" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="m6.5 17.5 11-11"/></symbol>
+    <symbol id="icon-gizmo-move" viewBox="0 0 24 24"><path d="M12 2.5v19M2.5 12h19M12 2.5 9.6 4.9M12 2.5l2.4 2.4M12 21.5l-2.4-2.4M12 21.5l2.4-2.4M2.5 12l2.4-2.4M2.5 12l2.4 2.4M21.5 12l-2.4-2.4M21.5 12l-2.4 2.4"/></symbol>
+    <symbol id="icon-gizmo-rotate" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.8-6.3M20.5 3.5v5h-5"/></symbol>
+    <symbol id="icon-gizmo-scale" viewBox="0 0 24 24"><path d="M4.5 19.5 19.5 4.5M11 4.5h8.5V13"/><rect x="3.5" y="15" width="5" height="5" rx=".8"/></symbol>
+    <symbol id="icon-gizmo-rect" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1" stroke-dasharray="3 2"/><rect x="3.2" y="3.2" width="3.6" height="3.6" rx=".6"/><rect x="17.2" y="3.2" width="3.6" height="3.6" rx=".6"/><rect x="3.2" y="17.2" width="3.6" height="3.6" rx=".6"/><rect x="17.2" y="17.2" width="3.6" height="3.6" rx=".6"/></symbol>
     <symbol id="icon-directed-adjacent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="18" r="2"/><circle cx="4" cy="18" r="2"/><path d="M12 9V6m-1.6 1.5L12 6l1.6 1.5m.8 6.2 3.3 2.6m-2.2.1 2.2-.1-.5-2.1m-7.6-.5-3.3 2.6m2.2.1-2.2-.1.5-2.1"/></symbol>
   </svg>
 
@@ -281,6 +286,25 @@
               </div>
               <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
             </div>
+
+            <details class="section" open>
+              <summary class="section-title">
+                <span data-i18n="gizmo_section">Transform gizmo</span>
+                <span class="tiny muted" data-i18n="gizmo_section_sub">(positions only)</span>
+              </summary>
+              <div class="sec-body">
+                <div class="gizmo-mode-grid" role="group" aria-label="Transform gizmo mode" data-i18n-aria-label="gizmo_tools">
+                  <button class="btn small" data-gizmo-mode="off" data-i18n-title="gizmo_off_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-off"></use></svg> <span data-i18n="gizmo_off">Off</span></button>
+                  <button class="btn small" data-gizmo-mode="translate" data-i18n-title="gizmo_translate_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-move"></use></svg> <span data-i18n="gizmo_translate">Move</span></button>
+                  <button class="btn small" data-gizmo-mode="rotate" data-i18n-title="gizmo_rotate_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rotate"></use></svg> <span data-i18n="gizmo_rotate">Rotate</span></button>
+                  <button class="btn small" data-gizmo-mode="scale" data-i18n-title="gizmo_scale_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-scale"></use></svg> <span data-i18n="gizmo_scale">Scale</span></button>
+                  <button class="btn small" data-gizmo-mode="rect" data-i18n-title="gizmo_rect_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rect"></use></svg> <span data-i18n="gizmo_rect">Rect</span></button>
+                </div>
+                <div class="tiny muted gizmo-note" data-i18n="gizmo_note">Transform selected nodes by dragging the on-canvas handles. Only node positions change: sizes, shapes, labels, colours and edge styles are never touched.</div>
+                <div id="gizmoReadout" class="tiny muted gizmo-sidebar-readout"></div>
+                <p class="tiny muted gizmo-note" data-i18n="gizmo_keys">Keys: G move · R rotate · K scale · B rect · 0 off. Shift snaps rotation to 15° and scaling to tenths. Drag the box border (or centre cross) to move, corners to scale, the round handle to rotate. Escape cancels a gesture; Ctrl+Z undoes a completed one.</p>
+              </div>
+            </details>
           </section>
 
           <!-- ================= STYLE ================= -->
@@ -669,6 +693,10 @@
                 <path id="dragLine" class="drag-line" d="" style="display:none"></path>
                 <g id="selectionOverlayLayer"></g>
                 <g id="nodesLayer"></g>
+                <!-- Position-only transform gizmo: lives in world space inside
+                     the camera scene, so it tracks pan/zoom for free. Only its
+                     handles are hit-testable; the graph stays fully clickable. -->
+                <g id="transformGizmoLayer" class="transform-gizmo" aria-hidden="true"></g>
               </g>
             </g>
           </svg>
@@ -676,6 +704,17 @@
           <div class="canvas-hud">
             <div id="statusPill" class="status-pill" data-i18n="ready">Ready</div>
             <div id="statsPill" class="status-pill">0 nodes · 0 edges</div>
+          </div>
+
+          <!-- Transform gizmo mode switcher: each mode draws its own handles.
+               All of them write ONLY node x/y — never node/edge style fields. -->
+          <div class="gizmo-tools" role="group" aria-label="Transform gizmo" data-i18n-aria-label="gizmo_tools">
+            <span class="gizmo-tools-label" data-i18n="gizmo_label">Gizmo</span>
+            <button class="btn" data-gizmo-mode="off" title="Hide gizmo (0)" data-i18n-title="gizmo_off_title" aria-label="Hide gizmo" data-i18n-aria-label="gizmo_off" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-off"></use></svg></button>
+            <button class="btn" data-gizmo-mode="translate" title="Translate gizmo (G)" data-i18n-title="gizmo_translate_title" aria-label="Translate gizmo" data-i18n-aria-label="gizmo_translate" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-move"></use></svg></button>
+            <button class="btn" data-gizmo-mode="rotate" title="Rotate gizmo (R)" data-i18n-title="gizmo_rotate_title" aria-label="Rotate gizmo" data-i18n-aria-label="gizmo_rotate" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rotate"></use></svg></button>
+            <button class="btn" data-gizmo-mode="scale" title="Scale gizmo (K)" data-i18n-title="gizmo_scale_title" aria-label="Scale gizmo" data-i18n-aria-label="gizmo_scale" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-scale"></use></svg></button>
+            <button class="btn" data-gizmo-mode="rect" title="Rect transform gizmo (B)" data-i18n-title="gizmo_rect_title" aria-label="Rect transform gizmo" data-i18n-aria-label="gizmo_rect" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rect"></use></svg></button>
           </div>
 
           <div class="zoom-controls" role="group" aria-label="Zoom controls">

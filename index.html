@@ -239,6 +239,29 @@
     }
     .sel-tools svg,.edge-tools svg{width:17px; height:17px; display:block}
 
+    /* ---------- Transform gizmo mode bar + sidebar controls ---------- */
+    .gizmo-tools{
+      position:absolute; left:calc(10px + var(--sa-left)); top:calc(46px + var(--sa-top)); z-index:11;
+      display:none; align-items:center; gap:2px; padding:3px 5px; max-width:calc(100% - 20px);
+      background:rgba(10,16,29,.9); border:1px solid var(--line-2); border-radius:999px;
+      box-shadow:0 8px 22px rgba(0,0,0,.45); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    }
+    .canvas-wrap.select-mode .gizmo-tools{display:flex}
+    .gizmo-tools-label{font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); padding:0 5px 0 3px}
+    .gizmo-tools .btn{
+      width:30px; min-width:30px; min-height:30px; padding:0; border:none; border-radius:999px;
+      background:transparent; color:var(--muted); box-shadow:none;
+    }
+    .gizmo-tools .btn:hover{color:var(--text); background:rgba(148,163,184,.14)}
+    .gizmo-tools .btn.active{color:var(--ink); background:linear-gradient(135deg,var(--accent),#0ea5e9); box-shadow:0 2px 9px rgba(34,211,238,.32)}
+    .gizmo-tools .ui-icon{width:16px; height:16px; display:block}
+    .gizmo-mode-grid{display:flex; flex-wrap:wrap; gap:5px}
+    .gizmo-mode-grid .btn{display:inline-flex; align-items:center; gap:5px; min-height:34px}
+    .gizmo-mode-grid .btn.active{border-color:var(--accent); color:var(--accent); box-shadow:0 0 0 1px rgba(34,211,238,.35) inset}
+    .gizmo-mode-grid .ui-icon{width:15px; height:15px}
+    .gizmo-sidebar-readout{margin-top:8px; padding:6px 8px; border-radius:8px; background:rgba(34,211,238,.07); border:1px solid rgba(34,211,238,.18); color:#cbd5e1}
+    .gizmo-note{margin:7px 0 0; line-height:1.45}
+
     /* ---------- Tool tabs ---------- */
     .tab{
       flex:1; min-width:0; min-height:44px; border:none; background:transparent; color:var(--dim);
@@ -518,6 +541,35 @@
     .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:2; stroke-dasharray:6 5; pointer-events:none}
     .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
 
+    /* ---------- On-canvas transform gizmo ----------
+       The layer itself never captures pointer events: only the transparent
+       hit shapes of the handles do, so nodes under the box stay clickable. */
+    .transform-gizmo *{box-sizing:border-box}
+    .gizmo-box{fill:none; stroke:var(--accent); stroke-width:1.4; stroke-dasharray:7 5; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.9}
+    .gizmo-box-hit{fill:none; stroke:transparent; pointer-events:stroke; cursor:move}
+    .gizmo-guide{fill:none; stroke:var(--accent); stroke-width:1.2; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.65}
+    .gizmo-axis{fill:none; stroke-width:2; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.8}
+    .gizmo-axis-x{stroke:#f87171}
+    .gizmo-axis-y{stroke:#4ade80}
+    .gizmo-pivot{fill:none; stroke:#e2e8f0; stroke-width:1.2; vector-effect:non-scaling-stroke; pointer-events:none; opacity:.8}
+    .gizmo-handle-shape{fill:#0b1220; stroke:var(--accent); stroke-width:1.6; vector-effect:non-scaling-stroke; pointer-events:none}
+    .gizmo-handle-hit{fill:transparent; stroke:none; pointer-events:all}
+    .gizmo-handle{cursor:pointer}
+    .gizmo-handle:active .gizmo-handle-shape{fill:var(--accent)}
+    .gizmo-h-rotate .gizmo-handle-shape{fill:#1e293b; stroke:#a78bfa}
+    .gizmo-h-rotate{cursor:grab}
+    .gizmo-h-move-x .gizmo-handle-shape{stroke:#f87171}
+    .gizmo-h-move-y .gizmo-handle-shape{stroke:#4ade80}
+    .gizmo-h-n .gizmo-handle-shape,.gizmo-h-s .gizmo-handle-shape,.gizmo-h-e .gizmo-handle-shape,.gizmo-h-w .gizmo-handle-shape{stroke:#fbbf24}
+    .gizmo-h-n,.gizmo-h-s{cursor:ns-resize}
+    .gizmo-h-e,.gizmo-h-w{cursor:ew-resize}
+    .gizmo-h-nw,.gizmo-h-se{cursor:nwse-resize}
+    .gizmo-h-ne,.gizmo-h-sw{cursor:nesw-resize}
+    .gizmo-readout{
+      fill:#e2e8f0; stroke:rgba(2,6,23,.9); stroke-width:3px; paint-order:stroke;
+      font-weight:700; letter-spacing:.02em; pointer-events:none; user-select:none;
+    }
+
     /* .fast-interaction is an interaction-state marker only. It intentionally
        changes no paint property: switching filters or label effects at release
        forces a fresh SVG layer and can flash an enlarged/stale drag frame. */
@@ -561,6 +613,12 @@
       .mode-fab{width:auto}
       .mode-fab .seg{flex:0 0 48px;min-width:48px;padding:0}
       .toast-stack{top:calc(160px + var(--sa-top));bottom:auto}
+      /* HUD pills can wrap to three lines on phones. Dock the gizmo bar above
+         the floating selection tools instead of below the HUD, and drop the
+         label so it stays one compact row. */
+      .gizmo-tools{top:auto; bottom:calc(126px + var(--sa-bottom)); padding:2px 4px}
+      .gizmo-tools-label{display:none}
+      .gizmo-tools .btn{width:28px; min-width:28px; min-height:28px}
     }
 
     /* Portrait: canvas on top, panels below — stacked full-width, sized
@@ -756,6 +814,11 @@
     <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
     <symbol id="icon-brush" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5" stroke-dasharray="3 2.2"/></symbol>
     <symbol id="icon-adjacent" viewBox="0 0 24 24"><path d="m10.5 10.3-4-4m7-2.3v5.2m2 1.2 3.5-4m-3.4 7.2 3.5 3.8m-8.7-3.7-3.6 3.8"/><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="5" cy="5" r="2"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/><circle cx="5" cy="19" r="2"/></symbol>
+    <symbol id="icon-gizmo-off" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="m6.5 17.5 11-11"/></symbol>
+    <symbol id="icon-gizmo-move" viewBox="0 0 24 24"><path d="M12 2.5v19M2.5 12h19M12 2.5 9.6 4.9M12 2.5l2.4 2.4M12 21.5l-2.4-2.4M12 21.5l2.4-2.4M2.5 12l2.4-2.4M2.5 12l2.4 2.4M21.5 12l-2.4-2.4M21.5 12l-2.4 2.4"/></symbol>
+    <symbol id="icon-gizmo-rotate" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.8-6.3M20.5 3.5v5h-5"/></symbol>
+    <symbol id="icon-gizmo-scale" viewBox="0 0 24 24"><path d="M4.5 19.5 19.5 4.5M11 4.5h8.5V13"/><rect x="3.5" y="15" width="5" height="5" rx=".8"/></symbol>
+    <symbol id="icon-gizmo-rect" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1" stroke-dasharray="3 2"/><rect x="3.2" y="3.2" width="3.6" height="3.6" rx=".6"/><rect x="17.2" y="3.2" width="3.6" height="3.6" rx=".6"/><rect x="3.2" y="17.2" width="3.6" height="3.6" rx=".6"/><rect x="17.2" y="17.2" width="3.6" height="3.6" rx=".6"/></symbol>
     <symbol id="icon-directed-adjacent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"/><circle cx="12" cy="3" r="2"/><circle cx="20" cy="18" r="2"/><circle cx="4" cy="18" r="2"/><path d="M12 9V6m-1.6 1.5L12 6l1.6 1.5m.8 6.2 3.3 2.6m-2.2.1 2.2-.1-.5-2.1m-7.6-.5-3.3 2.6m2.2.1-2.2-.1.5-2.1"/></symbol>
   </svg>
 
@@ -990,6 +1053,25 @@
               </div>
               <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
             </div>
+
+            <details class="section" open>
+              <summary class="section-title">
+                <span data-i18n="gizmo_section">Transform gizmo</span>
+                <span class="tiny muted" data-i18n="gizmo_section_sub">(positions only)</span>
+              </summary>
+              <div class="sec-body">
+                <div class="gizmo-mode-grid" role="group" aria-label="Transform gizmo mode" data-i18n-aria-label="gizmo_tools">
+                  <button class="btn small" data-gizmo-mode="off" data-i18n-title="gizmo_off_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-off"></use></svg> <span data-i18n="gizmo_off">Off</span></button>
+                  <button class="btn small" data-gizmo-mode="translate" data-i18n-title="gizmo_translate_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-move"></use></svg> <span data-i18n="gizmo_translate">Move</span></button>
+                  <button class="btn small" data-gizmo-mode="rotate" data-i18n-title="gizmo_rotate_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rotate"></use></svg> <span data-i18n="gizmo_rotate">Rotate</span></button>
+                  <button class="btn small" data-gizmo-mode="scale" data-i18n-title="gizmo_scale_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-scale"></use></svg> <span data-i18n="gizmo_scale">Scale</span></button>
+                  <button class="btn small" data-gizmo-mode="rect" data-i18n-title="gizmo_rect_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rect"></use></svg> <span data-i18n="gizmo_rect">Rect</span></button>
+                </div>
+                <div class="tiny muted gizmo-note" data-i18n="gizmo_note">Transform selected nodes by dragging the on-canvas handles. Only node positions change: sizes, shapes, labels, colours and edge styles are never touched.</div>
+                <div id="gizmoReadout" class="tiny muted gizmo-sidebar-readout"></div>
+                <p class="tiny muted gizmo-note" data-i18n="gizmo_keys">Keys: G move · R rotate · K scale · B rect · 0 off. Shift snaps rotation to 15° and scaling to tenths. Drag the box border (or centre cross) to move, corners to scale, the round handle to rotate. Escape cancels a gesture; Ctrl+Z undoes a completed one.</p>
+              </div>
+            </details>
           </section>
 
           <!-- ================= STYLE ================= -->
@@ -1378,6 +1460,10 @@
                 <path id="dragLine" class="drag-line" d="" style="display:none"></path>
                 <g id="selectionOverlayLayer"></g>
                 <g id="nodesLayer"></g>
+                <!-- Position-only transform gizmo: lives in world space inside
+                     the camera scene, so it tracks pan/zoom for free. Only its
+                     handles are hit-testable; the graph stays fully clickable. -->
+                <g id="transformGizmoLayer" class="transform-gizmo" aria-hidden="true"></g>
               </g>
             </g>
           </svg>
@@ -1385,6 +1471,17 @@
           <div class="canvas-hud">
             <div id="statusPill" class="status-pill" data-i18n="ready">Ready</div>
             <div id="statsPill" class="status-pill">0 nodes · 0 edges</div>
+          </div>
+
+          <!-- Transform gizmo mode switcher: each mode draws its own handles.
+               All of them write ONLY node x/y — never node/edge style fields. -->
+          <div class="gizmo-tools" role="group" aria-label="Transform gizmo" data-i18n-aria-label="gizmo_tools">
+            <span class="gizmo-tools-label" data-i18n="gizmo_label">Gizmo</span>
+            <button class="btn" data-gizmo-mode="off" title="Hide gizmo (0)" data-i18n-title="gizmo_off_title" aria-label="Hide gizmo" data-i18n-aria-label="gizmo_off" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-off"></use></svg></button>
+            <button class="btn" data-gizmo-mode="translate" title="Translate gizmo (G)" data-i18n-title="gizmo_translate_title" aria-label="Translate gizmo" data-i18n-aria-label="gizmo_translate" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-move"></use></svg></button>
+            <button class="btn" data-gizmo-mode="rotate" title="Rotate gizmo (R)" data-i18n-title="gizmo_rotate_title" aria-label="Rotate gizmo" data-i18n-aria-label="gizmo_rotate" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rotate"></use></svg></button>
+            <button class="btn" data-gizmo-mode="scale" title="Scale gizmo (K)" data-i18n-title="gizmo_scale_title" aria-label="Scale gizmo" data-i18n-aria-label="gizmo_scale" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-scale"></use></svg></button>
+            <button class="btn" data-gizmo-mode="rect" title="Rect transform gizmo (B)" data-i18n-title="gizmo_rect_title" aria-label="Rect transform gizmo" data-i18n-aria-label="gizmo_rect" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rect"></use></svg></button>
           </div>
 
           <div class="zoom-controls" role="group" aria-label="Zoom controls">
@@ -1569,6 +1666,37 @@ const I18N = {
         'hit_any_title': { en: 'Select nodes or edges by any part', ru: 'Выбирать узлы и рёбра по любой части' },
         'hit_center_title': { en: 'Select only at exact centres', ru: 'Выбирать только по точным центрам' },
         'sel_tip': { en: 'Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.', ru: 'Инструменты выделения работают в режиме Выбора. Используйте Замена/Добавить/Вычесть; Shift временно добавляет к текущему выделению. Многоугольник — кликами; клик по первой точке или двойной клик для замыкания.' },
+        // --- Transform gizmo (position-only transforms) ---
+        'gizmo_tools': { en: 'Transform gizmo modes', ru: 'Режимы трансформации' },
+        'gizmo_label': { en: 'Gizmo', ru: 'Гизмо' },
+        'gizmo_section': { en: 'Transform gizmo', ru: 'Гизмо трансформаций' },
+        'gizmo_section_sub': { en: '(positions only)', ru: '(только позиции)' },
+        'gizmo_off': { en: 'Off', ru: 'Выкл' },
+        'gizmo_translate': { en: 'Move', ru: 'Движение' },
+        'gizmo_rotate': { en: 'Rotate', ru: 'Поворот' },
+        'gizmo_scale': { en: 'Scale', ru: 'Масштаб' },
+        'gizmo_rect': { en: 'Rect', ru: 'Рамка' },
+        'gizmo_off_title': { en: 'Hide gizmo (0)', ru: 'Скрыть гизмо (0)' },
+        'gizmo_translate_title': { en: 'Translate gizmo: drag centre/axes or the box border (G)', ru: 'Перемещение: тяните центр, оси или рамку (G)' },
+        'gizmo_rotate_title': { en: 'Rotate gizmo: drag the round handle; Shift snaps to 15° (R)', ru: 'Поворот: тяните круглый маркер; Shift — шаг 15° (R)' },
+        'gizmo_scale_title': { en: 'Scale gizmo: drag a corner for uniform scaling (K)', ru: 'Масштаб: тяните угол для равномерного масштаба (K)' },
+        'gizmo_rect_title': { en: 'Rect gizmo: 8 handles for X/Y scaling, plus rotation and move (B)', ru: 'Рамка: 8 маркеров для масштаба по X/Y, поворот и движение (B)' },
+        'gizmo_note': { en: 'Transform selected nodes by dragging the on-canvas handles. Only node positions change: sizes, shapes, labels, colours and edge styles are never touched.', ru: 'Преобразуйте выбранные узлы, перетаскивая маркеры на холсте. Меняются только координаты узлов: размеры, формы, подписи, цвета и стили рёбер не затрагиваются.' },
+        'gizmo_keys': { en: 'Keys: G move · R rotate · K scale · B rect · 0 off. Shift snaps rotation to 15° and scaling to tenths. Drag the box border (or centre cross) to move, corners to scale, the round handle to rotate. Escape cancels a gesture; Ctrl+Z undoes a completed one.', ru: 'Клавиши: G движение · R поворот · K масштаб · B рамка · 0 выкл. Shift — поворот кратно 15° и масштаб до десятых. Тяните рамку (или крест в центре) для движения, углы для масштаба, круглый маркер для поворота. Escape отменяет жест, Ctrl+Z отменяет результат.' },
+        'gizmo_active': { en: 'Active: {mode} · {n} node(s) selected · positions only', ru: 'Активно: {mode} · выбрано узлов: {n} · только позиции' },
+        'gizmo_idle': { en: 'Gizmo off — select nodes and press G, R, K or B', ru: 'Гизмо выключено — выделите узлы и нажмите G, R, K или B' },
+        'gizmo_mode_translate': { en: 'Translate', ru: 'Перемещение' },
+        'gizmo_mode_rotate': { en: 'Rotate', ru: 'Поворот' },
+        'gizmo_mode_scale': { en: 'Scale', ru: 'Масштаб' },
+        'gizmo_mode_rect': { en: 'Rect', ru: 'Рамка' },
+        'gizmo_readout_idle': { en: '{mode} · {n} node(s) · positions only', ru: '{mode} · узлов: {n} · только позиции' },
+        'gizmo_value_move': { en: 'Δ {dx}, {dy}', ru: 'Δ {dx}, {dy}' },
+        'gizmo_value_rotate': { en: '↻ {angle}°', ru: '↻ {angle}°' },
+        'gizmo_value_scale': { en: '× {sx} · × {sy}', ru: '× {sx} · × {sy}' },
+        'gizmo_status': { en: 'Gizmo: {mode} — {value} (positions only)', ru: 'Гизмо: {mode} — {value} (только позиции)' },
+        'gizmo_need_two': { en: 'Select at least two nodes — only positions are transformed', ru: 'Выделите минимум два узла — меняются только позиции' },
+        'gizmo_status_ready': { en: 'Gizmo: {mode} — drag a handle (positions only)', ru: 'Гизмо: {mode} — тяните маркер (только позиции)' },
+        'gizmo_cancelled': { en: 'Transform cancelled', ru: 'Трансформация отменена' },
         // --- Edit tab: Node placement ---
         'node_placement': { en: 'Node placement', ru: 'Размещение узла' },
         'node_placement_sub': { en: '(values for newly added nodes)', ru: '(значения для новых узлов)' },
@@ -2103,6 +2231,8 @@ const edgesLayer = $('#edgesLayer');
 const nodesLayer = $('#nodesLayer');
 const dragLine = $('#dragLine');
 const selectionOverlayLayer = $('#selectionOverlayLayer');
+// Transform gizmo overlay: a sibling of nodesLayer inside the camera scene.
+const transformGizmoLayer = $('#transformGizmoLayer');
 const gridPattern = $('#gridPattern');
 const NODE_SHAPES = ['circle', 'square', 'diamond', 'triangleUp', 'triangleDown', 'hexagon'];
 const STROKE_STYLES = ['solid', 'dashed', 'dotted'];
@@ -3195,6 +3325,7 @@ function syncControls() {
     setSelectTool(state.selectTool || 'single', false);
     setSelectCombine(state.selectCombine || 'replace', false);
     setHitTestMode(state.settings.hitTestMode || 'any', false);
+    syncGizmoControls();
 }
 function syncEditTypeLists() {
     const ntl = $('#nodeTypeListEdit');
@@ -3232,8 +3363,11 @@ function renderCanvas() {
     updateUndoRedo();
     resetSelectionMirror();
     endRenderPass();
+    scheduleGizmoUpdate();
 }
 function statusText() {
+    if (gizmoDrag)
+        return I18N.t('gizmo_status', { mode: gizmoModeLabel(gizmoDrag.mode), value: gizmoDrag.readout || '…' });
     if (edgeDraft)
         return I18N.t('drag_to_target');
     if (pendingEdgeFrom)
@@ -3250,6 +3384,8 @@ function statusText() {
         return I18N.t('node_mode_click');
     if (state.mode === 'edge')
         return I18N.t('edge_mode_drag');
+    if (gizmoHasSelection())
+        return I18N.t('gizmo_status_ready', { mode: gizmoModeLabel() });
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', { tool: state.selectTool });
 }
 function applyCamera() {
@@ -3259,6 +3395,7 @@ function applyCamera() {
     applyCameraTransform(state.viewBox);
     updateGridBackground(state.viewBox);
     syncCameraInputs();
+    scheduleGizmoUpdate();
 }
 // === Camera ===
 // The root viewBox is a fixed world reference frame, written once. The logical
@@ -3318,6 +3455,7 @@ function applyPreviewCamera(preview, rect = null) {
     const viewport = applyCameraTransform(preview, rect);
     if (viewport)
         updateGridBackground(preview, viewport);
+    scheduleGizmoUpdate();
 }
 function hexToRgba(hex, alpha) {
     const h = String(hex || '#94a3b8').replace('#', '');
@@ -3438,6 +3576,7 @@ function moveDragFast() {
         const vc = drag.vc || (drag.vc = newVisualCache());
         for (const edge of (drag.affectedEdges || []))
             updateEdgeFast(edge, vc);
+        scheduleGizmoUpdate();
     }
     catch (e) { /* fail-safe */ }
 }
@@ -4694,6 +4833,7 @@ function setMode(mode, render = true) {
     $('#canvasWrap').classList.toggle('edge-mode', mode === 'edge');
     // Selection tools float over the canvas only while Select mode is active
     $('#canvasWrap').classList.toggle('select-mode', mode === 'select');
+    scheduleGizmoUpdate();
     if (render) {
         setStatusOnly();
         saveSoon();
@@ -4774,6 +4914,8 @@ function setSelection(nodes = [], edges = [], primary = null, combine = 'replace
     mergeSelection(nodes, edges, primary, combine);
     syncSelectionDom();
     renderSidebar();
+    syncGizmoControls();
+    scheduleGizmoUpdate();
     setStatusOnly();
 }
 // Live variant for per-frame selection tools (brush): identical state
@@ -4782,6 +4924,8 @@ function setSelectionLive(nodes = [], edges = [], combine = 'add') {
     mergeSelection(nodes, edges, null, combine);
     syncSelectionDom();
     markSidebarDirty();
+    syncGizmoControls();
+    scheduleGizmoUpdate();
     setStatusOnly();
 }
 function selectItem(type, id) { setSelection(type === 'node' ? [id] : [], type === 'edge' ? [id] : [], { type, id }, false); }
@@ -5844,6 +5988,10 @@ function maybeStartPinch() {
 function beginPinch(a, b) {
     if (pinch)
         return;
+    // A second touch abandons any single-pointer gizmo gesture (positions are
+    // restored) before the pinch takes over the camera.
+    if (gizmoDrag)
+        cancelGizmoDrag();
     gestureActive = true;
     if (edgeDraft) {
         edgeDraft = null;
@@ -6352,6 +6500,10 @@ svg.addEventListener('pointerdown', ev => {
     }
     if (ev.button !== 0)
         return;
+    // Gizmo handles have their own pointerdown listener and stopPropagation;
+    // this is a second line of defence if an event is retargeted to the SVG.
+    if (ev.target.closest && ev.target.closest('[data-gizmo-handle]'))
+        return;
     if (ev.target.closest && ev.target.closest('.node,.edge'))
         return;
     if (polygonToolActive()) {
@@ -6441,6 +6593,10 @@ svg.addEventListener('pointermove', ev => {
         }
         return;
     }
+    if (gizmoDrag && ev.pointerId === gizmoDrag.pointerId) {
+        updateGizmoDrag(ev);
+        return;
+    }
     const p = pointFromEvent(ev);
     if (selectDraft?.tool === 'polygon') {
         updatePolygonPreview(ev);
@@ -6491,6 +6647,16 @@ svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
 function finishPointer(ev, cancel = false) {
     if (zoomPreview)
         flushZoomPreview(); // hit-testing must see committed geometry
+    if (gizmoDrag && ev.pointerId === gizmoDrag.pointerId) {
+        finishGizmoDrag(cancel);
+        try {
+            if (svg.hasPointerCapture?.(ev.pointerId))
+                svg.releasePointerCapture(ev.pointerId);
+        }
+        catch { }
+        unregisterPointer(ev);
+        return;
+    }
     if (singleSweep && ev.pointerId === singleSweep.pointerId) {
         const sw = singleSweep;
         singleSweep = null;
@@ -6749,6 +6915,472 @@ function editEdgeQuick(id) { const e = edgeById(id); if (!e)
     queueRender(true);
 } }
 // Standardized precision for all coordinate exports — 4 decimals prevents drift across round-trips
+// === Transform gizmo =====================================================
+// A classic editor gizmo (translate / rotate / scale / rect) for the current
+// node selection. The important contract: every gesture writes ONLY the x/y
+// of the selected nodes. No width, height, shape, label, colour, font, type,
+// order or edge property is ever read for writing, so visual parameters of
+// individual parts cannot change. Node radii are read (read-only) to size the
+// bounding box; the box itself is an overlay, never graph data.
+//
+// The layer is inside #sceneLayer, i.e. inside the composited camera group,
+// so it pans/zooms with the graph for free. Handles are sized in world units
+// derived from the current camera scale, which keeps them a constant number
+// of screen pixels. Only small hit shapes accept pointer input: nodes under
+// the box remain selectable/draggable in the ordinary way.
+const GIZMO_MODES = ['off', 'translate', 'rotate', 'scale', 'rect'];
+const GIZMO_PREF_KEY = 'graph-editor-pro-gizmo-mode';
+const GIZMO_MIN_SCALE = 0.05;
+const GIZMO_MAX_SCALE = 20;
+const GIZMO_ROTATE_STEP = Math.PI / 12; // 15 degrees while Shift is held
+const GIZMO_CORNER_KINDS = ['nw', 'ne', 'se', 'sw'];
+const GIZMO_RECT_KINDS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+let gizmoMode = loadGizmoMode();
+let gizmoDrag = null;
+let gizmoFrame = false;
+let gizmoSignature = '';
+function loadGizmoMode() {
+    try {
+        const saved = localStorage.getItem(GIZMO_PREF_KEY);
+        if (GIZMO_MODES.includes(saved))
+            return saved;
+    }
+    catch { /* storage may be unavailable */ }
+    return 'rect'; // full box by default, so all four transforms are discoverable
+}
+function gizmoModeLabel(mode = gizmoMode) {
+    return I18N.t('gizmo_mode_' + mode);
+}
+/** Switch modes. This is a UI preference, not document state: it is never
+ *  serialized into the graph, exported JSON or the undo history. */
+function setGizmoMode(mode, persist = true) {
+    const next = (GIZMO_MODES.includes(mode) ? mode : 'off');
+    if (gizmoDrag)
+        finishGizmoDrag(true);
+    if (next === gizmoMode && persist) {
+        syncGizmoControls();
+        return;
+    }
+    gizmoMode = next;
+    if (persist) {
+        try {
+            localStorage.setItem(GIZMO_PREF_KEY, gizmoMode);
+        }
+        catch { /* ignore */ }
+    }
+    syncGizmoControls();
+    scheduleGizmoUpdate();
+    setStatusOnly();
+}
+function syncGizmoControls() {
+    $$('[data-gizmo-mode]').forEach((b) => {
+        const active = b.dataset.gizmoMode === gizmoMode;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
+    });
+    const readout = document.getElementById('gizmoReadout');
+    if (readout) {
+        const count = state.selection?.nodes?.length || 0;
+        readout.textContent = gizmoMode === 'off'
+            ? I18N.t('gizmo_idle')
+            : I18N.t('gizmo_active', { mode: gizmoModeLabel(), n: count });
+    }
+}
+function gizmoHasSelection() {
+    return gizmoMode !== 'off' && state.mode === 'select' &&
+        (state.selection?.nodes?.length || 0) > 0;
+}
+function gizmoActive() { return Boolean(gizmoHasSelection() || gizmoDrag); }
+/** World units per screen pixel at the current (committed) camera. */
+function gizmoUnit(camera = state.viewBox) {
+    const r = svg.getBoundingClientRect();
+    const pixelsPerUnit = r.width > 0 && r.height > 0
+        ? Math.min(r.width / camera.w, r.height / camera.h)
+        : 1;
+    return pixelsPerUnit > 0 ? 1 / pixelsPerUnit : camera.w / 1000;
+}
+function gizmoSelectedNodes() {
+    const ids = state.selection?.nodes || [];
+    const out = [];
+    for (const id of ids) {
+        const n = nodeById(id);
+        if (n)
+            out.push(n);
+    }
+    return out;
+}
+/** Axis-aligned bounds of the selected node bodies, padded in screen pixels. */
+function gizmoBounds(nodes, unit) {
+    if (!nodes.length)
+        return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of nodes) {
+        const r = Math.max(nodeRadius(n), 8 * unit);
+        minX = Math.min(minX, n.x - r);
+        minY = Math.min(minY, n.y - r);
+        maxX = Math.max(maxX, n.x + r);
+        maxY = Math.max(maxY, n.y + r);
+    }
+    const pad = 12 * unit;
+    minX -= pad;
+    minY -= pad;
+    maxX += pad;
+    maxY += pad;
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    return { minX, minY, maxX, maxY, cx, cy, w: maxX - minX, h: maxY - minY };
+}
+function gzNum(value, digits = 3) {
+    if (!Number.isFinite(value))
+        return 0;
+    const f = Math.pow(10, digits);
+    return Math.round(value * f) / f;
+}
+function gzEl(tag, attrs, parent = transformGizmoLayer) {
+    const el = document.createElementNS(NS, tag);
+    for (const key of Object.keys(attrs))
+        el.setAttribute(key, String(attrs[key]));
+    parent.appendChild(el);
+    return el;
+}
+function scheduleGizmoUpdate() {
+    if (gizmoFrame)
+        return;
+    gizmoFrame = true;
+    requestAnimationFrame(() => { gizmoFrame = false; renderTransformGizmo(); });
+}
+function hideTransformGizmo() {
+    if (transformGizmoLayer.firstChild)
+        transformGizmoLayer.textContent = '';
+    removeAttr(transformGizmoLayer, 'transform');
+    gizmoSignature = '';
+}
+function renderTransformGizmo() {
+    if (!gizmoActive()) {
+        hideTransformGizmo();
+        return;
+    }
+    const d = gizmoDrag;
+    const mode = d ? d.mode : gizmoMode;
+    const camera = d ? d.viewBox : state.viewBox;
+    const unit = gizmoUnit(camera);
+    const nodes = d ? d.nodes : gizmoSelectedNodes();
+    const b = d ? d.bounds : gizmoBounds(nodes, unit);
+    if (!b) {
+        hideTransformGizmo();
+        return;
+    }
+    const matrix = d ? d.matrix : '';
+    const readout = d ? d.readout : '';
+    // Rebuilding a dozen tiny SVG elements is cheap, but skip it when nothing
+    // about the box, mode or gesture readout changed (e.g. idle render passes).
+    const signature = [mode, nodes.map(n => n.id).join(','),
+        gzNum(b.minX), gzNum(b.minY), gzNum(b.maxX), gzNum(b.maxY),
+        gzNum(unit, 5), matrix, readout, I18N.current].join('|');
+    if (signature === gizmoSignature)
+        return;
+    gizmoSignature = signature;
+    transformGizmoLayer.textContent = '';
+    if (matrix)
+        setAttr(transformGizmoLayer, 'transform', matrix);
+    else
+        removeAttr(transformGizmoLayer, 'transform');
+    const handleR = 5.5 * unit;
+    const hitR = Math.max(11 * unit, handleR * 1.8);
+    gzEl('rect', {
+        class: 'gizmo-box', x: b.minX, y: b.minY, width: b.w, height: b.h, rx: 4 * unit
+    });
+    // Dragging the border (or the centre cross) translates the selection.
+    gzEl('rect', {
+        class: 'gizmo-box-hit', 'data-gizmo-handle': 'move',
+        x: b.minX, y: b.minY, width: b.w, height: b.h, 'stroke-width': 14 * unit
+    });
+    gzEl('path', {
+        class: 'gizmo-pivot',
+        d: `M ${b.cx - 6 * unit} ${b.cy} H ${b.cx + 6 * unit} M ${b.cx} ${b.cy - 6 * unit} V ${b.cy + 6 * unit}`
+    });
+    const addHandle = (kind, x, y, circle = false) => {
+        const g = gzEl('g', {
+            class: 'gizmo-handle gizmo-h-' + kind,
+            'data-gizmo-handle': kind, 'aria-hidden': 'true'
+        });
+        if (circle) {
+            gzEl('circle', { class: 'gizmo-handle-shape', cx: x, cy: y, r: handleR }, g);
+        }
+        else {
+            gzEl('rect', {
+                class: 'gizmo-handle-shape', x: x - handleR, y: y - handleR,
+                width: handleR * 2, height: handleR * 2, rx: 1.6 * unit
+            }, g);
+        }
+        // Transparent, larger touch target on top of the visible shape.
+        gzEl('circle', { class: 'gizmo-handle-hit', cx: x, cy: y, r: hitR }, g);
+        return g;
+    };
+    const corners = {
+        nw: [b.minX, b.minY], ne: [b.maxX, b.minY],
+        se: [b.maxX, b.maxY], sw: [b.minX, b.maxY]
+    };
+    const sides = {
+        n: [b.cx, b.minY], e: [b.maxX, b.cy],
+        s: [b.cx, b.maxY], w: [b.minX, b.cy]
+    };
+    // Rotating/scaling a single point around its own centre is a no-op, so
+    // don't offer handles that cannot do anything. The box border still moves
+    // that node like a normal translate.
+    const multi = nodes.length > 1;
+    if (mode === 'translate') {
+        const ax = b.maxX + 36 * unit, ay = b.cy;
+        const bx = b.cx, by = b.minY - 36 * unit;
+        gzEl('line', { class: 'gizmo-axis gizmo-axis-x', x1: b.cx, y1: b.cy, x2: ax, y2: ay });
+        gzEl('line', { class: 'gizmo-axis gizmo-axis-y', x1: bx, y1: by, x2: b.cx, y2: b.cy });
+        addHandle('move', b.cx, b.cy, true);
+        addHandle('move-x', ax, ay, true);
+        addHandle('move-y', bx, by, true);
+    }
+    else if (multi && mode === 'rotate') {
+        const ry = b.minY - 30 * unit;
+        gzEl('line', { class: 'gizmo-guide', x1: b.cx, y1: b.minY, x2: b.cx, y2: ry });
+        addHandle('rotate', b.cx, ry, true);
+    }
+    else if (multi && mode === 'scale') {
+        for (const kind of GIZMO_CORNER_KINDS)
+            addHandle(kind, corners[kind][0], corners[kind][1]);
+    }
+    else if (multi && mode === 'rect') {
+        for (const kind of GIZMO_RECT_KINDS) {
+            const pt = corners[kind] || sides[kind];
+            addHandle(kind, pt[0], pt[1], false);
+        }
+        const ry = b.minY - 30 * unit;
+        gzEl('line', { class: 'gizmo-guide', x1: b.cx, y1: b.minY, x2: b.cx, y2: ry });
+        addHandle('rotate', b.cx, ry, true);
+    }
+    const label = readout || (!multi && mode !== 'translate'
+        ? I18N.t('gizmo_need_two')
+        : I18N.t('gizmo_readout_idle', { mode: gizmoModeLabel(mode), n: nodes.length }));
+    // Prefer above the box (clear of the floating tool pills at the bottom).
+    // Rotate/rect have a stem handle above, so leave room for it there. If the
+    // box is already at the top of the camera, fall back to below the box.
+    const above = (multi && (mode === 'rotate' || mode === 'rect')) ? 44 * unit : 10 * unit;
+    let labelY = b.minY - above;
+    if (labelY < camera.y + 8 * unit)
+        labelY = b.maxY + 21 * unit;
+    const text = gzEl('text', {
+        class: 'gizmo-readout', x: b.cx, y: labelY,
+        'text-anchor': 'middle', 'font-size': 12 * unit
+    });
+    text.textContent = label;
+}
+// The opposite point stays fixed while a rect/scale handle is dragged.
+function gizmoAnchor(kind, b) {
+    switch (kind) {
+        case 'nw': return { x: b.maxX, y: b.maxY };
+        case 'ne': return { x: b.minX, y: b.maxY };
+        case 'se': return { x: b.minX, y: b.minY };
+        case 'sw': return { x: b.maxX, y: b.minY };
+        case 'n': return { x: b.cx, y: b.maxY };
+        case 's': return { x: b.cx, y: b.minY };
+        case 'e': return { x: b.minX, y: b.cy };
+        case 'w': return { x: b.maxX, y: b.cy };
+        default: return { x: b.cx, y: b.cy };
+    }
+}
+function gizmoUsesAxis(kind) {
+    if (GIZMO_CORNER_KINDS.includes(kind))
+        return { x: true, y: true };
+    if (kind === 'e' || kind === 'w')
+        return { x: true, y: false };
+    if (kind === 'n' || kind === 's')
+        return { x: false, y: true };
+    return { x: false, y: false };
+}
+function onGizmoPointerDown(ev) {
+    const target = ev.target;
+    const handle = target && target.closest ? target.closest('[data-gizmo-handle]') : null;
+    if (!handle || !gizmoHasSelection() || ev.button !== 0)
+        return;
+    if (!transformGizmoLayer.contains(handle))
+        return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    beginGizmoDrag(ev, handle.getAttribute('data-gizmo-handle') || 'move');
+}
+transformGizmoLayer.addEventListener('pointerdown', onGizmoPointerDown);
+function beginGizmoDrag(ev, kind) {
+    // One gesture at a time: never fight an in-flight node drag, pan or draft.
+    if (gizmoDrag || drag || pan || pinch || selectDraft || edgeDraft)
+        return;
+    registerPointer(ev);
+    try {
+        svg.setPointerCapture(ev.pointerId);
+    }
+    catch { /* jsdom / older SVG */ }
+    const unit = gizmoUnit();
+    const nodes = gizmoSelectedNodes();
+    const b = gizmoBounds(nodes, unit);
+    if (!b)
+        return;
+    const camera = { ...state.viewBox };
+    const p0 = clientToWorld(ev.clientX, ev.clientY, camera, pointerRect || svg.getBoundingClientRect());
+    const ids = new Set(nodes.map(n => n.id));
+    const starts = new Map(nodes.map(n => [n.id, { x: n.x, y: n.y }]));
+    const anchor = gizmoAnchor(kind, b);
+    const affectedEdges = state.edges.filter(e => ids.has(e.from) || ids.has(e.to));
+    const liveEdges = affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT;
+    const mode = gizmoMode;
+    gizmoDrag = {
+        pointerId: ev.pointerId, kind, mode, nodes, ids, starts, bounds: b,
+        cx: b.cx, cy: b.cy, anchor, viewBox: camera,
+        start: p0, denomX: p0.x - anchor.x, denomY: p0.y - anchor.y,
+        startDistance: Math.max(unit * 8, Math.hypot(p0.x - b.cx, p0.y - b.cy)),
+        lastAngle: Math.atan2(p0.y - b.cy, p0.x - b.cx), angle: 0,
+        matrix: '', readout: '', moved: false, liveEdges,
+        historyLabel: 'gizmo ' + (kind === 'rotate' ? 'rotate' : kind.startsWith('move') ? 'translate' : mode === 'rect' ? 'rect transform' : 'scale') + ' selection'
+    };
+    // Reuse the existing fast drag writer: it repoints node transforms and all
+    // connected edges in one frame without a full render pass.
+    drag = {
+        node: nodes[0], nodes, starts, ignoreIds: ids,
+        startX: p0.x, startY: p0.y, offsetX: 0, offsetY: 0,
+        affectedEdges, liveEdges, moved: false,
+        fastFrame: false, fastNodeId: null, vc: null, gizmo: true
+    };
+    gestureActive = true;
+    $('#canvasWrap').classList.add('fast-interaction');
+    scheduleGizmoUpdate();
+    setStatusOnly();
+}
+function updateGizmoDrag(ev) {
+    const d = gizmoDrag;
+    if (!d || ev.pointerId !== d.pointerId)
+        return;
+    // Use the camera captured at gesture start: a wheel zoom mid-drag must not
+    // teleport the pointer's world position.
+    const p = clientToWorld(ev.clientX, ev.clientY, d.viewBox, pointerRect || svg.getBoundingClientRect());
+    const shift = Boolean(ev.shiftKey);
+    const apply = (fn) => {
+        for (const n of d.nodes) {
+            const st = d.starts.get(n.id);
+            const next = fn(st.x, st.y);
+            n.x = next.x;
+            n.y = next.y;
+        }
+    };
+    let matrix = '', readout = '';
+    if (d.kind === 'move' || d.kind === 'move-x' || d.kind === 'move-y') {
+        let dx = p.x - d.start.x, dy = p.y - d.start.y;
+        if (d.kind === 'move-x')
+            dy = 0;
+        if (d.kind === 'move-y')
+            dx = 0;
+        // Snap the pivot (not each node), like a normal group drag would. The
+        // selected ids are excluded from alignment snapping against themselves.
+        const snapped = snapPointToEnabled(d.cx + dx, d.cy + dy, d.ids);
+        dx = snapped.x - d.cx;
+        dy = snapped.y - d.cy;
+        if (d.kind === 'move-x')
+            dy = 0;
+        if (d.kind === 'move-y')
+            dx = 0;
+        apply((x, y) => ({ x: x + dx, y: y + dy }));
+        matrix = `translate(${gzNum(dx)},${gzNum(dy)})`;
+        readout = I18N.t('gizmo_value_move', { dx: Math.round(dx), dy: Math.round(dy) });
+    }
+    else if (d.kind === 'rotate') {
+        const a = Math.atan2(p.y - d.cy, p.x - d.cx);
+        let diff = a - d.lastAngle;
+        if (diff > Math.PI)
+            diff -= 2 * Math.PI;
+        else if (diff < -Math.PI)
+            diff += 2 * Math.PI;
+        d.angle += diff;
+        d.lastAngle = a;
+        const angle = shift ? Math.round(d.angle / GIZMO_ROTATE_STEP) * GIZMO_ROTATE_STEP : d.angle;
+        const cs = Math.cos(angle), sn = Math.sin(angle);
+        apply((x, y) => {
+            const ox = x - d.cx, oy = y - d.cy;
+            return { x: d.cx + ox * cs - oy * sn, y: d.cy + ox * sn + oy * cs };
+        });
+        const degrees = gzNum(angle * 180 / Math.PI);
+        matrix = `rotate(${degrees},${gzNum(d.cx)},${gzNum(d.cy)})`;
+        readout = I18N.t('gizmo_value_rotate', { angle: Math.round(degrees) });
+    }
+    else if (d.mode === 'scale') {
+        let s = Math.hypot(p.x - d.cx, p.y - d.cy) / d.startDistance;
+        s = clamp(s, GIZMO_MIN_SCALE, GIZMO_MAX_SCALE);
+        if (shift)
+            s = Math.max(0.1, Math.round(s * 10) / 10);
+        apply((x, y) => ({ x: d.cx + (x - d.cx) * s, y: d.cy + (y - d.cy) * s }));
+        const f = gzNum(s);
+        matrix = `matrix(${f},0,0,${f},${gzNum(d.cx * (1 - s))},${gzNum(d.cy * (1 - s))})`;
+        readout = I18N.t('gizmo_value_scale', { sx: gzNum(s, 2), sy: gzNum(s, 2) });
+    }
+    else {
+        // Rect mode: independent X/Y scaling about the opposite handle/edge.
+        const axis = gizmoUsesAxis(d.kind);
+        let sx = axis.x && Math.abs(d.denomX) > 1e-9 ? (p.x - d.anchor.x) / d.denomX : 1;
+        let sy = axis.y && Math.abs(d.denomY) > 1e-9 ? (p.y - d.anchor.y) / d.denomY : 1;
+        sx = axis.x ? clamp(sx, GIZMO_MIN_SCALE, GIZMO_MAX_SCALE) : 1;
+        sy = axis.y ? clamp(sy, GIZMO_MIN_SCALE, GIZMO_MAX_SCALE) : 1;
+        if (shift && axis.x && axis.y) {
+            const f = Math.max(GIZMO_MIN_SCALE, Math.round(((Math.abs(sx) + Math.abs(sy)) / 2) * 10) / 10);
+            sx = f;
+            sy = f;
+        }
+        apply((x, y) => ({
+            x: d.anchor.x + (x - d.anchor.x) * sx,
+            y: d.anchor.y + (y - d.anchor.y) * sy
+        }));
+        const fx = gzNum(sx), fy = gzNum(sy);
+        matrix = `matrix(${fx},0,0,${fy},${gzNum(d.anchor.x * (1 - sx))},${gzNum(d.anchor.y * (1 - sy))})`;
+        readout = I18N.t('gizmo_value_scale', { sx: gzNum(sx, 2), sy: gzNum(sy, 2) });
+    }
+    d.matrix = matrix;
+    d.readout = readout;
+    if (Math.hypot(p.x - d.start.x, p.y - d.start.y) > 0.5) {
+        d.moved = true;
+        if (drag)
+            drag.moved = true;
+    }
+    // One DOM write per frame for nodes + connected edges, then refresh the
+    // overlay with the same matrix the nodes just received.
+    scheduleFastNodeMove(d.nodes[0]?.id);
+    scheduleGizmoUpdate();
+    setStatusOnly();
+}
+function finishGizmoDrag(cancel = false) {
+    const d = gizmoDrag;
+    if (!d)
+        return;
+    if (cancel) {
+        for (const n of d.nodes) {
+            const st = d.starts.get(n.id);
+            n.x = st.x;
+            n.y = st.y;
+        }
+    }
+    // Flush the pending frame before dropping `drag`, otherwise a fast gesture
+    // could leave one node/edge transform stale.
+    if (drag)
+        moveDragFast();
+    const moved = d.moved && !cancel;
+    gizmoDrag = null;
+    drag = null;
+    gestureActive = false;
+    $('#canvasWrap').classList.remove('fast-interaction');
+    gizmoSignature = '';
+    if (moved) {
+        pushHistory(d.historyLabel);
+        if (!d.liveEdges)
+            queueRender(false);
+        saveSoon();
+    }
+    if (cancel && d.moved)
+        toast(I18N.t('gizmo_cancelled'));
+    scheduleGizmoUpdate();
+    setStatusOnly();
+}
+function cancelGizmoDrag() { finishGizmoDrag(true); }
 function assertImportTextSize(text) {
     if (text.length > MAX_IMPORT_BYTES) {
         throw new Error(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
@@ -9497,6 +10129,10 @@ function wireUi() {
             moveNode(id, dir);
     });
     function chooseImport(format, accept) { const input = $('#fileImport'); input.dataset.format = format; input.accept = accept; input.click(); }
+    // Transform gizmo modes — one handler for the floating bar and the sidebar.
+    $$('[data-gizmo-mode]').forEach(btn => {
+        btn.addEventListener('click', () => setGizmoMode(btn.dataset.gizmoMode));
+    });
     // Clipboard copy/paste/duplicate + preserve toggle
     function bindClipboardButton(id, fn) { const el = document.getElementById(id); if (el)
         el.addEventListener('click', fn); }
@@ -9801,6 +10437,8 @@ function wireUi() {
             return;
         if (matchesHotkey(ev, 'escape')) {
             ev.preventDefault();
+            if (gizmoDrag)
+                cancelGizmoDrag();
             if (selectDraft?.tool === 'polygon')
                 finishPolygonSelection(true);
             else if (selectDraft)
@@ -9842,6 +10480,17 @@ function wireUi() {
             setMode('edge');
             return;
         }
+        // Transform gizmo shortcuts. They come after the configurable mode keys,
+        // so a user-defined hotkey always wins over these defaults.
+        if (!ctrl) {
+            const gizmoKey = { g: 'translate', r: 'rotate', k: 'scale', b: 'rect', '0': 'off' };
+            const target = gizmoKey[ev.key.toLowerCase()];
+            if (target) {
+                ev.preventDefault();
+                setGizmoMode(target);
+                return;
+            }
+        }
     });
     window.addEventListener('keyup', ev => { if (matchesHotkey(ev, 'pan')) {
         spaceDown = false;
@@ -9861,6 +10510,10 @@ function wireUi() {
     // (pointerup may be missed if a system alert steals focus or the window loses focus mid-drag)
     function resetInteractionState() {
         let changed = false, navigationChanged = false;
+        if (gizmoDrag) {
+            cancelGizmoDrag();
+            changed = true;
+        }
         if (drag) {
             if (drag.fastNodeId)
                 moveNodeFast(drag.fastNodeId);

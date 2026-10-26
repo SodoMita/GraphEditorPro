@@ -42,6 +42,9 @@
   }
   function beginPinch(a,b){
     if(pinch) return;
+    // A second touch abandons any single-pointer gizmo gesture (positions are
+    // restored) before the pinch takes over the camera.
+    if(gizmoDrag) cancelGizmoDrag();
     gestureActive = true;
     if(edgeDraft){ edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d',''); }
     if(drag){
@@ -466,6 +469,9 @@
       return;
     }
     if(ev.button !== 0) return;
+    // Gizmo handles have their own pointerdown listener and stopPropagation;
+    // this is a second line of defence if an event is retargeted to the SVG.
+    if(ev.target.closest && ev.target.closest('[data-gizmo-handle]')) return;
     if(ev.target.closest && ev.target.closest('.node,.edge')) return;
     if(polygonToolActive()){
       pendingEdgeFrom = null;
@@ -541,6 +547,7 @@
       }
       return;
     }
+    if(gizmoDrag && ev.pointerId === gizmoDrag.pointerId){ updateGizmoDrag(ev); return; }
     const p = pointFromEvent(ev);
     if(selectDraft?.tool === 'polygon'){ updatePolygonPreview(ev); return; }
     if(selectDraft && ev.pointerId === selectDraft.pointerId){ scheduleSelectionDraftUpdate(p); return; }
@@ -573,6 +580,12 @@
   svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
   function finishPointer(ev, cancel=false){
     if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
+    if(gizmoDrag && ev.pointerId === gizmoDrag.pointerId){
+      finishGizmoDrag(cancel);
+      try{ if(svg.hasPointerCapture?.(ev.pointerId)) svg.releasePointerCapture(ev.pointerId); }catch{}
+      unregisterPointer(ev);
+      return;
+    }
     if(singleSweep && ev.pointerId === singleSweep.pointerId){
       const sw = singleSweep;
       singleSweep = null;

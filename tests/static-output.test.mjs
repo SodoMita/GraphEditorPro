@@ -28,11 +28,22 @@ test('source template has no duplicate element IDs', () => {
   assert.equal(new Set(ids).size, ids.length);
 });
 
+test('transform gizmo is a first-class part of the generated page', () => {
+  assert.equal((html.match(/data-gizmo-mode="translate"/g) ?? []).length, 2,
+    'the floating bar and the sidebar both expose translate mode');
+  for (const mode of ['off', 'translate', 'rotate', 'scale', 'rect']) {
+    assert.match(html, new RegExp(`data-gizmo-mode="${mode}"`), `missing ${mode} mode`);
+  }
+  assert.match(html, /id="transformGizmoLayer"/);
+  assert.match(html, /gizmo-box-hit|gizmo-h-rotate/);
+});
+
 test('key graph editor controls remain in the generated page', () => {
   for (const id of [
     'graphCanvas', 'gridLayer', 'cameraLayer', 'sceneLayer', 'nodesLayer', 'edgesLayer', 'modeSelect', 'modeNode',
     'modeEdge', 'matrixHost', 'edgeListHost', 'btnUndo', 'btnRedo',
     'btnExportJson', 'fileImport', 'optMatrixLimit', 'optEdgeListPageSize', 'algoOutput',
+    'transformGizmoLayer', 'gizmoReadout',
   ]) {
     assert.match(html, new RegExp(`\\bid=["']${id}["']`), `missing #${id}`);
   }

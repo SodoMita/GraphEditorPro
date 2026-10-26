@@ -39,6 +39,8 @@
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');
   const selectionOverlayLayer = $('#selectionOverlayLayer');
+  // Transform gizmo overlay: a sibling of nodesLayer inside the camera scene.
+  const transformGizmoLayer = $('#transformGizmoLayer');
   const gridPattern = $('#gridPattern');
 
   const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];

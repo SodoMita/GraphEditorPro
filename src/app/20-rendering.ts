@@ -425,6 +425,7 @@
     setSelectTool(state.selectTool || 'single', false);
     setSelectCombine(state.selectCombine || 'replace', false);
     setHitTestMode(state.settings.hitTestMode || 'any', false);
+    syncGizmoControls();
   }
   function syncEditTypeLists(){
     const ntl = $('#nodeTypeListEdit'); if(ntl) ntl.innerHTML = existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('');
@@ -452,8 +453,10 @@
     updateUndoRedo();
     resetSelectionMirror();
     endRenderPass();
+    scheduleGizmoUpdate();
   }
   function statusText(){
+    if(gizmoDrag) return I18N.t('gizmo_status', {mode: gizmoModeLabel(gizmoDrag.mode), value: gizmoDrag.readout || '…'});
     if(edgeDraft) return I18N.t('drag_to_target');
     if(pendingEdgeFrom) return I18N.t('source_selected', {name: labelOf(pendingEdgeFrom)});
     if(selectDraft) return I18N.t('selection_tool', {tool: selectDraft.tool});
@@ -462,6 +465,7 @@
     if(state.mode === 'move') return I18N.t('move_mode_drag');
     if(state.mode === 'node') return I18N.t('node_mode_click');
     if(state.mode === 'edge') return I18N.t('edge_mode_drag');
+    if(gizmoHasSelection()) return I18N.t('gizmo_status_ready', {mode: gizmoModeLabel()});
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: state.selectTool});
   }
   function applyCamera(){
@@ -471,6 +475,7 @@
     applyCameraTransform(state.viewBox);
     updateGridBackground(state.viewBox);
     syncCameraInputs();
+    scheduleGizmoUpdate();
   }
 
   // === Camera ===
@@ -529,6 +534,7 @@
   function applyPreviewCamera(preview, rect=null){
     const viewport = applyCameraTransform(preview, rect);
     if(viewport) updateGridBackground(preview, viewport);
+    scheduleGizmoUpdate();
   }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
@@ -631,6 +637,7 @@
       if(drag.liveEdges === false) return;
       const vc = drag.vc || (drag.vc = newVisualCache());
       for(const edge of (drag.affectedEdges || [])) updateEdgeFast(edge, vc);
+      scheduleGizmoUpdate();
     } catch(e) { /* fail-safe */ }
   }
   function updateEdgeFast(edgeOrId, vc=null){
