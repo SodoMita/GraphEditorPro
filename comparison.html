@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Huge Graph: Site vs Pure SVG Comparison</title>
+<style>
+  body{font-family:Inter,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:20px;line-height:1.5}
+  h1{font-size:24px;margin-bottom:8px}
+  h2{font-size:18px;margin-top:32px;color:#7dd3fc}
+  table{border-collapse:collapse;width:100%;margin:12px 0;background:#1e293b;border-radius:8px;overflow:hidden}
+  th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #334155}
+  th{background:#0f172a;color:#94a3b8;font-weight:600}
+  .metric{font-family:ui-monospace,monospace}
+  a{color:#7dd3fc}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
+  .card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px}
+  iframe{width:100%;height:600px;border:1px solid #334155;border-radius:8px;background:#020617}
+  .highlight{background:#0ea5e922;border-left:3px solid #0ea5e9;padding:12px;margin:12px 0;border-radius:0 8px 8px 0}
+</style>
+</head>
+<body>
+<h1>Huge Graph Rendering: Site vs Pure SVG</h1>
+<p>Generated with <code>scripts/bench-svg-vs-site.mjs</code> – measures load performance of the same graph rendered as standalone SVG vs inside GraphEditorPro (with UI, selection, grid, etc).</p>
+
+<div class="highlight">
+  <strong>Key finding:</strong> Pure SVG is ~10-18% faster to load and uses ~2-3× fewer DOM elements. Site overhead comes from:
+  <ul>
+    <li>UI chrome (toolbar, sidebars, modals) – ~13k-23k extra DOM nodes</li>
+    <li>Per-edge extra elements: hit area (.edge-hit), selection rings (.edge-sel), labels, background plates</li>
+    <li>JS execution: style merging, caching, selection sync, grid pattern – 150-380ms script</li>
+    <li>Style/layout recalc for interactive layers</li>
+  </ul>
+  The biggest cost is DOM count, not JS. Complete 100n (4950 edges) → 8752 elements pure vs 27279 in site (3.1×).
+</div>
+
+<h2>Benchmark Results (Headless Chromium, 1440×900)</h2>
+
+<table>
+<tr><th>Graph</th><th>Version</th><th>File Size</th><th>Load</th><th>Task</th><th>Script</th><th>Style</th><th>Layout</th><th>DOM Total</th><th>SVG Elements</th></tr>
+<tr><td rowspan="2">500n 2500e (sparse)</td><td>Pure SVG</td><td class="metric">593 KB</td><td class="metric">1591ms</td><td class="metric">97ms</td><td class="metric">0ms</td><td class="metric">15ms</td><td class="metric">10ms</td><td class="metric">5781</td><td class="metric">5774</td></tr>
+<tr><td>Site</td><td class="metric">822 KB</td><td class="metric">1757ms</td><td class="metric">547ms</td><td class="metric">147ms</td><td class="metric">120ms</td><td class="metric">90ms</td><td class="metric">19008</td><td class="metric">10955</td></tr>
+<tr><td rowspan="2">100n 4950e (complete)</td><td>Pure SVG</td><td class="metric">943 KB</td><td class="metric">1601ms</td><td class="metric">118ms</td><td class="metric">0ms</td><td class="metric">22ms</td><td class="metric">8ms</td><td class="metric">8752</td><td class="metric">8745</td></tr>
+<tr><td>Site</td><td class="metric">1008 KB</td><td class="metric">1855ms</td><td class="metric">715ms</td><td class="metric">220ms</td><td class="metric">184ms</td><td class="metric">107ms</td><td class="metric">27279</td><td class="metric">19226</td></tr>
+<tr><td rowspan="2">1000n 5000e</td><td>Pure SVG</td><td class="metric">1197 KB</td><td class="metric">1616ms</td><td class="metric">156ms</td><td class="metric">0ms</td><td class="metric">28ms</td><td class="metric">21ms</td><td class="metric">11557</td><td class="metric">11550</td></tr>
+<tr><td>Site</td><td class="metric">1151 KB</td><td class="metric">1904ms</td><td class="metric">754ms</td><td class="metric">293ms</td><td class="metric">160ms</td><td class="metric">99ms</td><td class="metric">29284</td><td class="metric">21231</td></tr>
+<tr><td rowspan="2">1500n 8000e</td><td>Pure SVG</td><td class="metric">1895 KB</td><td class="metric">1659ms</td><td class="metric">234ms</td><td class="metric">0ms</td><td class="metric">44ms</td><td class="metric">31ms</td><td class="metric">18131</td><td class="metric">18124</td></tr>
+<tr><td>Site</td><td class="metric">1537 KB</td><td class="metric">1672ms</td><td class="metric">1083ms</td><td class="metric">380ms</td><td class="metric">346ms</td><td class="metric">120ms</td><td class="metric">41358</td><td class="metric">33305</td></tr>
+</table>
+
+<h2>Why Site is Heavier</h2>
+<ul>
+  <li><strong>Per edge in site:</strong> 5 elements (g, .edge-hit, .edge-line, .edge-arrow, optional label) vs 1-2 in pure SVG (path + polygon). Plus selection rings when selected.</li>
+  <li><strong>Per node in site:</strong> 2-3 elements (g, shape, label, optional sel ring) vs 2 in pure (g + ellipse + text).</li>
+  <li><strong>Extra layers:</strong> grid pattern (world-locked SVG pattern), camera layer, selection overlay, UI panels – 13k+ nodes.</li>
+  <li><strong>JS work:</strong> style merging (nodeVisual/edgeVisual cached per pass now), edge offset cache, geometry cache, selection mirror – still 150-380ms.</li>
+</ul>
+
+<h2>Visual Comparison (500n 2500e)</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Pure SVG (593 KB, 5781 DOM)</h3>
+    <p><a href="huge-500n.svg" target="_blank">Open raw SVG</a> | <a href="huge-500n-pure.html" target="_blank">Open HTML wrapper</a></p>
+    <iframe src="huge-500n-pure.html" loading="lazy"></iframe>
+  </div>
+  <div class="card">
+    <h3>Site Version (822 KB, 19008 DOM)</h3>
+    <p><a href="huge-500n-site.html" target="_blank">Open site version</a> – includes toolbar, pan/zoom, selection</p>
+    <iframe src="huge-500n-site.html" loading="lazy"></iframe>
+  </div>
+</div>
+
+<h2>Visual Comparison (100n complete 4950e – dense)</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Pure SVG Complete (943 KB, 8752 DOM)</h3>
+    <p><a href="huge-100n-complete.svg" target="_blank">Open raw SVG</a></p>
+    <iframe src="huge-100n-complete-pure.html" loading="lazy"></iframe>
+  </div>
+  <div class="card">
+    <h3>Site Complete (1008 KB, 27279 DOM)</h3>
+    <p><a href="huge-100n-complete-site.html" target="_blank">Open site</a> – dense graph is where DOM explodes</p>
+    <iframe src="huge-100n-complete-site.html" loading="lazy"></iframe>
+  </div>
+</div>
+
+<h2>Takeaways</h2>
+<ul>
+  <li>Pure SVG file renders with zero JS, only style+layout (15-44ms style, 8-31ms layout). Site adds 120-346ms style + 90-120ms layout due to extra layers and attribute writes.</li>
+  <li>File size is similar (pure SVG slightly larger for complete graph because site JSON is more compact than SVG paths), but DOM is 2-3× larger in site.</li>
+  <li>For huge graphs, biggest win would be: edge virtualization (skip off-screen edges), or Canvas/WebGL renderer, or reducing per-edge elements (drop .edge-hit, merge arrow into path).</li>
+  <li>Current optimizations (caches) already cut 18-34% load time vs main branch for 1500n.</li>
+</ul>
+
+<p>Generated files in <code>/tmp</code> and workspace: <code>huge-*.svg</code>, <code>huge-*-pure.html</code>, <code>huge-*-site.html</code></p>
+</body>
+</html>

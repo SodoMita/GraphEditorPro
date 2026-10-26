@@ -137,6 +137,10 @@
       else if(validNodes.length) state.selected = {type:'node', id:validNodes[0]};
       else if(validEdges.length) state.selected = {type:'edge', id:validEdges[0]};
     }
+    // Selection cache lives in 30-graph-editing.ts; bump it if present so
+    // selectedNodeIds/selectedEdgeIds don't return stale Sets after undo/redo/import.
+    try { if(typeof invalidateSelectionCache === 'function') invalidateSelectionCache(); } catch {}
+    try { if(typeof selCacheRev !== 'undefined') selCacheRev++; } catch {}
     syncControls();
     persistAutosavePreference(Boolean(state.settings.autosave));
     queueRender(true, true);
