@@ -120,13 +120,17 @@
   // halo thickness for a 13px label and scales proportionally with the label
   // size, so outlines stay readable at any label size.
   function labelOutlineConf(){
+    const vc = passVisuals;
+    if(vc && vc.labelOutline) return vc.labelOutline;
     const gd = state.settings.graphDefaults || {};
     const mode = gd.labelOutline;
-    return {
+    const conf = {
       mode: (mode === 'plate' || mode === 'none') ? mode : 'outline',
       color: gd.labelOutlineColor || '#020617',
       width: clamp(finite(gd.labelOutlineWidth, 4), 0, 10)
     };
+    if(vc) vc.labelOutline = conf;
+    return conf;
   }
   function labelOutlineThickness(conf, labelSize){
     return conf.width * (labelSize / 13);
@@ -221,7 +225,19 @@
   // reused by every edge that touches the item, keeping render passes and drag
   // frames free of repeated merges and short-lived allocations. Each render
   // pass (and each drag gesture) owns one cache.
-  function newVisualCache(){ return { node: new Map(), edge: new Map(), edgeStyle: new Map(), radius: new Map() }; }
+  // Sorted-by-order cache — invalidated when nodes array identity/len or graphRev changes (reorder, add/remove)
+  let sortedNodesCache = { arr: null as any, len: -1, rev: -1, sorted: [] as any[] };
+  function sortedNodesByOrder(){
+    const arr = state.nodes;
+    if(sortedNodesCache.arr === arr && sortedNodesCache.len === arr.length && sortedNodesCache.rev === graphRev){
+      return sortedNodesCache.sorted;
+    }
+    const sorted = [...arr].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    sortedNodesCache.arr = arr; sortedNodesCache.len = arr.length; sortedNodesCache.rev = graphRev; sortedNodesCache.sorted = sorted;
+    return sorted;
+  }
+  // Per-pass visual cache includes visible nodes/ids and label outline config to avoid double work per renderCanvas
+  function newVisualCache(){ return { node: new Map(), edge: new Map(), edgeStyle: new Map(), radius: new Map(), visibleNodes: null as any, visibleIds: null as any, labelOutline: null as any, showLabels: null as any }; }
   let passVisuals = null;
   function beginRenderPass(){ passVisuals = newVisualCache(); }
   function endRenderPass(){ passVisuals = null; }
@@ -336,10 +352,10 @@
       if(!ring){
         ring = document.createElementNS(NS,'polygon');
         ring.setAttribute('class','edge-sel-arrow');
-        // Behind the arrowhead itself, so only its border shows as accent. When
-        // the arrow does not exist yet it is created right after this call and
-        // lands on top anyway.
-        if(g.__arrow) g.insertBefore(ring, g.__arrow); else g.appendChild(ring);
+        // Behind the arrowhead and the line, so only its border shows as accent
+        // and it never covers the edge itself. Insert before the selection line
+        // accent (or the edge line) so both accents stay behind the edge.
+        g.insertBefore(ring, sel || line || g.firstChild);
         g.__selArrow = ring;
       }
       setAttr(ring, 'points', edgeArrowPoints(geo, SEL_TIP_SCALE));
@@ -364,20 +380,40 @@
     return r;
   }
   function shouldShowLabels(){
+    const vc = passVisuals;
+    if(vc && vc.showLabels != null) return vc.showLabels;
     const policy = state.settings.graphDefaults?.labelsPolicy || 'auto';
-    if(policy === 'off') return false;
-    if(policy === 'on') return true;
-    return state.nodes.length <= 30;
+    let res: boolean;
+    if(policy === 'off') res = false;
+    else if(policy === 'on') res = true;
+    else res = state.nodes.length <= 30;
+    if(vc) vc.showLabels = res;
+    return res;
   }
+  // Type lists are cached by nodes/edges identity/len/rev — O(V) only when graph actually changes
+  let nodeTypesCache = { arr: null as any, len: -1, rev: -1, types: [] as string[] };
   function existingNodeTypes(){
-    const set = new Set();
-    for(const n of state.nodes) if(n.type) set.add(n.type);
-    return [...set].sort();
+    const arr = state.nodes;
+    if(nodeTypesCache.arr === arr && nodeTypesCache.len === arr.length && nodeTypesCache.rev === graphRev){
+      return nodeTypesCache.types;
+    }
+    const set = new Set<string>();
+    for(const n of arr) if(n.type) set.add(n.type);
+    const types = [...set].sort();
+    nodeTypesCache.arr = arr; nodeTypesCache.len = arr.length; nodeTypesCache.rev = graphRev; nodeTypesCache.types = types;
+    return types;
   }
+  let edgeTypesCache = { arr: null as any, len: -1, rev: -1, types: [] as string[] };
   function existingEdgeTypes(){
-    const set = new Set();
-    for(const e of state.edges) if(e.type) set.add(e.type);
-    return [...set].sort();
+    const arr = state.edges;
+    if(edgeTypesCache.arr === arr && edgeTypesCache.len === arr.length && edgeTypesCache.rev === graphRev){
+      return edgeTypesCache.types;
+    }
+    const set = new Set<string>();
+    for(const e of arr) if(e.type) set.add(e.type);
+    const types = [...set].sort();
+    edgeTypesCache.arr = arr; edgeTypesCache.len = arr.length; edgeTypesCache.rev = graphRev; edgeTypesCache.types = types;
+    return types;
   }
 
   function syncControls(){
@@ -417,9 +453,12 @@
     $('#optEdgeListPageSize').value = state.settings.edgeListPageSize;
     const inhEl = $('#optInheritDefaults'); if(inhEl) inhEl.checked = state.settings.inheritDefaults !== false;
     const noLblEl = $('#optNoLabel'); if(noLblEl) noLblEl.checked = Boolean(state.settings.noLabel);
+    const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(chkPreserve) chkPreserve.checked = state.settings.copyPreserveExternal !== false;
+    if((window as any).syncPreserve) (window as any).syncPreserve();
     syncStyleControls();
     syncEditTypeLists();
     setMode(state.mode, false);
+    syncGizmoControls();
     setSelectTool(state.selectTool || 'single', false);
     setSelectCombine(state.selectCombine || 'replace', false);
     setHitTestMode(state.settings.hitTestMode || 'any', false);
@@ -447,6 +486,7 @@
     setText($('#statusPill'), statusText());
     renderEdges();
     renderNodes();
+    renderGizmo();
     updateUndoRedo();
     resetSelectionMirror();
     endRenderPass();
@@ -454,6 +494,7 @@
   function statusText(){
     if(edgeDraft) return I18N.t('drag_to_target');
     if(pendingEdgeFrom) return I18N.t('source_selected', {name: labelOf(pendingEdgeFrom)});
+    if(gizmoDrag && gizmoDrag.readout) return gizmoDrag.readout;
     if(selectDraft) return I18N.t('selection_tool', {tool: selectDraft.tool});
     if(pinch) return I18N.t('pinch_zoom_pan');
     if(spaceDown) return I18N.t('pan_mode');
@@ -469,6 +510,9 @@
     applyCameraTransform(state.viewBox);
     updateGridBackground(state.viewBox);
     syncCameraInputs();
+    // Gizmo handles are sized in screen pixels, so a committed zoom change
+    // re-sizes them (signature-guarded: a no-op when nothing changed).
+    renderGizmo();
   }
 
   // === Camera ===
@@ -619,16 +663,17 @@
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
     for(const edge of edges) updateEdgeFast(edge);
   }
-  function moveDragFast(){
-    if(!drag) return;
+  function moveDragFast(src=drag){
+    if(!src) return;
     try {
-      const nodes = drag.nodes || (drag.node ? [drag.node] : []);
+      const nodes = src.nodes || (src.node ? [src.node] : []);
       for(const n of nodes){
         const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
       }
-      if(drag.liveEdges === false) return;
-      const vc = drag.vc || (drag.vc = newVisualCache());
-      for(const edge of (drag.affectedEdges || [])) updateEdgeFast(edge, vc);
+      followGizmoForPlainDrag(src);
+      if(src.liveEdges === false) return;
+      const vc = src.vc || (src.vc = newVisualCache());
+      for(const edge of (src.affectedEdges || [])) updateEdgeFast(edge, vc);
     } catch(e) { /* fail-safe */ }
   }
   function updateEdgeFast(edgeOrId, vc=null){
@@ -1037,6 +1082,7 @@
     // Remove stale elements
     for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); nodeEls.delete(id); } }
   }
+
   function renderSidebar(){
     renderStartSelect();
     renderSelectionPanel();
@@ -1355,17 +1401,31 @@
     }
   }
   // Returns nodes sorted by order, optionally filtered by the visible range setting.
-  // When visibleRange.start is -1, all nodes are returned.
+  // When visibleRange.start is -1, all nodes are returned. Sorted result is cached
+  // globally (invalidated by graphRev), and per-pass visibleNodes/visibleIds are
+  // cached inside passVisuals to avoid double sort in renderCanvas (renderEdges + renderNodes).
   function visibleNodes(){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const vc = passVisuals;
+    if(vc && vc.visibleNodes) return vc.visibleNodes;
+    const sorted = sortedNodesByOrder();
     const vr = state.settings.visibleRange || {start:-1, end:-1};
-    if(vr.start < 0 && vr.end < 0) return sorted;
-    const start = vr.start < 0 ? 0 : vr.start;
-    const end = vr.end < 0 ? sorted.length : Math.min(vr.end + 1, sorted.length);
-    return sorted.slice(Math.max(0, start), end);
+    let result: any[];
+    if(vr.start < 0 && vr.end < 0) result = sorted;
+    else {
+      const start = vr.start < 0 ? 0 : vr.start;
+      const end = vr.end < 0 ? sorted.length : Math.min(vr.end + 1, sorted.length);
+      result = sorted.slice(Math.max(0, start), end);
+    }
+    if(vc) vc.visibleNodes = result;
+    return result;
   }
   function visibleNodeIds(){
-    return new Set(visibleNodes().map(n => n.id));
+    const vc = passVisuals;
+    if(vc && vc.visibleIds) return vc.visibleIds;
+    const nodes = visibleNodes();
+    const ids = new Set(nodes.map((n:any) => n.id));
+    if(vc) vc.visibleIds = ids;
+    return ids;
   }
   function matrixNodes(){
     const dim = clamp(parseInt(state.settings.matrixDimension,10) || 0, 0, 300);
@@ -1422,18 +1482,37 @@
   function adjacencyMatrixHtml(nodes=matrixNodes()){
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
-    const header = nodes.map(n => `<th><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>`).join('');
-    let html = '<table><thead><tr><th></th>' + header + '</tr></thead><tbody>';
-    nodes.forEach((row,i) => {
-      html += `<tr><th class="row-head"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"></th>` +
-        values[i].map((cell,j) => {
-          const to = nodes[j].id;
-          const ids = edgeIds[i][j];
-          const selected = ids.some(id => edgeSel.has(id));
-          return `<td><input class="matrix-input${selected?' matrix-selected':''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly aria-label="${esc(I18N.t('col_from'))} ${esc(row.id)}, ${esc(I18N.t('col_to'))} ${esc(to)}" title="${esc(I18N.t('matrix_cell_hint'))}"></td>`;
-        }).join('') + '</tr>';
-    });
-    return html + '</tbody></table>';
+    // Global order index for each node (for move boundaries)
+    const allSorted = [...state.nodes].sort((a,b)=>(a.order??0)-(b.order??0));
+    const orderPos = new Map(allSorted.map((n,i)=>[n.id,i]));
+    // Build with array push+join instead of repeated += to avoid O(n^2) string copying for large matrices
+    const parts: string[] = [];
+    const header = nodes.map((n, idx) => {
+      const pos = orderPos.get(n.id) ?? idx;
+      const upDisabled = pos === 0 ? ' disabled' : '';
+      const downDisabled = pos === allSorted.length - 1 ? ' disabled' : '';
+      return `<th><div class="matrix-header-cell"><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="-1" title="${esc(I18N.t('move_left'))}" aria-label="${esc(I18N.t('move_left'))}: ${esc(n.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="${esc(I18N.t('order'))}">${n.order??0}</span><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="1" title="${esc(I18N.t('move_right'))}" aria-label="${esc(I18N.t('move_right'))}: ${esc(n.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>`;
+    }).join('');
+    parts.push('<table><thead><tr><th></th>', header, '</tr></thead><tbody>');
+    for(let i=0;i<nodes.length;i++){
+      const row = nodes[i];
+      const pos = orderPos.get(row.id) ?? i;
+      const upDisabled = pos === 0 ? ' disabled' : '';
+      const downDisabled = pos === allSorted.length - 1 ? ' disabled' : '';
+      parts.push(`<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="-1" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(row.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="1" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(row.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>`);
+      const rowVals = values[i];
+      const rowEdgeIds = edgeIds[i];
+      for(let j=0;j<rowVals.length;j++){
+        const cell = rowVals[j];
+        const to = nodes[j].id;
+        const ids = rowEdgeIds[j];
+        const selected = ids.some(id => edgeSel.has(id));
+        parts.push(`<td><input class="matrix-input${selected?' matrix-selected':''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly aria-label="${esc(I18N.t('col_from'))} ${esc(row.id)}, ${esc(I18N.t('col_to'))} ${esc(to)}" title="${esc(I18N.t('matrix_cell_hint'))}"></td>`);
+      }
+      parts.push('</tr>');
+    }
+    parts.push('</tbody></table>');
+    return parts.join('');
   }
   function edgeListHtml(){
     if(!state.edges.length){ if($('#edgeListNote')) $('#edgeListNote').textContent = ''; return '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; }
@@ -1460,12 +1539,14 @@
       $('#edgeListNote').textContent = filterNote + pageNote;
     }
     const selectedEdges = selectedEdgeIds();
-    let html = '<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>';
-    renderedEdges.forEach((e,i) => {
+    const parts: string[] = [];
+    parts.push('<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
+    for(let i=0;i<renderedEdges.length;i++){
+      const e = renderedEdges[i];
       const a = nodeById(e.from), b = nodeById(e.to);
       const sel = selectedEdges.has(e.id) ? ' matrix-selected' : '';
       const strokeOpts = '<option value=""></option>' + STROKE_STYLES.map(s => `<option value="${s}"${e.strokeStyle===s?' selected':''}>${I18N.t('stroke_' + s)}</option>`).join('');
-      html += `<tr>
+      parts.push(`<tr>
         <td style="white-space:nowrap">
           <button class="btn small icon edge-up" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button>
           <button class="btn small icon edge-down" data-edge-id="${esc(e.id)}" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(e.id)}" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button>
@@ -1480,19 +1561,20 @@
         <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed?'checked':''} aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"></td>
         <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
-      </tr>`;
-    });
-    html += '</tbody></table>';
+      </tr>`);
+    }
+    parts.push('</tbody></table>');
     if(renderedEdges.length < filteredEdges.length){
       const remaining = filteredEdges.length - renderedEdges.length;
       const pageSize = configuredEdgeListPageSize();
       const label = I18N.current === 'ru'
         ? `Показать ещё ${Math.min(pageSize, remaining)}`
         : `Show ${Math.min(pageSize, remaining)} more`;
-      html += `<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`;
+      parts.push(`<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`);
     }
-    return html;
+    return parts.join('');
   }
+
   function showMoreEdgeRows(){
     edgeListRenderLimit += configuredEdgeListPageSize();
     $('#edgeListHost').innerHTML = edgeListHtml();

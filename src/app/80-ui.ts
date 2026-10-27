@@ -85,6 +85,7 @@
     activatePanel('edit');
 
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+    $$('[data-gizmotool]').forEach(btn => btn.addEventListener('click', () => setGizmoTool(btn.dataset.gizmotool)));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
     $$('[data-hittest]').forEach(btn => btn.addEventListener('click', () => setHitTestMode(btn.dataset.hittest)));
@@ -128,6 +129,7 @@
     });
     $('#optInheritDefaults').addEventListener('change', e => { state.settings.inheritDefaults = e.target.checked; pushHistory('inherit defaults'); });
     $('#optNoLabel').addEventListener('change', e => { state.settings.noLabel = e.target.checked; pushHistory('no label'); });
+    $('#optGizmo').addEventListener('change', e => setGizmoEnabled(e.target.checked));
     $('#optSnap').addEventListener('change', e => { state.settings.snap = e.target.checked; pushHistory('snap grid'); });
     $('#optSnapX').addEventListener('change', e => { state.settings.snapX = e.target.checked; pushHistory('snap x'); });
     $('#optSnapY').addEventListener('change', e => { state.settings.snapY = e.target.checked; pushHistory('snap y'); });
@@ -299,7 +301,84 @@
       const t = ev.target;
       if(t.matches && t.matches('input')){ t.readOnly = true; }
     });
+    // Matrix per-node order controls (left/right for columns, up/down for rows)
+    $('#matrixHost').addEventListener('click', ev => {
+      const btn = ev.target.closest && ev.target.closest('[data-node-move]');
+      if(!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const id = btn.dataset.nodeMove;
+      const dir = parseInt(btn.dataset.dir, 10) || 0;
+      if(!id || !dir) return;
+      if(typeof moveNode === 'function') moveNode(id, dir);
+    });
     function chooseImport(format, accept){ const input = $('#fileImport'); input.dataset.format = format; input.accept = accept; input.click(); }
+    // Clipboard copy/paste/duplicate + preserve toggle
+    function bindClipboardButton(id, fn){ const el=document.getElementById(id); if(el) el.addEventListener('click', fn); }
+    bindClipboardButton('btnCopy', copySelectedNodes);
+    bindClipboardButton('btnCut', cutSelectedNodes);
+    bindClipboardButton('btnDuplicate', duplicateSelectedNodes);
+    bindClipboardButton('btnPaste', pasteFromSystemClipboard);
+    bindClipboardButton('btnCopy2', copySelectedNodes);
+    bindClipboardButton('btnCut2', cutSelectedNodes);
+    bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
+    bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
+    const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null;
+    if(chkPreserve){
+      chkPreserve.checked = state.settings.copyPreserveExternal !== false;
+      chkPreserve.addEventListener('change', e => { state.settings.copyPreserveExternal = (e.target as HTMLInputElement).checked; saveSoon(); });
+      // keep checkbox synced when state changes externally (undo/redo, load)
+      const syncPreserve = () => { const c=document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(c) c.checked = state.settings.copyPreserveExternal !== false; };
+      // patch global render hook to also sync preserve - expose for 20-rendering to call
+      (window as any).syncPreserve = syncPreserve;
+    }
+    // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
+    document.addEventListener('keydown', ev => {
+      const mod = ev.ctrlKey || ev.metaKey;
+      if(!mod) return;
+      const target = ev.target as HTMLElement;
+      const isInput = target && ((target as any).matches && ((target as HTMLElement).matches('input, textarea, [contenteditable]') || (target as any).isContentEditable));
+      // If focus is in matrix/edge input that is readonly (selection mode), we still want clipboard shortcuts
+      const readonlyInput = isInput && (target as HTMLInputElement).readOnly;
+      if(isInput && !readonlyInput && !((target as HTMLElement).matches && (target as HTMLElement).matches('.matrix-input,.matrix-label-input'))) {
+        // typing in a visible text field — don't hijack
+        return;
+      }
+      const key = ev.key.toLowerCase();
+      if(key === 'c' && !ev.shiftKey && !ev.altKey){
+        // Ctrl+C copy
+        if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
+          ev.preventDefault(); copySelectedNodes();
+        }
+      } else if(key === 'x' && !ev.shiftKey && !ev.altKey){
+        if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
+          ev.preventDefault(); cutSelectedNodes();
+        }
+      } else if(key === 'v' && !ev.shiftKey && !ev.altKey){
+        ev.preventDefault(); pasteFromSystemClipboard();
+      } else if(key === 'd' && !ev.shiftKey && !ev.altKey){
+        // Ctrl+D duplicate — prevent browser bookmark
+        if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
+          ev.preventDefault(); duplicateSelectedNodes();
+        }
+      }
+    });
+    // Handle system paste event (Ctrl+V via browser) when app has focus and clipboard contains our JSON
+    document.addEventListener('paste', async ev => {
+      // If user is editing a matrix cell label, let the default paste happen
+      const target = ev.target as HTMLElement;
+      const isEditingInput = target && (target as any).matches && (target as HTMLElement).matches('input:not([readonly]), textarea, [contenteditable]');
+      if(isEditingInput) return;
+      try {
+        const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+        if(!text) return;
+        const data = JSON.parse(text);
+        if(data && data.type === 'graph-editor-clipboard'){
+          ev.preventDefault();
+          handlePasteEventWithData(data);
+        }
+      } catch {}
+    });
     $('#btnFlipEdges').addEventListener('click', flipSelectedEdges);
     $('#btnExportJson').addEventListener('click', exportJson);
     $('#btnImportJson').addEventListener('click', () => chooseImport('json', 'application/json,.json'));
@@ -488,13 +567,29 @@
       if(ctrl && matchesHotkey(ev, 'undo')){ ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
       if(ctrl && matchesHotkey(ev, 'redo')){ ev.preventDefault(); redo(); return; }
       if(typing) return;
-      if(matchesHotkey(ev, 'escape')){ ev.preventDefault(); if(selectDraft?.tool === 'polygon') finishPolygonSelection(true); else if(selectDraft) finishSelectionDraft(true); pendingEdgeFrom=null; pendingNodeTap=null; edgeDraft=null; dragLine.style.display='none'; setStatusOnly(); return; }
+      if(matchesHotkey(ev, 'escape')){ ev.preventDefault(); if(gizmoDrag) endGizmoDrag(false); else if(selectDraft?.tool === 'polygon') finishPolygonSelection(true); else if(selectDraft) finishSelectionDraft(true); pendingEdgeFrom=null; pendingNodeTap=null; edgeDraft=null; dragLine.style.display='none'; setStatusOnly(); return; }
       if(matchesHotkey(ev, 'delete')){ ev.preventDefault(); deleteSelected(); return; }
       if(matchesHotkey(ev, 'pan')){ spaceDown = true; setStatusOnly(); return; }
       if(matchesHotkey(ev, 'select')){ ev.preventDefault(); setMode('select'); return; }
       if(matchesHotkey(ev, 'move')){ ev.preventDefault(); setMode('move'); return; }
       if(matchesHotkey(ev, 'node')){ ev.preventDefault(); setMode('node'); return; }
       if(matchesHotkey(ev, 'edge')){ ev.preventDefault(); setMode('edge'); return; }
+      if(matchesHotkey(ev, 'gizmoMove')){ ev.preventDefault(); setMode('select'); setGizmoTool('move'); return; }
+      if(matchesHotkey(ev, 'gizmoRotate')){ ev.preventDefault(); setMode('select'); setGizmoTool('rotate'); return; }
+      if(matchesHotkey(ev, 'gizmoScale')){ ev.preventDefault(); setMode('select'); setGizmoTool('scale'); return; }
+      if(matchesHotkey(ev, 'gizmoRect')){ ev.preventDefault(); setMode('select'); setGizmoTool('rect'); return; }
+      if(matchesHotkey(ev, 'gizmoToggle')){ ev.preventDefault(); setGizmoEnabled(!gizmoEnabled); return; }
+      // Arrow keys nudge the gizmo target nodes (grid step while snap is on,
+      // otherwise 1 unit; Shift multiplies the step).
+      if(state.mode === 'select' && !ctrl && !ev.altKey && ev.key.startsWith('Arrow') && !(ev.target as HTMLElement)?.closest?.('#toolsPanel')){
+        const mult = ev.shiftKey ? (state.settings.snap ? 5 : 10) : 1;
+        const stepX = (state.settings.snap ? (state.settings.gridSizeX || 40) : 1) * mult;
+        const stepY = (state.settings.snap ? (state.settings.gridSizeY || 40) : 1) * mult;
+        const dx = ev.key === 'ArrowLeft' ? -stepX : ev.key === 'ArrowRight' ? stepX : 0;
+        const dy = ev.key === 'ArrowUp' ? -stepY : ev.key === 'ArrowDown' ? stepY : 0;
+        if((dx || dy) && nudgeSelection(dx, dy)) ev.preventDefault();
+        return;
+      }
     });
     window.addEventListener('keyup', ev => { if(matchesHotkey(ev, 'pan')){ spaceDown = false; setStatusOnly(); } });
     window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
@@ -510,6 +605,7 @@
     // (pointerup may be missed if a system alert steals focus or the window loses focus mid-drag)
     function resetInteractionState(){
       let changed = false, navigationChanged = false;
+      if(gizmoDrag){ endGizmoDrag(true); changed = true; }
       if(drag){
         if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
         if(drag.moved) pushHistory('move node');

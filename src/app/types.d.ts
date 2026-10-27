@@ -5,6 +5,7 @@ type GraphMode = 'select' | 'move' | 'node' | 'edge';
 type SelectionTool = 'single' | 'rect' | 'brush' | 'lasso' | 'line' | 'polygon';
 type SelectionCombine = 'replace' | 'add' | 'subtract';
 type HitTestMode = 'any' | 'center';
+type GizmoTool = 'move' | 'rotate' | 'scale' | 'rect';
 
 interface Point {
   x: number;

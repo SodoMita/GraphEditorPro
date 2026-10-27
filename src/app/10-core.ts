@@ -39,6 +39,7 @@
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');
   const selectionOverlayLayer = $('#selectionOverlayLayer');
+  const gizmoLayer = $('#gizmoLayer');
   const gridPattern = $('#gridPattern');
 
   const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
@@ -68,6 +69,8 @@
       hitTestMode: 'any',
       inheritDefaults: true,
       noLabel: false, // when true, new nodes are created with empty labels
+      // Copy/paste: when true, pasting preserves edges that have only one endpoint in the clipboard if the other endpoint exists in the graph
+      copyPreserveExternal: true,
       // Visible range: filters matrix, edge list, and graph canvas to nodes within [start, end] by order.
       // -1 end means "to last". -1 start means "show all".
       visibleRange: {start: -1, end: -1},
@@ -109,6 +112,9 @@
   let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
   const activePointers = new Map();
+  // Clipboard for copy/paste of nodes+edges
+  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[] } | null = null;
+  let pasteOffsetCount = 0;
 
   function snapshot(){
     flushZoomPreview(); // never persist a camera that is still in compositor preview
@@ -137,6 +143,10 @@
       else if(validNodes.length) state.selected = {type:'node', id:validNodes[0]};
       else if(validEdges.length) state.selected = {type:'edge', id:validEdges[0]};
     }
+    // Selection cache lives in 30-graph-editing.ts; bump it if present so
+    // selectedNodeIds/selectedEdgeIds don't return stale Sets after undo/redo/import.
+    try { if(typeof invalidateSelectionCache === 'function') invalidateSelectionCache(); } catch {}
+    try { if(typeof selCacheRev !== 'undefined') selCacheRev++; } catch {}
     syncControls();
     persistAutosavePreference(Boolean(state.settings.autosave));
     queueRender(true, true);
@@ -177,6 +187,17 @@
     $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => edgeById(id)?.directed);
     $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
     $('#btnMatrixClear').disabled = !state.edges.length;
+    const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
+    const pasteBtn = document.getElementById('btnPaste') as HTMLButtonElement | null;
+    const pasteExtBtn = document.getElementById('btnPasteWithExternal') as HTMLButtonElement | null;
+    if(pasteBtn) pasteBtn.disabled = !hasClipboard;
+    if(pasteExtBtn) pasteExtBtn.disabled = !hasClipboard;
+    const copyBtn = document.getElementById('btnCopy') as HTMLButtonElement | null;
+    const cutBtn = document.getElementById('btnCut') as HTMLButtonElement | null;
+    const dupBtn = document.getElementById('btnDuplicate') as HTMLButtonElement | null;
+    if(copyBtn) copyBtn.disabled = !hasSelection;
+    if(cutBtn) cutBtn.disabled = !hasSelection;
+    if(dupBtn) dupBtn.disabled = !hasSelection;
   }
   function updateUndoRedo(){
     $('#btnUndo').disabled = appHistoryIndex <= 0;
@@ -378,6 +399,10 @@
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, 300);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
+    settings.copyPreserveExternal = settings.copyPreserveExternal !== false;
+    // Gizmo tool/visibility migrated to a local UI preference (45-gizmo.ts);
+    // strip the legacy document field so imports/exports cannot resurrect it.
+    delete settings.gizmoEnabled;
     // Canvas background and grid colors
     settings.canvasBgColor = validColor(settings.canvasBgColor) || '#020617';
     settings.gridMinorColor = validColor(settings.gridMinorColor) || '#94a3b8';
