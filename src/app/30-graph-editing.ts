@@ -36,22 +36,6 @@
     });
     if(render) saveSoon();
   }
-  function setGizmoTool(tool, render=true){
-    if(gizmoDrag) return; // never swap tools underneath a live gizmo gesture
-    state.gizmoTool = (['move','rotate','scale','rect'].includes(tool) ? tool : 'move') as GizmoTool;
-    $$('[data-gizmotool]').forEach(b => {
-      const active = b.dataset.gizmotool === state.gizmoTool;
-      b.classList.toggle('active', active);
-      b.setAttribute('aria-pressed', String(active));
-    });
-    if(render) { renderGizmo(); setStatusOnly(); saveSoon(); }
-  }
-  function setGizmoEnabled(enabled, render=true){
-    state.settings.gizmoEnabled = Boolean(enabled);
-    const el = document.getElementById('optGizmo') as HTMLInputElement | null;
-    if(el) el.checked = Boolean(enabled);
-    if(render) { pushHistory('gizmo on/off'); renderGizmo(); setStatusOnly(); }
-  }
   function setHitTestMode(mode, render=true){
     state.settings.hitTestMode = ['any','center'].includes(mode) ? mode : 'any';
     $$('[data-hittest]').forEach(b => {

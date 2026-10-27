@@ -455,11 +455,10 @@
     const noLblEl = $('#optNoLabel'); if(noLblEl) noLblEl.checked = Boolean(state.settings.noLabel);
     const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(chkPreserve) chkPreserve.checked = state.settings.copyPreserveExternal !== false;
     if((window as any).syncPreserve) (window as any).syncPreserve();
-    const gizmoOpt = document.getElementById('optGizmo') as HTMLInputElement | null; if(gizmoOpt) gizmoOpt.checked = state.settings.gizmoEnabled !== false;
     syncStyleControls();
     syncEditTypeLists();
     setMode(state.mode, false);
-    setGizmoTool(state.gizmoTool || 'move', false);
+    syncGizmoControls();
     setSelectTool(state.selectTool || 'single', false);
     setSelectCombine(state.selectCombine || 'replace', false);
     setHitTestMode(state.settings.hitTestMode || 'any', false);
@@ -671,13 +670,7 @@
       for(const n of nodes){
         const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
       }
-      // A plain node drag translates every gizmo node by the same delta, so
-      // the gizmo follows with one transform write instead of a rebuild.
-      // Gizmo gestures pass their own source and rebuild via renderGizmo.
-      if(gizmoRootEl && gizmoAnchor && src !== gizmoDrag){
-        const anchorNode = nodeById(gizmoAnchor.id);
-        if(anchorNode) setAttr(gizmoRootEl, 'transform', `translate(${anchorNode.x - gizmoAnchor.x},${anchorNode.y - gizmoAnchor.y})`);
-      }
+      followGizmoForPlainDrag(src);
       if(src.liveEdges === false) return;
       const vc = src.vc || (src.vc = newVisualCache());
       for(const edge of (src.affectedEdges || [])) updateEdgeFast(edge, vc);
@@ -1090,192 +1083,6 @@
     for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); nodeEls.delete(id); } }
   }
 
-  // === Selection transform gizmo ===
-  // Translate / rotate / scale / rect handles drawn around the selection in
-  // Select mode. Every gizmo tool rewrites ONLY node x/y positions — node
-  // sizes, shapes and all other visual parameters are never touched (the
-  // node bodies simply ride their translate() to the new spots, exactly
-  // like a node drag). Handles are sized in screen pixels converted to
-  // world units, so they keep a constant on-screen size at any zoom; the
-  // layer rides the camera matrix with the rest of the scene, so pan and
-  // zoom previews need no gizmo work at all.
-  const GIZMO_TOOLS: GizmoTool[] = ['move','rotate','scale','rect'];
-  let gizmoSig = '';
-  let gizmoRootEl: any = null;
-  let gizmoAnchor: { id:string; x:number; y:number } | null = null;
-  let gizmoPivot: { x:number; y:number } | null = null; // user-dragged pivot override
-  let gizmoPivotKey = ''; // selection id-set the override belongs to
-  // The nodes a gizmo gesture acts on: the selected nodes, or — when only
-  // edges are selected — those edges' endpoints, so an edge selection can
-  // be moved/rotated as a unit too.
-  function gizmoTargetNodes(){
-    let nodes = [...selectedNodeIds()].map(nodeById).filter(Boolean);
-    if(!nodes.length){
-      const ids = new Set<string>();
-      for(const id of selectedEdgeIds()){ const e = edgeById(id); if(e){ ids.add(e.from); ids.add(e.to); } }
-      nodes = [...ids].map(nodeById).filter(Boolean);
-    }
-    const vr = state.settings.visibleRange || {start:-1, end:-1};
-    if(vr.start >= 0 || vr.end >= 0){ const vis = visibleNodeIds(); nodes = nodes.filter(n => vis.has(n.id)); }
-    return nodes;
-  }
-  function gizmoWorldPerPixel(){
-    const r = pointerRect || svg.getBoundingClientRect();
-    const s = (r && r.width) ? Math.min(r.width / state.viewBox.w, r.height / state.viewBox.h) : 0;
-    return s > 0 ? 1 / s : state.viewBox.w / 1000;
-  }
-  // Bounds of the node bodies (centres ± half size), i.e. the frame the rect
-  // gizmo stretches and the centre the other tools pivot around by default.
-  function gizmoNodeBounds(nodes){
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for(const n of nodes){
-      const v = nodeVisualC(n);
-      const hw = (v.width || 50) / 2, hh = (v.height || 50) / 2;
-      if(n.x - hw < minX) minX = n.x - hw;
-      if(n.y - hh < minY) minY = n.y - hh;
-      if(n.x + hw > maxX) maxX = n.x + hw;
-      if(n.y + hh > maxY) maxY = n.y + hh;
-    }
-    return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
-  }
-  function gizmoEl(name, attrs=null, cls=null){
-    const el: any = document.createElementNS(NS, name);
-    if(cls) el.setAttribute('class', cls);
-    if(attrs) for(const k in attrs) el.setAttribute(k, attrs[k]);
-    return el;
-  }
-  function renderGizmo(){
-    const wrap = $('#canvasWrap');
-    const show = state.mode === 'select' && state.settings.gizmoEnabled !== false && !selectDraft && !edgeDraft && !pinch && !pan;
-    const nodes = show ? gizmoTargetNodes() : [];
-    if(!nodes.length){
-      if(gizmoSig){ gizmoLayer.textContent = ''; gizmoSig = ''; gizmoRootEl = null; gizmoAnchor = null; }
-      wrap.classList.toggle('gizmo-active', false);
-      return;
-    }
-    const b = gizmoNodeBounds(nodes);
-    const key = nodes.map(n => n.id).join(',');
-    if(key !== gizmoPivotKey){ gizmoPivot = null; gizmoPivotKey = key; }
-    const P = gizmoPivot || {x:b.cx, y:b.cy};
-    const u = gizmoWorldPerPixel(); // world units per screen pixel
-    const tool: GizmoTool = GIZMO_TOOLS.includes(state.gizmoTool) ? state.gizmoTool : 'move';
-    const active = gizmoDrag?.handle || '';
-    const pointer = gizmoDrag?.pointer;
-    const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(4), active,
-      gizmoDrag?.readout || '', pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
-    wrap.classList.toggle('gizmo-active', true);
-    if(sig === gizmoSig) return;
-    gizmoSig = sig;
-    gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
-    gizmoLayer.textContent = '';
-    const root = gizmoEl('g', null, 'gizmo-root');
-    gizmoRootEl = root;
-    gizmoLayer.appendChild(root);
-    const handle = (kind: string) => {
-      const g = gizmoEl('g', {'data-gizmo': kind}, 'gizmo-handle' + (active === kind ? ' active' : ''));
-      root.appendChild(g);
-      return g;
-    };
-    const armLen = 52 * u, armStart = 11 * u;
-    let topY = b.minY;
-
-    if(tool === 'rect'){
-      root.appendChild(gizmoEl('rect', {x:b.minX, y:b.minY, width:b.w, height:b.h}, 'gizmo-rectbox'));
-      const hit = 7 * u, box = 11 * u, boxHit = 21 * u;
-      const edges: Array<[string, number, number, number, number, number, number]> = [
-        ['rect-n', b.minX, b.minY, b.maxX, b.minY, b.cx, b.minY],
-        ['rect-e', b.maxX, b.minY, b.maxX, b.maxY, b.maxX, b.cy],
-        ['rect-s', b.minX, b.maxY, b.maxX, b.maxY, b.cx, b.maxY],
-        ['rect-w', b.minX, b.minY, b.minX, b.maxY, b.minX, b.cy],
-      ];
-      for(const [kind, x1, y1, x2, y2, hx, hy] of edges){
-        const g = handle(kind);
-        g.appendChild(gizmoEl('line', {x1, y1, x2, y2, 'stroke-width': 2 * hit}, 'gizmo-hit-stroke'));
-        g.appendChild(gizmoEl('rect', {x:hx - boxHit/2, y:hy - boxHit/2, width:boxHit, height:boxHit}, 'gizmo-hit'));
-        g.appendChild(gizmoEl('rect', {x:hx - box/2, y:hy - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
-      }
-      const corners: Array<[string, number, number]> = [
-        ['rect-nw', b.minX, b.minY], ['rect-ne', b.maxX, b.minY],
-        ['rect-se', b.maxX, b.maxY], ['rect-sw', b.minX, b.maxY],
-      ];
-      for(const [kind, hx, hy] of corners){
-        const g = handle(kind);
-        g.appendChild(gizmoEl('rect', {x:hx - boxHit/2, y:hy - boxHit/2, width:boxHit, height:boxHit}, 'gizmo-hit'));
-        g.appendChild(gizmoEl('rect', {x:hx - box/2, y:hy - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
-      }
-      const centre = handle('rect-move');
-      centre.appendChild(gizmoEl('circle', {cx:b.cx, cy:b.cy, r:13 * u}, 'gizmo-hit'));
-      centre.appendChild(gizmoEl('rect', {x:b.cx - box/2, y:b.cy - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
-    } else if(tool === 'rotate'){
-      // Fixed on-screen ring around the pivot (not a ring enclosing the
-      // whole selection): the drag is angular, so the ring size does not
-      // affect the math, and a constant-size ring never leaves the canvas
-      // for large selections.
-      const Rr = 72 * u;
-      topY = P.y - Rr; // readout rides the ring, not the (rotating) bounds
-      const ring = handle('rotate');
-      ring.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:Rr, 'stroke-width': 18 * u}, 'gizmo-hit-stroke'));
-      ring.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:Rr}, 'gizmo-ring gizmo-vis'));
-      const a = (gizmoDrag?.tool === 'rotate' && pointer) ? Math.atan2(pointer.y - P.y, pointer.x - P.x) : -Math.PI / 2;
-      const hx = P.x + Math.cos(a) * Rr, hy = P.y + Math.sin(a) * Rr;
-      if(gizmoDrag?.tool === 'rotate') ring.appendChild(gizmoEl('line', {x1:P.x, y1:P.y, x2:hx, y2:hy}, 'gizmo-spoke gizmo-vis'));
-      ring.appendChild(gizmoEl('circle', {cx:hx, cy:hy, r:6.5 * u}, 'gizmo-handle-box gizmo-box-amber gizmo-vis'));
-    } else {
-      // move & scale share the axis arms; they differ in the end handles.
-      root.appendChild(gizmoEl('rect', {x:b.minX, y:b.minY, width:b.w, height:b.h}, 'gizmo-bounds'));
-      const axisHandle = (kind: string, dx: number, dy: number, axisCls: string, boxCls: string, label: string) => {
-        const g = handle(kind);
-        const ex = P.x + dx * armLen, ey = P.y + dy * armLen;
-        g.appendChild(gizmoEl('line', {x1:P.x + dx * armStart, y1:P.y + dy * armStart, x2:ex, y2:ey, 'stroke-width': 16 * u}, 'gizmo-hit-stroke'));
-        g.appendChild(gizmoEl('line', {x1:P.x + dx * armStart, y1:P.y + dy * armStart, x2:ex, y2:ey}, 'gizmo-axis ' + axisCls + ' gizmo-vis'));
-        if(tool === 'move'){
-          const al = 12 * u, aw = 5 * u;
-          const tipX = P.x + dx * (armLen + al), tipY = P.y + dy * (armLen + al);
-          const pts = `${tipX},${tipY} ${ex - dy * aw},${ey + dx * aw} ${ex + dy * aw},${ey - dx * aw}`;
-          g.appendChild(gizmoEl('circle', {cx:ex + dx * al / 2, cy:ey + dy * al / 2, r: 11 * u}, 'gizmo-hit'));
-          g.appendChild(gizmoEl('polygon', {points: pts}, 'gizmo-arrow-' + (dx ? 'x' : 'y') + ' gizmo-vis'));
-          const t = gizmoEl('text', {x: tipX + dx * 9 * u - (dy ? 3 * u : 0), y: tipY + dy * 12 * u + (dx ? 4 * u : 0), 'font-size': 11 * u, fill: dx ? '#fb7185' : '#4ade80'}, 'gizmo-axis-label');
-          t.textContent = label;
-          g.appendChild(t);
-        } else {
-          const box = 13 * u;
-          g.appendChild(gizmoEl('rect', {x:ex - 11 * u, y:ey - 11 * u, width:22 * u, height:22 * u}, 'gizmo-hit'));
-          g.appendChild(gizmoEl('rect', {x:ex - box/2, y:ey - box/2, width:box, height:box}, 'gizmo-handle-box ' + boxCls + ' gizmo-vis'));
-        }
-        return g;
-      };
-      axisHandle(tool === 'move' ? 'move-x' : 'scale-x', 1, 0, 'gizmo-axis-x', 'gizmo-box-x', 'x');
-      axisHandle(tool === 'move' ? 'move-y' : 'scale-y', 0, 1, 'gizmo-axis-y', 'gizmo-box-y', 'y');
-      const centre = handle(tool === 'move' ? 'move-free' : 'scale-uniform');
-      centre.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:13 * u}, 'gizmo-hit'));
-      if(tool === 'move'){
-        centre.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:7.5 * u}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
-      } else {
-        const box = 14 * u;
-        centre.appendChild(gizmoEl('rect', {x:P.x - box/2, y:P.y - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
-      }
-    }
-
-    // Pivot: marker for every tool; directly draggable in rotate/scale/rect
-    // (in move/rect the centre handle already owns that spot, so the small
-    // dot on top of it is the pivot grab). Double-click resets to centre.
-    if(tool === 'rotate' || tool === 'scale' || tool === 'rect'){
-      const pv = handle('pivot');
-      const title = gizmoEl('title'); title.textContent = I18N.t('gizmo_pivot'); pv.appendChild(title);
-      // In scale/rect the pivot sits inside the centre handle: keep its hit
-      // area to the dot itself so the centre handle stays grabbable around it.
-      pv.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:(tool === 'rotate' ? 11 : 7) * u}, 'gizmo-hit'));
-      pv.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:6 * u}, 'gizmo-pivot-ring gizmo-vis'));
-      pv.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:2 * u}, 'gizmo-pivot-dot gizmo-vis'));
-    } else {
-      root.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:6 * u}, 'gizmo-pivot-ring gizmo-vis'));
-    }
-    if(gizmoDrag?.readout){
-      const t = gizmoEl('text', {x: tool === 'rect' ? b.cx : P.x, y: topY - 10 * u, 'font-size': 12.5 * u}, 'gizmo-readout');
-      t.textContent = gizmoDrag.readout;
-      root.appendChild(t);
-    }
-  }
   function renderSidebar(){
     renderStartSelect();
     renderSelectionPanel();

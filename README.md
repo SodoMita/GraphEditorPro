@@ -28,6 +28,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 | `src/app/20-rendering.ts` | SVG, matrix, edge-list, and selection rendering |
 | `src/app/30-graph-editing.ts` | Graph mutations, selection, sorting, and matrix editing |
 | `src/app/40-interactions.ts` | Pointer, drag, pan, zoom, and canvas selection behavior |
+| `src/app/45-gizmo.ts` | Position-only translate/rotate/scale/rect selection gizmo |
 | `src/app/50-import-export.ts` | JSON, CSV, DOT, and GraphML import/export |
 | `src/app/60-algorithms.ts` | Graph algorithms and automatic layouts |
 | `src/app/70-controls.ts` | Style controls, presets, camera controls, and hotkeys |
@@ -41,7 +42,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 
 ## Moving selections: transform gizmos
 
-In Select mode, a selection that contains nodes (or only edges — their endpoints are used) gets a transform gizmo: a floating toolbar row of its own above the selection tools, and handles drawn around the selection on the canvas. **Every gizmo tool rewrites only node `x`/`y` positions.** Node widths, heights, shapes, colors, labels — all visual parameters of the individual parts — are never touched; the node bodies simply ride to their new spots and connected edges follow through the same live-edge fast path as an ordinary node drag.
+In Select mode, a selection that contains nodes (or only edges — their endpoints are used) gets a transform gizmo: handles drawn around the selection on the canvas, a floating toolbar row above the selection tools, and a matching **Transform gizmo** section in the Edit tab with a live status readout. **Every gizmo tool rewrites only node `x`/`y` positions.** Node widths, heights, shapes, colors, labels — all visual parameters of the individual parts — are never touched; the node bodies simply ride to their new spots and connected edges follow through the same live-edge fast path as an ordinary node drag.
 
 | Tool | Handles | What it does to the selected positions |
 | --- | --- | --- |
@@ -52,9 +53,9 @@ In Select mode, a selection that contains nodes (or only edges — their endpoin
 
 The **pivot** defaults to the centre of the selection's bounding box. In Rotate/Scale (and Rect) it is the small white dot: drag it — it snaps onto node centres — to rotate or scale around any point, and double-click it to reset. It resets automatically when the set of selected nodes changes.
 
-A numeric readout (delta, angle, factor, or frame size) follows the drag on the canvas and in the status pill. `Esc` cancels a gizmo drag and restores the exact pre-gesture positions; a committed drag is a single undo step. Arrow keys nudge the selection (grid step while snap is on, otherwise 1 unit; `Shift` multiplies). `G` (or the *Show transform gizmo* option under Behavior & grid) hides the gizmo when its handles would get in the way. The digit/`G` bindings are remappable like the other hotkeys.
+A numeric readout (delta, angle, factor, or frame size) follows the drag on the canvas and in the status pill. `Esc` cancels a gizmo drag and restores the exact pre-gesture positions; a committed drag is a single undo step. Arrow keys nudge the selection (grid step while snap is on, otherwise 1 unit; `Shift` multiplies). `G` (or the *Show transform gizmo* checkbox in the Edit tab's Transform gizmo section) hides the gizmo when its handles would get in the way. The digit/`G` bindings are remappable like the other hotkeys.
 
-Implementation notes: the gizmo lives in its own `#gizmoLayer` inside the camera scene, above the nodes, and is rebuilt only when its signature (tool, selection ids, pivot, bounds, screen-pixel size, drag state) changes. Handles are sized in world units per screen pixel, so they keep a constant on-screen size at any zoom; only handle shapes take pointer events (lines and the rotate ring are stroke-only), so the frame never blocks the nodes under it. During an ordinary group drag the whole gizmo follows with a single transform write on its root instead of a rebuild.
+Implementation notes: `src/app/45-gizmo.ts` owns the gizmo's preferences, rendering, gestures and keyboard nudging; the rest of the app only keeps render/selection notifications, pointermove/pointerup routing, and button/hotkey wiring. The active tool and show/hide choice are browser UI preferences in `localStorage` (`graph-editor-pro-gizmo`), not document data — they never enter exports, autosaves or undo snapshots, and toggling visibility cannot create a history step (legacy autosaves that still carry the old document fields are migrated once on load). The gizmo lives in its own `#gizmoLayer` inside the camera scene, above the nodes, and is rebuilt only when its signature (tool, selection ids, pivot, bounds, screen-pixel size, drag state) changes. Handles are sized in world units per screen pixel, so they keep a constant on-screen size at any zoom; only handle shapes take pointer events (lines and the rotate ring are stroke-only), so the frame never blocks the nodes under it. During an ordinary group drag the whole gizmo follows with a single transform write on its root instead of a rebuild.
 
 ## Build and safety guarantees
 

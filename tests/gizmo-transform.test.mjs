@@ -142,14 +142,16 @@ async function setup(t, graph = baseGraph) {
   return { window, document, svg, pointer, clickNode, selectSquare, gizmoDrag, key, handles };
 }
 
-test('gizmo appears for a selection in select mode only, and tool choice persists', async t => {
-  const { document, selectSquare, handles, key } = await setup(t);
+test('gizmo appears for a selection in select mode only; tool persists as a UI preference', async t => {
+  const { window, document, selectSquare, handles, key } = await setup(t);
   assert.deepEqual(handles(), [], 'no gizmo without a selection');
   assert.equal(document.querySelector('.canvas-wrap').classList.contains('gizmo-active'), false);
   await selectSquare();
   assert.deepEqual(handles(), ['move-x', 'move-y', 'move-free']);
   assert.equal(document.querySelector('.canvas-wrap').classList.contains('gizmo-active'), true);
-  assert.equal(document.querySelector('[data-gizmotool="move"]').classList.contains('active'), true);
+  assert.equal(document.querySelectorAll('[data-gizmotool]').length, 8, 'floating row and sidebar section are both present');
+  assert.ok([...document.querySelectorAll('[data-gizmotool="move"]')].every(b => b.classList.contains('active')));
+  assert.match(document.querySelector('#gizmoReadout').textContent, /Move.*4 target node/);
 
   document.querySelector('[data-gizmotool="rotate"]').click();
   assert.deepEqual(handles(), ['rotate', 'pivot']);
@@ -157,10 +159,15 @@ test('gizmo appears for a selection in select mode only, and tool choice persist
   assert.deepEqual(handles(), ['scale-x', 'scale-y', 'scale-uniform', 'pivot']);
   document.querySelector('[data-gizmotool="rect"]').click();
   assert.deepEqual(handles(), ['rect-n', 'rect-e', 'rect-s', 'rect-w', 'rect-nw', 'rect-ne', 'rect-se', 'rect-sw', 'rect-move', 'pivot']);
-  assert.equal(exported(document).gizmoTool, 'rect', 'gizmo tool is part of the saved document');
+  assert.ok([...document.querySelectorAll('[data-gizmotool="rect"]')].every(b => b.classList.contains('active')));
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('graph-editor-pro-gizmo')), { tool: 'rect', enabled: true });
+  const exportedGraph = exported(document);
+  assert.equal(Object.hasOwn(exportedGraph, 'gizmoTool'), false, 'gizmo tool is not document data');
+  assert.equal(Object.hasOwn(exportedGraph.settings, 'gizmoEnabled'), false, 'gizmo visibility is not a document setting');
 
   key('Digit1', { key: '1' });
-  assert.equal(exported(document).gizmoTool, 'move', 'Digit1 hotkey selects the translate gizmo');
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('graph-editor-pro-gizmo')), { tool: 'move', enabled: true },
+    'Digit1 hotkey selects the translate gizmo and persists the UI preference');
 
   document.querySelector('#modeMove').click();
   assert.deepEqual(handles(), [], 'gizmo hides outside select mode');
@@ -335,21 +342,63 @@ test('edge-only selection is transformed through its endpoints', async t => {
   assertPos(nodes.n3, 400, 400); assertPos(nodes.n5, 650, 300);
 });
 
-test('arrow keys nudge the selection and G toggles the gizmo', async t => {
-  const { document, selectSquare, key, handles } = await setup(t);
+test('arrow keys nudge the selection and G toggles the gizmo without touching the document', async t => {
+  const { window, document, selectSquare, key, handles } = await setup(t);
   await selectSquare();
   key('ArrowRight', { key: 'ArrowRight' });
   key('ArrowDown', { key: 'ArrowDown', shiftKey: true });
-  let nodes = nodeMap(exported(document));
+  let graph = exported(document);
+  let nodes = nodeMap(graph);
   assertPos(nodes.n1, 201, 210); assertPos(nodes.n3, 401, 410); assertPos(nodes.n5, 650, 300);
 
   key('KeyG', { key: 'g' });
   assert.deepEqual(handles(), [], 'G hides the gizmo');
-  assert.equal(exported(document).settings.gizmoEnabled, false);
+  assert.equal(document.querySelector('#optGizmo').checked, false);
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('graph-editor-pro-gizmo')), { tool: 'move', enabled: false });
+  graph = exported(document);
+  assert.equal(Object.hasOwn(graph.settings, 'gizmoEnabled'), false);
   key('KeyG', { key: 'g' });
   assert.deepEqual(handles(), ['move-x', 'move-y', 'move-free'], 'G brings the gizmo back');
+  assert.equal(document.querySelector('#optGizmo').checked, true);
   nodes = nodeMap(exported(document));
   assertPos(nodes.n1, 201, 210, 'toggling the gizmo never moves nodes');
+});
+
+test('gizmo tool and visibility changes create no undo step and survive undo', async t => {
+  const { window, document, selectSquare, key, handles } = await setup(t);
+  await selectSquare();
+  key('ArrowRight', { key: 'ArrowRight' }); // the one real, undoable edit
+  document.querySelector('[data-gizmotool="rotate"]').click();
+  key('KeyG', { key: 'g' });
+  key('KeyG', { key: 'g' });
+
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window);
+  assertPos(nodeMap(exported(document)).n1, 200, 200,
+    'the single undo consumed the nudge, proving the toggles added no history entries');
+  assert.ok([...document.querySelectorAll('[data-gizmotool="rotate"]')].every(b => b.classList.contains('active')),
+    'undo does not change the UI-owned gizmo tool');
+  assert.equal(document.querySelector('#optGizmo').checked, true, 'undo does not change gizmo visibility');
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('graph-editor-pro-gizmo')), { tool: 'rotate', enabled: true });
+
+  await selectSquare();
+  assert.deepEqual(handles(), ['rotate', 'pivot']);
+});
+
+test('legacy document gizmo fields migrate to the UI preference and leave exports clean', async t => {
+  const graph = { ...baseGraph, gizmoTool: 'scale', settings: { gizmoEnabled: false } };
+  const { window, document, selectSquare, key, handles } = await setup(t, graph);
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('graph-editor-pro-gizmo')), { tool: 'scale', enabled: false });
+  const graphAfterLoad = exported(document);
+  assert.equal(Object.hasOwn(graphAfterLoad, 'gizmoTool'), false);
+  assert.equal(Object.hasOwn(graphAfterLoad.settings, 'gizmoEnabled'), false);
+
+  await selectSquare();
+  assert.deepEqual(handles(), [], 'migrated hidden preference is honored');
+  assert.match(document.querySelector('#gizmoReadout').textContent, /hidden/i);
+  key('KeyG', { key: 'g' });
+  assert.deepEqual(handles(), ['scale-x', 'scale-y', 'scale-uniform', 'pivot'], 'migrated scale tool is honored');
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('graph-editor-pro-gizmo')), { tool: 'scale', enabled: true });
 });
 
 test('single-node selection transforms as a group of one', async t => {

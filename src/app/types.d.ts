@@ -63,7 +63,6 @@ interface GraphState {
   mode: GraphMode;
   selectTool: SelectionTool;
   selectCombine: SelectionCombine;
-  gizmoTool: GizmoTool;
   nextNode: number;
   nextEdge: number;
   nodes: GraphNode[];

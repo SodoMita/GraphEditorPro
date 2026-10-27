@@ -194,7 +194,6 @@
                 <label class="chk" for="optInheritDefaults" title="New nodes inherit Style-tab defaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">Inherit defaults</span></label>
                 <p class="tiny muted" style="margin:2px 0 6px"><span data-i18n="inherit_defaults_desc">When on, new nodes have unset visual properties and follow Style-tab defaults dynamically.</span></p>
                 <label class="chk" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">No label</span></label>
-                <label class="chk" for="optGizmo"><input id="optGizmo" type="checkbox" checked /> <span data-i18n="gizmo_enabled">Show transform gizmo for the selection (translate / rotate / scale / rect — positions only)</span></label>
                 <label class="chk" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap grid</span></label>
                 <label class="chk" for="optSnapX"><input id="optSnapX" type="checkbox" /> <span data-i18n="snap_x">Snap X</span></label>
                 <label class="chk" for="optSnapY"><input id="optSnapY" type="checkbox" /> <span data-i18n="snap_y">Snap Y</span></label>
@@ -272,6 +271,25 @@
                   <button class="btn symbol-only active" data-hittest="any" title="Select nodes or edges by any part" data-i18n-title="hit_any_title" aria-label="Select nodes or edges by any part" data-i18n-aria-label="hit_any_title"><span class="unicode-symbol" aria-hidden="true">◌</span></button>
                   <button class="btn symbol-only" data-hittest="center" title="Select only at exact centres" data-i18n-title="hit_center_title" aria-label="Select only at exact centres" data-i18n-aria-label="hit_center_title"><span class="unicode-symbol" aria-hidden="true">⊙</span></button>
                 </div>
+              </div>
+            </details>
+
+            <details class="section" open>
+              <summary class="section-title">
+                <span data-i18n="gizmo_section">Transform gizmo</span>
+                <span class="tiny muted" data-i18n="gizmo_section_sub">(positions only)</span>
+              </summary>
+              <div class="sec-body">
+                <label class="chk" for="optGizmo" style="margin-bottom:7px"><input id="optGizmo" type="checkbox" checked /> <span data-i18n="gizmo_enabled">Show transform gizmo for the selection (translate / rotate / scale / rect — positions only)</span></label>
+                <div class="gizmo-mode-grid" role="group" aria-label="Transform gizmo tools" data-i18n-aria-label="gizmo_tools">
+                  <button class="btn small" data-gizmotool="move" data-i18n-title="gizmo_move" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-move"></use></svg> <span data-i18n="gizmo_move_label">Move</span></button>
+                  <button class="btn small" data-gizmotool="rotate" data-i18n-title="gizmo_rotate" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rotate"></use></svg> <span data-i18n="gizmo_rotate_label">Rotate</span></button>
+                  <button class="btn small" data-gizmotool="scale" data-i18n-title="gizmo_scale" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-scale"></use></svg> <span data-i18n="gizmo_scale_label">Scale</span></button>
+                  <button class="btn small" data-gizmotool="rect" data-i18n-title="gizmo_rect" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-gizmo-rect"></use></svg> <span data-i18n="gizmo_rect_label">Rect</span></button>
+                </div>
+                <div class="tiny muted gizmo-note" data-i18n="gizmo_note">Drag the on-canvas handles to transform the selected nodes (or a selected edge’s endpoints). Only positions change; sizes, shapes, labels, colours and edge styles stay untouched.</div>
+                <div id="gizmoReadout" class="tiny muted gizmo-sidebar-readout"></div>
+                <p class="tiny muted gizmo-note" data-i18n="gizmo_keys">Keys 1–4 choose a tool; G shows/hides the gizmo. Drag the white pivot in Rotate/Scale/Rect to move the transform centre (double-click resets). Shift snaps rotation and locks proportions; Alt rect-stretches from the centre; Esc cancels; arrows nudge.</p>
               </div>
             </details>
 

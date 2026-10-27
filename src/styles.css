@@ -237,6 +237,15 @@
     }
     .sel-tools svg,.edge-tools svg,.gizmo-tools svg{width:17px; height:17px; display:block}
 
+    /* Sidebar mirror of the floating gizmo row: same data-gizmotool buttons,
+       kept in sync by syncGizmoControls(), plus a textual status readout. */
+    .gizmo-mode-grid{display:flex; flex-wrap:wrap; gap:5px}
+    .gizmo-mode-grid .btn{display:inline-flex; align-items:center; gap:5px; min-height:34px}
+    .gizmo-mode-grid .btn.active{border-color:var(--accent); color:var(--accent); box-shadow:0 0 0 1px rgba(34,211,238,.35) inset}
+    .gizmo-mode-grid .ui-icon{width:15px; height:15px}
+    .gizmo-sidebar-readout{margin-top:8px; padding:6px 8px; border-radius:8px; background:rgba(34,211,238,.07); border:1px solid rgba(34,211,238,.18); color:#cbd5e1}
+    .gizmo-note{margin:7px 0 0; line-height:1.45}
+
     /* ---------- Tool tabs ---------- */
     .tab{
       flex:1; min-width:0; min-height:44px; border:none; background:transparent; color:var(--dim);

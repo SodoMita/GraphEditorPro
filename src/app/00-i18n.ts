@@ -85,6 +85,17 @@ const I18N: I18nService = {
     'gizmo_rect': { en: 'Rect: stretch selected node positions with the bounding box (Alt = from centre, Shift = keep aspect)', ru: 'Прямоугольник: растягивать позиции выбранных узлов рамкой (Alt = от центра, Shift = сохранять пропорции)' },
     'gizmo_enabled': { en: 'Show transform gizmo for the selection (translate / rotate / scale / rect — positions only)', ru: 'Показывать гизмо трансформации выделения (перемещение / вращение / масштаб / рамка — только позиции)' },
     'gizmo_pivot': { en: 'Pivot — drag to move the rotation/scale centre, double-click to reset', ru: 'Пивот — перетащите, чтобы сместить центр вращения/масштаба, двойной клик — сброс' },
+    'gizmo_section': { en: 'Transform gizmo', ru: 'Гизмо трансформаций' },
+    'gizmo_section_sub': { en: '(positions only)', ru: '(только позиции)' },
+    'gizmo_move_label': { en: 'Move', ru: 'Движение' },
+    'gizmo_rotate_label': { en: 'Rotate', ru: 'Поворот' },
+    'gizmo_scale_label': { en: 'Scale', ru: 'Масштаб' },
+    'gizmo_rect_label': { en: 'Rect', ru: 'Рамка' },
+    'gizmo_note': { en: 'Drag the on-canvas handles to transform the selected nodes (or a selected edge’s endpoints). Only positions change; sizes, shapes, labels, colours and edge styles stay untouched.', ru: 'Перетаскивайте маркеры на холсте, чтобы преобразовать выбранные узлы (или концы выбранного ребра). Меняются только позиции; размеры, формы, подписи, цвета и стили рёбер не затрагиваются.' },
+    'gizmo_keys': { en: 'Keys 1–4 choose a tool; G shows/hides the gizmo. Drag the white pivot in Rotate/Scale/Rect to move the transform centre (double-click resets). Shift snaps rotation and locks proportions; Alt rect-stretches from the centre; Esc cancels; arrows nudge.', ru: 'Клавиши 1–4 выбирают инструмент; G показывает/скрывает гизмо. Белый пивот в Вращении/Масштабе/Рамке перетаскивается (двойной клик — сброс). Shift — шаг поворота и пропорции; Alt — рамка от центра; Esc — отмена; стрелки сдвигают выделение.' },
+    'gizmo_active': { en: 'Active: {mode} · {n} target node(s) · positions only', ru: 'Активно: {mode} · целевых узлов: {n} · только позиции' },
+    'gizmo_no_selection': { en: 'Select nodes (or an edge) in Select mode to transform their positions.', ru: 'Выделите узлы (или ребро) в режиме Выбора, чтобы изменить их позиции.' },
+    'gizmo_hidden': { en: 'Gizmo hidden — press G or enable “Show transform gizmo”.', ru: 'Гизмо скрыто — нажмите G или включите «Показывать гизмо трансформации».' },
 
     // --- Edit tab: Node placement ---
     'node_placement': { en: 'Node placement', ru: 'Размещение узла' },

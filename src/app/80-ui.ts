@@ -578,7 +578,7 @@
       if(matchesHotkey(ev, 'gizmoRotate')){ ev.preventDefault(); setMode('select'); setGizmoTool('rotate'); return; }
       if(matchesHotkey(ev, 'gizmoScale')){ ev.preventDefault(); setMode('select'); setGizmoTool('scale'); return; }
       if(matchesHotkey(ev, 'gizmoRect')){ ev.preventDefault(); setMode('select'); setGizmoTool('rect'); return; }
-      if(matchesHotkey(ev, 'gizmoToggle')){ ev.preventDefault(); setGizmoEnabled(state.settings.gizmoEnabled === false); return; }
+      if(matchesHotkey(ev, 'gizmoToggle')){ ev.preventDefault(); setGizmoEnabled(!gizmoEnabled); return; }
       // Arrow keys nudge the gizmo target nodes (grid step while snap is on,
       // otherwise 1 unit; Shift multiplies the step).
       if(state.mode === 'select' && !ctrl && !ev.altKey && ev.key.startsWith('Arrow') && !(ev.target as HTMLElement)?.closest?.('#toolsPanel')){
