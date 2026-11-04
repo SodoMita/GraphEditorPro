@@ -454,7 +454,7 @@
     const inhEl = $('#optInheritDefaults'); if(inhEl) inhEl.checked = state.settings.inheritDefaults !== false;
     const noLblEl = $('#optNoLabel'); if(noLblEl) noLblEl.checked = Boolean(state.settings.noLabel);
     const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(chkPreserve) chkPreserve.checked = state.settings.copyPreserveExternal !== false;
-    if((window as any).syncPreserve) (window as any).syncPreserve();
+    if(syncUiHooks) syncUiHooks();
     syncStyleControls();
     syncEditTypeLists();
     renderCustomAttributes();
@@ -1429,9 +1429,12 @@
     return ids;
   }
   function matrixNodes(){
-    const dim = clamp(parseInt(state.settings.matrixDimension,10) || 0, 0, 300);
+    const dim = clamp(parseInt(state.settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     const sorted = visibleNodes();
-    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted;
+    // Hard ceiling, independent of matrixLimit: every matrix cell is an <input>,
+    // so an n×n grid is n² DOM elements. Without this, a document with a large
+    // matrixLimit (or a big graph and matrixDimension 0) can freeze the tab.
+    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted.slice(0, MATRIX_MAX_NODES);
   }
   let edgeListRenderLimit = 250;
   function configuredEdgeListPageSize(){
@@ -1441,7 +1444,7 @@
     edgeListRenderLimit = configuredEdgeListPageSize();
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
-    const sizeInput = $('#matrixSize'); if(sizeInput) sizeInput.value = state.settings.matrixDimension || total;
+    const sizeInput = $('#matrixSize'); if(sizeInput) sizeInput.value = state.settings.matrixDimension || Math.min(total, MATRIX_MAX_NODES);
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
@@ -1494,7 +1497,7 @@
       const downDisabled = pos === allSorted.length - 1 ? ' disabled' : '';
       return `<th><div class="matrix-header-cell"><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="-1" title="${esc(I18N.t('move_left'))}" aria-label="${esc(I18N.t('move_left'))}: ${esc(n.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="${esc(I18N.t('order'))}">${n.order??0}</span><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="1" title="${esc(I18N.t('move_right'))}" aria-label="${esc(I18N.t('move_right'))}: ${esc(n.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>`;
     }).join('');
-    parts.push('<table><thead><tr><th></th>', header, '</tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('matrix_corner')) + '</span></th>', header, '</tr></thead><tbody>');
     for(let i=0;i<nodes.length;i++){
       const row = nodes[i];
       const pos = orderPos.get(row.id) ?? i;
@@ -1541,7 +1544,7 @@
     }
     const selectedEdges = selectedEdgeIds();
     const parts: string[] = [];
-    parts.push('<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('rows_reorder')) + '</span></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
     for(let i=0;i<renderedEdges.length;i++){
       const e = renderedEdges[i];
       const a = nodeById(e.from), b = nodeById(e.to);

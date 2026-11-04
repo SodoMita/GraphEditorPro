@@ -39,6 +39,12 @@
     button{cursor:pointer}
     ::selection{background:rgba(34,211,238,.28)}
     .icon-sprite{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
+    /* Text that is only for screen readers (page heading, table corner cells):
+       keeps the accessible structure without adding visual layout. */
+    .visually-hidden{
+      position:absolute !important; width:1px; height:1px; margin:-1px; padding:0;
+      overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0;
+    }
     .ui-icon{
       width:18px;height:18px;display:block;flex:0 0 auto;
       fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;
@@ -836,6 +842,7 @@
 
     <!-- ================= App command bar — every core action is one click away ================= -->
     <header class="panel appbar">
+      <h1 class="visually-hidden" data-i18n="brand_name">Graph Editor Pro</h1>
       <div class="brand" title="Graph Editor Pro">
         <div class="brand-badge">G</div>
         <span class="brand-name" data-i18n="brand_name">Graph Editor Pro</span>
@@ -2168,6 +2175,15 @@ const I18N = {
         'highest_degree': { en: 'Highest degree:', ru: 'Наибольшая степень:' },
         'na': { en: 'n/a', ru: 'н/д' },
         'language_switched': { en: 'Language: English', ru: 'Язык: Русский' },
+        // --- Audit fixes: import feedback, layout budget, autosave, a11y labels ---
+        'appended_n_m': { en: '{label} appended: +{n} nodes, +{m} edges', ru: '{label}: добавлено +{n} узлов, +{m} рёбер' },
+        'appended_n_m_discarded': { en: '{label} appended: +{n} nodes, +{m} edges (discarded {d} dangling)', ru: '{label}: добавлено +{n} узлов, +{m} рёбер (отброшено висячих: {d})' },
+        'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано {imported}; отброшено {dropped} — лимит документа {limit}' },
+        'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано {imported}; пропущено {skipped} записей с неизвестными узлами' },
+        'layout_force_reduced': { en: 'Large graph: force layout ran {iter} passes instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter} проходов вместо 180, чтобы не подвешивать интерфейс' },
+        'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
+        'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
+        'rows_reorder': { en: 'Reorder row', ru: 'Перестановка строки' },
     },
     // Текущий язык
     current: 'en',
@@ -2214,8 +2230,14 @@ const I18N = {
         });
         // Show the language the button will switch to without replacing its SVG.
         const langCode = document.getElementById('langCode');
-        if (langCode)
+        if (langCode) {
             langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
+            // Accessible name must contain the visible label (the code shown), not
+            // just the generic "Switch language" action.
+            const langBtn = document.getElementById('btnLang');
+            if (langBtn)
+                langBtn.setAttribute('aria-label', this.t('lang_switch') + ': ' + langCode.textContent);
+        }
         // Обновить title документа
         const titleInput = document.getElementById('docTitleInput');
         if (titleInput && (titleInput.value === 'untitled' || titleInput.value === 'безымянный')) {
@@ -2243,9 +2265,6 @@ const I18N = {
         catch { }
     }
 };
-// Keep the service available for debugging while the application itself uses
-// the typed lexical binding above.
-window.I18N = I18N;
 const NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'graph-editor-pro-v2';
 const AUTOSAVE_PREF_KEY = 'graph-editor-pro-autosave';
@@ -2256,6 +2275,15 @@ const R = 25;
 // bounds per-frame work at a few milliseconds.
 const DRAG_LIVE_EDGE_LIMIT = 2000;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+// The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
+// size is capped independently of the user-facing row limit: 300 columns is
+// already ~90k elements (~5 s of DOM work on a mid-range machine). The
+// matrixLimit setting decides when the matrix is hidden *below* this cap; it
+// can never raise the cap itself.
+const MATRIX_MAX_NODES = 300;
+// Pair-interaction budget for the force layout (see layoutForce): bounds one
+// click to roughly a second on a mid-range machine instead of O(iter·n²).
+const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
 /** Return a required DOM element or fail immediately with a useful error. */
 const $ = (selector, root = document) => {
     // Plain "#id" lookups are common in render paths (camera inputs,
@@ -2362,6 +2390,10 @@ const activePointers = new Map();
 // Clipboard for copy/paste of nodes+edges
 let clipboardData = null;
 let pasteOffsetCount = 0;
+// UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
+// controls call it instead of reaching for a global, so modules stay
+// decoupled without leaking implementation state onto `window`.
+let syncUiHooks = null;
 function snapshot() {
     flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
@@ -2415,6 +2447,10 @@ function applySnapshot(raw) {
 // memory and eviction cost predictable where an entry cap alone would not.
 const HISTORY_MAX_ENTRIES = 100;
 const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+// Snapshots are JS strings (UTF-16), so the memory they occupy is two bytes
+// per code unit. Counting code units here would make the byte cap twice as
+// permissive as its name claims.
+const snapshotBytes = (snap) => snap.length * 2;
 let historyBytes = 0;
 function pushHistory(label = 'change') {
     const snap = snapshot();
@@ -2422,10 +2458,10 @@ function pushHistory(label = 'change') {
         return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    historyBytes += snap.length;
+    historyBytes += snapshotBytes(snap);
     appHistoryIndex = appHistory.length - 1;
     while (appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)) {
-        historyBytes -= appHistory[0].length;
+        historyBytes -= snapshotBytes(appHistory[0]);
         appHistory.shift();
         appHistoryIndex--;
     }
@@ -2435,7 +2471,7 @@ function pushHistory(label = 'change') {
 function resetHistory() {
     appHistory = [snapshot()];
     appHistoryIndex = 0;
-    historyBytes = appHistory[0].length;
+    historyBytes = snapshotBytes(appHistory[0]);
     updateUndoRedo();
 }
 function undo() { if (appHistoryIndex <= 0)
@@ -3447,8 +3483,8 @@ function syncControls() {
     const chkPreserve = document.getElementById('chkCopyPreserve');
     if (chkPreserve)
         chkPreserve.checked = state.settings.copyPreserveExternal !== false;
-    if (window.syncPreserve)
-        window.syncPreserve();
+    if (syncUiHooks)
+        syncUiHooks();
     syncStyleControls();
     syncEditTypeLists();
     renderCustomAttributes();
@@ -4802,9 +4838,12 @@ function visibleNodeIds() {
     return ids;
 }
 function matrixNodes() {
-    const dim = clamp(parseInt(state.settings.matrixDimension, 10) || 0, 0, 300);
+    const dim = clamp(parseInt(state.settings.matrixDimension, 10) || 0, 0, MATRIX_MAX_NODES);
     const sorted = visibleNodes();
-    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted;
+    // Hard ceiling, independent of matrixLimit: every matrix cell is an <input>,
+    // so an n×n grid is n² DOM elements. Without this, a document with a large
+    // matrixLimit (or a big graph and matrixDimension 0) can freeze the tab.
+    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted.slice(0, MATRIX_MAX_NODES);
 }
 let edgeListRenderLimit = 250;
 function configuredEdgeListPageSize() {
@@ -4816,7 +4855,7 @@ function renderMatrixAndList() {
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
     const sizeInput = $('#matrixSize');
     if (sizeInput)
-        sizeInput.value = state.settings.matrixDimension || total;
+        sizeInput.value = state.settings.matrixDimension || Math.min(total, MATRIX_MAX_NODES);
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || { start: -1, end: -1 };
     const rangeActive = vr.start >= 0 || vr.end >= 0;
@@ -4884,7 +4923,7 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
         const downDisabled = pos === allSorted.length - 1 ? ' disabled' : '';
         return `<th><div class="matrix-header-cell"><input class="matrix-label-input${isNodeSelected(n.id) ? ' matrix-selected' : ''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="-1" title="${esc(I18N.t('move_left'))}" aria-label="${esc(I18N.t('move_left'))}: ${esc(n.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="${esc(I18N.t('order'))}">${n.order ?? 0}</span><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="1" title="${esc(I18N.t('move_right'))}" aria-label="${esc(I18N.t('move_right'))}: ${esc(n.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>`;
     }).join('');
-    parts.push('<table><thead><tr><th></th>', header, '</tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('matrix_corner')) + '</span></th>', header, '</tr></thead><tbody>');
     for (let i = 0; i < nodes.length; i++) {
         const row = nodes[i];
         const pos = orderPos.get(row.id) ?? i;
@@ -4936,7 +4975,7 @@ function edgeListHtml() {
     }
     const selectedEdges = selectedEdgeIds();
     const parts = [];
-    parts.push('<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('rows_reorder')) + '</span></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
     for (let i = 0; i < renderedEdges.length; i++) {
         const e = renderedEdges[i];
         const a = nodeById(e.from), b = nodeById(e.to);
@@ -7734,7 +7773,19 @@ function assertImportTextSize(text) {
     }
 }
 function fmtCoord(v) { return (Math.round(v * 10000) / 10000).toString(); }
-function csvCell(v) { v = String(v ?? ''); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+// Spreadsheet apps execute a cell that starts with =, +, @, tab or CR as a
+// formula. Graph labels and weights are user/import-controlled text, so a
+// malicious .json could otherwise run code on the exporter's machine when the
+// CSV is opened in Excel/Sheets. Prefix such cells with an apostrophe (the
+// standard mitigation) while leaving plain numbers — including negative
+// coordinates — untouched so the CSV stays usable.
+function csvCell(v) {
+    v = String(v ?? '');
+    const formulaLike = /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
+    if (formulaLike)
+        v = "'" + v;
+    return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
 function rowsToCsv(rows) { return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
 function edgeCsv() {
     const rows = [['id', 'source_id', 'source_label', 'target_id', 'target_label', 'weight', 'directed', 'label', 'type', 'color', 'stroke_size', 'stroke_style', 'label_color', 'label_size']];
@@ -7910,6 +7961,15 @@ function showExportPreview(name, content, type) {
 }
 function fileBase() { return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'graph'; }
 function exportJson() { showExportPreview(`${fileBase()}.graph.json`, JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json;charset=utf-8'); }
+// Map the editor's shape names onto DOT's vocabulary (and back in parseDot).
+function dotShapeName(shape) {
+    return shape === 'diamond' ? 'diamond'
+        : shape === 'square' ? 'box'
+            : shape === 'triangleUp' ? 'triangle'
+                : shape === 'triangleDown' ? 'invtriangle'
+                    : shape === 'hexagon' ? 'polygon'
+                        : 'ellipse';
+}
 function dotId(id) { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : '"' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
 function dotString(v) { return '"' + String(v ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'; }
 function exportDotText() {
@@ -7918,7 +7978,14 @@ function exportDotText() {
     const connector = allDirected ? '->' : '--';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
-        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(n.shape === 'diamond' ? 'diamond' : n.shape === 'square' ? 'box' : 'ellipse')}`, `fillcolor=${dotString(n.color)}`, `order=${n.order ?? 0}`];
+        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(n.shape))}`];
+        // Hexagon has no native DOT shape: emit a regular polygon so the importer
+        // can restore it instead of flattening it to an ellipse.
+        if (n.shape === 'hexagon')
+            attrs.push('sides=6', 'regular=true');
+        attrs.push(`fillcolor=${dotString(n.color)}`, `order=${n.order ?? 0}`);
+        if (n.type)
+            attrs.push(`type=${dotString(n.type)}`);
         lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for (const e of state.edges) {
@@ -8127,10 +8194,9 @@ function appendImportedGraph(data, label = 'graph') {
     pushHistory(`append ${label}`);
     queueRender(true, true);
     saveSoon();
-    const msg = discarded > 0
-        ? `${label} appended: +${sane.nodes.length} nodes, +${validEdges.length} edges (${discarded} dangling edge${discarded === 1 ? '' : 's'} discarded)`
-        : `${label} appended: +${sane.nodes.length} nodes, +${validEdges.length} edges`;
-    toast(msg);
+    toast(discarded > 0
+        ? I18N.t('appended_n_m_discarded', { label, n: sane.nodes.length, m: validEdges.length, d: discarded })
+        : I18N.t('appended_n_m', { label, n: sane.nodes.length, m: validEdges.length }));
 }
 function importGraphData(data, label, append) {
     if (append) {
@@ -8215,6 +8281,40 @@ function parseCsv(text) {
     }
     return rows;
 }
+// Every CSV importer used to write straight into state.nodes/state.edges, so
+// it bypassed everything sanitizeState guarantees: the 3000/8000 caps, label
+// length, colour/shape/stroke validation and dangling-edge removal. A 4,000
+// row nodes CSV therefore produced a 4,000-node document that silently shrank
+// to 3,000 on the next reload. All CSV paths now funnel through the same
+// sanitizer as JSON/GraphML imports.
+function commitCsvGraph(nodes, edges, label) {
+    const sane = sanitizeState({
+        title: state.title, mode: state.mode, selectTool: state.selectTool,
+        selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
+        nodes, edges, customAttributes: state.customAttributes,
+        settings: state.settings, viewBox: state.viewBox
+    });
+    const droppedNodes = nodes.length - sane.nodes.length;
+    const droppedEdges = edges.length - sane.edges.length;
+    state = { ...state, ...sane, selected: null, selection: { nodes: [], edges: [] } };
+    invalidateGraphIndex();
+    invalidateSelectionCache();
+    pushHistory(label);
+    queueRender(true, true);
+    saveSoon();
+    return { droppedNodes, droppedEdges };
+}
+function csvImportToast(imported, dropped, skipped, limit, key) {
+    if (dropped > 0) {
+        toast(I18N.t('csv_import_capped', { imported, dropped, limit }));
+        return;
+    }
+    if (skipped > 0) {
+        toast(I18N.t('csv_import_skipped', { imported, skipped }));
+        return;
+    }
+    toast(I18N.t(key, { n: imported }));
+}
 function importEdgesCsv(text, append) {
     const rows = parseCsv(text);
     if (rows.length < 2) {
@@ -8231,31 +8331,33 @@ function importEdgesCsv(text, append) {
         return;
     }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
+    const idSet = new Set(state.nodes.map(n => n.id));
     const resolveNode = val => {
         if (!val)
             return null;
-        if (state.nodes.some(n => n.id === val))
+        if (idSet.has(val))
             return val;
         if (labelToId.has(val))
             return labelToId.get(val);
         return null;
     };
-    if (!append) {
-        state.edges = [];
-        state.selected = null;
-        state.selection = { nodes: [], edges: [] };
-    }
-    let count = 0;
+    const initialEdges = append ? state.edges.length : 0;
+    const edges = append ? state.edges.slice() : [];
+    let parsed = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length || (row.length === 1 && !row[0]))
             continue;
         const from = resolveNode(row[iFrom]);
         const to = resolveNode(row[iTo]);
-        if (!from || !to)
+        if (!from || !to) {
+            skipped++;
             continue;
+        }
         const e = {
-            id: (iId >= 0 && row[iId]) ? safeId(row[iId], 'e') : 'e' + state.nextEdge,
+            // Duplicate/invalid ids are normalised by the sanitizer below, so no
+            // quadratic uniqueness scan is needed here.
+            id: (iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed),
             from, to,
             weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0, 50) : '',
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
@@ -8268,16 +8370,11 @@ function importEdgesCsv(text, append) {
             e.strokeSize = clamp(parseFloat(row[iStrokeSize]) || 2.4, 0, 20);
         if (iStrokeStyle >= 0 && row[iStrokeStyle])
             e.strokeStyle = row[iStrokeStyle];
-        // Ensure unique edge ID
-        while (state.edges.some(x => x.id === e.id))
-            e.id = 'e' + state.nextEdge++;
-        state.edges.push(e);
-        count++;
+        edges.push(e);
+        parsed++;
     }
-    pushHistory('import edges csv');
-    queueRender(true, true);
-    saveSoon();
-    toast(I18N.t('imported_n_edges', { n: count }));
+    const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
 }
 function importMatrixCsv(text, append) {
     const rows = parseCsv(text);
@@ -8287,41 +8384,52 @@ function importMatrixCsv(text, append) {
     }
     const labels = rows[0].slice(1);
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
-    if (!append) {
-        state.edges = [];
-        state.selected = null;
-        state.selection = { nodes: [], edges: [] };
-    }
-    let count = 0;
+    const idSet = new Set(state.nodes.map(n => n.id));
+    // Only known endpoints are accepted. Previously an unknown label was used
+    // verbatim as a node id, which created invisible edges pointing at nodes
+    // that do not exist (they vanished on the next reload).
+    const resolveNode = (val, byId) => {
+        if (!val)
+            return null;
+        if (byId && idSet.has(val))
+            return val;
+        if (labelToId.has(val))
+            return labelToId.get(val);
+        if (idSet.has(val))
+            return val;
+        return null;
+    };
+    const initialEdges = append ? state.edges.length : 0;
+    const edges = append ? state.edges.slice() : [];
+    let parsed = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length)
             continue;
-        const fromLabel = row[0];
-        let fromId = labelToId.get(fromLabel);
+        const fromId = resolveNode(row[0], true);
         if (!fromId) {
-            fromId = fromLabel;
+            if (row.slice(1).some(v => (v || '').trim()))
+                skipped++;
+            continue;
         }
         for (let c = 1; c < row.length && c - 1 < labels.length; c++) {
             const val = (row[c] || '').trim();
             if (!val)
                 continue;
-            const toLabel = labels[c - 1];
-            let toId = labelToId.get(toLabel);
+            const toId = resolveNode(labels[c - 1], false);
             if (!toId) {
-                toId = toLabel;
+                skipped++;
+                continue;
             }
             const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
             for (const w of weights) {
-                state.edges.push({ id: 'e' + state.nextEdge++, from: fromId, to: toId, weight: w.slice(0, 50), label: '', directed: state.settings.directed, type: '' });
-                count++;
+                edges.push({ id: 'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0, 50), label: '', directed: state.settings.directed, type: '' });
+                parsed++;
             }
         }
     }
-    pushHistory('import matrix csv');
-    queueRender(true, true);
-    saveSoon();
-    toast(I18N.t('imported_n_edges', { n: count }));
+    const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
 }
 function importNodesCsv(text, append) {
     const rows = parseCsv(text);
@@ -8333,36 +8441,28 @@ function importNodesCsv(text, append) {
     const idx = name => header.indexOf(name);
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
-    if (!append) {
-        state.nodes = [];
-        state.edges = [];
-        state.selected = null;
-        state.selection = { nodes: [], edges: [] };
-    }
-    let count = 0;
+    const initialNodes = append ? state.nodes.length : 0;
+    const nodes = append ? state.nodes.slice() : [];
+    let parsed = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length || (row.length === 1 && !row[0]))
             continue;
         const n = {
-            id: (iId >= 0 && row[iId]) ? safeId(row[iId], 'n') : 'n' + state.nextNode,
+            id: (iId >= 0 && row[iId]) ? row[iId] : 'n' + (state.nextNode + parsed),
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
             x: iX >= 0 ? parseFloat(row[iX]) || 0 : 0,
             y: iY >= 0 ? parseFloat(row[iY]) || 0 : 0,
             shape: (iShape >= 0 ? row[iShape] : '') || '',
             color: (iColor >= 0 ? row[iColor] : '') || '',
             type: (iType >= 0 ? row[iType] : '') || '',
-            order: iOrder >= 0 ? (parseInt(row[iOrder], 10) || state.nodes.length) : state.nodes.length
+            order: iOrder >= 0 ? (parseInt(row[iOrder], 10) || (state.nodes.length + parsed)) : (state.nodes.length + parsed)
         };
-        while (state.nodes.some(x => x.id === n.id))
-            n.id = 'n' + state.nextNode++;
-        state.nodes.push(n);
-        count++;
+        nodes.push(n);
+        parsed++;
     }
-    pushHistory('import nodes csv');
-    queueRender(true, true);
-    saveSoon();
-    toast(I18N.t('imported_n_nodes', { n: count }));
+    const { droppedNodes } = commitCsvGraph(nodes, state.edges, 'import nodes csv');
+    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
 }
 function parseAttrList(text) {
     const attrs = {};
@@ -8384,9 +8484,65 @@ function cleanDotToken(t) {
         return t.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\');
     return t;
 }
+// Strip DOT comments without touching quoted strings. A '#' is only a comment
+// at the start of a line (C-preprocessor style): treating every '#' as one,
+// as a global /#.*$/ regex does, truncates hex colours (fillcolor="#0ea5e9")
+// and labels such as "C#" mid-line — which used to swallow the declaration
+// that followed and silently drop nodes.
+function stripDotComments(text) {
+    let out = '';
+    let i = 0;
+    let lineStart = true;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '"') { // copy the whole quoted string verbatim
+            out += ch;
+            i++;
+            while (i < text.length) {
+                const c = text[i];
+                out += c;
+                i++;
+                if (c === '\\') {
+                    if (i < text.length) {
+                        out += text[i];
+                        i++;
+                    }
+                    continue;
+                }
+                if (c === '"')
+                    break;
+            }
+            lineStart = false;
+            continue;
+        }
+        if (ch === '/' && text[i + 1] === '*') {
+            const end = text.indexOf('*/', i + 2);
+            i = end < 0 ? text.length : end + 2;
+            out += ' ';
+            continue;
+        }
+        if (ch === '/' && text[i + 1] === '/') {
+            while (i < text.length && text[i] !== '\n')
+                i++;
+            continue;
+        }
+        if (ch === '#' && lineStart) {
+            while (i < text.length && text[i] !== '\n')
+                i++;
+            continue;
+        }
+        out += ch;
+        i++;
+        if (ch === '\n')
+            lineStart = true;
+        else if (ch !== ' ' && ch !== '\t' && ch !== '\r')
+            lineStart = false;
+    }
+    return out;
+}
 function parseDot(text) {
     const directedGraph = /\bdigraph\b/i.test(text);
-    let body = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/#.*$/gm, '');
+    let body = stripDotComments(text);
     const open = body.indexOf('{'), close = body.lastIndexOf('}');
     if (open >= 0 && close > open)
         body = body.slice(open + 1, close);
@@ -8399,7 +8555,10 @@ function parseDot(text) {
     while ((m = edgeRe.exec(body))) {
         const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
         const a = ensureNode(fromOrig), b = ensureNode(toOrig);
-        const dotWeight = attrs.weight || attrs.label || '';
+        // Only fall back to the label when the file has no weight attribute at
+        // all: an explicit empty weight (weight="") means "no weight", and
+        // treating it as missing gave label-only edges a spurious weight.
+        const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
         edges.push({ id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: m[2] === '->' || attrs.directed === 'true' || directedGraph });
     }
     const withoutEdges = body.replace(edgeRe, '');
@@ -8413,8 +8572,17 @@ function parseDot(text) {
             n.label = attrs.label;
         if (attrs.fillcolor || attrs.color)
             n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
-        if (attrs.shape)
-            n.shape = /diamond/i.test(attrs.shape) ? 'diamond' : /box|square|rect/i.test(attrs.shape) ? 'square' : 'circle';
+        if (attrs.shape) {
+            const shape = parseShape(attrs.shape);
+            if (shape)
+                n.shape = shape;
+            else if (/polygon/i.test(attrs.shape) && String(attrs.sides) === '6')
+                n.shape = 'hexagon';
+        }
+        if (attrs.type)
+            n.type = String(attrs.type).slice(0, 40);
+        if (attrs.order != null && Number.isFinite(Number(attrs.order)))
+            n.order = Math.max(0, Math.trunc(Number(attrs.order)));
         if (attrs.pos) {
             const parts = attrs.pos.replace('!', '').split(',').map(Number);
             if (Number.isFinite(parts[0]))
@@ -8443,10 +8611,12 @@ function parseShape(raw) {
         return 'diamond';
     if (s.includes('square') || s.includes('rect') || s.includes('box'))
         return 'square';
+    // "invtriangle" is DOT's downward triangle; it must be tested before the
+    // generic "triangle" rule below or every downward triangle becomes upward.
+    if (s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down')
+        return 'triangleDown';
     if (s.includes('triangleup') || s === 'triangle up' || s === 'triangle-up')
         return 'triangleUp';
-    if (s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down')
-        return 'triangleDown';
     if (s.includes('hexagon') || s.includes('hex'))
         return 'hexagon';
     if (s.includes('triangle'))
@@ -8986,10 +9156,17 @@ function layoutGrid() {
     fitView();
     queueRender(true);
 }
-function layoutForce(iter = 180) {
+function layoutForce(requestedIter = 180) {
     const n = state.nodes.length;
     if (n < 2)
         return;
+    // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
+    // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
+    // work instead so one click always finishes in roughly a second; large
+    // graphs get fewer refinement passes rather than an unresponsive page.
+    const pairs = n * (n - 1) / 2;
+    const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
+    const reduced = iter < requestedIter;
     const area = Math.max(700 * 500, n * 22000), k = Math.sqrt(area / n);
     for (let step = 0; step < iter; step++) {
         const disp = new Map(state.nodes.map(v => [v.id, { x: 0, y: 0 }]));
@@ -9029,6 +9206,8 @@ function layoutForce(iter = 180) {
     pushHistory('relax layout');
     fitView();
     queueRender(true);
+    if (reduced)
+        toast(I18N.t('layout_force_reduced', { iter, n }));
 }
 function addSample() {
     if (state.nodes.length && !confirm(I18N.t('replace_with_sample')))
@@ -9060,14 +9239,38 @@ function persistAutosavePreference(enabled) {
     }
     catch { }
 }
+// Autosave failures used to be swallowed, so a full quota looked exactly like
+// a working save while every subsequent edit was lost. Report it once.
+let autosaveFailureReported = false;
+function writeAutosave() {
+    try {
+        localStorage.setItem(STORAGE_KEY, snapshot());
+        autosaveFailureReported = false;
+        return true;
+    }
+    catch {
+        if (!autosaveFailureReported) {
+            autosaveFailureReported = true;
+            toast(I18N.t('autosave_failed'));
+        }
+        return false;
+    }
+}
 function saveSoon() {
     clearTimeout(saveTimer);
     if (!state.settings.autosave)
         return;
-    saveTimer = setTimeout(() => { try {
-        localStorage.setItem(STORAGE_KEY, snapshot());
-    }
-    catch { } }, 250);
+    saveTimer = setTimeout(() => { saveTimer = null; writeAutosave(); }, 250);
+}
+// Flush a pending debounced write when the page goes away; otherwise the last
+// 250 ms of edits are lost by closing the tab right after a change.
+function flushAutosave() {
+    if (!saveTimer)
+        return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if (state.settings.autosave)
+        writeAutosave();
 }
 function loadSaved() {
     try {
@@ -10604,8 +10807,9 @@ function wireUi() {
         // keep checkbox synced when state changes externally (undo/redo, load)
         const syncPreserve = () => { const c = document.getElementById('chkCopyPreserve'); if (c)
             c.checked = state.settings.copyPreserveExternal !== false; };
-        // patch global render hook to also sync preserve - expose for 20-rendering to call
-        window.syncPreserve = syncPreserve;
+        // Renderers that rebuild controls call this hook (10-core defines it) so
+        // the checkbox stays in sync without exposing anything on `window`.
+        syncUiHooks = syncPreserve;
     }
     // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
     document.addEventListener('keydown', ev => {
@@ -11049,6 +11253,10 @@ function wireUi() {
     window.addEventListener('blur', resetInteractionState);
     window.addEventListener('visibilitychange', () => { if (document.hidden)
         resetInteractionState(); });
+    // Persist a pending debounced autosave before the page goes away.
+    window.addEventListener('pagehide', () => flushAutosave());
+    window.addEventListener('visibilitychange', () => { if (document.hidden)
+        flushAutosave(); });
     window.addEventListener('keyup', ev => { if (ev.key === 'Escape')
         resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)

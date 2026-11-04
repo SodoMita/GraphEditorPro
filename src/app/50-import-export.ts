@@ -6,7 +6,18 @@
 
   function fmtCoord(v){ return (Math.round(v * 10000) / 10000).toString(); }
 
-  function csvCell(v){ v = String(v ?? ''); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; }
+  // Spreadsheet apps execute a cell that starts with =, +, @, tab or CR as a
+  // formula. Graph labels and weights are user/import-controlled text, so a
+  // malicious .json could otherwise run code on the exporter's machine when the
+  // CSV is opened in Excel/Sheets. Prefix such cells with an apostrophe (the
+  // standard mitigation) while leaving plain numbers — including negative
+  // coordinates — untouched so the CSV stays usable.
+  function csvCell(v){
+    v = String(v ?? '');
+    const formulaLike = /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
+    if(formulaLike) v = "'" + v;
+    return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+  }
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
   function edgeCsv(){
     const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','label_color','label_size']];
@@ -136,6 +147,15 @@
   }
   function fileBase(){ return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,60) || 'graph'; }
   function exportJson(){ showExportPreview(`${fileBase()}.graph.json`, JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json;charset=utf-8'); }
+  // Map the editor's shape names onto DOT's vocabulary (and back in parseDot).
+  function dotShapeName(shape){
+    return shape === 'diamond' ? 'diamond'
+      : shape === 'square' ? 'box'
+      : shape === 'triangleUp' ? 'triangle'
+      : shape === 'triangleDown' ? 'invtriangle'
+      : shape === 'hexagon' ? 'polygon'
+      : 'ellipse';
+  }
   function dotId(id){ return /^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : '"' + String(id).replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"'; }
   function dotString(v){ return '"' + String(v ?? '').replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n') + '"'; }
   function exportDotText(){
@@ -144,7 +164,12 @@
     const connector = allDirected ? '->' : '--';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
-      const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(n.shape === 'diamond' ? 'diamond' : n.shape === 'square' ? 'box' : 'ellipse')}`, `fillcolor=${dotString(n.color)}`, `order=${n.order ?? 0}`];
+      const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(n.shape))}`];
+      // Hexagon has no native DOT shape: emit a regular polygon so the importer
+      // can restore it instead of flattening it to an ellipse.
+      if(n.shape === 'hexagon') attrs.push('sides=6', 'regular=true');
+      attrs.push(`fillcolor=${dotString(n.color)}`, `order=${n.order ?? 0}`);
+      if(n.type) attrs.push(`type=${dotString(n.type)}`);
       lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for(const e of state.edges){
@@ -338,10 +363,9 @@
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
-    const msg = discarded > 0
-      ? `${label} appended: +${sane.nodes.length} nodes, +${validEdges.length} edges (${discarded} dangling edge${discarded===1?'':'s'} discarded)`
-      : `${label} appended: +${sane.nodes.length} nodes, +${validEdges.length} edges`;
-    toast(msg);
+    toast(discarded > 0
+      ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
+      : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
   }
   function importGraphData(data, label, append){
     if(append){ appendImportedGraph(data, label); }
@@ -389,6 +413,32 @@
     if(field || row.length){ row.push(field); rows.push(row); }
     return rows;
   }
+  // Every CSV importer used to write straight into state.nodes/state.edges, so
+  // it bypassed everything sanitizeState guarantees: the 3000/8000 caps, label
+  // length, colour/shape/stroke validation and dangling-edge removal. A 4,000
+  // row nodes CSV therefore produced a 4,000-node document that silently shrank
+  // to 3,000 on the next reload. All CSV paths now funnel through the same
+  // sanitizer as JSON/GraphML imports.
+  function commitCsvGraph(nodes, edges, label) {
+    const sane = sanitizeState({
+      title: state.title, mode: state.mode, selectTool: state.selectTool,
+      selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
+      nodes, edges, customAttributes: state.customAttributes,
+      settings: state.settings, viewBox: state.viewBox
+    });
+    const droppedNodes = nodes.length - sane.nodes.length;
+    const droppedEdges = edges.length - sane.edges.length;
+    state = {...state, ...sane, selected: null, selection: {nodes: [], edges: []}};
+    invalidateGraphIndex();
+    invalidateSelectionCache();
+    pushHistory(label); queueRender(true, true); saveSoon();
+    return { droppedNodes, droppedEdges };
+  }
+  function csvImportToast(imported: number, dropped: number, skipped: number, limit: number, key: string) {
+    if(dropped > 0){ toast(I18N.t('csv_import_capped', {imported, dropped, limit})); return; }
+    if(skipped > 0){ toast(I18N.t('csv_import_skipped', {imported, skipped})); return; }
+    toast(I18N.t(key, {n: imported}));
+  }
   function importEdgesCsv(text, append){
     const rows = parseCsv(text);
     if(rows.length < 2){ toast(I18N.t('no_edge_data')); return; }
@@ -399,20 +449,24 @@
     const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
     if(iFrom < 0 || iTo < 0){ toast(I18N.t('csv_needs_cols')); return; }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
+    const idSet = new Set(state.nodes.map(n => n.id));
     const resolveNode = val => {
       if(!val) return null;
-      if(state.nodes.some(n => n.id === val)) return val;
+      if(idSet.has(val)) return val;
       if(labelToId.has(val)) return labelToId.get(val);
       return null;
     };
-    if(!append){ state.edges = []; state.selected = null; state.selection = {nodes:[], edges:[]}; }
-    let count = 0;
+    const initialEdges = append ? state.edges.length : 0;
+    const edges: GraphEdge[] = append ? state.edges.slice() : [];
+    let parsed = 0, skipped = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length || (row.length === 1 && !row[0])) continue;
       const from = resolveNode(row[iFrom]); const to = resolveNode(row[iTo]);
-      if(!from || !to) continue;
+      if(!from || !to){ skipped++; continue; }
       const e: GraphEdge = {
-        id: (iId >= 0 && row[iId]) ? safeId(row[iId], 'e') : 'e' + state.nextEdge,
+        // Duplicate/invalid ids are normalised by the sanitizer below, so no
+        // quadratic uniqueness scan is needed here.
+        id: (iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed),
         from, to,
         weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0,50) : '',
         label: (iLabel >= 0 ? row[iLabel] : '') || '',
@@ -422,40 +476,48 @@
       if(iColor >= 0 && row[iColor]) e.color = row[iColor];
       if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(parseFloat(row[iStrokeSize])||2.4, 0, 20);
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
-      // Ensure unique edge ID
-      while(state.edges.some(x => x.id === e.id)) e.id = 'e' + state.nextEdge++;
-      state.edges.push(e); count++;
+      edges.push(e); parsed++;
     }
-    pushHistory('import edges csv'); queueRender(true, true); saveSoon();
-    toast(I18N.t('imported_n_edges', {n: count}));
+    const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }
   function importMatrixCsv(text, append){
     const rows = parseCsv(text);
     if(rows.length < 2){ toast(I18N.t('no_matrix_data')); return; }
     const labels = rows[0].slice(1);
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
-    if(!append){ state.edges = []; state.selected = null; state.selection = {nodes:[], edges:[]}; }
-    let count = 0;
+    const idSet = new Set(state.nodes.map(n => n.id));
+    // Only known endpoints are accepted. Previously an unknown label was used
+    // verbatim as a node id, which created invisible edges pointing at nodes
+    // that do not exist (they vanished on the next reload).
+    const resolveNode = (val, byId) => {
+      if(!val) return null;
+      if(byId && idSet.has(val)) return val;
+      if(labelToId.has(val)) return labelToId.get(val);
+      if(idSet.has(val)) return val;
+      return null;
+    };
+    const initialEdges = append ? state.edges.length : 0;
+    const edges: GraphEdge[] = append ? state.edges.slice() : [];
+    let parsed = 0, skipped = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length) continue;
-      const fromLabel = row[0];
-      let fromId = labelToId.get(fromLabel);
-      if(!fromId){ fromId = fromLabel; }
+      const fromId = resolveNode(row[0], true);
+      if(!fromId){ if(row.slice(1).some(v => (v || '').trim())) skipped++; continue; }
       for(let c = 1; c < row.length && c-1 < labels.length; c++){
         const val = (row[c] || '').trim();
         if(!val) continue;
-        const toLabel = labels[c-1];
-        let toId = labelToId.get(toLabel);
-        if(!toId){ toId = toLabel; }
+        const toId = resolveNode(labels[c-1], false);
+        if(!toId){ skipped++; continue; }
         const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
         for(const w of weights){
-          state.edges.push({ id:'e' + state.nextEdge++, from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: state.settings.directed, type:'' });
-          count++;
+          edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: state.settings.directed, type:'' });
+          parsed++;
         }
       }
     }
-    pushHistory('import matrix csv'); queueRender(true, true); saveSoon();
-    toast(I18N.t('imported_n_edges', {n: count}));
+    const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }
   function importNodesCsv(text, append){
     const rows = parseCsv(text);
@@ -464,25 +526,25 @@
     const idx = name => header.indexOf(name);
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
-    if(!append){ state.nodes = []; state.edges = []; state.selected = null; state.selection = {nodes:[], edges:[]}; }
-    let count = 0;
+    const initialNodes = append ? state.nodes.length : 0;
+    const nodes: GraphNode[] = append ? state.nodes.slice() : [];
+    let parsed = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length || (row.length === 1 && !row[0])) continue;
-      const n = {
-        id: (iId >= 0 && row[iId]) ? safeId(row[iId], 'n') : 'n' + state.nextNode,
+      const n: GraphNode = {
+        id: (iId >= 0 && row[iId]) ? row[iId] : 'n' + (state.nextNode + parsed),
         label: (iLabel >= 0 ? row[iLabel] : '') || '',
         x: iX >= 0 ? parseFloat(row[iX]) || 0 : 0,
         y: iY >= 0 ? parseFloat(row[iY]) || 0 : 0,
         shape: (iShape >= 0 ? row[iShape] : '') || '',
         color: (iColor >= 0 ? row[iColor] : '') || '',
         type: (iType >= 0 ? row[iType] : '') || '',
-        order: iOrder >= 0 ? (parseInt(row[iOrder],10) || state.nodes.length) : state.nodes.length
+        order: iOrder >= 0 ? (parseInt(row[iOrder],10) || (state.nodes.length + parsed)) : (state.nodes.length + parsed)
       };
-      while(state.nodes.some(x => x.id === n.id)) n.id = 'n' + state.nextNode++;
-      state.nodes.push(n); count++;
+      nodes.push(n); parsed++;
     }
-    pushHistory('import nodes csv'); queueRender(true, true); saveSoon();
-    toast(I18N.t('imported_n_nodes', {n: count}));
+    const { droppedNodes } = commitCsvGraph(nodes, state.edges, 'import nodes csv');
+    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
   }
   function parseAttrList(text): AnyRecord {
     const attrs: AnyRecord = {};
@@ -501,9 +563,39 @@
     if((t[0] === '"' && t.at(-1) === '"') || (t[0] === "'" && t.at(-1) === "'")) return t.slice(1,-1).replace(/\\n/g,'\n').replace(/\\"/g,'"').replace(/\\'/g,"'").replace(/\\\\/g,'\\');
     return t;
   }
+  // Strip DOT comments without touching quoted strings. A '#' is only a comment
+  // at the start of a line (C-preprocessor style): treating every '#' as one,
+  // as a global /#.*$/ regex does, truncates hex colours (fillcolor="#0ea5e9")
+  // and labels such as "C#" mid-line — which used to swallow the declaration
+  // that followed and silently drop nodes.
+  function stripDotComments(text: string): string {
+    let out = '';
+    let i = 0;
+    let lineStart = true;
+    while(i < text.length){
+      const ch = text[i];
+      if(ch === '"'){                       // copy the whole quoted string verbatim
+        out += ch; i++;
+        while(i < text.length){
+          const c = text[i]; out += c; i++;
+          if(c === '\\'){ if(i < text.length){ out += text[i]; i++; } continue; }
+          if(c === '"') break;
+        }
+        lineStart = false;
+        continue;
+      }
+      if(ch === '/' && text[i+1] === '*'){ const end = text.indexOf('*/', i + 2); i = end < 0 ? text.length : end + 2; out += ' '; continue; }
+      if(ch === '/' && text[i+1] === '/'){ while(i < text.length && text[i] !== '\n') i++; continue; }
+      if(ch === '#' && lineStart){ while(i < text.length && text[i] !== '\n') i++; continue; }
+      out += ch; i++;
+      if(ch === '\n') lineStart = true;
+      else if(ch !== ' ' && ch !== '\t' && ch !== '\r') lineStart = false;
+    }
+    return out;
+  }
   function parseDot(text){
     const directedGraph = /\bdigraph\b/i.test(text);
-    let body = text.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/.*$/gm,'').replace(/#.*$/gm,'');
+    let body = stripDotComments(text);
     const open = body.indexOf('{'), close = body.lastIndexOf('}'); if(open >= 0 && close > open) body = body.slice(open+1, close);
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
@@ -513,7 +605,10 @@
     while((m = edgeRe.exec(body))){
       const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
       const a = ensureNode(fromOrig), b = ensureNode(toOrig);
-      const dotWeight = attrs.weight || attrs.label || '';
+      // Only fall back to the label when the file has no weight attribute at
+      // all: an explicit empty weight (weight="") means "no weight", and
+      // treating it as missing gave label-only edges a spurious weight.
+      const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
       edges.push({ id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed:m[2] === '->' || attrs.directed === 'true' || directedGraph });
     }
     const withoutEdges = body.replace(edgeRe, '');
@@ -524,7 +619,13 @@
       const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
       if(attrs.label) n.label = attrs.label;
       if(attrs.fillcolor || attrs.color) n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
-      if(attrs.shape) n.shape = /diamond/i.test(attrs.shape) ? 'diamond' : /box|square|rect/i.test(attrs.shape) ? 'square' : 'circle';
+      if(attrs.shape){
+        const shape = parseShape(attrs.shape);
+        if(shape) n.shape = shape;
+        else if(/polygon/i.test(attrs.shape) && String(attrs.sides) === '6') n.shape = 'hexagon';
+      }
+      if(attrs.type) n.type = String(attrs.type).slice(0, 40);
+      if(attrs.order != null && Number.isFinite(Number(attrs.order))) n.order = Math.max(0, Math.trunc(Number(attrs.order)));
       if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
     }
     const arr = [...nodes.values()];
@@ -544,8 +645,10 @@
     if(s.includes('disc') || s.includes('disk') || s.includes('circle') || s.includes('ellipse') || s.includes('oval')) return 'circle';
     if(s.includes('diamond')) return 'diamond';
     if(s.includes('square') || s.includes('rect') || s.includes('box')) return 'square';
+    // "invtriangle" is DOT's downward triangle; it must be tested before the
+    // generic "triangle" rule below or every downward triangle becomes upward.
+    if(s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down') return 'triangleDown';
     if(s.includes('triangleup') || s === 'triangle up' || s === 'triangle-up') return 'triangleUp';
-    if(s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down') return 'triangleDown';
     if(s.includes('hexagon') || s.includes('hex')) return 'hexagon';
     if(s.includes('triangle')) return 'triangleUp';
     return '';

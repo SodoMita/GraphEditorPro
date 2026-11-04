@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: build + test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # typecheck → clean build → static guarantees → 62+ tests
+      - run: npm run check
+
+      # The committed deliverable must be exactly what the sources produce, so a
+      # stale index.html cannot be merged.
+      - name: Verify index.html is up to date
+        run: git diff --exit-code -- index.html

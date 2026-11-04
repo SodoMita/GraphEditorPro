@@ -4,6 +4,8 @@
 # everything here comes from npm (@sparticuz/chromium) and GitHub.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# ROOT is consumed by the node -e below, so it must be exported, not just set.
+export ROOT
 export BROWSER_DIR="${BROWSER_DIR:-$HOME/.browser}"
 mkdir -p "$BROWSER_DIR/lib" "$BROWSER_DIR/fonts"
 

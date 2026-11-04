@@ -8,6 +8,15 @@
   // bounds per-frame work at a few milliseconds.
   const DRAG_LIVE_EDGE_LIMIT = 2000;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+  // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
+  // size is capped independently of the user-facing row limit: 300 columns is
+  // already ~90k elements (~5 s of DOM work on a mid-range machine). The
+  // matrixLimit setting decides when the matrix is hidden *below* this cap; it
+  // can never raise the cap itself.
+  const MATRIX_MAX_NODES = 300;
+  // Pair-interaction budget for the force layout (see layoutForce): bounds one
+  // click to roughly a second on a mid-range machine instead of O(iter·n²).
+  const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
 
   /** Return a required DOM element or fail immediately with a useful error. */
   const $ = (selector: string, root: ParentNode = document): any => {
@@ -116,6 +125,10 @@
   // Clipboard for copy/paste of nodes+edges
   let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[] } | null = null;
   let pasteOffsetCount = 0;
+  // UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
+  // controls call it instead of reaching for a global, so modules stay
+  // decoupled without leaking implementation state onto `window`.
+  let syncUiHooks: (() => void) | null = null;
 
   function snapshot(){
     flushZoomPreview(); // never persist a camera that is still in compositor preview
@@ -158,16 +171,20 @@
   // memory and eviction cost predictable where an entry cap alone would not.
   const HISTORY_MAX_ENTRIES = 100;
   const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+  // Snapshots are JS strings (UTF-16), so the memory they occupy is two bytes
+  // per code unit. Counting code units here would make the byte cap twice as
+  // permissive as its name claims.
+  const snapshotBytes = (snap: string) => snap.length * 2;
   let historyBytes = 0;
   function pushHistory(label='change'){
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    historyBytes += snap.length;
+    historyBytes += snapshotBytes(snap);
     appHistoryIndex = appHistory.length - 1;
     while(appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)){
-      historyBytes -= appHistory[0].length;
+      historyBytes -= snapshotBytes(appHistory[0]);
       appHistory.shift();
       appHistoryIndex--;
     }
@@ -177,7 +194,7 @@
   function resetHistory(){
     appHistory = [snapshot()];
     appHistoryIndex = 0;
-    historyBytes = appHistory[0].length;
+    historyBytes = snapshotBytes(appHistory[0]);
     updateUndoRedo();
   }
   function undo(){ if(appHistoryIndex <= 0) return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }

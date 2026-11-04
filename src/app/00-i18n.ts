@@ -552,6 +552,15 @@ const I18N: I18nService = {
     'highest_degree': { en: 'Highest degree:', ru: 'Наибольшая степень:' },
     'na': { en: 'n/a', ru: 'н/д' },
     'language_switched': { en: 'Language: English', ru: 'Язык: Русский' },
+    // --- Audit fixes: import feedback, layout budget, autosave, a11y labels ---
+    'appended_n_m': { en: '{label} appended: +{n} nodes, +{m} edges', ru: '{label}: добавлено +{n} узлов, +{m} рёбер' },
+    'appended_n_m_discarded': { en: '{label} appended: +{n} nodes, +{m} edges (discarded {d} dangling)', ru: '{label}: добавлено +{n} узлов, +{m} рёбер (отброшено висячих: {d})' },
+    'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано {imported}; отброшено {dropped} — лимит документа {limit}' },
+    'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано {imported}; пропущено {skipped} записей с неизвестными узлами' },
+    'layout_force_reduced': { en: 'Large graph: force layout ran {iter} passes instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter} проходов вместо 180, чтобы не подвешивать интерфейс' },
+    'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
+    'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
+    'rows_reorder': { en: 'Reorder row', ru: 'Перестановка строки' },
   },
 
   // Текущий язык
@@ -600,7 +609,13 @@ const I18N: I18nService = {
     });
     // Show the language the button will switch to without replacing its SVG.
     const langCode = document.getElementById('langCode');
-    if (langCode) langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
+    if (langCode){
+      langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
+      // Accessible name must contain the visible label (the code shown), not
+      // just the generic "Switch language" action.
+      const langBtn = document.getElementById('btnLang');
+      if (langBtn) langBtn.setAttribute('aria-label', this.t('lang_switch') + ': ' + langCode.textContent);
+    }
     // Обновить title документа
     const titleInput = document.getElementById('docTitleInput') as HTMLInputElement | null;
     if (titleInput && (titleInput.value === 'untitled' || titleInput.value === 'безымянный')) {
@@ -626,6 +641,3 @@ const I18N: I18nService = {
   }
 };
 
-// Keep the service available for debugging while the application itself uses
-// the typed lexical binding above.
-window.I18N = I18N;

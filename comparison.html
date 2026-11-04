@@ -14,7 +14,6 @@
   a{color:#7dd3fc}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
   .card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px}
-  iframe{width:100%;height:600px;border:1px solid #334155;border-radius:8px;background:#020617}
   .highlight{background:#0ea5e922;border-left:3px solid #0ea5e9;padding:12px;margin:12px 0;border-radius:0 8px 8px 0}
 </style>
 </head>
@@ -55,32 +54,12 @@
   <li><strong>JS work:</strong> style merging (nodeVisual/edgeVisual cached per pass now), edge offset cache, geometry cache, selection mirror – still 150-380ms.</li>
 </ul>
 
-<h2>Visual Comparison (500n 2500e)</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Pure SVG (593 KB, 5781 DOM)</h3>
-    <p><a href="huge-500n.svg" target="_blank">Open raw SVG</a> | <a href="huge-500n-pure.html" target="_blank">Open HTML wrapper</a></p>
-    <iframe src="huge-500n-pure.html" loading="lazy"></iframe>
-  </div>
-  <div class="card">
-    <h3>Site Version (822 KB, 19008 DOM)</h3>
-    <p><a href="huge-500n-site.html" target="_blank">Open site version</a> – includes toolbar, pan/zoom, selection</p>
-    <iframe src="huge-500n-site.html" loading="lazy"></iframe>
-  </div>
-</div>
-
-<h2>Visual Comparison (100n complete 4950e – dense)</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Pure SVG Complete (943 KB, 8752 DOM)</h3>
-    <p><a href="huge-100n-complete.svg" target="_blank">Open raw SVG</a></p>
-    <iframe src="huge-100n-complete-pure.html" loading="lazy"></iframe>
-  </div>
-  <div class="card">
-    <h3>Site Complete (1008 KB, 27279 DOM)</h3>
-    <p><a href="huge-100n-complete-site.html" target="_blank">Open site</a> – dense graph is where DOM explodes</p>
-    <iframe src="huge-100n-complete-site.html" loading="lazy"></iframe>
-  </div>
+<h2>Visual Comparison</h2>
+<div class="highlight">
+  The side-by-side build artifacts (<code>huge-500n.svg</code>, <code>huge-500n-pure.html</code>,
+  <code>huge-500n-site.html</code>, <code>huge-100n-complete*</code>) are generated on demand by
+  <code>node scripts/bench-svg-vs-site.mjs</code> and are intentionally not committed — this page used to
+  embed iframes pointing at files that were never in the repository.
 </div>
 
 <h2>Takeaways</h2>
@@ -91,6 +70,6 @@
   <li>Current optimizations (caches) already cut 18-34% load time vs main branch for 1500n.</li>
 </ul>
 
-<p>Generated files in <code>/tmp</code> and workspace: <code>huge-*.svg</code>, <code>huge-*-pure.html</code>, <code>huge-*-site.html</code></p>
+<p>Generated files are written to <code>/tmp</code> by <code>scripts/bench-svg-vs-site.mjs</code>: <code>huge-*.svg</code>, <code>huge-*-pure.html</code>, <code>huge-*-site.html</code>.</p>
 </body>
 </html>
