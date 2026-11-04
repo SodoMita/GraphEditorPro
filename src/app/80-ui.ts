@@ -1,4 +1,37 @@
   function wireUi(){
+    renderCustomAttributes();
+    $('#btnAddCustomAttribute').addEventListener('click', () => {
+      const idInput = $('#customAttributeId');
+      const id = String(idInput.value || '').trim();
+      if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
+      idInput.setCustomValidity('');
+      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)){ toast(I18N.t('attribute_id_reserved')); return; }
+      if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
+      state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
+      idInput.value = '';
+      renderCustomAttributes(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
+    });
+    $('#customAttributesList').addEventListener('click', ev => {
+      const button = ev.target.closest('[data-attribute-action]');
+      if(!button) return;
+      const row = button.closest('[data-custom-attribute]');
+      const index = Number(row?.dataset.customAttribute);
+      if(!Number.isInteger(index) || !state.customAttributes[index]) return;
+      if(button.dataset.attributeAction === 'delete'){
+        state.customAttributes.splice(index, 1);
+        renderCustomAttributes(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
+      }
+      const idInput = row.querySelector('[data-attribute-field="id"]');
+      const id = String(idInput.value || '').trim();
+      if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
+      idInput.setCustomValidity('');
+      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)){ toast(I18N.t('attribute_id_reserved')); return; }
+      if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
+      const scope = row.querySelector('[data-attribute-field="scope"]').value;
+      const type = row.querySelector('[data-attribute-field="type"]').value;
+      state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'};
+      renderCustomAttributes(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
+    });
     svg.addEventListener('selectstart', ev => ev.preventDefault());
     svg.addEventListener('contextmenu', ev => ev.preventDefault());
     svg.addEventListener('auxclick', ev => ev.preventDefault());

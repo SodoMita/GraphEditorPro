@@ -45,11 +45,12 @@
   const STROKE_STYLES = ['solid','dashed','dotted'];
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
+  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
     title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
-    nodes: [], edges: [],
+    nodes: [], edges: [], customAttributes: [],
     selected: null, selection: {nodes: [], edges: []},
     settings: {
       // Edit-tab node placement (primary for newly added nodes)
@@ -114,7 +115,7 @@
     flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
       title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, nextNode:state.nextNode, nextEdge:state.nextEdge,
-      nodes:state.nodes, edges:state.edges, settings:state.settings, viewBox:state.viewBox,
+      nodes:state.nodes, edges:state.edges, customAttributes:state.customAttributes, settings:state.settings, viewBox:state.viewBox,
       // Preserve user focus across undo/redo so editing the same object stays ergonomic
       selected:state.selected, selection:state.selection
     });
@@ -423,6 +424,17 @@
         return out;
       }).filter(Boolean);
     } else { settings.stylePresets = []; }
+    const customAttributeTypes = ['boolean','int','long','float','double','string'];
+    const customAttributeIds = new Set<string>();
+    const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
+      .slice(0, 500).filter(isRecord).map(attribute => {
+        const id = String(attribute.id ?? '').trim().slice(0, 128);
+        const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
+        const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
+        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id)) return null;
+        customAttributeIds.add(id);
+        return {id, scope, type};
+      }).filter(Boolean) as GraphState['customAttributes'];
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),
@@ -443,7 +455,7 @@
       selection: {nodes: [], edges: []},
       nextNode: maxN + 1,
       nextEdge: maxE + 1,
-      nodes, edges, settings,
+      nodes, edges, customAttributes, settings,
       viewBox: { x:finite(vb.x,-500), y:finite(vb.y,-330), w:clamp(finite(vb.w,1000),100,20000), h:clamp(finite(vb.h,660),100,20000) }
     };
   }

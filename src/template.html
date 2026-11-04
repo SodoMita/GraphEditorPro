@@ -468,6 +468,26 @@
           <section id="panel-data" class="tab-panel" role="tabpanel" aria-labelledby="tab-data" aria-hidden="true">
 
             <details class="section" open>
+              <summary class="section-title"><span data-i18n="custom_attributes">Custom attributes</span></summary>
+              <div class="sec-body">
+                <p class="tiny muted" data-i18n="custom_attributes_help">Define GraphML attributes for the graph, nodes, or edges.</p>
+                <div class="grid2" style="margin-top:6px">
+                  <label class="field col" for="customAttributeId"><span data-i18n="attribute_id">Attribute ID</span>
+                    <input id="customAttributeId" type="text" maxlength="128" required autocomplete="off" />
+                  </label>
+                  <label class="field" for="customAttributeScope"><span data-i18n="attribute_scope">Applies to</span>
+                    <select id="customAttributeScope"><option value="graph" data-i18n="scope_graph">Graph</option><option value="node" data-i18n="scope_node">Node</option><option value="edge" data-i18n="scope_edge">Edge</option></select>
+                  </label>
+                  <label class="field" for="customAttributeType"><span data-i18n="attribute_type">Type</span>
+                    <select id="customAttributeType"><option value="boolean">boolean</option><option value="int">int</option><option value="long">long</option><option value="float">float</option><option value="double">double</option><option value="string">string</option></select>
+                  </label>
+                </div>
+                <button id="btnAddCustomAttribute" class="btn small good" type="button" style="margin-top:8px" data-i18n="add_attribute">Add attribute</button>
+                <div id="customAttributesList" class="custom-attributes-list" style="margin-top:8px"></div>
+              </div>
+            </details>
+
+            <details class="section" open>
               <summary class="section-title">
                 <span data-i18n="import_export">Import / export</span>
               </summary>

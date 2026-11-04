@@ -66,6 +66,7 @@ interface GraphState {
   nextEdge: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string }[];
   selected: { type: 'node' | 'edge'; id: string } | null;
   selection: GraphSelection;
   settings: AnyRecord;

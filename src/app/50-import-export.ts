@@ -203,6 +203,7 @@
       `  <key id="gridMajorColor" for="graph" attr.name="grid.major.color" attr.type="string"/>`,
       `  <key id="gridMinorAlpha" for="graph" attr.name="grid.minor.alpha" attr.type="double"/>`,
       `  <key id="gridMajorAlpha" for="graph" attr.name="grid.major.alpha" attr.type="double"/>`,
+      ...state.customAttributes.map(attribute => `  <key id="${xmlEsc(attribute.id)}" for="${attribute.scope}" attr.name="${xmlEsc(attribute.id)}" attr.type="${attribute.type}"/>`),
       `  <graph id="${xmlEsc(fileBase())}" edgedefault="directed">`];
     // Graph-level defaults
     lines.push(`    <data key="labelsPolicy">${xmlEsc(gd.labelsPolicy)}</data>`);
@@ -331,6 +332,8 @@
     }
     state.nodes.push(...sane.nodes);
     state.edges.push(...validEdges);
+    const customIds = new Set(state.customAttributes.map(attribute => attribute.id));
+    state.customAttributes.push(...sane.customAttributes.filter(attribute => !customIds.has(attribute.id)));
     state.nextNode = Math.max(state.nextNode, counter);
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
     pushHistory(`append ${label}`);
@@ -621,11 +624,19 @@
     const keyNames: Record<string, string> = {};
     const keyDefaults: AnyRecord = {};  // keyed by attr.name, separated by target
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
+    const graphmlTypes = ['boolean','int','long','float','double','string'];
+    const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
+    const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
+    const customAttributes: GraphState['customAttributes'] = [];
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
       const name = (k.getAttribute('attr.name') || id).toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
       keyNames[id] = name;
+      const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
+      if(id && !reservedKeyIds.has(id) && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom)){
+        customAttributes.push({id, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
+      }
       const defEl = k.querySelector('default');
       if(defEl){
         const val = defEl.textContent.trim();
@@ -766,7 +777,7 @@
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.
-    return {title:'imported-graphml', nodes, edges, settings};
+    return {title:'imported-graphml', nodes, edges, customAttributes, settings};
   }
   function importFile(file, forcedFormat='auto'){
     if(!file) return;
