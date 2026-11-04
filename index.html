@@ -275,10 +275,12 @@
     }
     .tab-panel{display:none; min-width:0; overflow-x:hidden}
     .tab-panel.active{display:block}
-    .custom-attribute-row{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(78px,.7fr) minmax(86px,.7fr);gap:6px;align-items:end;padding:8px 0;border-top:1px solid var(--line,#334155)}
+    .custom-attribute-row{padding:8px 0;border-top:1px solid var(--line,#334155)}
+    .custom-attribute-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+    .custom-attribute-fields>.field:first-child{grid-column:1/-1}
     .custom-attribute-row .field{min-width:0}
-    .custom-attribute-actions{grid-column:1/-1;justify-content:flex-end}
-    .custom-attribute-row input,.custom-attribute-row select{min-width:0;width:100%}
+    .custom-attribute-actions{justify-content:flex-end;margin-top:8px}
+    .custom-attribute-fields input,.custom-attribute-fields select{min-width:0;width:100%}
 
     /* ---------- Collapsible sections ---------- */
     .section{
@@ -1176,10 +1178,10 @@
                   <label class="field col" for="customAttributeId"><span data-i18n="attribute_id">Attribute ID</span>
                     <input id="customAttributeId" type="text" maxlength="128" required autocomplete="off" />
                   </label>
-                  <label class="field" for="customAttributeScope"><span data-i18n="attribute_scope">Applies to</span>
+                  <label class="field col" for="customAttributeScope"><span data-i18n="attribute_scope">Applies to</span>
                     <select id="customAttributeScope"><option value="graph" data-i18n="scope_graph">Graph</option><option value="node" data-i18n="scope_node">Node</option><option value="edge" data-i18n="scope_edge">Edge</option></select>
                   </label>
-                  <label class="field" for="customAttributeType"><span data-i18n="attribute_type">Type</span>
+                  <label class="field col" for="customAttributeType"><span data-i18n="attribute_type">Type</span>
                     <select id="customAttributeType"><option value="boolean">boolean</option><option value="int">int</option><option value="long">long</option><option value="float">float</option><option value="double">double</option><option value="string">string</option></select>
                   </label>
                 </div>
@@ -8694,13 +8696,15 @@ function renderCustomAttributes() {
     }
     host.innerHTML = state.customAttributes.map((attribute, index) => `
       <div class="custom-attribute-row" data-custom-attribute="${index}">
-        <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(attribute.id)}" data-attribute-field="id"></label>
-        <label class="field"><span>${esc(I18N.t('attribute_scope'))}</span><select data-attribute-field="scope">
-          <option value="graph" ${attribute.scope === 'graph' ? 'selected' : ''}>${esc(I18N.t('scope_graph'))}</option>
-          <option value="node" ${attribute.scope === 'node' ? 'selected' : ''}>${esc(I18N.t('scope_node'))}</option>
-          <option value="edge" ${attribute.scope === 'edge' ? 'selected' : ''}>${esc(I18N.t('scope_edge'))}</option>
-        </select></label>
-        <label class="field"><span>${esc(I18N.t('attribute_type'))}</span><select data-attribute-field="type">${CUSTOM_ATTRIBUTE_TYPES.map(type => `<option value="${type}" ${attribute.type === type ? 'selected' : ''}>${type}</option>`).join('')}</select></label>
+        <div class="custom-attribute-fields">
+          <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(attribute.id)}" data-attribute-field="id"></label>
+          <label class="field col"><span>${esc(I18N.t('attribute_scope'))}</span><select data-attribute-field="scope">
+            <option value="graph" ${attribute.scope === 'graph' ? 'selected' : ''}>${esc(I18N.t('scope_graph'))}</option>
+            <option value="node" ${attribute.scope === 'node' ? 'selected' : ''}>${esc(I18N.t('scope_node'))}</option>
+            <option value="edge" ${attribute.scope === 'edge' ? 'selected' : ''}>${esc(I18N.t('scope_edge'))}</option>
+          </select></label>
+          <label class="field col"><span>${esc(I18N.t('attribute_type'))}</span><select data-attribute-field="type">${CUSTOM_ATTRIBUTE_TYPES.map(type => `<option value="${type}" ${attribute.type === type ? 'selected' : ''}>${type}</option>`).join('')}</select></label>
+        </div>
         <div class="row custom-attribute-actions">
           <button type="button" class="btn small good" data-attribute-action="save">${esc(I18N.t('save_attribute'))}</button>
           <button type="button" class="btn small danger" data-attribute-action="delete" title="${esc(I18N.t('delete_btn'))}" aria-label="${esc(I18N.t('delete_btn'))}">${esc(I18N.t('delete_btn'))}</button>
