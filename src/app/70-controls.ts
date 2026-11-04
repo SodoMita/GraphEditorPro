@@ -130,6 +130,7 @@
   const HOTKEYS_KEY = 'graph-editor-pro-hotkeys';
   const DEFAULT_HOTKEYS = {
     select: 'KeyS', move: 'KeyM', node: 'KeyN', edge: 'KeyE',
+    gizmoMove: 'Digit1', gizmoRotate: 'Digit2', gizmoScale: 'Digit3', gizmoRect: 'Digit4', gizmoToggle: 'KeyG',
     delete: 'Delete', pan: 'Space', undo: 'KeyZ', redo: 'KeyY', escape: 'Escape'
   };
   let _hotkeysCache = null;

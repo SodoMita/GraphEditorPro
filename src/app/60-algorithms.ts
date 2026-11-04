@@ -100,7 +100,11 @@
         return;
       }
       const saved = localStorage.getItem(STORAGE_KEY);
-      if(saved) state = {...state, ...sanitizeState(JSON.parse(saved)), selected:null};
+      if(saved){
+        const parsed = JSON.parse(saved);
+        migrateLegacyGizmoPreferences(parsed);
+        state = {...state, ...sanitizeState(parsed), selected:null};
+      }
       if(preference === 'true') state.settings.autosave = true;
     }catch{}
   }
