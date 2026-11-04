@@ -44,6 +44,7 @@
     if(pinch) return;
     gestureActive = true;
     if(edgeDraft){ edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d',''); }
+    if(gizmoDrag) endGizmoDrag(true);
     if(drag){
       if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
       if(drag.moved) pushHistory('move node');
@@ -107,6 +108,7 @@
     selectDraft = { tool:state.selectTool, pointerId:ev.pointerId, start:p, end:p, points:[p], combine:effectiveSelectCombine(ev), moved:false };
     $('#canvasWrap').classList.add('fast-interaction');
     renderSelectionDraft();
+    renderGizmo(); // hidden while a selection draft is live
     setStatusOnly();
   }
   function sampleSelectionDraftPoint(p){
@@ -174,6 +176,7 @@
       selectDraft = { tool:'polygon', points:[p], start:p, end:p, combine:effectiveSelectCombine(ev), moved:false };
       $('#canvasWrap').classList.add('fast-interaction');
       renderSelectionDraft();
+      renderGizmo();
       setStatusOnly();
       return true;
     }
@@ -556,6 +559,7 @@
       if(Math.hypot(ev.clientX - edgeDraft.startClientX, ev.clientY - edgeDraft.startClientY) > 8) edgeDraft.moved = true;
       updateDragLine(p, ev.clientX, ev.clientY); return;
     }
+    if(gizmoDrag && ev.pointerId === gizmoDrag.pointerId){ updateGizmoDrag(p, ev); return; }
     if(drag){
       const n = drag.node; if(!n) return;
       let x = p.x - drag.offsetX, y = p.y - drag.offsetY;
@@ -640,6 +644,11 @@
         toast(I18N.t('source_tap_target'));
         queueRender(false);
       } else queueRender(false);
+    }
+    if(gizmoDrag && ev.pointerId === gizmoDrag.pointerId){
+      endGizmoDrag(!cancel);
+      unregisterPointer(ev);
+      return;
     }
     if(drag){
       if(drag.fastNodeId) moveDragFast();

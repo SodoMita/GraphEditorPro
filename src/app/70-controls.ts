@@ -130,6 +130,7 @@
   const HOTKEYS_KEY = 'graph-editor-pro-hotkeys';
   const DEFAULT_HOTKEYS = {
     select: 'KeyS', move: 'KeyM', node: 'KeyN', edge: 'KeyE',
+    gizmoMove: 'Digit1', gizmoRotate: 'Digit2', gizmoScale: 'Digit3', gizmoRect: 'Digit4', gizmoToggle: 'KeyG',
     delete: 'Delete', pan: 'Space', undo: 'KeyZ', redo: 'KeyY', escape: 'Escape'
   };
   let _hotkeysCache = null;
@@ -313,7 +314,7 @@
         n.color = d.color;
       }
     }
-    pushHistory('apply node defaults'); queueRender(true); toast(I18N.t('node_defaults_applied'));
+    invalidateGraphIndex(); pushHistory('apply node defaults'); queueRender(true); toast(I18N.t('node_defaults_applied'));
   }
   function applyNodeDefaultsToSelected(){
     const nodeIds = state.selection?.nodes || [];
@@ -332,7 +333,7 @@
         n.color = d.color;
       }
     }
-    pushHistory('apply node defaults to selected'); queueRender(true); renderSelectionPanel();
+    invalidateGraphIndex(); pushHistory('apply node defaults to selected'); queueRender(true); renderSelectionPanel();
     toast(I18N.t('node_defaults_applied_sel', {count: nodeIds.length}));
   }
   function applyEdgeDefaultsToAll(){
@@ -345,7 +346,7 @@
         applyTypeStyleToEdge(e);
       }
     }
-    pushHistory('apply edge defaults'); queueRender(true); toast(I18N.t('edge_defaults_applied'));
+    invalidateGraphIndex(); pushHistory('apply edge defaults'); queueRender(true); toast(I18N.t('edge_defaults_applied'));
   }
   function applyEdgeDefaultsToSelected(){
     const edgeIds = state.selection?.edges || [];
@@ -360,7 +361,7 @@
         applyTypeStyleToEdge(e);
       }
     }
-    pushHistory('apply edge defaults to selected'); queueRender(true); renderSelectionPanel();
+    invalidateGraphIndex(); pushHistory('apply edge defaults to selected'); queueRender(true); renderSelectionPanel();
     toast(I18N.t('edge_defaults_applied_sel', {count: edgeIds.length}));
   }
 
