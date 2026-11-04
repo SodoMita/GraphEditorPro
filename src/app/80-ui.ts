@@ -261,7 +261,7 @@
         // (rebuilding would destroy the next input the user taps on mobile)
         if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-elabel')){ e.label = t.value.slice(0,80); pushHistory('edit edge label'); queueRender(false); saveSoon(); }
-        else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); pushHistory('edit edge type'); queueRender(false); saveSoon(); }
+        else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edit edge type'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-directed')){ e.directed = t.checked; pushHistory('edit edge directed'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-color')){ e.color = t.value; pushHistory('edit edge color'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-stroke-style')){ e.strokeStyle = t.value || undefined; pushHistory('edit edge stroke style'); queueRender(false); saveSoon(); }

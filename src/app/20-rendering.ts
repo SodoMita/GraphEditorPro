@@ -1200,8 +1200,8 @@
           pushHistory('multi-edit nodes'); queueRender(false); saveSoon();
         };
         $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of nodeIds){ const n = nodeById(id); if(n) n.label = v; } pushHistory('multi node label'); queueRender(true); markSidebarDirty(); saveSoon(); });
-        $('#mulNodeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of nodeIds){ const n = nodeById(id); if(n){ n.type = v; applyTypeStyleToNode(n); } } pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
-        $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const ord = clamp(parseInt(v,10)||0, 0, 2147483647); for(const id of nodeIds){ const n = nodeById(id); if(n) n.order = ord; } pushHistory('multi node order'); queueRender(true); saveSoon(); });
+        $('#mulNodeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of nodeIds){ const n = nodeById(id); if(n){ n.type = v; applyTypeStyleToNode(n); } } invalidateGraphIndex(); pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
+        $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const ord = clamp(parseInt(v,10)||0, 0, 2147483647); for(const id of nodeIds){ const n = nodeById(id); if(n) n.order = ord; } invalidateGraphIndex(); pushHistory('multi node order'); queueRender(true); saveSoon(); });
         $('#mulNodeColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.color = e.target.value; } queueRender(false); saveSoon(); });
         $('#mulNodeColor').addEventListener('change', () => pushHistory('multi node color'));
         $('#mulNodeShape').addEventListener('change', e => { const v = e.target.value; for(const id of nodeIds){ const n = nodeById(id); if(n) n.shape = v; } pushHistory('multi node shape'); queueRender(false); });
@@ -1236,7 +1236,7 @@
         const edgeIds = state.selection.edges;
         $('#mulEdgeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.label = v; } pushHistory('multi edge label'); queueRender(true); saveSoon(); });
         $('#mulEdgeWeight').addEventListener('change', e => { const v = e.target.value.slice(0,50); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ if(v === '') delete ed.weight; else ed.weight = v; } } pushHistory('multi edge weight'); queueRender(true); saveSoon(); });
-        $('#mulEdgeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ ed.type = v; applyTypeStyleToEdge(ed); } } pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
+        $('#mulEdgeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ ed.type = v; applyTypeStyleToEdge(ed); } } invalidateGraphIndex(); pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
         $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const dir = v === 'true'; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.directed = dir; } pushHistory('multi edge directed'); queueRender(true); });
         $('#mulEdgeColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.color = e.target.value; } queueRender(false); saveSoon(); });
         $('#mulEdgeColor').addEventListener('change', () => pushHistory('multi edge color'));
@@ -1316,7 +1316,7 @@
         if(final) pushHistory('move node coordinate');
       };
       $('#selNodeLabel').addEventListener('change', e => { n.label = e.target.value.slice(0,80); pushHistory(); queueRender(true); markSidebarDirty(); });
-      $('#selNodeType').addEventListener('change', e => { n.type = e.target.value.slice(0,40); applyTypeStyleToNode(n); pushHistory('node type'); queueRender(false); renderSelectionPanel(); });
+      $('#selNodeType').addEventListener('change', e => { n.type = e.target.value.slice(0,40); applyTypeStyleToNode(n); invalidateGraphIndex(); pushHistory('node type'); queueRender(false); renderSelectionPanel(); });
       $('#selNodeColor').addEventListener('input', e => { n.color = e.target.value; queueRender(false); saveSoon(); });
       $('#selNodeColor').addEventListener('change', () => pushHistory());
       $('#selNodeShape').addEventListener('change', e => { n.shape = e.target.value; pushHistory(); queueRender(false); });
@@ -1331,7 +1331,7 @@
       $('#selNodeLabelSize').addEventListener('change', e => { n.labelSize = clamp(finite(e.target.value,13),4,72); e.target.value=n.labelSize; pushHistory(); queueRender(false); });
       $('#selNodeLabelPos').addEventListener('change', e => { n.labelPosition = e.target.value; pushHistory(); queueRender(false); });
       $('#selNodeLabelFont').addEventListener('change', e => { n.labelFont = e.target.value.slice(0,60) || undefined; pushHistory(); queueRender(false); });
-      $('#selNodeOrder').addEventListener('change', e => { n.order = clamp(parseInt(e.target.value,10)||0, 0, 2147483647); e.target.value=n.order; pushHistory('node order'); queueRender(true); saveSoon(); });
+      $('#selNodeOrder').addEventListener('change', e => { n.order = clamp(parseInt(e.target.value,10)||0, 0, 2147483647); e.target.value=n.order; invalidateGraphIndex(); pushHistory('node order'); queueRender(true); saveSoon(); });
       $('#selNodeX').addEventListener('input', e => moveCoord('x', e.target.value, false));
       $('#selNodeY').addEventListener('input', e => moveCoord('y', e.target.value, false));
       $('#selNodeX').addEventListener('change', e => moveCoord('x', e.target.value, true));
@@ -1380,7 +1380,7 @@
       $('#selEdgeStrokeStyle').value = e.strokeStyle || '';
       $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory(); queueRender(true); });
       $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0,80); pushHistory(); queueRender(true); });
-      $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0,40); applyTypeStyleToEdge(e); pushHistory('edge type'); queueRender(false); renderSelectionPanel(); });
+      $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edge type'); queueRender(false); renderSelectionPanel(); });
       $('#selEdgeDirected').addEventListener('change', ev => { e.directed = ev.target.checked; pushHistory(); queueRender(true); });
       $('#selEdgeColor').addEventListener('input', ev => { e.color = ev.target.value; queueRender(false); saveSoon(); });
       $('#selEdgeColor').addEventListener('change', () => pushHistory());

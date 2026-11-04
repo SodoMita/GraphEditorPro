@@ -599,18 +599,21 @@
     const sorted = [...state.nodes].sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('sort nodes by id'); queueRender(true); toast(I18N.t('nodes_sorted_id'));
   }
   function sortNodesByLabel(){
     const sorted = [...state.nodes].sort((a,b) => (a.label||'').localeCompare(b.label||'', undefined, {numeric:true}));
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('sort nodes by label'); queueRender(true); toast(I18N.t('nodes_sorted_label'));
   }
   function renumberNodeOrder(){
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('renumber node order'); queueRender(true); saveSoon(); toast(I18N.t('node_order_renumbered'));
   }
   function moveNode(nodeId, dir){
@@ -623,6 +626,7 @@
     sorted.splice(newIdx, 0, moved);
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('move node'); queueRender(true); saveSoon();
   }
   function moveNodeToPosition(nodeId, newPosition){
@@ -635,6 +639,7 @@
     sorted.splice(newPosition, 0, moved);
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('move node to position'); queueRender(true); saveSoon();
   }
   function reverseNodeOrder(){
@@ -642,6 +647,7 @@
     sorted.reverse();
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('reverse node order'); queueRender(true); toast(I18N.t('nodes_reversed'));
   }
   function shuffleNodeOrder(){
@@ -652,6 +658,7 @@
     }
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('shuffle node order'); queueRender(true); toast(I18N.t('nodes_shuffled'));
   }
   function sortEdgesById(){

@@ -4413,13 +4413,13 @@ function renderSelectionPanel() {
                     n.type = v;
                     applyTypeStyleToNode(n);
                 }
-            } pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
+            } invalidateGraphIndex(); pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
             $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if (v === '')
                 return; const ord = clamp(parseInt(v, 10) || 0, 0, 2147483647); for (const id of nodeIds) {
                 const n = nodeById(id);
                 if (n)
                     n.order = ord;
-            } pushHistory('multi node order'); queueRender(true); saveSoon(); });
+            } invalidateGraphIndex(); pushHistory('multi node order'); queueRender(true); saveSoon(); });
             $('#mulNodeColor').addEventListener('input', e => { for (const id of nodeIds) {
                 const n = nodeById(id);
                 if (n)
@@ -4532,7 +4532,7 @@ function renderSelectionPanel() {
                     ed.type = v;
                     applyTypeStyleToEdge(ed);
                 }
-            } pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
+            } invalidateGraphIndex(); pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
             $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if (v === '')
                 return; const dir = v === 'true'; for (const id of edgeIds) {
                 const ed = edgeById(id);
@@ -4657,7 +4657,7 @@ function renderSelectionPanel() {
                 pushHistory('move node coordinate');
         };
         $('#selNodeLabel').addEventListener('change', e => { n.label = e.target.value.slice(0, 80); pushHistory(); queueRender(true); markSidebarDirty(); });
-        $('#selNodeType').addEventListener('change', e => { n.type = e.target.value.slice(0, 40); applyTypeStyleToNode(n); pushHistory('node type'); queueRender(false); renderSelectionPanel(); });
+        $('#selNodeType').addEventListener('change', e => { n.type = e.target.value.slice(0, 40); applyTypeStyleToNode(n); invalidateGraphIndex(); pushHistory('node type'); queueRender(false); renderSelectionPanel(); });
         $('#selNodeColor').addEventListener('input', e => { n.color = e.target.value; queueRender(false); saveSoon(); });
         $('#selNodeColor').addEventListener('change', () => pushHistory());
         $('#selNodeShape').addEventListener('change', e => { n.shape = e.target.value; pushHistory(); queueRender(false); });
@@ -4672,7 +4672,7 @@ function renderSelectionPanel() {
         $('#selNodeLabelSize').addEventListener('change', e => { n.labelSize = clamp(finite(e.target.value, 13), 4, 72); e.target.value = n.labelSize; pushHistory(); queueRender(false); });
         $('#selNodeLabelPos').addEventListener('change', e => { n.labelPosition = e.target.value; pushHistory(); queueRender(false); });
         $('#selNodeLabelFont').addEventListener('change', e => { n.labelFont = e.target.value.slice(0, 60) || undefined; pushHistory(); queueRender(false); });
-        $('#selNodeOrder').addEventListener('change', e => { n.order = clamp(parseInt(e.target.value, 10) || 0, 0, 2147483647); e.target.value = n.order; pushHistory('node order'); queueRender(true); saveSoon(); });
+        $('#selNodeOrder').addEventListener('change', e => { n.order = clamp(parseInt(e.target.value, 10) || 0, 0, 2147483647); e.target.value = n.order; invalidateGraphIndex(); pushHistory('node order'); queueRender(true); saveSoon(); });
         $('#selNodeX').addEventListener('input', e => moveCoord('x', e.target.value, false));
         $('#selNodeY').addEventListener('input', e => moveCoord('y', e.target.value, false));
         $('#selNodeX').addEventListener('change', e => moveCoord('x', e.target.value, true));
@@ -4741,7 +4741,7 @@ function renderSelectionPanel() {
         else
             e.weight = v; pushHistory(); queueRender(true); });
         $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0, 80); pushHistory(); queueRender(true); });
-        $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0, 40); applyTypeStyleToEdge(e); pushHistory('edge type'); queueRender(false); renderSelectionPanel(); });
+        $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0, 40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edge type'); queueRender(false); renderSelectionPanel(); });
         $('#selEdgeDirected').addEventListener('change', ev => { e.directed = ev.target.checked; pushHistory(); queueRender(true); });
         $('#selEdgeColor').addEventListener('input', ev => { e.color = ev.target.value; queueRender(false); saveSoon(); });
         $('#selEdgeColor').addEventListener('change', () => pushHistory());
@@ -5725,6 +5725,7 @@ function sortNodesById() {
     const sorted = [...state.nodes].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('sort nodes by id');
     queueRender(true);
     toast(I18N.t('nodes_sorted_id'));
@@ -5733,6 +5734,7 @@ function sortNodesByLabel() {
     const sorted = [...state.nodes].sort((a, b) => (a.label || '').localeCompare(b.label || '', undefined, { numeric: true }));
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('sort nodes by label');
     queueRender(true);
     toast(I18N.t('nodes_sorted_label'));
@@ -5741,6 +5743,7 @@ function renumberNodeOrder() {
     const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('renumber node order');
     queueRender(true);
     saveSoon();
@@ -5758,6 +5761,7 @@ function moveNode(nodeId, dir) {
     sorted.splice(newIdx, 0, moved);
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('move node');
     queueRender(true);
     saveSoon();
@@ -5774,6 +5778,7 @@ function moveNodeToPosition(nodeId, newPosition) {
     sorted.splice(newPosition, 0, moved);
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('move node to position');
     queueRender(true);
     saveSoon();
@@ -5783,6 +5788,7 @@ function reverseNodeOrder() {
     sorted.reverse();
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('reverse node order');
     queueRender(true);
     toast(I18N.t('nodes_reversed'));
@@ -5795,6 +5801,7 @@ function shuffleNodeOrder() {
     }
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('shuffle node order');
     queueRender(true);
     toast(I18N.t('nodes_shuffled'));
@@ -9503,6 +9510,7 @@ function applyNodeDefaultsToAll() {
             n.color = d.color;
         }
     }
+    invalidateGraphIndex();
     pushHistory('apply node defaults');
     queueRender(true);
     toast(I18N.t('node_defaults_applied'));
@@ -9538,6 +9546,7 @@ function applyNodeDefaultsToSelected() {
             n.color = d.color;
         }
     }
+    invalidateGraphIndex();
     pushHistory('apply node defaults to selected');
     queueRender(true);
     renderSelectionPanel();
@@ -9557,6 +9566,7 @@ function applyEdgeDefaultsToAll() {
             applyTypeStyleToEdge(e);
         }
     }
+    invalidateGraphIndex();
     pushHistory('apply edge defaults');
     queueRender(true);
     toast(I18N.t('edge_defaults_applied'));
@@ -9583,6 +9593,7 @@ function applyEdgeDefaultsToSelected() {
             applyTypeStyleToEdge(e);
         }
     }
+    invalidateGraphIndex();
     pushHistory('apply edge defaults to selected');
     queueRender(true);
     renderSelectionPanel();
@@ -10443,6 +10454,7 @@ function wireUi() {
             else if (t.matches('.edge-type')) {
                 e.type = t.value.slice(0, 40);
                 applyTypeStyleToEdge(e);
+                invalidateGraphIndex();
                 pushHistory('edit edge type');
                 queueRender(false);
                 saveSoon();
