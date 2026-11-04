@@ -36,6 +36,100 @@
     el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
   const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
   const esc = (value: unknown): string => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
+  // === In-app dialogs ===
+  // Native prompt()/confirm()/alert() block the whole tab, cannot be themed,
+  // ignore the document language and are suppressed in some embeds. These
+  // helpers reuse the app's modal pattern instead: role=dialog, aria-modal,
+  // a focus trap, Escape to cancel and focus restored to the trigger.
+  type DialogOptions = {
+    title: string;
+    message?: string;
+    input?: { value?: string; placeholder?: string; maxLength?: number };
+    confirmLabel?: string;
+    cancelLabel?: string;
+    danger?: boolean;
+  };
+  let dialogEl: HTMLElement | null = null;
+  let dialogResolve: ((value: string | boolean | null) => void) | null = null;
+  let dialogReturnFocus: HTMLElement | null = null;
+  function closeDialog(result: string | boolean | null = null){
+    if(!dialogEl) return;
+    const resolve = dialogResolve;
+    dialogEl.remove();
+    dialogEl = null;
+    dialogResolve = null;
+    if(dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
+    dialogReturnFocus = null;
+    resolve?.(result);
+  }
+  function showDialog(options: DialogOptions): Promise<string | boolean | null> {
+    closeDialog(null); // only one dialog at a time
+    return new Promise(resolve => {
+      dialogResolve = resolve;
+      dialogReturnFocus = document.activeElement as HTMLElement;
+      const wantsInput = Boolean(options.input);
+      const dialog = document.createElement('div');
+      dialog.className = 'app-dialog';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.setAttribute('aria-labelledby', 'appDialogTitle');
+      if(options.message) dialog.setAttribute('aria-describedby', 'appDialogMessage');
+      const inputId = 'appDialogInput';
+      dialog.innerHTML = `
+        <form class="app-dialog-card">
+          <h2 id="appDialogTitle" class="app-dialog-title">${esc(options.title)}</h2>
+          ${options.message ? `<p id="appDialogMessage" class="app-dialog-message">${esc(options.message)}</p>` : ''}
+          ${wantsInput ? `<label class="app-dialog-field" for="${inputId}"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></label>` : ''}
+          <div class="app-dialog-actions">
+            <button type="button" class="btn small" data-dialog-cancel>${esc(options.cancelLabel || I18N.t('dialog_cancel'))}</button>
+            <button type="submit" class="btn small ${options.danger ? 'danger' : 'good'}" data-dialog-ok>${esc(options.confirmLabel || I18N.t('dialog_ok'))}</button>
+          </div>
+        </form>`;
+      document.body.appendChild(dialog);
+      dialogEl = dialog;
+      const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
+      const form = dialog.querySelector('form');
+      const finish = (result: string | boolean | null) => closeDialog(result);
+      form?.addEventListener('submit', ev => {
+        ev.preventDefault();
+        finish(wantsInput ? (input?.value ?? '') : true);
+      });
+      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
+      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) finish(wantsInput ? null : false); });
+      dialog.addEventListener('keydown', ev => {
+        if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); finish(wantsInput ? null : false); return; }
+        if(ev.key !== 'Tab') return;
+        const focusable = $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
+        if(!focusable.length) return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
+        else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
+      });
+      setTimeout(() => {
+        if(input){
+          input.focus();
+          input.select();
+        } else {
+          dialog.querySelector<HTMLButtonElement>('[data-dialog-ok]')?.focus();
+        }
+      }, 0);
+    });
+  }
+  /** Replace window.confirm with an in-app, translated, focus-trapped dialog. */
+  async function uiConfirm(message: string, options: { title?: string; confirmLabel?: string; danger?: boolean } = {}): Promise<boolean> {
+    return (await showDialog({
+      title: options.title || I18N.t('dialog_confirm_title'),
+      message,
+      confirmLabel: options.confirmLabel,
+      danger: options.danger
+    })) === true;
+  }
+  /** Replace window.prompt: resolves to the text, or null when cancelled. */
+  async function uiPrompt(title: string, message: string, value = '', maxLength = 80): Promise<string | null> {
+    const result = await showDialog({ title, message, input: { value, maxLength } });
+    return typeof result === 'string' ? result : null;
+  }
+
   const svg = $('#graphCanvas');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
@@ -176,7 +270,7 @@
   // permissive as its name claims.
   const snapshotBytes = (snap: string) => snap.length * 2;
   let historyBytes = 0;
-  function pushHistory(label='change'){
+  function pushHistory(_label='change'){  // labels are kept for call-site intent/documentation
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);

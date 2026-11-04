@@ -527,6 +527,9 @@ const I18N: I18nService = {
     'source_tap_target': { en: 'Source selected. Tap a target node or empty canvas.', ru: 'Источник выбран. Нажмите целевой узел или пустой холст.' },
     'node_label_prompt': { en: 'Node label:', ru: 'Метка узла:' },
     'edge_weight_prompt': { en: 'Edge weight:', ru: 'Вес ребра:' },
+    'node_label_hint': { en: 'Leave empty to clear the label.', ru: 'Оставьте пустым, чтобы очистить метку.' },
+    'edge_weight_hint': { en: 'Leave empty to remove the weight.', ru: 'Оставьте пустым, чтобы убрать вес.' },
+    'preset_name_hint': { en: 'Shown in the preset list.', ru: 'Отображается в списке пресетов.' },
     'drag_to_target': { en: 'Drag to a target node or empty canvas…', ru: 'Перетащите к целевому узлу или на пустой холст…' },
     'pinch_zoom_pan': { en: 'Pinch: zoom and pan', ru: 'Щипок: зум и панор.' },
     'pan_mode': { en: 'Pan mode', ru: 'Режим панор.' },
@@ -561,6 +564,9 @@ const I18N: I18nService = {
     'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
     'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
     'rows_reorder': { en: 'Reorder row', ru: 'Перестановка строки' },
+    'dialog_ok': { en: 'OK', ru: 'ОК' },
+    'dialog_cancel': { en: 'Cancel', ru: 'Отмена' },
+    'dialog_confirm_title': { en: 'Confirm', ru: 'Подтверждение' },
   },
 
   // Текущий язык

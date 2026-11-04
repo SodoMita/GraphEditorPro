@@ -252,7 +252,7 @@
     el.setAttribute('class', (el.getAttribute('class') || '') + ' selection-draft');
     selectionOverlayLayer.appendChild(el);
   }
-  function hitTestSelection(draft, liveBrush=false){
+  function hitTestSelection(draft, _liveBrush=false){
     const nodes = [], edges = [];
     const tool = draft.tool;
     const minX = Math.min(draft.start.x,draft.end.x), maxX = Math.max(draft.start.x,draft.end.x), minY = Math.min(draft.start.y,draft.end.y), maxY = Math.max(draft.start.y,draft.end.y);
@@ -578,7 +578,6 @@
   function finishPointer(ev, cancel=false){
     if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
     if(singleSweep && ev.pointerId === singleSweep.pointerId){
-      const sw = singleSweep;
       singleSweep = null;
       gestureActive = false;
       try{ if(svg.hasPointerCapture?.(ev.pointerId)) svg.releasePointerCapture(ev.pointerId); }catch{}
@@ -783,7 +782,15 @@
     state.viewBox = {x:minX, y:minY, w:Math.max(260,maxX-minX), h:Math.max(220,maxY-minY)}; queueRender(false); saveSoon();
   }
 
-  function editNodeQuick(id){ const n=nodeById(id); if(!n) return; const val=prompt(I18N.t('node_label_prompt'), n.label); if(val !== null){ n.label = val.trim().slice(0,80); pushHistory('rename node'); queueRender(true); } }
-  function editEdgeQuick(id){ const e=edgeById(id); if(!e) return; const val=prompt(I18N.t('edge_weight_prompt'), e.weight ?? ''); if(val !== null){ const t = val.trim().slice(0,50); if(t === '') delete e.weight; else e.weight = t; pushHistory('edit edge'); queueRender(true); } }
+  async function editNodeQuick(id){
+    const n=nodeById(id); if(!n) return;
+    const val = await uiPrompt(I18N.t('node_label_prompt'), I18N.t('node_label_hint'), n.label, 80);
+    if(val !== null){ n.label = val.trim().slice(0,80); pushHistory('rename node'); queueRender(true); }
+  }
+  async function editEdgeQuick(id){
+    const e=edgeById(id); if(!e) return;
+    const val = await uiPrompt(I18N.t('edge_weight_prompt'), I18N.t('edge_weight_hint'), e.weight ?? '', 50);
+    if(val !== null){ const t = val.trim().slice(0,50); if(t === '') delete e.weight; else e.weight = t; pushHistory('edit edge'); queueRender(true); }
+  }
 
   // Standardized precision for all coordinate exports — 4 decimals prevents drift across round-trips

@@ -73,8 +73,8 @@
     pushHistory('relax layout'); fitView(); queueRender(true);
     if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
   }
-  function addSample(){
-    if(state.nodes.length && !confirm(I18N.t('replace_with_sample'))) return;
+  async function addSample(){
+    if(state.nodes.length && !await uiConfirm(I18N.t('replace_with_sample'), {danger: true})) return;
     state.nodes = [
       {id:'n1',label:'A',x:-220,y:-120,shape:'circle',color:'#0ea5e9'}, {id:'n2',label:'B',x:0,y:-170,shape:'circle',color:'#8b5cf6'},
       {id:'n3',label:'C',x:230,y:-80,shape:'hexagon',color:'#06b6d4'}, {id:'n4',label:'D',x:-110,y:110,shape:'square',color:'#10b981'},

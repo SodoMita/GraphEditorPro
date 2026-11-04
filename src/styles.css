@@ -465,6 +465,25 @@
     .drag-handle:hover{background:rgba(34,211,238,.22)}
     .drag-handle:active{background:rgba(34,211,238,.32)}
 
+    /* ---------- In-app dialog (replaces prompt/confirm/alert) ---------- */
+    .app-dialog{
+      position:fixed; inset:0; z-index:90; display:grid; place-items:center; padding:16px;
+      background:rgba(2,6,23,.72); backdrop-filter:blur(3px);
+    }
+    .app-dialog-card{
+      width:min(420px,100%); background:var(--panel); border:1px solid var(--line-2); border-radius:14px;
+      box-shadow:var(--shadow); padding:16px; display:grid; gap:12px;
+    }
+    .app-dialog-title{margin:0; font-size:15px; font-weight:800; color:#e2e8f0}
+    .app-dialog-message{margin:0; font-size:12.5px; color:#cbd5e1; line-height:1.45; white-space:pre-wrap}
+    .app-dialog-field{margin:0}
+    .app-dialog-input{
+      width:100%; background:#020617; border:1px solid var(--line-2); color:#e2e8f0;
+      border-radius:8px; padding:9px 10px; font-size:16px; min-height:40px;
+    }
+    .app-dialog-input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+    .app-dialog-actions{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap}
+
     /* ---------- Presets overlay (app-wide) ---------- */
     .presets-overlay{
       position:fixed; inset:0; z-index:60; background:rgba(2,6,23,.92); backdrop-filter:blur(8px);

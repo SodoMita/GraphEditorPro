@@ -472,6 +472,25 @@
     .drag-handle:hover{background:rgba(34,211,238,.22)}
     .drag-handle:active{background:rgba(34,211,238,.32)}
 
+    /* ---------- In-app dialog (replaces prompt/confirm/alert) ---------- */
+    .app-dialog{
+      position:fixed; inset:0; z-index:90; display:grid; place-items:center; padding:16px;
+      background:rgba(2,6,23,.72); backdrop-filter:blur(3px);
+    }
+    .app-dialog-card{
+      width:min(420px,100%); background:var(--panel); border:1px solid var(--line-2); border-radius:14px;
+      box-shadow:var(--shadow); padding:16px; display:grid; gap:12px;
+    }
+    .app-dialog-title{margin:0; font-size:15px; font-weight:800; color:#e2e8f0}
+    .app-dialog-message{margin:0; font-size:12.5px; color:#cbd5e1; line-height:1.45; white-space:pre-wrap}
+    .app-dialog-field{margin:0}
+    .app-dialog-input{
+      width:100%; background:#020617; border:1px solid var(--line-2); color:#e2e8f0;
+      border-radius:8px; padding:9px 10px; font-size:16px; min-height:40px;
+    }
+    .app-dialog-input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+    .app-dialog-actions{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap}
+
     /* ---------- Presets overlay (app-wide) ---------- */
     .presets-overlay{
       position:fixed; inset:0; z-index:60; background:rgba(2,6,23,.92); backdrop-filter:blur(8px);
@@ -2150,6 +2169,9 @@ const I18N = {
         'source_tap_target': { en: 'Source selected. Tap a target node or empty canvas.', ru: 'Источник выбран. Нажмите целевой узел или пустой холст.' },
         'node_label_prompt': { en: 'Node label:', ru: 'Метка узла:' },
         'edge_weight_prompt': { en: 'Edge weight:', ru: 'Вес ребра:' },
+        'node_label_hint': { en: 'Leave empty to clear the label.', ru: 'Оставьте пустым, чтобы очистить метку.' },
+        'edge_weight_hint': { en: 'Leave empty to remove the weight.', ru: 'Оставьте пустым, чтобы убрать вес.' },
+        'preset_name_hint': { en: 'Shown in the preset list.', ru: 'Отображается в списке пресетов.' },
         'drag_to_target': { en: 'Drag to a target node or empty canvas…', ru: 'Перетащите к целевому узлу или на пустой холст…' },
         'pinch_zoom_pan': { en: 'Pinch: zoom and pan', ru: 'Щипок: зум и панор.' },
         'pan_mode': { en: 'Pan mode', ru: 'Режим панор.' },
@@ -2184,6 +2206,9 @@ const I18N = {
         'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
         'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
         'rows_reorder': { en: 'Reorder row', ru: 'Перестановка строки' },
+        'dialog_ok': { en: 'OK', ru: 'ОК' },
+        'dialog_cancel': { en: 'Cancel', ru: 'Отмена' },
+        'dialog_confirm_title': { en: 'Confirm', ru: 'Подтверждение' },
     },
     // Текущий язык
     current: 'en',
@@ -2303,6 +2328,104 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const isKeyboardVisible = (el) => el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+let dialogEl = null;
+let dialogResolve = null;
+let dialogReturnFocus = null;
+function closeDialog(result = null) {
+    if (!dialogEl)
+        return;
+    const resolve = dialogResolve;
+    dialogEl.remove();
+    dialogEl = null;
+    dialogResolve = null;
+    if (dialogReturnFocus?.isConnected)
+        dialogReturnFocus.focus({ preventScroll: true });
+    dialogReturnFocus = null;
+    resolve?.(result);
+}
+function showDialog(options) {
+    closeDialog(null); // only one dialog at a time
+    return new Promise(resolve => {
+        dialogResolve = resolve;
+        dialogReturnFocus = document.activeElement;
+        const wantsInput = Boolean(options.input);
+        const dialog = document.createElement('div');
+        dialog.className = 'app-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'appDialogTitle');
+        if (options.message)
+            dialog.setAttribute('aria-describedby', 'appDialogMessage');
+        const inputId = 'appDialogInput';
+        dialog.innerHTML = `
+        <form class="app-dialog-card">
+          <h2 id="appDialogTitle" class="app-dialog-title">${esc(options.title)}</h2>
+          ${options.message ? `<p id="appDialogMessage" class="app-dialog-message">${esc(options.message)}</p>` : ''}
+          ${wantsInput ? `<label class="app-dialog-field" for="${inputId}"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></label>` : ''}
+          <div class="app-dialog-actions">
+            <button type="button" class="btn small" data-dialog-cancel>${esc(options.cancelLabel || I18N.t('dialog_cancel'))}</button>
+            <button type="submit" class="btn small ${options.danger ? 'danger' : 'good'}" data-dialog-ok>${esc(options.confirmLabel || I18N.t('dialog_ok'))}</button>
+          </div>
+        </form>`;
+        document.body.appendChild(dialog);
+        dialogEl = dialog;
+        const input = dialog.querySelector('#' + inputId);
+        const form = dialog.querySelector('form');
+        const finish = (result) => closeDialog(result);
+        form?.addEventListener('submit', ev => {
+            ev.preventDefault();
+            finish(wantsInput ? (input?.value ?? '') : true);
+        });
+        dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
+        dialog.addEventListener('pointerdown', ev => { if (ev.target === dialog)
+            finish(wantsInput ? null : false); });
+        dialog.addEventListener('keydown', ev => {
+            if (ev.key === 'Escape') {
+                ev.preventDefault();
+                ev.stopPropagation();
+                finish(wantsInput ? null : false);
+                return;
+            }
+            if (ev.key !== 'Tab')
+                return;
+            const focusable = $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
+            if (!focusable.length)
+                return;
+            const first = focusable[0], last = focusable[focusable.length - 1];
+            if (ev.shiftKey && document.activeElement === first) {
+                ev.preventDefault();
+                last.focus();
+            }
+            else if (!ev.shiftKey && document.activeElement === last) {
+                ev.preventDefault();
+                first.focus();
+            }
+        });
+        setTimeout(() => {
+            if (input) {
+                input.focus();
+                input.select();
+            }
+            else {
+                dialog.querySelector('[data-dialog-ok]')?.focus();
+            }
+        }, 0);
+    });
+}
+/** Replace window.confirm with an in-app, translated, focus-trapped dialog. */
+async function uiConfirm(message, options = {}) {
+    return (await showDialog({
+        title: options.title || I18N.t('dialog_confirm_title'),
+        message,
+        confirmLabel: options.confirmLabel,
+        danger: options.danger
+    })) === true;
+}
+/** Replace window.prompt: resolves to the text, or null when cancelled. */
+async function uiPrompt(title, message, value = '', maxLength = 80) {
+    const result = await showDialog({ title, message, input: { value, maxLength } });
+    return typeof result === 'string' ? result : null;
+}
 const svg = $('#graphCanvas');
 const gridLayer = $('#gridLayer');
 const gridRect = $('#gridRect');
@@ -2452,7 +2575,7 @@ const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
 // permissive as its name claims.
 const snapshotBytes = (snap) => snap.length * 2;
 let historyBytes = 0;
-function pushHistory(label = 'change') {
+function pushHistory(_label = 'change') {
     const snap = snapshot();
     if (appHistory[appHistoryIndex] === snap)
         return;
@@ -3270,7 +3393,7 @@ function selRingFor(shape, w, h) {
 // Creates/removes/updates a node's selection ring and returns the ring
 // element (or null). Safe to call from render passes and the fast
 // selection-sync path alike.
-function syncNodeSelRing(g, n, shape, w, h, selected) {
+function syncNodeSelRing(g, _n, shape, w, h, selected) {
     const selSig = shape + '|' + w + '|' + h;
     let sel = g.__sel;
     if (selected) {
@@ -4424,20 +4547,6 @@ function renderSelectionPanel() {
         // Wire node multi-edit controls
         if (nodeCount > 0) {
             const nodeIds = state.selection.nodes;
-            const setNodeProp = (prop, val, isInput) => {
-                for (const id of nodeIds) {
-                    const n = nodeById(id);
-                    if (n) {
-                        if (val === '' && isInput)
-                            n[prop] = '';
-                        else if (val !== '')
-                            n[prop] = isInput ? val : val;
-                    }
-                }
-                pushHistory('multi-edit nodes');
-                queueRender(false);
-                saveSoon();
-            };
             $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0, 80); for (const id of nodeIds) {
                 const n = nodeById(id);
                 if (n)
@@ -5654,9 +5763,8 @@ function setNodeLabelFromMatrix(id, label) {
     const n = nodeById(id);
     if (!n)
         return;
-    // If the displayed value was the ID fallback (label was empty) and user
-    // didn't change it, keep the label empty instead of baking in the ID.
-    const displayed = n.label || id;
+    // If the value equals the ID fallback (label was empty) and the user did
+    // not change it, keep the label empty instead of baking in the ID.
     const newLabel = String(label ?? '').slice(0, 80);
     if (newLabel === id && n.label === '')
         return;
@@ -5749,10 +5857,10 @@ function setMatrixCell(from, to, raw) {
     pushHistory('edit matrix edge');
     queueRender(true);
 }
-function clearMatrixEdges() {
+async function clearMatrixEdges() {
     if (!state.edges.length)
         return;
-    if (!confirm(I18N.t('clear_matrix_edges')))
+    if (!await uiConfirm(I18N.t('clear_matrix_edges'), { danger: true, confirmLabel: I18N.t('clear') }))
         return;
     state.edges = [];
     setSelection([], [], null, false);
@@ -6507,7 +6615,7 @@ function renderSelectionDraft() {
     el.setAttribute('class', (el.getAttribute('class') || '') + ' selection-draft');
     selectionOverlayLayer.appendChild(el);
 }
-function hitTestSelection(draft, liveBrush = false) {
+function hitTestSelection(draft, _liveBrush = false) {
     const nodes = [], edges = [];
     const tool = draft.tool;
     const minX = Math.min(draft.start.x, draft.end.x), maxX = Math.max(draft.start.x, draft.end.x), minY = Math.min(draft.start.y, draft.end.y), maxY = Math.max(draft.start.y, draft.end.y);
@@ -6902,7 +7010,6 @@ function finishPointer(ev, cancel = false) {
     if (zoomPreview)
         flushZoomPreview(); // hit-testing must see committed geometry
     if (singleSweep && ev.pointerId === singleSweep.pointerId) {
-        const sw = singleSweep;
         singleSweep = null;
         gestureActive = false;
         try {
@@ -7147,22 +7254,32 @@ function fitView() {
     queueRender(false);
     saveSoon();
 }
-function editNodeQuick(id) { const n = nodeById(id); if (!n)
-    return; const val = prompt(I18N.t('node_label_prompt'), n.label); if (val !== null) {
-    n.label = val.trim().slice(0, 80);
-    pushHistory('rename node');
-    queueRender(true);
-} }
-function editEdgeQuick(id) { const e = edgeById(id); if (!e)
-    return; const val = prompt(I18N.t('edge_weight_prompt'), e.weight ?? ''); if (val !== null) {
-    const t = val.trim().slice(0, 50);
-    if (t === '')
-        delete e.weight;
-    else
-        e.weight = t;
-    pushHistory('edit edge');
-    queueRender(true);
-} }
+async function editNodeQuick(id) {
+    const n = nodeById(id);
+    if (!n)
+        return;
+    const val = await uiPrompt(I18N.t('node_label_prompt'), I18N.t('node_label_hint'), n.label, 80);
+    if (val !== null) {
+        n.label = val.trim().slice(0, 80);
+        pushHistory('rename node');
+        queueRender(true);
+    }
+}
+async function editEdgeQuick(id) {
+    const e = edgeById(id);
+    if (!e)
+        return;
+    const val = await uiPrompt(I18N.t('edge_weight_prompt'), I18N.t('edge_weight_hint'), e.weight ?? '', 50);
+    if (val !== null) {
+        const t = val.trim().slice(0, 50);
+        if (t === '')
+            delete e.weight;
+        else
+            e.weight = t;
+        pushHistory('edit edge');
+        queueRender(true);
+    }
+}
 // Standardized precision for all coordinate exports — 4 decimals prevents drift across round-trips
 // === Selection transform gizmo ================================
 // Translate / rotate / scale / rect handles for the current selection.
@@ -8005,7 +8122,7 @@ function exportDotText() {
 function exportDot() { showExportPreview(`${fileBase()}.dot`, exportDotText(), 'text/vnd.graphviz;charset=utf-8'); }
 function xmlEsc(v) { return String(v ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&apos;', '"': '&quot;' }[c])); }
 function exportGraphmlText() {
-    const nd = state.settings.nodeDefaults, ed = state.settings.edgeDefaults, gd = state.settings.graphDefaults;
+    const gd = state.settings.graphDefaults;
     const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">`,
         `  <key id="label" for="node" attr.name="label" attr.type="string"/>`,
         `  <key id="nodeId" for="node" attr.name="id" attr.type="string"/>`,
@@ -8065,8 +8182,8 @@ function exportGraphmlText() {
     lines.push(`    <data key="gridMajorColor">${xmlEsc(state.settings.gridMajorColor)}</data>`);
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
-    // Node defaults
-    const ndLines = [`    <data key="type">${xmlEsc(nd.type)}</data>`, `    <data key="shape">${xmlEsc(nd.shape)}</data>`, `    <data key="color">${xmlEsc(nd.color)}</data>`, `    <data key="width">${xmlEsc(nd.width)}</data>`, `    <data key="height">${xmlEsc(nd.height)}</data>`, `    <data key="strokeColor">${xmlEsc(nd.strokeColor)}</data>`, `    <data key="strokeSize">${xmlEsc(nd.strokeSize)}</data>`, `    <data key="strokeStyle">${xmlEsc(nd.strokeStyle)}</data>`, `    <data key="labelColor">${xmlEsc(nd.labelColor)}</data>`, `    <data key="labelFont">${xmlEsc(nd.labelFont)}</data>`, `    <data key="labelSize">${xmlEsc(nd.labelSize)}</data>`, `    <data key="labelPosition">${xmlEsc(nd.labelPosition)}</data>`];
+    // Node defaults are serialised per node below (resolved visuals), so no
+    // separate <default> block is emitted.
     // Serialize nodes sorted by order
     const sortedNodes = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     for (const n of sortedNodes) {
@@ -8712,7 +8829,6 @@ function parseGraphml(text) {
         throw new Error('Invalid XML/GraphML');
     // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
     const keyNames = {};
-    const keyDefaults = {}; // keyed by attr.name, separated by target
     const keyDefaultsByFor = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
@@ -8964,18 +9080,18 @@ function importFile(file, forcedFormat = 'auto') {
     if (!file)
         return;
     if (file.size > MAX_IMPORT_BYTES) {
-        alert(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
+        toast(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
         return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
         try {
             const text = String(reader.result || '');
             assertImportTextSize(text);
             const name = (file.name || '').toLowerCase();
             const format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
             const append = $('#optImportAppend')?.checked;
-            if (!append && (state.nodes.length || state.edges.length) && !confirm(I18N.t('replace_with_import')))
+            if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
                 return;
             if (format === 'dot')
                 importGraphData(parseDot(text), 'DOT', append);
@@ -9005,7 +9121,7 @@ function importFile(file, forcedFormat = 'auto') {
             }
         }
         catch (err) {
-            alert(I18N.t('could_not_import', { msg: err.message }));
+            toast(I18N.t('could_not_import', { msg: err.message }));
         }
     };
     reader.readAsText(file);
@@ -9209,8 +9325,8 @@ function layoutForce(requestedIter = 180) {
     if (reduced)
         toast(I18N.t('layout_force_reduced', { iter, n }));
 }
-function addSample() {
-    if (state.nodes.length && !confirm(I18N.t('replace_with_sample')))
+async function addSample() {
+    if (state.nodes.length && !await uiConfirm(I18N.t('replace_with_sample'), { danger: true }))
         return;
     state.nodes = [
         { id: 'n1', label: 'A', x: -220, y: -120, shape: 'circle', color: '#0ea5e9' }, { id: 'n2', label: 'B', x: 0, y: -170, shape: 'circle', color: '#8b5cf6' },
@@ -10174,14 +10290,14 @@ function applyPresetToSelection(idx) {
         what.push(I18N.current === 'ru' ? `${edgeIds.length} ребр(о)` : `${edgeIds.length} edge${edgeIds.length === 1 ? '' : 's'}`);
     toast(I18N.t('preset_applied', { name: p.name, what: what.join(I18N.current === 'ru' ? ' и ' : ' and ') }));
 }
-function savePresetFromSelection() {
+async function savePresetFromSelection() {
     const nodeIds = state.selection?.nodes || [];
     const edgeIds = state.selection?.edges || [];
     if (!nodeIds.length && !edgeIds.length) {
         toast(I18N.t('select_node_edge'));
         return;
     }
-    const name = prompt(I18N.t('preset_name'), I18N.t('preset') + ' ' + ((state.settings.stylePresets?.length || 0) + 1));
+    const name = await uiPrompt(I18N.t('preset_name'), I18N.t('preset_name_hint'), I18N.t('preset') + ' ' + ((state.settings.stylePresets?.length || 0) + 1), 60);
     if (!name)
         return;
     const preset = { name: name.slice(0, 40) };
@@ -10531,8 +10647,8 @@ function wireUi() {
             applyPresetToSelection(parseInt(card.dataset.presetIdx, 10));
         }
     });
-    $('#btnClear').addEventListener('click', () => { if (!state.nodes.length && !state.edges.length)
-        return; if (confirm(I18N.t('clear_entire'))) {
+    $('#btnClear').addEventListener('click', async () => { if (!state.nodes.length && !state.edges.length)
+        return; if (await uiConfirm(I18N.t('clear_entire'), { danger: true, confirmLabel: I18N.t('clear') })) {
         state.nodes = [];
         state.edges = [];
         state.selected = null;
@@ -10542,7 +10658,7 @@ function wireUi() {
         pushHistory('clear');
         queueRender(true, true);
     } });
-    $('#btnSample').addEventListener('click', () => { addSample(); closePanels(); });
+    $('#btnSample').addEventListener('click', () => { closePanels(); addSample(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
     $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });

@@ -265,10 +265,22 @@ Implemented in this branch after the audit (all covered by `tests/import-parsers
 | P3-5 Untranslated append toast | **Fixed** | `appended_n_m` / `appended_n_m_discarded` keys |
 | P3-6 History cap units | **Fixed** | Snapshot size counted in UTF-16 bytes |
 | P3-7 `comparison.html` dead links | **Fixed** | Dead iframes/links replaced with a note that artifacts are generated |
+| P2-5 blocking `prompt`/`confirm`/`alert` | **Fixed** | New `showDialog()`/`uiConfirm()`/`uiPrompt()` in `10-core.ts` (role=dialog, aria-modal, Escape/backdrop cancel, focus trap, focus restore, translated buttons). All 7 call sites converted — clear graph, clear matrix edges, replace with sample, replace with import, preset name, node label, edge weight; the two import `alert`s now use the toast stack. `tests/browser-smoke.test.mjs` fails if any path reaches a native dialog |
+| P3-4 type-safety debt (`strict:false`) | **Partly fixed** | `noImplicitThis`, `strictBindCallApply`, `strictFunctionTypes`, `noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUnusedLocals`, `noUnusedParameters` are now on with 0 errors (5 dead declarations and 3 unused parameters removed as a result). `strict`/`noImplicitAny`/`strictNullChecks` stay off — 747 `noImplicitAny` errors — and `tsconfig.json` now says so explicitly |
+| P2-5 keyboard selection of canvas nodes | **Open** | Nodes are still pointer-only; the matrix/edge-list tables remain the keyboard route |
 
-**Still open** (deliberately out of this change): replacing blocking `prompt()`/`confirm()` with the in-app modal pattern; enabling `strict`/`noImplicitAny`; keyboard selection of canvas nodes; a Playwright smoke job in CI; real app-code coverage instrumentation; matrix/edge-list virtualisation below the 300 cap.
+**Still open** (deliberately out of this change, each with its reason):
 
-Verification after the fixes: `npm run check` passes with **71 tests** (62 existing + 9 new parser/guard/a11y regressions), `axe.run()` returns no violations, and the browser bench still shows 0 root `viewBox` writes with 0.2 ms style+layout per camera update.
+- **`strict` / `noImplicitAny` / `strictNullChecks`.** Turning them on yields ~747 `noImplicitAny` errors alone across the concatenated scope; it is a mechanical but large refactor that would swamp the review of the behaviour fixes. The seven cheap flags that *do* pass were enabled instead (see P3-4 above), so regressions in unused code, fall-through and implicit returns are now caught.
+- **Keyboard selection and movement of canvas nodes** (P2-5 remainder). A real feature — roving focus over `<g>` nodes plus a keyboard connect flow — not a defect fix.
+- **A Playwright smoke job in CI.** Chromium 149 needs a download step; the suite stays jsdom-only so `npm run check` remains ~35 s and offline-capable. The Playwright harnesses used for this audit live outside the repo (`node_modules/.audit/`).
+- **App-code coverage instrumentation.** Tests drive the compiled bundle in a separate V8 context, so `node --test --experimental-test-coverage` measures the test files, not `src/app`. Fixing it means building an instrumented bundle for the test run.
+- **Matrix/edge-list virtualisation below the 300-node cap.** The cap (`MATRIX_MAX_NODES`) bounds the worst case; 300×300 inputs is still the slowest view in the app (~1 s at 300 nodes) and deserves windowing before the cap is ever raised.
+- **CSP meta tag (P3-2).** A single file with one inline script and one inline style block needs `'unsafe-inline'` (or hashes regenerated on every build) to keep working, which would buy almost nothing over the current "no network APIs in the output" build gate. Revisit only if the file is ever served from a host.
+- **Matrix-CSV identity model (P3-8).** Round-tripping duplicate or empty labels needs a format decision (labels vs IDs, plus a legend); it changes the export contract, so it belongs in its own change.
+- **Minification (P3-9).** The 645 KB unminified bundle is deliberate: readable diffs and a reviewable artifact for an offline file.
+
+Verification after this second round: `npm run check` passes with **74 tests** (62 existing + 12 regressions), `npx tsc --noEmit` is clean under the hardened flag set, `axe.run()` returns no violations with a dialog open, and headless Chromium confirms the dialog contract end to end (Escape cancels and restores focus to the trigger, `Tab` stays inside, Enter confirms, zero native `dialog` events, zero page errors).
 
 ---
 
@@ -276,7 +288,7 @@ Verification after the fixes: `npm run check` passes with **71 tests** (62 exist
 
 ```bash
 npm ci
-npm run check                    # typecheck + build + 62 tests (~35 s)
+npm run check                    # typecheck + build + 74 tests (~35 s)
 git diff --exit-code index.html  # rebuild is byte-identical
 
 # headless browser (note: script needs ROOT exported as committed)

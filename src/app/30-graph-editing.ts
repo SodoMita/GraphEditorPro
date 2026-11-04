@@ -514,9 +514,8 @@
   }
   function setNodeLabelFromMatrix(id, label){
     const n = nodeById(id); if(!n) return;
-    // If the displayed value was the ID fallback (label was empty) and user
-    // didn't change it, keep the label empty instead of baking in the ID.
-    const displayed = n.label || id;
+    // If the value equals the ID fallback (label was empty) and the user did
+    // not change it, keep the label empty instead of baking in the ID.
     const newLabel = String(label ?? '').slice(0,80);
     if(newLabel === id && n.label === '') return;
     n.label = newLabel;
@@ -586,9 +585,9 @@
     pushHistory('edit matrix edge');
     queueRender(true);
   }
-  function clearMatrixEdges(){
+  async function clearMatrixEdges(){
     if(!state.edges.length) return;
-    if(!confirm(I18N.t('clear_matrix_edges'))) return;
+    if(!await uiConfirm(I18N.t('clear_matrix_edges'), {danger: true, confirmLabel: I18N.t('clear')})) return;
     state.edges = [];
     setSelection([], [], null, false);
     pushHistory('clear matrix edges');

@@ -282,7 +282,7 @@
   // Creates/removes/updates a node's selection ring and returns the ring
   // element (or null). Safe to call from render passes and the fast
   // selection-sync path alike.
-  function syncNodeSelRing(g: any, n: any, shape: string, w: number, h: number, selected: boolean){
+  function syncNodeSelRing(g: any, _n: any, shape: string, w: number, h: number, selected: boolean){
     const selSig = shape + '|' + w + '|' + h;
     let sel = g.__sel;
     if(selected){
@@ -1195,10 +1195,6 @@
       // Wire node multi-edit controls
       if(nodeCount > 0){
         const nodeIds = state.selection.nodes;
-        const setNodeProp = (prop, val, isInput) => {
-          for(const id of nodeIds){ const n = nodeById(id); if(n){ if(val === '' && isInput) n[prop] = ''; else if(val !== '') n[prop] = isInput ? val : val; } }
-          pushHistory('multi-edit nodes'); queueRender(false); saveSoon();
-        };
         $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of nodeIds){ const n = nodeById(id); if(n) n.label = v; } pushHistory('multi node label'); queueRender(true); markSidebarDirty(); saveSoon(); });
         $('#mulNodeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of nodeIds){ const n = nodeById(id); if(n){ n.type = v; applyTypeStyleToNode(n); } } invalidateGraphIndex(); pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
         $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const ord = clamp(parseInt(v,10)||0, 0, 2147483647); for(const id of nodeIds){ const n = nodeById(id); if(n) n.order = ord; } invalidateGraphIndex(); pushHistory('multi node order'); queueRender(true); saveSoon(); });

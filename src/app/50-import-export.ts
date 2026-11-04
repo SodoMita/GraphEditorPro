@@ -185,7 +185,7 @@
   function exportDot(){ showExportPreview(`${fileBase()}.dot`, exportDotText(), 'text/vnd.graphviz;charset=utf-8'); }
   function xmlEsc(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&apos;','"':'&quot;'}[c])); }
   function exportGraphmlText(){
-    const nd = state.settings.nodeDefaults, ed = state.settings.edgeDefaults, gd = state.settings.graphDefaults;
+    const gd = state.settings.graphDefaults;
     const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">`,
       `  <key id="label" for="node" attr.name="label" attr.type="string"/>`,
       `  <key id="nodeId" for="node" attr.name="id" attr.type="string"/>`,
@@ -245,8 +245,8 @@
     lines.push(`    <data key="gridMajorColor">${xmlEsc(state.settings.gridMajorColor)}</data>`);
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
-    // Node defaults
-    const ndLines = [`    <data key="type">${xmlEsc(nd.type)}</data>`, `    <data key="shape">${xmlEsc(nd.shape)}</data>`, `    <data key="color">${xmlEsc(nd.color)}</data>`, `    <data key="width">${xmlEsc(nd.width)}</data>`, `    <data key="height">${xmlEsc(nd.height)}</data>`, `    <data key="strokeColor">${xmlEsc(nd.strokeColor)}</data>`, `    <data key="strokeSize">${xmlEsc(nd.strokeSize)}</data>`, `    <data key="strokeStyle">${xmlEsc(nd.strokeStyle)}</data>`, `    <data key="labelColor">${xmlEsc(nd.labelColor)}</data>`, `    <data key="labelFont">${xmlEsc(nd.labelFont)}</data>`, `    <data key="labelSize">${xmlEsc(nd.labelSize)}</data>`, `    <data key="labelPosition">${xmlEsc(nd.labelPosition)}</data>`];
+    // Node defaults are serialised per node below (resolved visuals), so no
+    // separate <default> block is emitted.
     // Serialize nodes sorted by order
     const sortedNodes = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     for(const n of sortedNodes){
@@ -725,7 +725,6 @@
     if(doc.querySelector('parsererror')) throw new Error('Invalid XML/GraphML');
     // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
     const keyNames: Record<string, string> = {};
-    const keyDefaults: AnyRecord = {};  // keyed by attr.name, separated by target
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
@@ -885,18 +884,18 @@
   function importFile(file, forcedFormat='auto'){
     if(!file) return;
     if(file.size > MAX_IMPORT_BYTES){
-      alert(I18N.t('import_too_large', {mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024)}));
+      toast(I18N.t('import_too_large', {mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024)}));
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try{
         const text = String(reader.result || '');
         assertImportTextSize(text);
         const name = (file.name || '').toLowerCase();
         const format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
         const append = $('#optImportAppend')?.checked;
-        if(!append && (state.nodes.length || state.edges.length) && !confirm(I18N.t('replace_with_import'))) return;
+        if(!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), {danger: true, confirmLabel: I18N.t('import_btn')})) return;
         if(format === 'dot') importGraphData(parseDot(text), 'DOT', append);
         else if(format === 'graphml') importGraphData(parseGraphml(text), 'GraphML', append);
         else if(format === 'csv'){
@@ -913,7 +912,7 @@
           }
         }
         else { importGraphData(JSON.parse(text), 'JSON', append); }
-      } catch(err){ alert(I18N.t('could_not_import', {msg: err.message})); }
+      } catch(err){ toast(I18N.t('could_not_import', {msg: err.message})); }
     };
     reader.readAsText(file);
   }

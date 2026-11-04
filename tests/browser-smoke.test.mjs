@@ -366,3 +366,152 @@ test('pinch preview and commit are the same composited camera write', async () =
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// === In-app dialogs ===
+// Native prompt/confirm/alert block the tab, ignore the document language and
+// cannot be styled or focus-trapped. These tests pin the replacement contract:
+// every destructive action asks inside the document, Escape cancels, focus
+// returns to the trigger and the buttons are translated.
+
+function nodeGroup(document, id) {
+  return document.querySelector(`#node-${id}`);
+}
+
+test('destructive actions confirm inside the document and never call native confirm', async () => {
+  const savedGraph = {
+    nodes: [{ id: 'n1', label: 'Alpha', x: 0, y: 0 }],
+    edges: [],
+    settings: {},
+  };
+  const { dom, errors } = createEditorDom(savedGraph);
+  await nextFrame(dom.window);
+  const document = dom.window.document;
+  // Fail loudly if any code path still reaches for the blocking native dialog.
+  dom.window.confirm = () => { throw new Error('native confirm() was called'); };
+  dom.window.alert = () => { throw new Error('native alert() was called'); };
+  dom.window.prompt = () => { throw new Error('native prompt() was called'); };
+
+  const clear = document.querySelector('#btnClear');
+  clear.focus();
+  clear.click();
+  await nextFrame(dom.window);
+
+  let dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'clearing the graph opens an in-app dialog');
+  assert.equal(dialog.getAttribute('role'), 'dialog');
+  assert.equal(dialog.getAttribute('aria-modal'), 'true');
+  assert.equal(dialog.getAttribute('aria-labelledby'), 'appDialogTitle');
+  assert.equal(dialog.querySelector('.app-dialog-title').textContent, 'Confirm', 'default language is English');
+  assert.equal(document.activeElement, dialog.querySelector('[data-dialog-ok]'), 'confirm is focused by default');
+
+  // Escape cancels, keeps the graph and returns focus to the trigger.
+  dialog.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await nextFrame(dom.window);
+  assert.equal(document.querySelector('.app-dialog'), null, 'Escape closes the dialog');
+  assert.match(document.querySelector('#statsPill').textContent, /^1 /, 'Escape keeps the graph');
+  assert.equal(document.activeElement, clear, 'focus returns to the trigger');
+
+  // Cancel button does the same.
+  clear.click();
+  await nextFrame(dom.window);
+  document.querySelector('.app-dialog [data-dialog-cancel]').click();
+  await nextFrame(dom.window);
+  assert.equal(document.querySelector('.app-dialog'), null);
+  assert.match(document.querySelector('#statsPill').textContent, /^1 /);
+
+  // Backdrop click cancels too.
+  clear.click();
+  await nextFrame(dom.window);
+  dialog = document.querySelector('.app-dialog');
+  dialog.dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true }));
+  await nextFrame(dom.window);
+  assert.equal(document.querySelector('.app-dialog'), null);
+  assert.match(document.querySelector('#statsPill').textContent, /^1 /);
+
+  // Confirming clears the graph.
+  clear.click();
+  await nextFrame(dom.window);
+  document.querySelector('.app-dialog [data-dialog-ok]').click();
+  await nextFrame(dom.window);
+  assert.equal(document.querySelector('.app-dialog'), null, 'confirm closes the dialog');
+  assert.match(document.querySelector('#statsPill').textContent, /^0 /, 'confirm clears the graph');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('double-clicking a node edits its label in an in-app prompt', async () => {
+  const savedGraph = {
+    nodes: [{ id: 'n1', label: 'Alpha', x: 0, y: 0 }],
+    edges: [],
+    settings: {},
+  };
+  const { dom, errors } = createEditorDom(savedGraph);
+  await nextFrame(dom.window);
+  const document = dom.window.document;
+  dom.window.confirm = () => { throw new Error('native confirm() was called'); };
+  dom.window.alert = () => { throw new Error('native alert() was called'); };
+  dom.window.prompt = () => { throw new Error('native prompt() was called'); };
+
+  const group = nodeGroup(document, 'n1');
+  assert.ok(group, 'node group is rendered');
+  group.dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  await nextFrame(dom.window);
+
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'double-click opens an in-app prompt');
+  const input = dialog.querySelector('.app-dialog-input');
+  assert.ok(input, 'the prompt has a text field');
+  assert.equal(input.value, 'Alpha', 'the field is prefilled with the current label');
+  assert.equal(document.activeElement, input, 'the field is focused');
+
+  // Escape leaves the label untouched.
+  dialog.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await nextFrame(dom.window);
+  assert.equal(document.querySelector('.app-dialog'), null);
+  assert.match(nodeGroup(document, 'n1').textContent, /Alpha/);
+
+  // Submitting writes the new label through the normal graph path.
+  group.dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  await nextFrame(dom.window);
+  const field = document.querySelector('.app-dialog .app-dialog-input');
+  field.value = 'Renamed';
+  document.querySelector('.app-dialog form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await nextFrame(dom.window);
+
+  assert.equal(document.querySelector('.app-dialog'), null, 'submitting closes the prompt');
+  assert.match(nodeGroup(document, 'n1').textContent, /Renamed/, 'the node renders the new label');
+  assert.doesNotMatch(nodeGroup(document, 'n1').textContent, /Alpha/);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('dialog copy follows the document language', async () => {
+  const savedGraph = {
+    nodes: [{ id: 'n1', label: 'Alpha', x: 0, y: 0 }],
+    edges: [],
+    settings: {},
+  };
+  const { dom, errors } = createEditorDom(savedGraph);
+  await nextFrame(dom.window);
+  const document = dom.window.document;
+
+  // Default UI language is English; switch to Russian and the dialog follows.
+  document.querySelector('#btnLang').click();
+  await nextFrame(dom.window);
+
+  document.querySelector('#btnClear').click();
+  await nextFrame(dom.window);
+
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'the confirmation still opens after a language switch');
+  assert.equal(dialog.querySelector('.app-dialog-title').textContent, 'Подтверждение');
+  assert.equal(dialog.querySelector('[data-dialog-cancel]').textContent, 'Отмена');
+  assert.equal(dialog.querySelector('[data-dialog-ok]').textContent, 'Очистить');
+  dialog.querySelector('[data-dialog-ok]').click();
+  await nextFrame(dom.window);
+
+  assert.equal(document.querySelector('.app-dialog'), null);
+  assert.match(document.querySelector('#statsPill').textContent, /^0 /);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

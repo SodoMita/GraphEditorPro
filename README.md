@@ -26,7 +26,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 | File | Responsibility |
 | --- | --- |
 | `src/app/00-i18n.ts` | English/Russian translations and language switching |
-| `src/app/10-core.ts` | Types, state, validation, history, and shared utilities |
+| `src/app/10-core.ts` | Types, state, validation, history, shared utilities, and the in-app dialog system |
 | `src/app/20-rendering.ts` | SVG, matrix, edge-list, and selection rendering |
 | `src/app/30-graph-editing.ts` | Graph mutations, selection, sorting, and matrix editing |
 | `src/app/40-interactions.ts` | Pointer, drag, pan, zoom, and canvas selection behavior |
@@ -71,6 +71,10 @@ The build fails if any of these guarantees are broken:
 - Static markup contains duplicate element IDs.
 
 Runtime data is also validated before use. Every import path — JSON, GraphML, DOT, edge/nodes/matrix CSV and the clipboard — runs through the same sanitizer, so all of them share the 3000-node / 8000-edge caps, labelled-field bounds, colour/shape/stroke validation and dangling-edge removal (a CSV import that exceeds a cap says so in the toast instead of silently building an oversized document that shrinks on the next reload). IDs are normalized and deduplicated, numeric/style values are clamped, unsafe map keys are isolated in prototype-free records, and required DOM elements fail with a descriptive error instead of causing a later null dereference. DOT parsing strips comments only where DOT defines them (a leading `#` on a line, `//` and `/* */` outside quoted strings), so hex colours and labels such as `C#` survive; DOT export/import round-trips labels, positions, colours, node types and the six shapes (hexagon as a regular polygon, triangles as `triangle`/`invtriangle`). Autosave is flushed on `pagehide`, and a failed write (full or unavailable storage) reports itself instead of failing silently.
+
+## Dialogs and keyboard
+
+Destructive and text-entry actions (clearing the graph or the matrix, replacing the document with an import or the sample graph, naming a preset, the double-click node-label and edge-weight editors) never call the browser's blocking `prompt`/`confirm`/`alert`. `showDialog()` in `src/app/10-core.ts` builds the same modal pattern the rest of the app uses: `role="dialog"`, `aria-modal="true"`, a title wired through `aria-labelledby`, Escape and backdrop-click to cancel, `Tab`/`Shift+Tab` trapped between the visible buttons and the field, and focus restored to the triggering control on close. The buttons are translated (`dialog_ok`, `dialog_cancel`, `dialog_confirm_title`) and the text field opens focused with its value selected, so a double-click rename is type-and-Enter. Import failures and oversized-file notices use the `aria-live` toast stack instead of an alert, so they never steal focus.
 
 ## Performance design
 
