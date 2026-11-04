@@ -495,7 +495,12 @@
     toast(I18N.t('inserted_n_before', {n: newIds.length}));
   }
   function setMatrixDimension(count){
-    count = clamp(parseInt(count,10) || 0, 0, 300);
+    // The matrix cannot render more than MATRIX_MAX_NODES, so growing the graph
+    // through this control stops there too instead of creating nodes the view
+    // can never show.
+    const requested = parseInt(count,10) || 0;
+    count = clamp(requested, 0, MATRIX_MAX_NODES);
+    if(requested > MATRIX_MAX_NODES) toast(I18N.t('matrix_cap_reached', {cap: MATRIX_MAX_NODES}));
     const current = state.nodes.length;
     state.settings.matrixDimension = count;
     if(count > current){

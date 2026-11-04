@@ -124,7 +124,39 @@ test('matrix CSV import drops cells whose node labels are unknown instead of inv
     assert.ok(ids.has(edge.to), `edge target ${edge.to} exists`);
   }
   assert.equal(graph.edges.length, 1, 'only the A→B cell produces an edge');
-  assert.match(toasts(document), /skipped/i);
+  // The toast must attribute the loss to unknown endpoints, not to the size
+  // cap: that only stays true while importMatrixCsv resolves endpoints itself
+  // instead of letting the sanitizer drop invented ids.
+  assert.match(toasts(document), /skipped 1/i);
+});
+
+test('replace-mode nodes CSV import drops the previous graph\'s edges', async () => {
+  const saved = {
+    title: 'stale',
+    nodes: [{ id:'n1', label:'A', x:0, y:0, order:0 }, { id:'n2', label:'B', x:100, y:0, order:1 }],
+    edges: [{ id:'e1', from:'n1', to:'n2', weight:'7', directed:true }],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+
+  // Replace mode (the default): the CSV keeps both ids, so the sanitizer sees
+  // a perfectly valid old edge and would happily keep it.
+  const rows = ['order,id,label,x,y,shape,color,type', '0,n1,A2,0,0,circle,#0ea5e9,', '1,n2,B2,100,0,circle,#0ea5e9,'];
+  await paste(document, dom.window, '#btnPasteNodesCsv', rows.join('\n'));
+
+  const replaced = exportedGraph(document);
+  assert.deepEqual(replaced.nodes.map(n => n.label), ['A2', 'B2']);
+  assert.equal(replaced.edges.length, 0, 'an edge of the replaced graph must not survive');
+  assert.match(toasts(document), /old edge/i, 'dropping the old edges is reported');
+
+  // Append mode is the opposite contract: the existing edge stays.
+  const appended = createEditorDom(saved);
+  await settle(appended.dom.window, 40);
+  appended.dom.window.document.querySelector('#optImportAppend').checked = true;
+  await paste(appended.dom.window.document, appended.dom.window, '#btnPasteNodesCsv', rows.join('\n'));
+  const kept = exportedGraph(appended.dom.window.document);
+  assert.equal(kept.edges.length, 1, 'append mode keeps the existing edge');
+  assert.equal(kept.nodes.length, 4);
 });
 
 test('nodes CSV import enforces the document size cap and reports it', async () => {
@@ -178,15 +210,73 @@ test('CSV export neutralises spreadsheet formula injection but keeps numbers int
   assert.ok(edgesCsv.includes(',-5,') || edgesCsv.includes(',-5\r'), 'negative weights stay numeric');
 });
 
+test('exported formula-guarded cells come back unchanged on import', async () => {
+  const saved = {
+    title: 'formulas',
+    nodes: [
+      { id:'n1', label:'=1+1', x:0, y:0, order:0 },
+      { id:'n2', label:'@SUM(A1)', x:100, y:0, order:1 },
+      { id:'n3', label:'-note', x:200, y:0, order:2 },
+    ],
+    edges: [],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportNodesCsv').click();
+  const csv = document.querySelector('.export-modal textarea').value;
+  assert.ok(csv.includes("'=1+1"), 'export guards the formula-like label');
+  // Round-trip through the same import path (the export modal's Import button).
+  document.querySelector('#expImportBtn').click();
+  await settle(dom.window, 60);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(n => n.label), ['=1+1', '@SUM(A1)', '-note'], 'one apostrophe in, none out');
+});
+
+test('DOT comments survive CRLF and CR-only files without eating the next declaration', async () => {
+  const dotLf = [
+    'digraph G {',
+    '  # leading hash comment',
+    '  a [label="Alpha", fillcolor="#ff0000"];',
+    '  b [label="Beta"];',
+    '  a -> b;',
+    '}',
+  ].join('\n');
+  const expected = await (async () => {
+    const {dom} = createEditorDom();
+    await settle(dom.window, 40);
+    await paste(dom.window.document, dom.window, '#btnPasteDot', dotLf);
+    const graph = exportedGraph(dom.window.document);
+    dom.window.close();
+    return graph;
+  })();
+  assert.deepEqual(expected.nodes.map(n => n.label), ['Alpha', 'Beta']);
+  assert.equal(expected.edges.length, 1);
+
+  for (const eol of ['\r\n', '\r']) {
+    const {dom, errors} = createEditorDom();
+    await settle(dom.window, 40);
+    await paste(dom.window.document, dom.window, '#btnPasteDot', dotLf.split('\n').join(eol));
+    const graph = exportedGraph(dom.window.document);
+    assert.deepEqual(graph.nodes.map(n => n.label), ['Alpha', 'Beta'], `comments survive ${JSON.stringify(eol)} line endings`);
+    assert.equal(graph.edges.length, 1, `edges survive ${JSON.stringify(eol)} line endings`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
 // === Performance guards ===
-test('matrix rendering is hard-capped at 300 nodes regardless of the row limit', async () => {
+test('matrix rendering is hard-capped at 14,400 cells regardless of the row limit', async () => {
   const nodes = Array.from({ length: 350 }, (_, i) => ({ id: 'n' + i, label: 'N' + i, x: i * 10, y: 0, order: i }));
   const {dom} = createEditorDom({ title: 'big', nodes, edges: [], settings: { matrixLimit: 5, matrixDimension: 0 } });
   const {document} = dom.window;
   await settle(dom.window, 80);
   const note = document.querySelector('#matrixNote').textContent;
-  assert.match(note, /300 of 350/, `matrix reports its capped size (got "${note}")`);
+  assert.match(note, /120 of 350/, `matrix reports its capped size (got "${note}")`);
   assert.equal(document.querySelectorAll('#matrixHost table').length, 0, 'oversized matrix is hidden, not rendered');
+  const hidden = document.querySelector('#matrixHost').textContent;
+  assert.match(hidden, /350 nodes/, 'the message names the real graph size, not the clamped slice');
+  assert.match(hidden, /120/, 'the message names the render ceiling that cannot be raised');
+  assert.doesNotMatch(hidden, /300 nodes/, 'no claim that the graph has 300 nodes');
 });
 
 // === Persistence and accessibility ===

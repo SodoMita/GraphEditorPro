@@ -254,7 +254,7 @@ Implemented in this branch after the audit (all covered by `tests/import-parsers
 | P1-1 DOT corruption | **Fixed** | `stripDotComments()` tokenises quoted strings and treats `#` as a comment only at line start; DOT export/import now round-trips labels, colours, node types, order and all six shapes (`triangle`/`invtriangle`/`polygon sides=6`); label-only edges no longer gain a phantom weight |
 | P1-2 Matrix-CSV dangling edges | **Fixed** | Unknown endpoints are skipped and counted; every CSV path now commits through `commitCsvGraph()` → `sanitizeState` |
 | P1-3 CSV imports bypassing caps | **Fixed** | Same funnel: 3000/8000 caps, label bounds, colour/shape/stroke validation; oversized imports report what was dropped |
-| P2-1 Matrix O(n²) | **Fixed** | `MATRIX_MAX_NODES = 300` hard ceiling; 700-node document now renders `300×300 view of 700 nodes` instead of 490k inputs |
+| P2-1 Matrix O(n²) | **Fixed** | `MATRIX_MAX_CELLS = 14,400` hard ceiling (120×120 nodes): a 350-node document renders 14,400 cells in ~1.2 s instead of 90,600 cells in ~5.8 s (measured: 150×150 1.6 s, 300×300 5.8 s). The hidden-matrix note now names the real graph size and the ceiling instead of the already-clamped slice |
 | P2-2 Force layout freeze | **Fixed** | `FORCE_LAYOUT_PAIR_BUDGET` (17M pair interactions): 600 nodes 1.85 s → 613 ms, 1,500 nodes ≈11 s → 707 ms, with a toast when passes are reduced |
 | P2-3 Broken browser-setup script | **Fixed** | `export ROOT`; the script now runs unmodified and yields Chromium 149 |
 | P2-4 No CI | **Fixed** | `.github/workflows/ci.yml` runs `npm run check` on Node 20/22 and fails on a stale `index.html` |
@@ -266,6 +266,11 @@ Implemented in this branch after the audit (all covered by `tests/import-parsers
 | P3-6 History cap units | **Fixed** | Snapshot size counted in UTF-16 bytes |
 | P3-7 `comparison.html` dead links | **Fixed** | Dead iframes/links replaced with a note that artifacts are generated |
 | P2-5 blocking `prompt`/`confirm`/`alert` | **Fixed** | New `showDialog()`/`uiConfirm()`/`uiPrompt()` in `10-core.ts` (role=dialog, aria-modal, Escape/backdrop cancel, focus trap, focus restore, translated buttons). All 7 call sites converted — clear graph, clear matrix edges, replace with sample, replace with import, preset name, node label, edge weight; the two import `alert`s now use the toast stack. `tests/browser-smoke.test.mjs` fails if any path reaches a native dialog |
+| Dialog keyboard trap and field name (review) | **Fixed** | Keydown/focusin handlers moved to the document, so Escape and Tab keep working after a click parks focus on `<body>`; focus is pulled back into an open dialog. The prompt field is named by the dialog title (`aria-label`) instead of an empty `<label>`: Chromium AX reports `textbox "Node label:"` |
+| CSV replace mode (review) | **Fixed** | A replace-mode nodes CSV now clears the previous edges *before* sanitising: carrying them over left stale-but-valid edges attached to a replaced graph. Append mode is unchanged, and dropping the old edges is reported |
+| CSV formula guard reversibility (review) | **Fixed** | `csvUnescapeCell()` undoes the export apostrophe, so `=1+1 → '=1+1 → =1+1` instead of growing a quote per round-trip (also fixes matrix-CSV label matching for such labels) |
+| DOT comment lines over CR-only EOLs (review) | **Fixed** | The comment scanner treats LF, CRLF and a lone CR as line boundaries (and the node regex accepts CR), so a `#` comment no longer leaves its text behind to swallow the next declaration; tests cover all three EOL styles |
+| Matrix-CSV endpoint resolution (review) | **Fixed** | The dead `byId` branch is gone and the skip is now observable: the toast reports the skipped unknown endpoints (`skipped N`), which the sanitizer alone could not distinguish from a size-cap drop |
 | P3-4 type-safety debt (`strict:false`) | **Partly fixed** | `noImplicitThis`, `strictBindCallApply`, `strictFunctionTypes`, `noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUnusedLocals`, `noUnusedParameters` are now on with 0 errors (5 dead declarations and 3 unused parameters removed as a result). `strict`/`noImplicitAny`/`strictNullChecks` stay off — 747 `noImplicitAny` errors — and `tsconfig.json` now says so explicitly |
 | P2-5 keyboard selection of canvas nodes | **Open** | Nodes are still pointer-only; the matrix/edge-list tables remain the keyboard route |
 
@@ -275,12 +280,12 @@ Implemented in this branch after the audit (all covered by `tests/import-parsers
 - **Keyboard selection and movement of canvas nodes** (P2-5 remainder). A real feature — roving focus over `<g>` nodes plus a keyboard connect flow — not a defect fix.
 - **A Playwright smoke job in CI.** Chromium 149 needs a download step; the suite stays jsdom-only so `npm run check` remains ~35 s and offline-capable. The Playwright harnesses used for this audit live outside the repo (`node_modules/.audit/`).
 - **App-code coverage instrumentation.** Tests drive the compiled bundle in a separate V8 context, so `node --test --experimental-test-coverage` measures the test files, not `src/app`. Fixing it means building an instrumented bundle for the test run.
-- **Matrix/edge-list virtualisation below the 300-node cap.** The cap (`MATRIX_MAX_NODES`) bounds the worst case; 300×300 inputs is still the slowest view in the app (~1 s at 300 nodes) and deserves windowing before the cap is ever raised.
+- **Matrix/edge-list virtualisation below the 120-node cap.** The cap (`MATRIX_MAX_CELLS`) bounds the worst case at ~1.2 s; windowing would let it grow again, and 120 nodes is the point where a matrix stops being readable anyway.
 - **CSP meta tag (P3-2).** A single file with one inline script and one inline style block needs `'unsafe-inline'` (or hashes regenerated on every build) to keep working, which would buy almost nothing over the current "no network APIs in the output" build gate. Revisit only if the file is ever served from a host.
 - **Matrix-CSV identity model (P3-8).** Round-tripping duplicate or empty labels needs a format decision (labels vs IDs, plus a legend); it changes the export contract, so it belongs in its own change.
 - **Minification (P3-9).** The 645 KB unminified bundle is deliberate: readable diffs and a reviewable artifact for an offline file.
 
-Verification after this second round: `npm run check` passes with **74 tests** (62 existing + 12 regressions), `npx tsc --noEmit` is clean under the hardened flag set, `axe.run()` returns no violations with a dialog open, and headless Chromium confirms the dialog contract end to end (Escape cancels and restores focus to the trigger, `Tab` stays inside, Enter confirms, zero native `dialog` events, zero page errors).
+Verification after this second round: `npm run check` passes with **79 tests** (62 existing + 17 regressions), `npx tsc --noEmit` is clean under the hardened flag set, `axe.run()` returns no violations with a dialog open, and headless Chromium confirms the dialog contract end to end (Escape cancels and restores focus to the trigger, `Tab` stays inside, Enter confirms, zero native `dialog` events, zero page errors).
 
 ---
 
@@ -288,7 +293,7 @@ Verification after this second round: `npm run check` passes with **74 tests** (
 
 ```bash
 npm ci
-npm run check                    # typecheck + build + 74 tests (~35 s)
+npm run check                    # typecheck + build + 79 tests (~43 s)
 git diff --exit-code index.html  # rebuild is byte-identical
 
 # headless browser (note: script needs ROOT exported as committed)

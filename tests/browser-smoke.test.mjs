@@ -485,6 +485,81 @@ test('double-clicking a node edits its label in an in-app prompt', async () => {
   dom.window.close();
 });
 
+test('dialog keys keep working after focus leaves the dialog', async () => {
+  const savedGraph = {
+    nodes: [{ id: 'n1', label: 'Alpha', x: 0, y: 0 }],
+    edges: [],
+    settings: {},
+  };
+  const { dom, errors } = createEditorDom(savedGraph);
+  await nextFrame(dom.window);
+  const document = dom.window.document;
+  const clear = document.querySelector('#btnClear');
+
+  // Clicking a dialog's own title or message parks focus on <body> in real
+  // browsers. Escape and the Tab trap must still work from there.
+  clear.focus();
+  clear.click();
+  await nextFrame(dom.window);
+  let dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog);
+  dialog.querySelector('.app-dialog-title').click();
+  document.activeElement.blur();
+  assert.equal(document.activeElement, document.body, 'focus is outside the dialog');
+
+  document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await nextFrame(dom.window);
+  assert.equal(document.querySelector('.app-dialog'), null, 'Escape closes the dialog even from <body>');
+  assert.match(document.querySelector('#statsPill').textContent, /^1 /, 'the graph is untouched');
+
+  // Tab from outside the dialog pulls focus back in instead of escaping it.
+  clear.focus();
+  clear.click();
+  await nextFrame(dom.window);
+  dialog = document.querySelector('.app-dialog');
+  document.activeElement.blur();
+  document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+  assert.equal(dialog.contains(document.activeElement), true, 'Tab re-enters the dialog');
+  assert.equal(document.activeElement, dialog.querySelector('[data-dialog-cancel]'), 'forward Tab lands on the first control');
+
+  // Focus pulled out by the page itself is redirected back inside.
+  const outside = document.querySelector('#btnLang');
+  outside.focus();
+  assert.equal(dialog.contains(document.activeElement), true, 'focus cannot leave an open dialog');
+
+  document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await nextFrame(dom.window);
+  assert.equal(document.activeElement, clear, 'focus returns to the trigger after closing');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('the prompt field carries the dialog title as its accessible name', async () => {
+  const savedGraph = {
+    nodes: [{ id: 'n1', label: 'Alpha', x: 0, y: 0 }],
+    edges: [],
+    settings: {},
+  };
+  const { dom, errors } = createEditorDom(savedGraph);
+  await nextFrame(dom.window);
+  const document = dom.window.document;
+
+  nodeGroup(document, 'n1').dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  await nextFrame(dom.window);
+
+  const dialog = document.querySelector('.app-dialog');
+  const input = dialog.querySelector('.app-dialog-input');
+  assert.equal(input.getAttribute('aria-label'), 'Node label:', 'the field is named');
+  assert.equal(dialog.querySelectorAll('label').length, 0, 'no empty <label> wrapping the field');
+  assert.equal(dialog.getAttribute('aria-labelledby'), 'appDialogTitle');
+
+  document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await nextFrame(dom.window);
+  assert.equal(document.querySelector('.app-dialog'), null);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
 test('dialog copy follows the document language', async () => {
   const savedGraph = {
     nodes: [{ id: 'n1', label: 'Alpha', x: 0, y: 0 }],

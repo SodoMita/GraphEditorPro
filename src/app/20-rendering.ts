@@ -1440,13 +1440,19 @@
     edgeListRenderLimit = configuredEdgeListPageSize();
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
-    const sizeInput = $('#matrixSize'); if(sizeInput) sizeInput.value = state.settings.matrixDimension || Math.min(total, MATRIX_MAX_NODES);
+    const sizeInput = $('#matrixSize'); if(sizeInput){ sizeInput.value = Math.min(state.settings.matrixDimension || total, MATRIX_MAX_NODES); sizeInput.max = String(MATRIX_MAX_NODES); }
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     if(total === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>'; $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; note.textContent=''; return; }
     if(n === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>'; note.textContent = `0 / ${total}`; }
-    else if(n > limit){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n} узлов > лимит ${limit}). Используйте экспорт Matrix CSV или увеличьте лимит.` : `Matrix hidden for performance (${n} nodes > limit ${limit}). Use Matrix CSV export or increase the limit.`) + '</div>'; note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`; }
+    else if(n > limit){
+      // Report the real graph size and the render ceiling, not the already
+      // clamped slice: "300 nodes" for a 350-node graph (with advice to raise a
+      // limit that could not help) was misleading.
+      $('#matrixHost').innerHTML = '<div class="tiny muted">' + esc(I18N.t('matrix_hidden_limit', {total, limit, cap: MATRIX_MAX_NODES})) + '</div>';
+      note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`;
+    }
     else {
       $('#matrixHost').innerHTML = adjacencyMatrixHtml(visNodes);
       note.textContent = rangeActive

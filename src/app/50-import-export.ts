@@ -12,11 +12,24 @@
   // CSV is opened in Excel/Sheets. Prefix such cells with an apostrophe (the
   // standard mitigation) while leaving plain numbers — including negative
   // coordinates — untouched so the CSV stays usable.
+  function formulaLikeText(v: string): boolean {
+    return /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
+  }
   function csvCell(v){
     v = String(v ?? '');
-    const formulaLike = /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
-    if(formulaLike) v = "'" + v;
+    if(formulaLikeText(v)) v = "'" + v;          // spreadsheet formula guard
     return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+  }
+  // Inverse of the guard above: a label that really starts with "=", "+", "@"
+  // or "-x" is exported as '=... so spreadsheets keep it as text. Reading the
+  // file back (our import, or Excel/LibreOffice "save as CSV") must drop that
+  // one marker, otherwise every round-trip grew another apostrophe.
+  function csvUnescapeCell(v: string): string {
+    if(v.length > 1 && v[0] === "'"){
+      const text = v.slice(1);
+      if(formulaLikeText(text)) return text;
+    }
+    return v;
   }
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
   function edgeCsv(){
@@ -411,7 +424,7 @@
       }
     }
     if(field || row.length){ row.push(field); rows.push(row); }
-    return rows;
+    return rows.map(cells => cells.map(csvUnescapeCell));
   }
   // Every CSV importer used to write straight into state.nodes/state.edges, so
   // it bypassed everything sanitizeState guarantees: the 3000/8000 caps, label
@@ -487,14 +500,16 @@
     const labels = rows[0].slice(1);
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
     const idSet = new Set(state.nodes.map(n => n.id));
-    // Only known endpoints are accepted. Previously an unknown label was used
-    // verbatim as a node id, which created invisible edges pointing at nodes
-    // that do not exist (they vanished on the next reload).
-    const resolveNode = (val, byId) => {
+    // Matrix rows and columns are written as *labels* (see matrixCsv), so an
+    // endpoint has to resolve to a live node id before an edge is created.
+    // Unknown endpoints are skipped here rather than handed to the sanitizer:
+    // the sanitizer would drop the edge anyway, but then the import would
+    // report a full import while edges silently vanished. Skipping keeps the
+    // "skipped" count — and the toast — true.
+    const resolveNode = val => {
       if(!val) return null;
-      if(byId && idSet.has(val)) return val;
-      if(labelToId.has(val)) return labelToId.get(val);
       if(idSet.has(val)) return val;
+      if(labelToId.has(val)) return labelToId.get(val);
       return null;
     };
     const initialEdges = append ? state.edges.length : 0;
@@ -502,12 +517,12 @@
     let parsed = 0, skipped = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length) continue;
-      const fromId = resolveNode(row[0], true);
+      const fromId = resolveNode(row[0]);
       if(!fromId){ if(row.slice(1).some(v => (v || '').trim())) skipped++; continue; }
       for(let c = 1; c < row.length && c-1 < labels.length; c++){
         const val = (row[c] || '').trim();
         if(!val) continue;
-        const toId = resolveNode(labels[c-1], false);
+        const toId = resolveNode(labels[c-1]);
         if(!toId){ skipped++; continue; }
         const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
         for(const w of weights){
@@ -543,8 +558,15 @@
       };
       nodes.push(n); parsed++;
     }
-    const { droppedNodes } = commitCsvGraph(nodes, state.edges, 'import nodes csv');
+    // Replace mode replaces the whole document, exactly as it did before the
+    // sanitizer funnel: carrying the previous edges over would leave them
+    // attached to nodes that no longer exist — and because the sanitizer only
+    // drops *unknown* endpoints, an old edge whose id happens to match a new
+    // node survived as a stale connection.
+    const replacedEdges = append ? 0 : state.edges.length;
+    const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
     csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
+    if(replacedEdges > 0) toast(I18N.t('csv_nodes_replaced_edges', {n: state.nodes.length, e: replacedEdges}));
   }
   function parseAttrList(text): AnyRecord {
     const attrs: AnyRecord = {};
@@ -569,9 +591,15 @@
   // and labels such as "C#" mid-line — which used to swallow the declaration
   // that followed and silently drop nodes.
   function stripDotComments(text: string): string {
+    // DOT line comments run to the end of the *line*, and a line may end with
+    // LF, CRLF or a lone CR (files saved on old Macs, or pasted from tools that
+    // normalise to CR). The scanner has to recognise all three: an earlier
+    // version only reset "at line start" on LF, so in a CR-only file a `#`
+    // comment was never recognised, its text stayed in the source, and the
+    // node regex then swallowed the declaration on the next line.
     let out = '';
     let i = 0;
-    let lineStart = true;
+    let atLineStart = true;
     while(i < text.length){
       const ch = text[i];
       if(ch === '"'){                       // copy the whole quoted string verbatim
@@ -581,15 +609,24 @@
           if(c === '\\'){ if(i < text.length){ out += text[i]; i++; } continue; }
           if(c === '"') break;
         }
-        lineStart = false;
+        atLineStart = false;
+        continue;
+      }
+      if(ch === '\r' || ch === '\n'){        // keep the terminator, remember the boundary
+        out += ch; i++;
+        if(ch === '\r' && text[i] === '\n'){ out += '\n'; i++; }
+        atLineStart = true;
         continue;
       }
       if(ch === '/' && text[i+1] === '*'){ const end = text.indexOf('*/', i + 2); i = end < 0 ? text.length : end + 2; out += ' '; continue; }
-      if(ch === '/' && text[i+1] === '/'){ while(i < text.length && text[i] !== '\n') i++; continue; }
-      if(ch === '#' && lineStart){ while(i < text.length && text[i] !== '\n') i++; continue; }
+      if((ch === '#' && atLineStart) || (ch === '/' && text[i+1] === '/')){
+        // Skip the comment text but leave the line terminator to the branch
+        // above, so the following declaration keeps its own line.
+        while(i < text.length && text[i] !== '\n' && text[i] !== '\r') i++;
+        continue;
+      }
       out += ch; i++;
-      if(ch === '\n') lineStart = true;
-      else if(ch !== ' ' && ch !== '\t' && ch !== '\r') lineStart = false;
+      if(ch !== ' ' && ch !== '\t' && ch !== '\ufeff') atLineStart = false;
     }
     return out;
   }
@@ -612,7 +649,7 @@
       edges.push({ id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed:m[2] === '->' || attrs.directed === 'true' || directedGraph });
     }
     const withoutEdges = body.replace(edgeRe, '');
-    const nodeRe = new RegExp('(?:^|;|\\n)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|\\n|$)', 'g');
+    const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
     while((m = nodeRe.exec(withoutEdges))){
       const name = cleanDotToken(m[1]);
       if(['graph','node','edge'].includes(name.toLowerCase())) continue;

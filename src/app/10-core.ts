@@ -9,11 +9,14 @@
   const DRAG_LIVE_EDGE_LIMIT = 2000;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
   // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
-  // size is capped independently of the user-facing row limit: 300 columns is
-  // already ~90k elements (~5 s of DOM work on a mid-range machine). The
-  // matrixLimit setting decides when the matrix is hidden *below* this cap; it
-  // can never raise the cap itself.
-  const MATRIX_MAX_NODES = 300;
+  // size is capped independently of the user-facing row limit. Every cell is a
+  // form control: measured in Chromium on a 350-node document, a full render
+  // costs ~0.9 s at 90 nodes, ~1.2 s at 120, ~1.6 s at 150 and ~5.8 s at 300.
+  // 120 keeps the worst case near a second while leaving the matrix usable for
+  // medium graphs. The matrixLimit setting (default 90) decides when the matrix
+  // is hidden *below* this cap; it can never raise the cap itself.
+  const MATRIX_MAX_CELLS = 14400;
+  const MATRIX_MAX_NODES = Math.floor(Math.sqrt(MATRIX_MAX_CELLS));  // 120
   // Pair-interaction budget for the force layout (see layoutForce): bounds one
   // click to roughly a second on a mid-range machine instead of O(iter·n²).
   const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
@@ -32,8 +35,15 @@
     return element;
   };
   const $$ = (selector: string, root: ParentNode = document): any[] => Array.from(root.querySelectorAll(selector));
-  const isKeyboardVisible = (el: HTMLElement): boolean =>
-    el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
+  // "Can this control take keyboard focus right now?" In browsers that is
+  // checkVisibility() (CSS display/visibility/inert aware). Engines without it
+  // — jsdom, whose offsetParent is always null — fall back to the structural
+  // checks instead of dropping every control from a focus trap.
+  const isKeyboardVisible = (el: HTMLElement): boolean => {
+    if(el.tabIndex < 0 || el.hasAttribute('disabled') || el.getAttribute('aria-hidden') === 'true') return false;
+    const check = (el as any).checkVisibility;
+    return typeof check === 'function' ? Boolean(check.call(el)) : true;
+  };
   const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
   const esc = (value: unknown): string => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
   // === In-app dialogs ===
@@ -44,7 +54,7 @@
   type DialogOptions = {
     title: string;
     message?: string;
-    input?: { value?: string; placeholder?: string; maxLength?: number };
+    input?: { value?: string; placeholder?: string; maxLength?: number; label?: string };
     confirmLabel?: string;
     cancelLabel?: string;
     danger?: boolean;
@@ -52,8 +62,13 @@
   let dialogEl: HTMLElement | null = null;
   let dialogResolve: ((value: string | boolean | null) => void) | null = null;
   let dialogReturnFocus: HTMLElement | null = null;
+  let dialogCleanup: (() => void) | null = null;
   function closeDialog(result: string | boolean | null = null){
     if(!dialogEl) return;
+    // Detach the document-level listeners *before* restoring focus: they pull
+    // focus back into the dialog, which must not fight the hand-off.
+    dialogCleanup?.();
+    dialogCleanup = null;
     const resolve = dialogResolve;
     dialogEl.remove();
     dialogEl = null;
@@ -79,7 +94,7 @@
         <form class="app-dialog-card">
           <h2 id="appDialogTitle" class="app-dialog-title">${esc(options.title)}</h2>
           ${options.message ? `<p id="appDialogMessage" class="app-dialog-message">${esc(options.message)}</p>` : ''}
-          ${wantsInput ? `<label class="app-dialog-field" for="${inputId}"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></label>` : ''}
+          ${wantsInput ? `<div class="app-dialog-field"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" aria-label="${esc(options.input?.label || options.title)}" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></div>` : ''}
           <div class="app-dialog-actions">
             <button type="button" class="btn small" data-dialog-cancel>${esc(options.cancelLabel || I18N.t('dialog_cancel'))}</button>
             <button type="submit" class="btn small ${options.danger ? 'danger' : 'good'}" data-dialog-ok>${esc(options.confirmLabel || I18N.t('dialog_ok'))}</button>
@@ -96,15 +111,38 @@
       });
       dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
       dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) finish(wantsInput ? null : false); });
-      dialog.addEventListener('keydown', ev => {
+      // The handlers live on the document, not on the dialog element: clicking
+      // the dialog's own title or message moves focus to <body> in Chromium,
+      // and a dialog-scoped keydown never fires from there — Escape and the
+      // Tab trap went dead until focus wandered back inside.
+      const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
+      const focusInside = (target: EventTarget | null) => Boolean(target) && dialog.contains(target as Node);
+      const onKeyDown = (ev: KeyboardEvent) => {
+        if(!dialogEl) return;
         if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); finish(wantsInput ? null : false); return; }
         if(ev.key !== 'Tab') return;
-        const focusable = $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
-        if(!focusable.length) return;
-        const first = focusable[0], last = focusable[focusable.length - 1];
+        const items = focusables();
+        if(!items.length) { ev.preventDefault(); return; }
+        const first = items[0], last = items[items.length - 1];
+        // Focus parked outside (title click, backdrop, or a stray programmatic
+        // focus) still gets trapped: the next Tab re-enters the dialog.
+        if(!focusInside(document.activeElement)){ ev.preventDefault(); (ev.shiftKey ? last : first).focus(); return; }
         if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
         else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
-      });
+      };
+      // A modal keeps focus: anything that pulls it out is redirected to the
+      // dialog's primary control. The trigger's own focus is restored on close.
+      const onFocusIn = (ev: FocusEvent) => {
+        if(!dialogEl || focusInside(ev.target)) return;
+        const items = focusables();
+        (items[items.length - 1] || items[0])?.focus();
+      };
+      document.addEventListener('keydown', onKeyDown, true);
+      document.addEventListener('focusin', onFocusIn, true);
+      dialogCleanup = () => {
+        document.removeEventListener('keydown', onKeyDown, true);
+        document.removeEventListener('focusin', onFocusIn, true);
+      };
       setTimeout(() => {
         if(input){
           input.focus();

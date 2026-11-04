@@ -1610,7 +1610,7 @@
           <div class="bottom-pane thin-scroll">
             <div class="section-title"><span data-i18n="adjacency_matrix">Adjacency matrix</span> <span id="matrixNote" class="tiny muted"></span></div>
             <div class="matrix-controls tiny muted">
-              <label class="field" for="matrixSize"><span data-i18n="matrix_view">Matrix view</span> <input id="matrixSize" class="matrix-input" type="number" min="0" max="300" value="0" title="Set visible matrix dimension. Smaller values do not delete graph nodes." data-i18n-title="matrix_view_title"></label>
+              <label class="field" for="matrixSize"><span data-i18n="matrix_view">Matrix view</span> <input id="matrixSize" class="matrix-input" type="number" min="0" max="120" value="0" title="Set visible matrix dimension. Smaller values do not delete graph nodes." data-i18n-title="matrix_view_title"></label>
               <button id="btnMatrixResize" class="btn small" title="Resize matrix view without deleting or rearranging existing graph" data-i18n-title="set_dim_title" data-i18n="set_dimensions">Set dimensions</button>
               <button id="btnMatrixAddNode" class="btn small" data-i18n="add_node">Add node</button>
               <button id="btnMatrixInsertNode" class="btn small" title="Insert a new node before each selected node" data-i18n-title="insert_title" data-i18n="insert_before_sel">Insert before selected</button>
@@ -2202,6 +2202,9 @@ const I18N = {
         'appended_n_m_discarded': { en: '{label} appended: +{n} nodes, +{m} edges (discarded {d} dangling)', ru: '{label}: добавлено +{n} узлов, +{m} рёбер (отброшено висячих: {d})' },
         'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано {imported}; отброшено {dropped} — лимит документа {limit}' },
         'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано {imported}; пропущено {skipped} записей с неизвестными узлами' },
+        'csv_nodes_replaced_edges': { en: 'Imported {n} node(s); {e} old edge(s) dropped with the replaced graph', ru: 'Импортировано {n} узл(ов); {e} старых рёбер удалено вместе с заменённым графом' },
+        'matrix_cap_reached': { en: 'The matrix renders at most {cap}×{cap} nodes; the graph was not enlarged further.', ru: 'Матрица отображает не более {cap}×{cap} узлов; граф дальше не увеличивался.' },
+        'matrix_hidden_limit': { en: 'Matrix hidden for performance: {total} nodes exceed the limit {limit} (the matrix renders at most {cap}). Raise the limit up to {cap}, or use the edge list / Matrix CSV export.', ru: 'Матрица скрыта для производительности: {total} узлов превышают лимит {limit} (матрица отображается максимум для {cap}). Поднимите лимит до {cap} или используйте список рёбер / экспорт Matrix CSV.' },
         'layout_force_reduced': { en: 'Large graph: force layout ran {iter} passes instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter} проходов вместо 180, чтобы не подвешивать интерфейс' },
         'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
         'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
@@ -2301,11 +2304,14 @@ const R = 25;
 const DRAG_LIVE_EDGE_LIMIT = 2000;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
-// size is capped independently of the user-facing row limit: 300 columns is
-// already ~90k elements (~5 s of DOM work on a mid-range machine). The
-// matrixLimit setting decides when the matrix is hidden *below* this cap; it
-// can never raise the cap itself.
-const MATRIX_MAX_NODES = 300;
+// size is capped independently of the user-facing row limit. Every cell is a
+// form control: measured in Chromium on a 350-node document, a full render
+// costs ~0.9 s at 90 nodes, ~1.2 s at 120, ~1.6 s at 150 and ~5.8 s at 300.
+// 120 keeps the worst case near a second while leaving the matrix usable for
+// medium graphs. The matrixLimit setting (default 90) decides when the matrix
+// is hidden *below* this cap; it can never raise the cap itself.
+const MATRIX_MAX_CELLS = 14400;
+const MATRIX_MAX_NODES = Math.floor(Math.sqrt(MATRIX_MAX_CELLS)); // 120
 // Pair-interaction budget for the force layout (see layoutForce): bounds one
 // click to roughly a second on a mid-range machine instead of O(iter·n²).
 const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
@@ -2325,15 +2331,29 @@ const $ = (selector, root = document) => {
     return element;
 };
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-const isKeyboardVisible = (el) => el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
+// "Can this control take keyboard focus right now?" In browsers that is
+// checkVisibility() (CSS display/visibility/inert aware). Engines without it
+// — jsdom, whose offsetParent is always null — fall back to the structural
+// checks instead of dropping every control from a focus trap.
+const isKeyboardVisible = (el) => {
+    if (el.tabIndex < 0 || el.hasAttribute('disabled') || el.getAttribute('aria-hidden') === 'true')
+        return false;
+    const check = el.checkVisibility;
+    return typeof check === 'function' ? Boolean(check.call(el)) : true;
+};
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 let dialogEl = null;
 let dialogResolve = null;
 let dialogReturnFocus = null;
+let dialogCleanup = null;
 function closeDialog(result = null) {
     if (!dialogEl)
         return;
+    // Detach the document-level listeners *before* restoring focus: they pull
+    // focus back into the dialog, which must not fight the hand-off.
+    dialogCleanup?.();
+    dialogCleanup = null;
     const resolve = dialogResolve;
     dialogEl.remove();
     dialogEl = null;
@@ -2361,7 +2381,7 @@ function showDialog(options) {
         <form class="app-dialog-card">
           <h2 id="appDialogTitle" class="app-dialog-title">${esc(options.title)}</h2>
           ${options.message ? `<p id="appDialogMessage" class="app-dialog-message">${esc(options.message)}</p>` : ''}
-          ${wantsInput ? `<label class="app-dialog-field" for="${inputId}"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></label>` : ''}
+          ${wantsInput ? `<div class="app-dialog-field"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" aria-label="${esc(options.input?.label || options.title)}" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></div>` : ''}
           <div class="app-dialog-actions">
             <button type="button" class="btn small" data-dialog-cancel>${esc(options.cancelLabel || I18N.t('dialog_cancel'))}</button>
             <button type="submit" class="btn small ${options.danger ? 'danger' : 'good'}" data-dialog-ok>${esc(options.confirmLabel || I18N.t('dialog_ok'))}</button>
@@ -2379,7 +2399,15 @@ function showDialog(options) {
         dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
         dialog.addEventListener('pointerdown', ev => { if (ev.target === dialog)
             finish(wantsInput ? null : false); });
-        dialog.addEventListener('keydown', ev => {
+        // The handlers live on the document, not on the dialog element: clicking
+        // the dialog's own title or message moves focus to <body> in Chromium,
+        // and a dialog-scoped keydown never fires from there — Escape and the
+        // Tab trap went dead until focus wandered back inside.
+        const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
+        const focusInside = (target) => Boolean(target) && dialog.contains(target);
+        const onKeyDown = (ev) => {
+            if (!dialogEl)
+                return;
             if (ev.key === 'Escape') {
                 ev.preventDefault();
                 ev.stopPropagation();
@@ -2388,10 +2416,19 @@ function showDialog(options) {
             }
             if (ev.key !== 'Tab')
                 return;
-            const focusable = $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
-            if (!focusable.length)
+            const items = focusables();
+            if (!items.length) {
+                ev.preventDefault();
                 return;
-            const first = focusable[0], last = focusable[focusable.length - 1];
+            }
+            const first = items[0], last = items[items.length - 1];
+            // Focus parked outside (title click, backdrop, or a stray programmatic
+            // focus) still gets trapped: the next Tab re-enters the dialog.
+            if (!focusInside(document.activeElement)) {
+                ev.preventDefault();
+                (ev.shiftKey ? last : first).focus();
+                return;
+            }
             if (ev.shiftKey && document.activeElement === first) {
                 ev.preventDefault();
                 last.focus();
@@ -2400,7 +2437,21 @@ function showDialog(options) {
                 ev.preventDefault();
                 first.focus();
             }
-        });
+        };
+        // A modal keeps focus: anything that pulls it out is redirected to the
+        // dialog's primary control. The trigger's own focus is restored on close.
+        const onFocusIn = (ev) => {
+            if (!dialogEl || focusInside(ev.target))
+                return;
+            const items = focusables();
+            (items[items.length - 1] || items[0])?.focus();
+        };
+        document.addEventListener('keydown', onKeyDown, true);
+        document.addEventListener('focusin', onFocusIn, true);
+        dialogCleanup = () => {
+            document.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('focusin', onFocusIn, true);
+        };
         setTimeout(() => {
             if (input) {
                 input.focus();
@@ -4963,8 +5014,10 @@ function renderMatrixAndList() {
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
     const sizeInput = $('#matrixSize');
-    if (sizeInput)
-        sizeInput.value = state.settings.matrixDimension || Math.min(total, MATRIX_MAX_NODES);
+    if (sizeInput) {
+        sizeInput.value = Math.min(state.settings.matrixDimension || total, MATRIX_MAX_NODES);
+        sizeInput.max = String(MATRIX_MAX_NODES);
+    }
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || { start: -1, end: -1 };
     const rangeActive = vr.start >= 0 || vr.end >= 0;
@@ -4979,7 +5032,10 @@ function renderMatrixAndList() {
         note.textContent = `0 / ${total}`;
     }
     else if (n > limit) {
-        $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n} узлов > лимит ${limit}). Используйте экспорт Matrix CSV или увеличьте лимит.` : `Matrix hidden for performance (${n} nodes > limit ${limit}). Use Matrix CSV export or increase the limit.`) + '</div>';
+        // Report the real graph size and the render ceiling, not the already
+        // clamped slice: "300 nodes" for a 350-node graph (with advice to raise a
+        // limit that could not help) was misleading.
+        $('#matrixHost').innerHTML = '<div class="tiny muted">' + esc(I18N.t('matrix_hidden_limit', { total, limit, cap: MATRIX_MAX_NODES })) + '</div>';
         note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`;
     }
     else {
@@ -5739,7 +5795,13 @@ function insertNodeFromMatrix() {
     toast(I18N.t('inserted_n_before', { n: newIds.length }));
 }
 function setMatrixDimension(count) {
-    count = clamp(parseInt(count, 10) || 0, 0, 300);
+    // The matrix cannot render more than MATRIX_MAX_NODES, so growing the graph
+    // through this control stops there too instead of creating nodes the view
+    // can never show.
+    const requested = parseInt(count, 10) || 0;
+    count = clamp(requested, 0, MATRIX_MAX_NODES);
+    if (requested > MATRIX_MAX_NODES)
+        toast(I18N.t('matrix_cap_reached', { cap: MATRIX_MAX_NODES }));
     const current = state.nodes.length;
     state.settings.matrixDimension = count;
     if (count > current) {
@@ -7896,12 +7958,26 @@ function fmtCoord(v) { return (Math.round(v * 10000) / 10000).toString(); }
 // CSV is opened in Excel/Sheets. Prefix such cells with an apostrophe (the
 // standard mitigation) while leaving plain numbers — including negative
 // coordinates — untouched so the CSV stays usable.
+function formulaLikeText(v) {
+    return /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
+}
 function csvCell(v) {
     v = String(v ?? '');
-    const formulaLike = /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
-    if (formulaLike)
-        v = "'" + v;
+    if (formulaLikeText(v))
+        v = "'" + v; // spreadsheet formula guard
     return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+// Inverse of the guard above: a label that really starts with "=", "+", "@"
+// or "-x" is exported as '=... so spreadsheets keep it as text. Reading the
+// file back (our import, or Excel/LibreOffice "save as CSV") must drop that
+// one marker, otherwise every round-trip grew another apostrophe.
+function csvUnescapeCell(v) {
+    if (v.length > 1 && v[0] === "'") {
+        const text = v.slice(1);
+        if (formulaLikeText(text))
+            return text;
+    }
+    return v;
 }
 function rowsToCsv(rows) { return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
 function edgeCsv() {
@@ -8396,7 +8472,7 @@ function parseCsv(text) {
         row.push(field);
         rows.push(row);
     }
-    return rows;
+    return rows.map(cells => cells.map(csvUnescapeCell));
 }
 // Every CSV importer used to write straight into state.nodes/state.edges, so
 // it bypassed everything sanitizeState guarantees: the 3000/8000 caps, label
@@ -8502,18 +8578,19 @@ function importMatrixCsv(text, append) {
     const labels = rows[0].slice(1);
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
     const idSet = new Set(state.nodes.map(n => n.id));
-    // Only known endpoints are accepted. Previously an unknown label was used
-    // verbatim as a node id, which created invisible edges pointing at nodes
-    // that do not exist (they vanished on the next reload).
-    const resolveNode = (val, byId) => {
+    // Matrix rows and columns are written as *labels* (see matrixCsv), so an
+    // endpoint has to resolve to a live node id before an edge is created.
+    // Unknown endpoints are skipped here rather than handed to the sanitizer:
+    // the sanitizer would drop the edge anyway, but then the import would
+    // report a full import while edges silently vanished. Skipping keeps the
+    // "skipped" count — and the toast — true.
+    const resolveNode = val => {
         if (!val)
             return null;
-        if (byId && idSet.has(val))
+        if (idSet.has(val))
             return val;
         if (labelToId.has(val))
             return labelToId.get(val);
-        if (idSet.has(val))
-            return val;
         return null;
     };
     const initialEdges = append ? state.edges.length : 0;
@@ -8523,7 +8600,7 @@ function importMatrixCsv(text, append) {
         const row = rows[r];
         if (!row.length)
             continue;
-        const fromId = resolveNode(row[0], true);
+        const fromId = resolveNode(row[0]);
         if (!fromId) {
             if (row.slice(1).some(v => (v || '').trim()))
                 skipped++;
@@ -8533,7 +8610,7 @@ function importMatrixCsv(text, append) {
             const val = (row[c] || '').trim();
             if (!val)
                 continue;
-            const toId = resolveNode(labels[c - 1], false);
+            const toId = resolveNode(labels[c - 1]);
             if (!toId) {
                 skipped++;
                 continue;
@@ -8578,8 +8655,16 @@ function importNodesCsv(text, append) {
         nodes.push(n);
         parsed++;
     }
-    const { droppedNodes } = commitCsvGraph(nodes, state.edges, 'import nodes csv');
+    // Replace mode replaces the whole document, exactly as it did before the
+    // sanitizer funnel: carrying the previous edges over would leave them
+    // attached to nodes that no longer exist — and because the sanitizer only
+    // drops *unknown* endpoints, an old edge whose id happens to match a new
+    // node survived as a stale connection.
+    const replacedEdges = append ? 0 : state.edges.length;
+    const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
     csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
+    if (replacedEdges > 0)
+        toast(I18N.t('csv_nodes_replaced_edges', { n: state.nodes.length, e: replacedEdges }));
 }
 function parseAttrList(text) {
     const attrs = {};
@@ -8607,9 +8692,15 @@ function cleanDotToken(t) {
 // and labels such as "C#" mid-line — which used to swallow the declaration
 // that followed and silently drop nodes.
 function stripDotComments(text) {
+    // DOT line comments run to the end of the *line*, and a line may end with
+    // LF, CRLF or a lone CR (files saved on old Macs, or pasted from tools that
+    // normalise to CR). The scanner has to recognise all three: an earlier
+    // version only reset "at line start" on LF, so in a CR-only file a `#`
+    // comment was never recognised, its text stayed in the source, and the
+    // node regex then swallowed the declaration on the next line.
     let out = '';
     let i = 0;
-    let lineStart = true;
+    let atLineStart = true;
     while (i < text.length) {
         const ch = text[i];
         if (ch === '"') { // copy the whole quoted string verbatim
@@ -8629,7 +8720,17 @@ function stripDotComments(text) {
                 if (c === '"')
                     break;
             }
-            lineStart = false;
+            atLineStart = false;
+            continue;
+        }
+        if (ch === '\r' || ch === '\n') { // keep the terminator, remember the boundary
+            out += ch;
+            i++;
+            if (ch === '\r' && text[i] === '\n') {
+                out += '\n';
+                i++;
+            }
+            atLineStart = true;
             continue;
         }
         if (ch === '/' && text[i + 1] === '*') {
@@ -8638,22 +8739,17 @@ function stripDotComments(text) {
             out += ' ';
             continue;
         }
-        if (ch === '/' && text[i + 1] === '/') {
-            while (i < text.length && text[i] !== '\n')
-                i++;
-            continue;
-        }
-        if (ch === '#' && lineStart) {
-            while (i < text.length && text[i] !== '\n')
+        if ((ch === '#' && atLineStart) || (ch === '/' && text[i + 1] === '/')) {
+            // Skip the comment text but leave the line terminator to the branch
+            // above, so the following declaration keeps its own line.
+            while (i < text.length && text[i] !== '\n' && text[i] !== '\r')
                 i++;
             continue;
         }
         out += ch;
         i++;
-        if (ch === '\n')
-            lineStart = true;
-        else if (ch !== ' ' && ch !== '\t' && ch !== '\r')
-            lineStart = false;
+        if (ch !== ' ' && ch !== '\t' && ch !== '\ufeff')
+            atLineStart = false;
     }
     return out;
 }
@@ -8679,7 +8775,7 @@ function parseDot(text) {
         edges.push({ id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: m[2] === '->' || attrs.directed === 'true' || directedGraph });
     }
     const withoutEdges = body.replace(edgeRe, '');
-    const nodeRe = new RegExp('(?:^|;|\\n)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|\\n|$)', 'g');
+    const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
     while ((m = nodeRe.exec(withoutEdges))) {
         const name = cleanDotToken(m[1]);
         if (['graph', 'node', 'edge'].includes(name.toLowerCase()))
