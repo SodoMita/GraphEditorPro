@@ -419,6 +419,7 @@
     const noLblEl = $('#optNoLabel'); if(noLblEl) noLblEl.checked = Boolean(state.settings.noLabel);
     syncStyleControls();
     syncEditTypeLists();
+    renderCustomAttributes();
     setMode(state.mode, false);
     setSelectTool(state.selectTool || 'single', false);
     setSelectCombine(state.selectCombine || 'replace', false);

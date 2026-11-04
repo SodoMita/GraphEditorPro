@@ -268,6 +268,12 @@
     }
     .tab-panel{display:none; min-width:0; overflow-x:hidden}
     .tab-panel.active{display:block}
+    .custom-attribute-row{padding:8px 0;border-top:1px solid var(--line,#334155)}
+    .custom-attribute-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+    .custom-attribute-fields>.field:first-child{grid-column:1/-1}
+    .custom-attribute-row .field{min-width:0}
+    .custom-attribute-actions{justify-content:flex-end;margin-top:8px}
+    .custom-attribute-fields input,.custom-attribute-fields select{min-width:0;width:100%}
 
     /* ---------- Collapsible sections ---------- */
     .section{

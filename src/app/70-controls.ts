@@ -676,3 +676,28 @@
       presetsReturnFocus = null;
     }
   }
+  const CUSTOM_ATTRIBUTE_TYPES = ['boolean','int','long','float','double','string'];
+  function renderCustomAttributes(){
+    const host = $('#customAttributesList');
+    if(!host) return;
+    if(!state.customAttributes.length){
+      host.innerHTML = `<div class="tiny muted">${esc(I18N.current === 'ru' ? 'Пользовательские атрибуты не заданы.' : 'No custom attributes defined.')}</div>`;
+      return;
+    }
+    host.innerHTML = state.customAttributes.map((attribute, index) => `
+      <div class="custom-attribute-row" data-custom-attribute="${index}">
+        <div class="custom-attribute-fields">
+          <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(attribute.id)}" data-attribute-field="id"></label>
+          <label class="field col"><span>${esc(I18N.t('attribute_scope'))}</span><select data-attribute-field="scope">
+            <option value="graph" ${attribute.scope === 'graph' ? 'selected' : ''}>${esc(I18N.t('scope_graph'))}</option>
+            <option value="node" ${attribute.scope === 'node' ? 'selected' : ''}>${esc(I18N.t('scope_node'))}</option>
+            <option value="edge" ${attribute.scope === 'edge' ? 'selected' : ''}>${esc(I18N.t('scope_edge'))}</option>
+          </select></label>
+          <label class="field col"><span>${esc(I18N.t('attribute_type'))}</span><select data-attribute-field="type">${CUSTOM_ATTRIBUTE_TYPES.map(type => `<option value="${type}" ${attribute.type === type ? 'selected' : ''}>${type}</option>`).join('')}</select></label>
+        </div>
+        <div class="row custom-attribute-actions">
+          <button type="button" class="btn small good" data-attribute-action="save">${esc(I18N.t('save_attribute'))}</button>
+          <button type="button" class="btn small danger" data-attribute-action="delete" title="${esc(I18N.t('delete_btn'))}" aria-label="${esc(I18N.t('delete_btn'))}">${esc(I18N.t('delete_btn'))}</button>
+        </div>
+      </div>`).join('');
+  }
