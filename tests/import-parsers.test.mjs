@@ -159,6 +159,37 @@ test('replace-mode nodes CSV import drops the previous graph\'s edges', async ()
   assert.equal(kept.nodes.length, 4);
 });
 
+test('replace-mode nodes CSV keeps explicit orders, including 0', async () => {
+  const saved = {
+    title: 'orders',
+    nodes: [
+      { id:'p1', label:'P1', x:0, y:0, order:0 },
+      { id:'p2', label:'P2', x:0, y:100, order:1 },
+      { id:'p3', label:'P3', x:0, y:200, order:2 },
+    ],
+    edges: [],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  const rows = [
+    'order,id,label,x,y,shape,color,type',
+    '0,p1,P1,0,0,circle,#0ea5e9,',
+    '1,p2,P2,0,100,circle,#0ea5e9,',
+    '2,p3,P3,0,200,circle,#0ea5e9,',
+  ];
+  await paste(document, dom.window, '#btnPasteNodesCsv', rows.join('\n'));
+
+  const graph = exportedGraph(document);
+  // parseInt(...) || fallback read a real order of 0 as "missing" and pushed the
+  // node to the end of the replaced list, so P1 came back as order 3.
+  assert.deepEqual(graph.nodes.map(n => [n.id, n.order]), [['p1', 0], ['p2', 1], ['p3', 2]]);
+  await settle(dom.window, 120);   // the matrix is rebuilt by the queued render pass
+  const header = [...document.querySelectorAll('#matrixHost [data-node-label]')]
+    .slice(0, 3)
+    .map(el => el.dataset.nodeLabel);
+  assert.deepEqual(header, ['p1', 'p2', 'p3'], 'the matrix keeps the imported order');
+});
+
 test('nodes CSV import enforces the document size cap and reports it', async () => {
   const {dom} = createEditorDom();
   const {document} = dom.window;
@@ -264,6 +295,46 @@ test('DOT comments survive CRLF and CR-only files without eating the next declar
   }
 });
 
+test('DOT labels round-trip newline escapes, literal backslashes and quotes', async () => {
+  const labels = ['a\nb', 'a\\nb', 'a"b', "a'b", 'a\\', 'a\\nb\\'];
+  const saved = {
+    title: 'escapes',
+    nodes: labels.map((label, i) => ({ id: 'n' + i, label, x: i * 100, y: 0, order: i })),
+    edges: [],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  // The graph's own DOT export, fed straight back in.
+  await paste(document, dom.window, '#btnPasteDot', dot);
+
+  assert.deepEqual(exportedGraph(document).nodes.map(n => n.label), labels,
+    'a newline, a literal backslash-n and a trailing backslash all survive');
+});
+
+test('CSV export and import preserve labels that start with an apostrophe', async () => {
+  const labels = ['=1+1', "'=1+1", "''=1+1", "'plain", '-note', 'plain'];
+  const saved = {
+    title: 'apostrophes',
+    nodes: labels.map((label, i) => ({ id: 'n' + i, label, x: 0, y: i * 60, order: i })),
+    edges: [],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+
+  document.querySelector('#btnExportNodesCsv').click();
+  const csv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(csv.includes("''=1+1"), 'a label that already starts with the guard apostrophe is escaped again');
+
+  await paste(document, dom.window, '#btnPasteNodesCsv', csv);
+  assert.deepEqual(exportedGraph(document).nodes.map(n => n.label), labels,
+    'guarded text is unescaped exactly once per round-trip');
+});
+
 // === Performance guards ===
 test('matrix rendering is hard-capped at 14,400 cells regardless of the row limit', async () => {
   const nodes = Array.from({ length: 350 }, (_, i) => ({ id: 'n' + i, label: 'N' + i, x: i * 10, y: 0, order: i }));
@@ -273,10 +344,21 @@ test('matrix rendering is hard-capped at 14,400 cells regardless of the row limi
   const note = document.querySelector('#matrixNote').textContent;
   assert.match(note, /120 of 350/, `matrix reports its capped size (got "${note}")`);
   assert.equal(document.querySelectorAll('#matrixHost table').length, 0, 'oversized matrix is hidden, not rendered');
+  assert.equal(document.querySelector('#matrixSize').value, '120', 'the matrix-size control is clamped to the ceiling');
+  assert.equal(document.querySelector('#matrixSize').max, '120');
   const hidden = document.querySelector('#matrixHost').textContent;
   assert.match(hidden, /350 nodes/, 'the message names the real graph size, not the clamped slice');
   assert.match(hidden, /120/, 'the message names the render ceiling that cannot be raised');
   assert.doesNotMatch(hidden, /300 nodes/, 'no claim that the graph has 300 nodes');
+});
+
+test('a saved matrix dimension above the render ceiling is clamped on load', async () => {
+  const nodes = Array.from({ length: 3 }, (_, i) => ({ id: 'n' + i, label: 'N' + i, x: i * 10, y: 0, order: i }));
+  const {dom} = createEditorDom({ title: 'dim', nodes, edges: [], settings: { matrixDimension: 300, matrixLimit: 999 } });
+  const {document} = dom.window;
+  await settle(dom.window, 80);
+  assert.equal(document.querySelector('#matrixSize').value, '120', 'the view control shows the clamped dimension');
+  assert.equal(exportedGraph(document).settings.matrixDimension, 120, 'the saved setting is clamped too');
 });
 
 // === Persistence and accessibility ===

@@ -546,7 +546,7 @@
     settings.gridSize = settings.gridSizeX;
     settings.matrixLimit = positiveInteger(settings.matrixLimit, 90);
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
-    settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, 300);
+    settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
     settings.copyPreserveExternal = settings.copyPreserveExternal !== false;

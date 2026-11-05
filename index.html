@@ -2914,7 +2914,7 @@ function sanitizeState(input) {
     settings.gridSize = settings.gridSizeX;
     settings.matrixLimit = positiveInteger(settings.matrixLimit, 90);
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
-    settings.matrixDimension = clamp(parseInt(settings.matrixDimension, 10) || 0, 0, 300);
+    settings.matrixDimension = clamp(parseInt(settings.matrixDimension, 10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter, 10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed);
     settings.snap = Boolean(settings.snap);
@@ -5788,7 +5788,7 @@ function insertNodeFromMatrix() {
     }
     state.nodes = reordered;
     if (state.settings.matrixDimension)
-        state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, 300);
+        state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, MATRIX_MAX_NODES);
     setSelection(newIds, [], newIds.length ? { type: 'node', id: newIds[0] } : null, false);
     pushHistory('insert node before selected');
     queueRender(true);
@@ -7961,22 +7961,28 @@ function fmtCoord(v) { return (Math.round(v * 10000) / 10000).toString(); }
 function formulaLikeText(v) {
     return /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
 }
+// A leading apostrophe is the spreadsheet "this is text" marker, so the guard
+// has to escape a value that itself starts with one. Guarding exactly the
+// values that would otherwise be read back as guarded makes the encoding
+// reversible: '=1+1 is exported as ''=1+1 and still means '=1+1 on import.
+function needsFormulaGuard(v) {
+    return formulaLikeText(v) || (v[0] === "'" && needsFormulaGuard(v.slice(1)));
+}
 function csvCell(v) {
     v = String(v ?? '');
-    if (formulaLikeText(v))
+    if (needsFormulaGuard(v))
         v = "'" + v; // spreadsheet formula guard
     return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 }
 // Inverse of the guard above: a label that really starts with "=", "+", "@"
-// or "-x" is exported as '=... so spreadsheets keep it as text. Reading the
-// file back (our import, or Excel/LibreOffice "save as CSV") must drop that
-// one marker, otherwise every round-trip grew another apostrophe.
+// or "-x" is exported as '=... so spreadsheets keep it as text, and reading
+// the file back (our import, or Excel/LibreOffice "save as CSV") drops that
+// one marker again. The marker is only removed when what follows would itself
+// have been guarded, so a label that genuinely starts with an apostrophe
+// survives the round-trip.
 function csvUnescapeCell(v) {
-    if (v.length > 1 && v[0] === "'") {
-        const text = v.slice(1);
-        if (formulaLikeText(text))
-            return text;
-    }
+    if (v[0] === "'" && needsFormulaGuard(v.slice(1)))
+        return v.slice(1);
     return v;
 }
 function rowsToCsv(rows) { return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
@@ -8636,12 +8642,20 @@ function importNodesCsv(text, append) {
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
     const initialNodes = append ? state.nodes.length : 0;
+    // Missing orders fall back to the position in the imported file, which is
+    // 0-based in replace mode (the old list is gone) and continues after the
+    // existing nodes in append mode.
+    const orderBase = append ? state.nodes.length : 0;
     const nodes = append ? state.nodes.slice() : [];
     let parsed = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length || (row.length === 1 && !row[0]))
             continue;
+        // parseInt() || fallback turned a legitimate order of 0 into "missing",
+        // so a replaced 3-node graph came back as orders 3,1,2.
+        const orderCell = iOrder >= 0 ? String(row[iOrder] ?? '').trim() : '';
+        const parsedOrder = orderCell === '' ? NaN : parseInt(orderCell, 10);
         const n = {
             id: (iId >= 0 && row[iId]) ? row[iId] : 'n' + (state.nextNode + parsed),
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
@@ -8650,7 +8664,7 @@ function importNodesCsv(text, append) {
             shape: (iShape >= 0 ? row[iShape] : '') || '',
             color: (iColor >= 0 ? row[iColor] : '') || '',
             type: (iType >= 0 ? row[iType] : '') || '',
-            order: iOrder >= 0 ? (parseInt(row[iOrder], 10) || (state.nodes.length + parsed)) : (state.nodes.length + parsed)
+            order: Number.isFinite(parsedOrder) ? Math.max(0, Math.trunc(parsedOrder)) : orderBase + parsed
         };
         nodes.push(n);
         parsed++;
@@ -8675,15 +8689,21 @@ function parseAttrList(text) {
     while ((m = re.exec(text))) {
         let v = m[2].trim();
         if ((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'"))
-            v = v.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+            v = dotUnescape(v.slice(1, -1));
         attrs[m[1].toLowerCase()] = v;
     }
     return attrs;
 }
+// DOT string escapes: \\ \" \' and \n. One pass, because chaining
+// replacements unescaped in the wrong order: "a\\\\nb" (the literal label a\nb)
+// hit the \n rule first and came back as a backslash plus a newline.
+function dotUnescape(text) {
+    return text.replace(/\\([\\"'n])/g, (_, ch) => ch === 'n' ? '\n' : ch);
+}
 function cleanDotToken(t) {
     t = String(t || '').trim();
     if ((t[0] === '"' && t.at(-1) === '"') || (t[0] === "'" && t.at(-1) === "'"))
-        return t.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+        return dotUnescape(t.slice(1, -1));
     return t;
 }
 // Strip DOT comments without touching quoted strings. A '#' is only a comment

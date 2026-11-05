@@ -488,7 +488,7 @@
       reordered.push(node);
     }
     state.nodes = reordered;
-    if(state.settings.matrixDimension) state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, 300);
+    if(state.settings.matrixDimension) state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, MATRIX_MAX_NODES);
     setSelection(newIds, [], newIds.length ? {type:'node', id:newIds[0]} : null, false);
     pushHistory('insert node before selected');
     queueRender(true);
