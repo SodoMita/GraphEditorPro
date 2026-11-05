@@ -20,7 +20,14 @@
   // values that would otherwise be read back as guarded makes the encoding
   // reversible: '=1+1 is exported as ''=1+1 and still means '=1+1 on import.
   function needsFormulaGuard(v: string): boolean {
-    return formulaLikeText(v) || (v[0] === "'" && needsFormulaGuard(v.slice(1)));
+    // Iterative on purpose: a cell may carry thousands of leading apostrophes,
+    // and recursing once per apostrophe overflowed the stack (the import was
+    // caught and reported, but it never loaded). Equivalent to "a value needs
+    // the guard when it is formula-like after stripping any escaped
+    // apostrophes".
+    let i = 0;
+    while(i < v.length && v.charCodeAt(i) === 39 /* ' */) i++;
+    return formulaLikeText(i === 0 ? v : v.slice(i));
   }
   function csvCell(v){
     v = String(v ?? '');

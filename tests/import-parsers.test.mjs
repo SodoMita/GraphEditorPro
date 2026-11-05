@@ -335,6 +335,32 @@ test('CSV export and import preserve labels that start with an apostrophe', asyn
     'guarded text is unescaped exactly once per round-trip');
 });
 
+test('CSV apostrophe handling is iterative and stays exact for many markers', async () => {
+  // A user-reachable cell: thousands of leading apostrophes used to recurse in
+  // needsFormulaGuard() and abort the import with a stack overflow.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const longLabel = "'".repeat(50_000);
+  await paste(document, dom.window, '#btnPasteNodesCsv',
+    'order,id,label,x,y,shape,color,type\n0,n1,' + longLabel + ',0,0,circle,#0ea5e9,');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'the import completes instead of failing');
+  assert.equal(graph.nodes[0].label.length, 80, 'the label is capped by the sanitizer');
+  assert.doesNotMatch(toasts(document), /failed/i, 'no failure is reported');
+  assert.deepEqual(errors.map(e => e.message), []);
+
+  // The escaping rule still strips exactly one marker, however many there are.
+  const label = "'".repeat(20) + '=1+1';
+  const saved = { title: 'apostrophes', nodes: [{ id: 'n1', label, x: 0, y: 0, order: 0 }], edges: [] };
+  const roundTrip = createEditorDom(saved);
+  const doc = roundTrip.dom.window.document;
+  doc.querySelector('#btnExportNodesCsv').click();
+  const csv = doc.querySelector('.export-modal textarea').value;
+  doc.querySelector('#expCloseBtn').click();
+  await paste(doc, roundTrip.dom.window, '#btnPasteNodesCsv', csv);
+  assert.equal(exportedGraph(doc).nodes[0].label, label, 'one apostrophe is added and one removed');
+});
+
 // === Performance guards ===
 test('matrix rendering is hard-capped at 14,400 cells regardless of the row limit', async () => {
   const nodes = Array.from({ length: 350 }, (_, i) => ({ id: 'n' + i, label: 'N' + i, x: i * 10, y: 0, order: i }));

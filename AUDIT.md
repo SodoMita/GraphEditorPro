@@ -287,7 +287,7 @@ Implemented in this branch after the audit (all covered by `tests/import-parsers
 - **Matrix-CSV identity model (P3-8).** Round-tripping duplicate or empty labels needs a format decision (labels vs IDs, plus a legend); it changes the export contract, so it belongs in its own change.
 - **Minification (P3-9).** The 645 KB unminified bundle is deliberate: readable diffs and a reviewable artifact for an offline file.
 
-Verification after this second round: `npm run check` passes with **83 tests** (62 existing + 21 regressions), `npx tsc --noEmit` is clean under the hardened flag set, `axe.run()` returns no violations with a dialog open, and headless Chromium confirms the dialog contract end to end (Escape cancels and restores focus to the trigger, `Tab` stays inside, Enter confirms, zero native `dialog` events, zero page errors).
+Verification after this second round: `npm run check` passes with **84 tests** (62 existing + 22 regressions), `npx tsc --noEmit` is clean under the hardened flag set, `axe.run()` returns no violations with a dialog open, and headless Chromium confirms the dialog contract end to end (Escape cancels and restores focus to the trigger, `Tab` stays inside, Enter confirms, zero native `dialog` events, zero page errors).
 
 ---
 
@@ -295,7 +295,7 @@ Verification after this second round: `npm run check` passes with **83 tests** (
 
 ```bash
 npm ci
-npm run check                    # typecheck + build + 83 tests (~50 s)
+npm run check                    # typecheck + build + 84 tests (~50 s)
 git diff --exit-code index.html  # rebuild is byte-identical
 
 # headless browser (note: script needs ROOT exported as committed)
