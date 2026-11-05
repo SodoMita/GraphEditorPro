@@ -84,7 +84,3 @@ interface I18nService {
   toggle(): void;
   load(): void;
 }
-
-interface Window {
-  I18N: I18nService;
-}

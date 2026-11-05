@@ -610,11 +610,11 @@
     if(p.edge && edgeIds.length) what.push(I18N.current === 'ru' ? `${edgeIds.length} ребр(о)` : `${edgeIds.length} edge${edgeIds.length===1?'':'s'}`);
     toast(I18N.t('preset_applied', {name: p.name, what: what.join(I18N.current==='ru'?' и ':' and ')}));
   }
-  function savePresetFromSelection(){
+  async function savePresetFromSelection(){
     const nodeIds = state.selection?.nodes || [];
     const edgeIds = state.selection?.edges || [];
     if(!nodeIds.length && !edgeIds.length){ toast(I18N.t('select_node_edge')); return; }
-    const name = prompt(I18N.t('preset_name'), I18N.t('preset') + ' ' + ((state.settings.stylePresets?.length || 0) + 1));
+    const name = await uiPrompt(I18N.t('preset_name'), I18N.t('preset_name_hint'), I18N.t('preset') + ' ' + ((state.settings.stylePresets?.length || 0) + 1), 60);
     if(!name) return;
     const preset: AnyRecord = { name: name.slice(0, 40) };
     // Save style from first selected node

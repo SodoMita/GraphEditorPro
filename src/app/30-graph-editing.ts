@@ -488,14 +488,19 @@
       reordered.push(node);
     }
     state.nodes = reordered;
-    if(state.settings.matrixDimension) state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, 300);
+    if(state.settings.matrixDimension) state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, MATRIX_MAX_NODES);
     setSelection(newIds, [], newIds.length ? {type:'node', id:newIds[0]} : null, false);
     pushHistory('insert node before selected');
     queueRender(true);
     toast(I18N.t('inserted_n_before', {n: newIds.length}));
   }
   function setMatrixDimension(count){
-    count = clamp(parseInt(count,10) || 0, 0, 300);
+    // The matrix cannot render more than MATRIX_MAX_NODES, so growing the graph
+    // through this control stops there too instead of creating nodes the view
+    // can never show.
+    const requested = parseInt(count,10) || 0;
+    count = clamp(requested, 0, MATRIX_MAX_NODES);
+    if(requested > MATRIX_MAX_NODES) toast(I18N.t('matrix_cap_reached', {cap: MATRIX_MAX_NODES}));
     const current = state.nodes.length;
     state.settings.matrixDimension = count;
     if(count > current){
@@ -514,9 +519,8 @@
   }
   function setNodeLabelFromMatrix(id, label){
     const n = nodeById(id); if(!n) return;
-    // If the displayed value was the ID fallback (label was empty) and user
-    // didn't change it, keep the label empty instead of baking in the ID.
-    const displayed = n.label || id;
+    // If the value equals the ID fallback (label was empty) and the user did
+    // not change it, keep the label empty instead of baking in the ID.
     const newLabel = String(label ?? '').slice(0,80);
     if(newLabel === id && n.label === '') return;
     n.label = newLabel;
@@ -586,9 +590,9 @@
     pushHistory('edit matrix edge');
     queueRender(true);
   }
-  function clearMatrixEdges(){
+  async function clearMatrixEdges(){
     if(!state.edges.length) return;
-    if(!confirm(I18N.t('clear_matrix_edges'))) return;
+    if(!await uiConfirm(I18N.t('clear_matrix_edges'), {danger: true, confirmLabel: I18N.t('clear')})) return;
     state.edges = [];
     setSelection([], [], null, false);
     pushHistory('clear matrix edges');

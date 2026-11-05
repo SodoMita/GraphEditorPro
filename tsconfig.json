@@ -5,9 +5,21 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "outFile": ".build/app.js",
     "noEmitOnError": true,
+    // The codebase is a single concatenated program with a deliberately loose
+    // shared-state model, so full `strict` (in particular strictNullChecks and
+    // noImplicitAny) is a larger migration still in progress (~750 sites).
+    // Everything else that catches real defects without annotating every value
+    // is on, so a forgotten return, an accidental fallthrough, an unused local
+    // or a mis-typed call signature fails the build.
     "strict": false,
     "noImplicitAny": false,
-    "noImplicitThis": false,
+    "noImplicitThis": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": false,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,

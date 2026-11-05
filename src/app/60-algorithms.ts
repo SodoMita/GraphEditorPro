@@ -51,8 +51,16 @@
     state.nodes.forEach((node,i)=>{ node.x=(i%cols-(cols-1)/2)*gap; node.y=(Math.floor(i/cols)-Math.floor((n-1)/cols)/2)*gap; });
     pushHistory('grid layout'); fitView(); queueRender(true);
   }
-  function layoutForce(iter=180){
-    const n=state.nodes.length; if(n < 2) return; const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
+  function layoutForce(requestedIter=180){
+    const n=state.nodes.length; if(n < 2) return;
+    // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
+    // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
+    // work instead so one click always finishes in roughly a second; large
+    // graphs get fewer refinement passes rather than an unresponsive page.
+    const pairs = n * (n - 1) / 2;
+    const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
+    const reduced = iter < requestedIter;
+    const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
     for(let step=0; step<iter; step++){
       const disp = new Map(state.nodes.map(v=>[v.id,{x:0,y:0}]));
       for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
@@ -63,9 +71,10 @@
       for(const v of state.nodes){ const d=disp.get(v.id); const len=Math.hypot(d.x,d.y)||.01; v.x += (d.x/len)*Math.min(len,temp); v.y += (d.y/len)*Math.min(len,temp); }
     }
     pushHistory('relax layout'); fitView(); queueRender(true);
+    if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
   }
-  function addSample(){
-    if(state.nodes.length && !confirm(I18N.t('replace_with_sample'))) return;
+  async function addSample(){
+    if(state.nodes.length && !await uiConfirm(I18N.t('replace_with_sample'), {danger: true})) return;
     state.nodes = [
       {id:'n1',label:'A',x:-220,y:-120,shape:'circle',color:'#0ea5e9'}, {id:'n2',label:'B',x:0,y:-170,shape:'circle',color:'#8b5cf6'},
       {id:'n3',label:'C',x:230,y:-80,shape:'hexagon',color:'#06b6d4'}, {id:'n4',label:'D',x:-110,y:110,shape:'square',color:'#10b981'},
@@ -84,10 +93,34 @@
   function persistAutosavePreference(enabled: boolean){
     try { localStorage.setItem(AUTOSAVE_PREF_KEY, enabled ? 'true' : 'false'); } catch {}
   }
+  // Autosave failures used to be swallowed, so a full quota looked exactly like
+  // a working save while every subsequent edit was lost. Report it once.
+  let autosaveFailureReported = false;
+  function writeAutosave(){
+    try {
+      localStorage.setItem(STORAGE_KEY, snapshot());
+      autosaveFailureReported = false;
+      return true;
+    } catch {
+      if(!autosaveFailureReported){
+        autosaveFailureReported = true;
+        toast(I18N.t('autosave_failed'));
+      }
+      return false;
+    }
+  }
   function saveSoon(){
     clearTimeout(saveTimer);
     if(!state.settings.autosave) return;
-    saveTimer = setTimeout(() => { try{ localStorage.setItem(STORAGE_KEY, snapshot()); }catch{} }, 250);
+    saveTimer = setTimeout(() => { saveTimer = null; writeAutosave(); }, 250);
+  }
+  // Flush a pending debounced write when the page goes away; otherwise the last
+  // 250 ms of edits are lost by closing the tab right after a change.
+  function flushAutosave(){
+    if(!saveTimer) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if(state.settings.autosave) writeAutosave();
   }
   function loadSaved(){
     try{

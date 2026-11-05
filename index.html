@@ -39,6 +39,12 @@
     button{cursor:pointer}
     ::selection{background:rgba(34,211,238,.28)}
     .icon-sprite{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
+    /* Text that is only for screen readers (page heading, table corner cells):
+       keeps the accessible structure without adding visual layout. */
+    .visually-hidden{
+      position:absolute !important; width:1px; height:1px; margin:-1px; padding:0;
+      overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0;
+    }
     .ui-icon{
       width:18px;height:18px;display:block;flex:0 0 auto;
       fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;
@@ -466,6 +472,25 @@
     .drag-handle:hover{background:rgba(34,211,238,.22)}
     .drag-handle:active{background:rgba(34,211,238,.32)}
 
+    /* ---------- In-app dialog (replaces prompt/confirm/alert) ---------- */
+    .app-dialog{
+      position:fixed; inset:0; z-index:90; display:grid; place-items:center; padding:16px;
+      background:rgba(2,6,23,.72); backdrop-filter:blur(3px);
+    }
+    .app-dialog-card{
+      width:min(420px,100%); background:var(--panel); border:1px solid var(--line-2); border-radius:14px;
+      box-shadow:var(--shadow); padding:16px; display:grid; gap:12px;
+    }
+    .app-dialog-title{margin:0; font-size:15px; font-weight:800; color:#e2e8f0}
+    .app-dialog-message{margin:0; font-size:12.5px; color:#cbd5e1; line-height:1.45; white-space:pre-wrap}
+    .app-dialog-field{margin:0}
+    .app-dialog-input{
+      width:100%; background:#020617; border:1px solid var(--line-2); color:#e2e8f0;
+      border-radius:8px; padding:9px 10px; font-size:16px; min-height:40px;
+    }
+    .app-dialog-input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+    .app-dialog-actions{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap}
+
     /* ---------- Presets overlay (app-wide) ---------- */
     .presets-overlay{
       position:fixed; inset:0; z-index:60; background:rgba(2,6,23,.92); backdrop-filter:blur(8px);
@@ -836,6 +861,7 @@
 
     <!-- ================= App command bar — every core action is one click away ================= -->
     <header class="panel appbar">
+      <h1 class="visually-hidden" data-i18n="brand_name">Graph Editor Pro</h1>
       <div class="brand" title="Graph Editor Pro">
         <div class="brand-badge">G</div>
         <span class="brand-name" data-i18n="brand_name">Graph Editor Pro</span>
@@ -1584,7 +1610,7 @@
           <div class="bottom-pane thin-scroll">
             <div class="section-title"><span data-i18n="adjacency_matrix">Adjacency matrix</span> <span id="matrixNote" class="tiny muted"></span></div>
             <div class="matrix-controls tiny muted">
-              <label class="field" for="matrixSize"><span data-i18n="matrix_view">Matrix view</span> <input id="matrixSize" class="matrix-input" type="number" min="0" max="300" value="0" title="Set visible matrix dimension. Smaller values do not delete graph nodes." data-i18n-title="matrix_view_title"></label>
+              <label class="field" for="matrixSize"><span data-i18n="matrix_view">Matrix view</span> <input id="matrixSize" class="matrix-input" type="number" min="0" max="120" value="0" title="Set visible matrix dimension. Smaller values do not delete graph nodes." data-i18n-title="matrix_view_title"></label>
               <button id="btnMatrixResize" class="btn small" title="Resize matrix view without deleting or rearranging existing graph" data-i18n-title="set_dim_title" data-i18n="set_dimensions">Set dimensions</button>
               <button id="btnMatrixAddNode" class="btn small" data-i18n="add_node">Add node</button>
               <button id="btnMatrixInsertNode" class="btn small" title="Insert a new node before each selected node" data-i18n-title="insert_title" data-i18n="insert_before_sel">Insert before selected</button>
@@ -2143,6 +2169,9 @@ const I18N = {
         'source_tap_target': { en: 'Source selected. Tap a target node or empty canvas.', ru: 'Источник выбран. Нажмите целевой узел или пустой холст.' },
         'node_label_prompt': { en: 'Node label:', ru: 'Метка узла:' },
         'edge_weight_prompt': { en: 'Edge weight:', ru: 'Вес ребра:' },
+        'node_label_hint': { en: 'Leave empty to clear the label.', ru: 'Оставьте пустым, чтобы очистить метку.' },
+        'edge_weight_hint': { en: 'Leave empty to remove the weight.', ru: 'Оставьте пустым, чтобы убрать вес.' },
+        'preset_name_hint': { en: 'Shown in the preset list.', ru: 'Отображается в списке пресетов.' },
         'drag_to_target': { en: 'Drag to a target node or empty canvas…', ru: 'Перетащите к целевому узлу или на пустой холст…' },
         'pinch_zoom_pan': { en: 'Pinch: zoom and pan', ru: 'Щипок: зум и панор.' },
         'pan_mode': { en: 'Pan mode', ru: 'Режим панор.' },
@@ -2168,6 +2197,21 @@ const I18N = {
         'highest_degree': { en: 'Highest degree:', ru: 'Наибольшая степень:' },
         'na': { en: 'n/a', ru: 'н/д' },
         'language_switched': { en: 'Language: English', ru: 'Язык: Русский' },
+        // --- Audit fixes: import feedback, layout budget, autosave, a11y labels ---
+        'appended_n_m': { en: '{label} appended: +{n} nodes, +{m} edges', ru: '{label}: добавлено +{n} узлов, +{m} рёбер' },
+        'appended_n_m_discarded': { en: '{label} appended: +{n} nodes, +{m} edges (discarded {d} dangling)', ru: '{label}: добавлено +{n} узлов, +{m} рёбер (отброшено висячих: {d})' },
+        'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано {imported}; отброшено {dropped} — лимит документа {limit}' },
+        'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано {imported}; пропущено {skipped} записей с неизвестными узлами' },
+        'csv_nodes_replaced_edges': { en: 'Imported {n} node(s); {e} old edge(s) dropped with the replaced graph', ru: 'Импортировано {n} узл(ов); {e} старых рёбер удалено вместе с заменённым графом' },
+        'matrix_cap_reached': { en: 'The matrix renders at most {cap}×{cap} nodes; the graph was not enlarged further.', ru: 'Матрица отображает не более {cap}×{cap} узлов; граф дальше не увеличивался.' },
+        'matrix_hidden_limit': { en: 'Matrix hidden for performance: {total} nodes exceed the limit {limit} (the matrix renders at most {cap}). Raise the limit up to {cap}, or use the edge list / Matrix CSV export.', ru: 'Матрица скрыта для производительности: {total} узлов превышают лимит {limit} (матрица отображается максимум для {cap}). Поднимите лимит до {cap} или используйте список рёбер / экспорт Matrix CSV.' },
+        'layout_force_reduced': { en: 'Large graph: force layout ran {iter} passes instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter} проходов вместо 180, чтобы не подвешивать интерфейс' },
+        'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
+        'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
+        'rows_reorder': { en: 'Reorder row', ru: 'Перестановка строки' },
+        'dialog_ok': { en: 'OK', ru: 'ОК' },
+        'dialog_cancel': { en: 'Cancel', ru: 'Отмена' },
+        'dialog_confirm_title': { en: 'Confirm', ru: 'Подтверждение' },
     },
     // Текущий язык
     current: 'en',
@@ -2214,8 +2258,14 @@ const I18N = {
         });
         // Show the language the button will switch to without replacing its SVG.
         const langCode = document.getElementById('langCode');
-        if (langCode)
+        if (langCode) {
             langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
+            // Accessible name must contain the visible label (the code shown), not
+            // just the generic "Switch language" action.
+            const langBtn = document.getElementById('btnLang');
+            if (langBtn)
+                langBtn.setAttribute('aria-label', this.t('lang_switch') + ': ' + langCode.textContent);
+        }
         // Обновить title документа
         const titleInput = document.getElementById('docTitleInput');
         if (titleInput && (titleInput.value === 'untitled' || titleInput.value === 'безымянный')) {
@@ -2243,9 +2293,6 @@ const I18N = {
         catch { }
     }
 };
-// Keep the service available for debugging while the application itself uses
-// the typed lexical binding above.
-window.I18N = I18N;
 const NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'graph-editor-pro-v2';
 const AUTOSAVE_PREF_KEY = 'graph-editor-pro-autosave';
@@ -2256,6 +2303,18 @@ const R = 25;
 // bounds per-frame work at a few milliseconds.
 const DRAG_LIVE_EDGE_LIMIT = 2000;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+// The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
+// size is capped independently of the user-facing row limit. Every cell is a
+// form control: measured in Chromium on a 350-node document, a full render
+// costs ~0.9 s at 90 nodes, ~1.2 s at 120, ~1.6 s at 150 and ~5.8 s at 300.
+// 120 keeps the worst case near a second while leaving the matrix usable for
+// medium graphs. The matrixLimit setting (default 90) decides when the matrix
+// is hidden *below* this cap; it can never raise the cap itself.
+const MATRIX_MAX_CELLS = 14400;
+const MATRIX_MAX_NODES = Math.floor(Math.sqrt(MATRIX_MAX_CELLS)); // 120
+// Pair-interaction budget for the force layout (see layoutForce): bounds one
+// click to roughly a second on a mid-range machine instead of O(iter·n²).
+const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
 /** Return a required DOM element or fail immediately with a useful error. */
 const $ = (selector, root = document) => {
     // Plain "#id" lookups are common in render paths (camera inputs,
@@ -2272,9 +2331,152 @@ const $ = (selector, root = document) => {
     return element;
 };
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-const isKeyboardVisible = (el) => el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
+// "Can this control take keyboard focus right now?" In browsers that is
+// checkVisibility() (CSS display/visibility/inert aware). Engines without it
+// — jsdom, whose offsetParent is always null — fall back to the structural
+// checks instead of dropping every control from a focus trap.
+const isKeyboardVisible = (el) => {
+    if (el.tabIndex < 0 || el.hasAttribute('disabled') || el.getAttribute('aria-hidden') === 'true')
+        return false;
+    const check = el.checkVisibility;
+    return typeof check === 'function' ? Boolean(check.call(el)) : true;
+};
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+let dialogEl = null;
+let dialogResolve = null;
+let dialogReturnFocus = null;
+let dialogCleanup = null;
+function closeDialog(result = null) {
+    if (!dialogEl)
+        return;
+    // Detach the document-level listeners *before* restoring focus: they pull
+    // focus back into the dialog, which must not fight the hand-off.
+    dialogCleanup?.();
+    dialogCleanup = null;
+    const resolve = dialogResolve;
+    dialogEl.remove();
+    dialogEl = null;
+    dialogResolve = null;
+    if (dialogReturnFocus?.isConnected)
+        dialogReturnFocus.focus({ preventScroll: true });
+    dialogReturnFocus = null;
+    resolve?.(result);
+}
+function showDialog(options) {
+    closeDialog(null); // only one dialog at a time
+    return new Promise(resolve => {
+        dialogResolve = resolve;
+        dialogReturnFocus = document.activeElement;
+        const wantsInput = Boolean(options.input);
+        const dialog = document.createElement('div');
+        dialog.className = 'app-dialog';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'appDialogTitle');
+        if (options.message)
+            dialog.setAttribute('aria-describedby', 'appDialogMessage');
+        const inputId = 'appDialogInput';
+        dialog.innerHTML = `
+        <form class="app-dialog-card">
+          <h2 id="appDialogTitle" class="app-dialog-title">${esc(options.title)}</h2>
+          ${options.message ? `<p id="appDialogMessage" class="app-dialog-message">${esc(options.message)}</p>` : ''}
+          ${wantsInput ? `<div class="app-dialog-field"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" aria-label="${esc(options.input?.label || options.title)}" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></div>` : ''}
+          <div class="app-dialog-actions">
+            <button type="button" class="btn small" data-dialog-cancel>${esc(options.cancelLabel || I18N.t('dialog_cancel'))}</button>
+            <button type="submit" class="btn small ${options.danger ? 'danger' : 'good'}" data-dialog-ok>${esc(options.confirmLabel || I18N.t('dialog_ok'))}</button>
+          </div>
+        </form>`;
+        document.body.appendChild(dialog);
+        dialogEl = dialog;
+        const input = dialog.querySelector('#' + inputId);
+        const form = dialog.querySelector('form');
+        const finish = (result) => closeDialog(result);
+        form?.addEventListener('submit', ev => {
+            ev.preventDefault();
+            finish(wantsInput ? (input?.value ?? '') : true);
+        });
+        dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
+        dialog.addEventListener('pointerdown', ev => { if (ev.target === dialog)
+            finish(wantsInput ? null : false); });
+        // The handlers live on the document, not on the dialog element: clicking
+        // the dialog's own title or message moves focus to <body> in Chromium,
+        // and a dialog-scoped keydown never fires from there — Escape and the
+        // Tab trap went dead until focus wandered back inside.
+        const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
+        const focusInside = (target) => Boolean(target) && dialog.contains(target);
+        const onKeyDown = (ev) => {
+            if (!dialogEl)
+                return;
+            if (ev.key === 'Escape') {
+                ev.preventDefault();
+                ev.stopPropagation();
+                finish(wantsInput ? null : false);
+                return;
+            }
+            if (ev.key !== 'Tab')
+                return;
+            const items = focusables();
+            if (!items.length) {
+                ev.preventDefault();
+                return;
+            }
+            const first = items[0], last = items[items.length - 1];
+            // Focus parked outside (title click, backdrop, or a stray programmatic
+            // focus) still gets trapped: the next Tab re-enters the dialog.
+            if (!focusInside(document.activeElement)) {
+                ev.preventDefault();
+                (ev.shiftKey ? last : first).focus();
+                return;
+            }
+            if (ev.shiftKey && document.activeElement === first) {
+                ev.preventDefault();
+                last.focus();
+            }
+            else if (!ev.shiftKey && document.activeElement === last) {
+                ev.preventDefault();
+                first.focus();
+            }
+        };
+        // A modal keeps focus: anything that pulls it out is redirected to the
+        // dialog's primary control. The trigger's own focus is restored on close.
+        const onFocusIn = (ev) => {
+            if (!dialogEl || focusInside(ev.target))
+                return;
+            const items = focusables();
+            (items[items.length - 1] || items[0])?.focus();
+        };
+        document.addEventListener('keydown', onKeyDown, true);
+        document.addEventListener('focusin', onFocusIn, true);
+        dialogCleanup = () => {
+            document.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('focusin', onFocusIn, true);
+        };
+        setTimeout(() => {
+            if (input) {
+                input.focus();
+                input.select();
+            }
+            else {
+                dialog.querySelector('[data-dialog-ok]')?.focus();
+            }
+        }, 0);
+    });
+}
+/** Replace window.confirm with an in-app, translated, focus-trapped dialog. */
+async function uiConfirm(message, options = {}) {
+    return (await showDialog({
+        title: options.title || I18N.t('dialog_confirm_title'),
+        message,
+        confirmLabel: options.confirmLabel,
+        danger: options.danger
+    })) === true;
+}
+/** Replace window.prompt: resolves to the text, or null when cancelled. */
+async function uiPrompt(title, message, value = '', maxLength = 80) {
+    const result = await showDialog({ title, message, input: { value, maxLength } });
+    return typeof result === 'string' ? result : null;
+}
 const svg = $('#graphCanvas');
 const gridLayer = $('#gridLayer');
 const gridRect = $('#gridRect');
@@ -2362,6 +2564,10 @@ const activePointers = new Map();
 // Clipboard for copy/paste of nodes+edges
 let clipboardData = null;
 let pasteOffsetCount = 0;
+// UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
+// controls call it instead of reaching for a global, so modules stay
+// decoupled without leaking implementation state onto `window`.
+let syncUiHooks = null;
 function snapshot() {
     flushZoomPreview(); // never persist a camera that is still in compositor preview
     return JSON.stringify({
@@ -2415,17 +2621,21 @@ function applySnapshot(raw) {
 // memory and eviction cost predictable where an entry cap alone would not.
 const HISTORY_MAX_ENTRIES = 100;
 const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+// Snapshots are JS strings (UTF-16), so the memory they occupy is two bytes
+// per code unit. Counting code units here would make the byte cap twice as
+// permissive as its name claims.
+const snapshotBytes = (snap) => snap.length * 2;
 let historyBytes = 0;
-function pushHistory(label = 'change') {
+function pushHistory(_label = 'change') {
     const snap = snapshot();
     if (appHistory[appHistoryIndex] === snap)
         return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    historyBytes += snap.length;
+    historyBytes += snapshotBytes(snap);
     appHistoryIndex = appHistory.length - 1;
     while (appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)) {
-        historyBytes -= appHistory[0].length;
+        historyBytes -= snapshotBytes(appHistory[0]);
         appHistory.shift();
         appHistoryIndex--;
     }
@@ -2435,7 +2645,7 @@ function pushHistory(label = 'change') {
 function resetHistory() {
     appHistory = [snapshot()];
     appHistoryIndex = 0;
-    historyBytes = appHistory[0].length;
+    historyBytes = snapshotBytes(appHistory[0]);
     updateUndoRedo();
 }
 function undo() { if (appHistoryIndex <= 0)
@@ -2704,7 +2914,7 @@ function sanitizeState(input) {
     settings.gridSize = settings.gridSizeX;
     settings.matrixLimit = positiveInteger(settings.matrixLimit, 90);
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
-    settings.matrixDimension = clamp(parseInt(settings.matrixDimension, 10) || 0, 0, 300);
+    settings.matrixDimension = clamp(parseInt(settings.matrixDimension, 10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter, 10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed);
     settings.snap = Boolean(settings.snap);
@@ -3234,7 +3444,7 @@ function selRingFor(shape, w, h) {
 // Creates/removes/updates a node's selection ring and returns the ring
 // element (or null). Safe to call from render passes and the fast
 // selection-sync path alike.
-function syncNodeSelRing(g, n, shape, w, h, selected) {
+function syncNodeSelRing(g, _n, shape, w, h, selected) {
     const selSig = shape + '|' + w + '|' + h;
     let sel = g.__sel;
     if (selected) {
@@ -3447,8 +3657,8 @@ function syncControls() {
     const chkPreserve = document.getElementById('chkCopyPreserve');
     if (chkPreserve)
         chkPreserve.checked = state.settings.copyPreserveExternal !== false;
-    if (window.syncPreserve)
-        window.syncPreserve();
+    if (syncUiHooks)
+        syncUiHooks();
     syncStyleControls();
     syncEditTypeLists();
     renderCustomAttributes();
@@ -4388,20 +4598,6 @@ function renderSelectionPanel() {
         // Wire node multi-edit controls
         if (nodeCount > 0) {
             const nodeIds = state.selection.nodes;
-            const setNodeProp = (prop, val, isInput) => {
-                for (const id of nodeIds) {
-                    const n = nodeById(id);
-                    if (n) {
-                        if (val === '' && isInput)
-                            n[prop] = '';
-                        else if (val !== '')
-                            n[prop] = isInput ? val : val;
-                    }
-                }
-                pushHistory('multi-edit nodes');
-                queueRender(false);
-                saveSoon();
-            };
             $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0, 80); for (const id of nodeIds) {
                 const n = nodeById(id);
                 if (n)
@@ -4802,9 +4998,12 @@ function visibleNodeIds() {
     return ids;
 }
 function matrixNodes() {
-    const dim = clamp(parseInt(state.settings.matrixDimension, 10) || 0, 0, 300);
+    const dim = clamp(parseInt(state.settings.matrixDimension, 10) || 0, 0, MATRIX_MAX_NODES);
     const sorted = visibleNodes();
-    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted;
+    // Hard ceiling, independent of matrixLimit: every matrix cell is an <input>,
+    // so an n×n grid is n² DOM elements. Without this, a document with a large
+    // matrixLimit (or a big graph and matrixDimension 0) can freeze the tab.
+    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted.slice(0, MATRIX_MAX_NODES);
 }
 let edgeListRenderLimit = 250;
 function configuredEdgeListPageSize() {
@@ -4815,8 +5014,10 @@ function renderMatrixAndList() {
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
     const sizeInput = $('#matrixSize');
-    if (sizeInput)
-        sizeInput.value = state.settings.matrixDimension || total;
+    if (sizeInput) {
+        sizeInput.value = Math.min(state.settings.matrixDimension || total, MATRIX_MAX_NODES);
+        sizeInput.max = String(MATRIX_MAX_NODES);
+    }
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || { start: -1, end: -1 };
     const rangeActive = vr.start >= 0 || vr.end >= 0;
@@ -4831,7 +5032,10 @@ function renderMatrixAndList() {
         note.textContent = `0 / ${total}`;
     }
     else if (n > limit) {
-        $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n} узлов > лимит ${limit}). Используйте экспорт Matrix CSV или увеличьте лимит.` : `Matrix hidden for performance (${n} nodes > limit ${limit}). Use Matrix CSV export or increase the limit.`) + '</div>';
+        // Report the real graph size and the render ceiling, not the already
+        // clamped slice: "300 nodes" for a 350-node graph (with advice to raise a
+        // limit that could not help) was misleading.
+        $('#matrixHost').innerHTML = '<div class="tiny muted">' + esc(I18N.t('matrix_hidden_limit', { total, limit, cap: MATRIX_MAX_NODES })) + '</div>';
         note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`;
     }
     else {
@@ -4884,7 +5088,7 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
         const downDisabled = pos === allSorted.length - 1 ? ' disabled' : '';
         return `<th><div class="matrix-header-cell"><input class="matrix-label-input${isNodeSelected(n.id) ? ' matrix-selected' : ''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="-1" title="${esc(I18N.t('move_left'))}" aria-label="${esc(I18N.t('move_left'))}: ${esc(n.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="${esc(I18N.t('order'))}">${n.order ?? 0}</span><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="1" title="${esc(I18N.t('move_right'))}" aria-label="${esc(I18N.t('move_right'))}: ${esc(n.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>`;
     }).join('');
-    parts.push('<table><thead><tr><th></th>', header, '</tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('matrix_corner')) + '</span></th>', header, '</tr></thead><tbody>');
     for (let i = 0; i < nodes.length; i++) {
         const row = nodes[i];
         const pos = orderPos.get(row.id) ?? i;
@@ -4936,7 +5140,7 @@ function edgeListHtml() {
     }
     const selectedEdges = selectedEdgeIds();
     const parts = [];
-    parts.push('<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('rows_reorder')) + '</span></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
     for (let i = 0; i < renderedEdges.length; i++) {
         const e = renderedEdges[i];
         const a = nodeById(e.from), b = nodeById(e.to);
@@ -5584,14 +5788,20 @@ function insertNodeFromMatrix() {
     }
     state.nodes = reordered;
     if (state.settings.matrixDimension)
-        state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, 300);
+        state.settings.matrixDimension = clamp(state.settings.matrixDimension + newIds.length, 0, MATRIX_MAX_NODES);
     setSelection(newIds, [], newIds.length ? { type: 'node', id: newIds[0] } : null, false);
     pushHistory('insert node before selected');
     queueRender(true);
     toast(I18N.t('inserted_n_before', { n: newIds.length }));
 }
 function setMatrixDimension(count) {
-    count = clamp(parseInt(count, 10) || 0, 0, 300);
+    // The matrix cannot render more than MATRIX_MAX_NODES, so growing the graph
+    // through this control stops there too instead of creating nodes the view
+    // can never show.
+    const requested = parseInt(count, 10) || 0;
+    count = clamp(requested, 0, MATRIX_MAX_NODES);
+    if (requested > MATRIX_MAX_NODES)
+        toast(I18N.t('matrix_cap_reached', { cap: MATRIX_MAX_NODES }));
     const current = state.nodes.length;
     state.settings.matrixDimension = count;
     if (count > current) {
@@ -5615,9 +5825,8 @@ function setNodeLabelFromMatrix(id, label) {
     const n = nodeById(id);
     if (!n)
         return;
-    // If the displayed value was the ID fallback (label was empty) and user
-    // didn't change it, keep the label empty instead of baking in the ID.
-    const displayed = n.label || id;
+    // If the value equals the ID fallback (label was empty) and the user did
+    // not change it, keep the label empty instead of baking in the ID.
     const newLabel = String(label ?? '').slice(0, 80);
     if (newLabel === id && n.label === '')
         return;
@@ -5710,10 +5919,10 @@ function setMatrixCell(from, to, raw) {
     pushHistory('edit matrix edge');
     queueRender(true);
 }
-function clearMatrixEdges() {
+async function clearMatrixEdges() {
     if (!state.edges.length)
         return;
-    if (!confirm(I18N.t('clear_matrix_edges')))
+    if (!await uiConfirm(I18N.t('clear_matrix_edges'), { danger: true, confirmLabel: I18N.t('clear') }))
         return;
     state.edges = [];
     setSelection([], [], null, false);
@@ -6468,7 +6677,7 @@ function renderSelectionDraft() {
     el.setAttribute('class', (el.getAttribute('class') || '') + ' selection-draft');
     selectionOverlayLayer.appendChild(el);
 }
-function hitTestSelection(draft, liveBrush = false) {
+function hitTestSelection(draft, _liveBrush = false) {
     const nodes = [], edges = [];
     const tool = draft.tool;
     const minX = Math.min(draft.start.x, draft.end.x), maxX = Math.max(draft.start.x, draft.end.x), minY = Math.min(draft.start.y, draft.end.y), maxY = Math.max(draft.start.y, draft.end.y);
@@ -6863,7 +7072,6 @@ function finishPointer(ev, cancel = false) {
     if (zoomPreview)
         flushZoomPreview(); // hit-testing must see committed geometry
     if (singleSweep && ev.pointerId === singleSweep.pointerId) {
-        const sw = singleSweep;
         singleSweep = null;
         gestureActive = false;
         try {
@@ -7108,22 +7316,32 @@ function fitView() {
     queueRender(false);
     saveSoon();
 }
-function editNodeQuick(id) { const n = nodeById(id); if (!n)
-    return; const val = prompt(I18N.t('node_label_prompt'), n.label); if (val !== null) {
-    n.label = val.trim().slice(0, 80);
-    pushHistory('rename node');
-    queueRender(true);
-} }
-function editEdgeQuick(id) { const e = edgeById(id); if (!e)
-    return; const val = prompt(I18N.t('edge_weight_prompt'), e.weight ?? ''); if (val !== null) {
-    const t = val.trim().slice(0, 50);
-    if (t === '')
-        delete e.weight;
-    else
-        e.weight = t;
-    pushHistory('edit edge');
-    queueRender(true);
-} }
+async function editNodeQuick(id) {
+    const n = nodeById(id);
+    if (!n)
+        return;
+    const val = await uiPrompt(I18N.t('node_label_prompt'), I18N.t('node_label_hint'), n.label, 80);
+    if (val !== null) {
+        n.label = val.trim().slice(0, 80);
+        pushHistory('rename node');
+        queueRender(true);
+    }
+}
+async function editEdgeQuick(id) {
+    const e = edgeById(id);
+    if (!e)
+        return;
+    const val = await uiPrompt(I18N.t('edge_weight_prompt'), I18N.t('edge_weight_hint'), e.weight ?? '', 50);
+    if (val !== null) {
+        const t = val.trim().slice(0, 50);
+        if (t === '')
+            delete e.weight;
+        else
+            e.weight = t;
+        pushHistory('edit edge');
+        queueRender(true);
+    }
+}
 // Standardized precision for all coordinate exports — 4 decimals prevents drift across round-trips
 // === Selection transform gizmo ================================
 // Translate / rotate / scale / rect handles for the current selection.
@@ -7734,7 +7952,47 @@ function assertImportTextSize(text) {
     }
 }
 function fmtCoord(v) { return (Math.round(v * 10000) / 10000).toString(); }
-function csvCell(v) { v = String(v ?? ''); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+// Spreadsheet apps execute a cell that starts with =, +, @, tab or CR as a
+// formula. Graph labels and weights are user/import-controlled text, so a
+// malicious .json could otherwise run code on the exporter's machine when the
+// CSV is opened in Excel/Sheets. Prefix such cells with an apostrophe (the
+// standard mitigation) while leaving plain numbers — including negative
+// coordinates — untouched so the CSV stays usable.
+function formulaLikeText(v) {
+    return /^[=+@\t\r]/.test(v) || (/^-/.test(v) && !/^-\s*\d/.test(v));
+}
+// A leading apostrophe is the spreadsheet "this is text" marker, so the guard
+// has to escape a value that itself starts with one. Guarding exactly the
+// values that would otherwise be read back as guarded makes the encoding
+// reversible: '=1+1 is exported as ''=1+1 and still means '=1+1 on import.
+function needsFormulaGuard(v) {
+    // Iterative on purpose: a cell may carry thousands of leading apostrophes,
+    // and recursing once per apostrophe overflowed the stack (the import was
+    // caught and reported, but it never loaded). Equivalent to "a value needs
+    // the guard when it is formula-like after stripping any escaped
+    // apostrophes".
+    let i = 0;
+    while (i < v.length && v.charCodeAt(i) === 39 /* ' */)
+        i++;
+    return formulaLikeText(i === 0 ? v : v.slice(i));
+}
+function csvCell(v) {
+    v = String(v ?? '');
+    if (needsFormulaGuard(v))
+        v = "'" + v; // spreadsheet formula guard
+    return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+// Inverse of the guard above: a label that really starts with "=", "+", "@"
+// or "-x" is exported as '=... so spreadsheets keep it as text, and reading
+// the file back (our import, or Excel/LibreOffice "save as CSV") drops that
+// one marker again. The marker is only removed when what follows would itself
+// have been guarded, so a label that genuinely starts with an apostrophe
+// survives the round-trip.
+function csvUnescapeCell(v) {
+    if (v[0] === "'" && needsFormulaGuard(v.slice(1)))
+        return v.slice(1);
+    return v;
+}
 function rowsToCsv(rows) { return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
 function edgeCsv() {
     const rows = [['id', 'source_id', 'source_label', 'target_id', 'target_label', 'weight', 'directed', 'label', 'type', 'color', 'stroke_size', 'stroke_style', 'label_color', 'label_size']];
@@ -7910,6 +8168,15 @@ function showExportPreview(name, content, type) {
 }
 function fileBase() { return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'graph'; }
 function exportJson() { showExportPreview(`${fileBase()}.graph.json`, JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json;charset=utf-8'); }
+// Map the editor's shape names onto DOT's vocabulary (and back in parseDot).
+function dotShapeName(shape) {
+    return shape === 'diamond' ? 'diamond'
+        : shape === 'square' ? 'box'
+            : shape === 'triangleUp' ? 'triangle'
+                : shape === 'triangleDown' ? 'invtriangle'
+                    : shape === 'hexagon' ? 'polygon'
+                        : 'ellipse';
+}
 function dotId(id) { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : '"' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
 function dotString(v) { return '"' + String(v ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'; }
 function exportDotText() {
@@ -7918,7 +8185,14 @@ function exportDotText() {
     const connector = allDirected ? '->' : '--';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
-        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(n.shape === 'diamond' ? 'diamond' : n.shape === 'square' ? 'box' : 'ellipse')}`, `fillcolor=${dotString(n.color)}`, `order=${n.order ?? 0}`];
+        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(n.shape))}`];
+        // Hexagon has no native DOT shape: emit a regular polygon so the importer
+        // can restore it instead of flattening it to an ellipse.
+        if (n.shape === 'hexagon')
+            attrs.push('sides=6', 'regular=true');
+        attrs.push(`fillcolor=${dotString(n.color)}`, `order=${n.order ?? 0}`);
+        if (n.type)
+            attrs.push(`type=${dotString(n.type)}`);
         lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for (const e of state.edges) {
@@ -7938,7 +8212,7 @@ function exportDotText() {
 function exportDot() { showExportPreview(`${fileBase()}.dot`, exportDotText(), 'text/vnd.graphviz;charset=utf-8'); }
 function xmlEsc(v) { return String(v ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&apos;', '"': '&quot;' }[c])); }
 function exportGraphmlText() {
-    const nd = state.settings.nodeDefaults, ed = state.settings.edgeDefaults, gd = state.settings.graphDefaults;
+    const gd = state.settings.graphDefaults;
     const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">`,
         `  <key id="label" for="node" attr.name="label" attr.type="string"/>`,
         `  <key id="nodeId" for="node" attr.name="id" attr.type="string"/>`,
@@ -7998,8 +8272,8 @@ function exportGraphmlText() {
     lines.push(`    <data key="gridMajorColor">${xmlEsc(state.settings.gridMajorColor)}</data>`);
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
-    // Node defaults
-    const ndLines = [`    <data key="type">${xmlEsc(nd.type)}</data>`, `    <data key="shape">${xmlEsc(nd.shape)}</data>`, `    <data key="color">${xmlEsc(nd.color)}</data>`, `    <data key="width">${xmlEsc(nd.width)}</data>`, `    <data key="height">${xmlEsc(nd.height)}</data>`, `    <data key="strokeColor">${xmlEsc(nd.strokeColor)}</data>`, `    <data key="strokeSize">${xmlEsc(nd.strokeSize)}</data>`, `    <data key="strokeStyle">${xmlEsc(nd.strokeStyle)}</data>`, `    <data key="labelColor">${xmlEsc(nd.labelColor)}</data>`, `    <data key="labelFont">${xmlEsc(nd.labelFont)}</data>`, `    <data key="labelSize">${xmlEsc(nd.labelSize)}</data>`, `    <data key="labelPosition">${xmlEsc(nd.labelPosition)}</data>`];
+    // Node defaults are serialised per node below (resolved visuals), so no
+    // separate <default> block is emitted.
     // Serialize nodes sorted by order
     const sortedNodes = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     for (const n of sortedNodes) {
@@ -8127,10 +8401,9 @@ function appendImportedGraph(data, label = 'graph') {
     pushHistory(`append ${label}`);
     queueRender(true, true);
     saveSoon();
-    const msg = discarded > 0
-        ? `${label} appended: +${sane.nodes.length} nodes, +${validEdges.length} edges (${discarded} dangling edge${discarded === 1 ? '' : 's'} discarded)`
-        : `${label} appended: +${sane.nodes.length} nodes, +${validEdges.length} edges`;
-    toast(msg);
+    toast(discarded > 0
+        ? I18N.t('appended_n_m_discarded', { label, n: sane.nodes.length, m: validEdges.length, d: discarded })
+        : I18N.t('appended_n_m', { label, n: sane.nodes.length, m: validEdges.length }));
 }
 function importGraphData(data, label, append) {
     if (append) {
@@ -8213,7 +8486,41 @@ function parseCsv(text) {
         row.push(field);
         rows.push(row);
     }
-    return rows;
+    return rows.map(cells => cells.map(csvUnescapeCell));
+}
+// Every CSV importer used to write straight into state.nodes/state.edges, so
+// it bypassed everything sanitizeState guarantees: the 3000/8000 caps, label
+// length, colour/shape/stroke validation and dangling-edge removal. A 4,000
+// row nodes CSV therefore produced a 4,000-node document that silently shrank
+// to 3,000 on the next reload. All CSV paths now funnel through the same
+// sanitizer as JSON/GraphML imports.
+function commitCsvGraph(nodes, edges, label) {
+    const sane = sanitizeState({
+        title: state.title, mode: state.mode, selectTool: state.selectTool,
+        selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
+        nodes, edges, customAttributes: state.customAttributes,
+        settings: state.settings, viewBox: state.viewBox
+    });
+    const droppedNodes = nodes.length - sane.nodes.length;
+    const droppedEdges = edges.length - sane.edges.length;
+    state = { ...state, ...sane, selected: null, selection: { nodes: [], edges: [] } };
+    invalidateGraphIndex();
+    invalidateSelectionCache();
+    pushHistory(label);
+    queueRender(true, true);
+    saveSoon();
+    return { droppedNodes, droppedEdges };
+}
+function csvImportToast(imported, dropped, skipped, limit, key) {
+    if (dropped > 0) {
+        toast(I18N.t('csv_import_capped', { imported, dropped, limit }));
+        return;
+    }
+    if (skipped > 0) {
+        toast(I18N.t('csv_import_skipped', { imported, skipped }));
+        return;
+    }
+    toast(I18N.t(key, { n: imported }));
 }
 function importEdgesCsv(text, append) {
     const rows = parseCsv(text);
@@ -8231,31 +8538,33 @@ function importEdgesCsv(text, append) {
         return;
     }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
+    const idSet = new Set(state.nodes.map(n => n.id));
     const resolveNode = val => {
         if (!val)
             return null;
-        if (state.nodes.some(n => n.id === val))
+        if (idSet.has(val))
             return val;
         if (labelToId.has(val))
             return labelToId.get(val);
         return null;
     };
-    if (!append) {
-        state.edges = [];
-        state.selected = null;
-        state.selection = { nodes: [], edges: [] };
-    }
-    let count = 0;
+    const initialEdges = append ? state.edges.length : 0;
+    const edges = append ? state.edges.slice() : [];
+    let parsed = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length || (row.length === 1 && !row[0]))
             continue;
         const from = resolveNode(row[iFrom]);
         const to = resolveNode(row[iTo]);
-        if (!from || !to)
+        if (!from || !to) {
+            skipped++;
             continue;
+        }
         const e = {
-            id: (iId >= 0 && row[iId]) ? safeId(row[iId], 'e') : 'e' + state.nextEdge,
+            // Duplicate/invalid ids are normalised by the sanitizer below, so no
+            // quadratic uniqueness scan is needed here.
+            id: (iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed),
             from, to,
             weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0, 50) : '',
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
@@ -8268,16 +8577,11 @@ function importEdgesCsv(text, append) {
             e.strokeSize = clamp(parseFloat(row[iStrokeSize]) || 2.4, 0, 20);
         if (iStrokeStyle >= 0 && row[iStrokeStyle])
             e.strokeStyle = row[iStrokeStyle];
-        // Ensure unique edge ID
-        while (state.edges.some(x => x.id === e.id))
-            e.id = 'e' + state.nextEdge++;
-        state.edges.push(e);
-        count++;
+        edges.push(e);
+        parsed++;
     }
-    pushHistory('import edges csv');
-    queueRender(true, true);
-    saveSoon();
-    toast(I18N.t('imported_n_edges', { n: count }));
+    const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
 }
 function importMatrixCsv(text, append) {
     const rows = parseCsv(text);
@@ -8287,41 +8591,53 @@ function importMatrixCsv(text, append) {
     }
     const labels = rows[0].slice(1);
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
-    if (!append) {
-        state.edges = [];
-        state.selected = null;
-        state.selection = { nodes: [], edges: [] };
-    }
-    let count = 0;
+    const idSet = new Set(state.nodes.map(n => n.id));
+    // Matrix rows and columns are written as *labels* (see matrixCsv), so an
+    // endpoint has to resolve to a live node id before an edge is created.
+    // Unknown endpoints are skipped here rather than handed to the sanitizer:
+    // the sanitizer would drop the edge anyway, but then the import would
+    // report a full import while edges silently vanished. Skipping keeps the
+    // "skipped" count — and the toast — true.
+    const resolveNode = val => {
+        if (!val)
+            return null;
+        if (idSet.has(val))
+            return val;
+        if (labelToId.has(val))
+            return labelToId.get(val);
+        return null;
+    };
+    const initialEdges = append ? state.edges.length : 0;
+    const edges = append ? state.edges.slice() : [];
+    let parsed = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length)
             continue;
-        const fromLabel = row[0];
-        let fromId = labelToId.get(fromLabel);
+        const fromId = resolveNode(row[0]);
         if (!fromId) {
-            fromId = fromLabel;
+            if (row.slice(1).some(v => (v || '').trim()))
+                skipped++;
+            continue;
         }
         for (let c = 1; c < row.length && c - 1 < labels.length; c++) {
             const val = (row[c] || '').trim();
             if (!val)
                 continue;
-            const toLabel = labels[c - 1];
-            let toId = labelToId.get(toLabel);
+            const toId = resolveNode(labels[c - 1]);
             if (!toId) {
-                toId = toLabel;
+                skipped++;
+                continue;
             }
             const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
             for (const w of weights) {
-                state.edges.push({ id: 'e' + state.nextEdge++, from: fromId, to: toId, weight: w.slice(0, 50), label: '', directed: state.settings.directed, type: '' });
-                count++;
+                edges.push({ id: 'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0, 50), label: '', directed: state.settings.directed, type: '' });
+                parsed++;
             }
         }
     }
-    pushHistory('import matrix csv');
-    queueRender(true, true);
-    saveSoon();
-    toast(I18N.t('imported_n_edges', { n: count }));
+    const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
 }
 function importNodesCsv(text, append) {
     const rows = parseCsv(text);
@@ -8333,36 +8649,44 @@ function importNodesCsv(text, append) {
     const idx = name => header.indexOf(name);
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
-    if (!append) {
-        state.nodes = [];
-        state.edges = [];
-        state.selected = null;
-        state.selection = { nodes: [], edges: [] };
-    }
-    let count = 0;
+    const initialNodes = append ? state.nodes.length : 0;
+    // Missing orders fall back to the position in the imported file, which is
+    // 0-based in replace mode (the old list is gone) and continues after the
+    // existing nodes in append mode.
+    const orderBase = append ? state.nodes.length : 0;
+    const nodes = append ? state.nodes.slice() : [];
+    let parsed = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length || (row.length === 1 && !row[0]))
             continue;
+        // parseInt() || fallback turned a legitimate order of 0 into "missing",
+        // so a replaced 3-node graph came back as orders 3,1,2.
+        const orderCell = iOrder >= 0 ? String(row[iOrder] ?? '').trim() : '';
+        const parsedOrder = orderCell === '' ? NaN : parseInt(orderCell, 10);
         const n = {
-            id: (iId >= 0 && row[iId]) ? safeId(row[iId], 'n') : 'n' + state.nextNode,
+            id: (iId >= 0 && row[iId]) ? row[iId] : 'n' + (state.nextNode + parsed),
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
             x: iX >= 0 ? parseFloat(row[iX]) || 0 : 0,
             y: iY >= 0 ? parseFloat(row[iY]) || 0 : 0,
             shape: (iShape >= 0 ? row[iShape] : '') || '',
             color: (iColor >= 0 ? row[iColor] : '') || '',
             type: (iType >= 0 ? row[iType] : '') || '',
-            order: iOrder >= 0 ? (parseInt(row[iOrder], 10) || state.nodes.length) : state.nodes.length
+            order: Number.isFinite(parsedOrder) ? Math.max(0, Math.trunc(parsedOrder)) : orderBase + parsed
         };
-        while (state.nodes.some(x => x.id === n.id))
-            n.id = 'n' + state.nextNode++;
-        state.nodes.push(n);
-        count++;
+        nodes.push(n);
+        parsed++;
     }
-    pushHistory('import nodes csv');
-    queueRender(true, true);
-    saveSoon();
-    toast(I18N.t('imported_n_nodes', { n: count }));
+    // Replace mode replaces the whole document, exactly as it did before the
+    // sanitizer funnel: carrying the previous edges over would leave them
+    // attached to nodes that no longer exist — and because the sanitizer only
+    // drops *unknown* endpoints, an old edge whose id happens to match a new
+    // node survived as a stale connection.
+    const replacedEdges = append ? 0 : state.edges.length;
+    const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
+    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
+    if (replacedEdges > 0)
+        toast(I18N.t('csv_nodes_replaced_edges', { n: state.nodes.length, e: replacedEdges }));
 }
 function parseAttrList(text) {
     const attrs = {};
@@ -8373,20 +8697,93 @@ function parseAttrList(text) {
     while ((m = re.exec(text))) {
         let v = m[2].trim();
         if ((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'"))
-            v = v.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+            v = dotUnescape(v.slice(1, -1));
         attrs[m[1].toLowerCase()] = v;
     }
     return attrs;
 }
+// DOT string escapes: \\ \" \' and \n. One pass, because chaining
+// replacements unescaped in the wrong order: "a\\\\nb" (the literal label a\nb)
+// hit the \n rule first and came back as a backslash plus a newline.
+function dotUnescape(text) {
+    return text.replace(/\\([\\"'n])/g, (_, ch) => ch === 'n' ? '\n' : ch);
+}
 function cleanDotToken(t) {
     t = String(t || '').trim();
     if ((t[0] === '"' && t.at(-1) === '"') || (t[0] === "'" && t.at(-1) === "'"))
-        return t.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+        return dotUnescape(t.slice(1, -1));
     return t;
+}
+// Strip DOT comments without touching quoted strings. A '#' is only a comment
+// at the start of a line (C-preprocessor style): treating every '#' as one,
+// as a global /#.*$/ regex does, truncates hex colours (fillcolor="#0ea5e9")
+// and labels such as "C#" mid-line — which used to swallow the declaration
+// that followed and silently drop nodes.
+function stripDotComments(text) {
+    // DOT line comments run to the end of the *line*, and a line may end with
+    // LF, CRLF or a lone CR (files saved on old Macs, or pasted from tools that
+    // normalise to CR). The scanner has to recognise all three: an earlier
+    // version only reset "at line start" on LF, so in a CR-only file a `#`
+    // comment was never recognised, its text stayed in the source, and the
+    // node regex then swallowed the declaration on the next line.
+    let out = '';
+    let i = 0;
+    let atLineStart = true;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '"') { // copy the whole quoted string verbatim
+            out += ch;
+            i++;
+            while (i < text.length) {
+                const c = text[i];
+                out += c;
+                i++;
+                if (c === '\\') {
+                    if (i < text.length) {
+                        out += text[i];
+                        i++;
+                    }
+                    continue;
+                }
+                if (c === '"')
+                    break;
+            }
+            atLineStart = false;
+            continue;
+        }
+        if (ch === '\r' || ch === '\n') { // keep the terminator, remember the boundary
+            out += ch;
+            i++;
+            if (ch === '\r' && text[i] === '\n') {
+                out += '\n';
+                i++;
+            }
+            atLineStart = true;
+            continue;
+        }
+        if (ch === '/' && text[i + 1] === '*') {
+            const end = text.indexOf('*/', i + 2);
+            i = end < 0 ? text.length : end + 2;
+            out += ' ';
+            continue;
+        }
+        if ((ch === '#' && atLineStart) || (ch === '/' && text[i + 1] === '/')) {
+            // Skip the comment text but leave the line terminator to the branch
+            // above, so the following declaration keeps its own line.
+            while (i < text.length && text[i] !== '\n' && text[i] !== '\r')
+                i++;
+            continue;
+        }
+        out += ch;
+        i++;
+        if (ch !== ' ' && ch !== '\t' && ch !== '\ufeff')
+            atLineStart = false;
+    }
+    return out;
 }
 function parseDot(text) {
     const directedGraph = /\bdigraph\b/i.test(text);
-    let body = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/#.*$/gm, '');
+    let body = stripDotComments(text);
     const open = body.indexOf('{'), close = body.lastIndexOf('}');
     if (open >= 0 && close > open)
         body = body.slice(open + 1, close);
@@ -8399,11 +8796,14 @@ function parseDot(text) {
     while ((m = edgeRe.exec(body))) {
         const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
         const a = ensureNode(fromOrig), b = ensureNode(toOrig);
-        const dotWeight = attrs.weight || attrs.label || '';
+        // Only fall back to the label when the file has no weight attribute at
+        // all: an explicit empty weight (weight="") means "no weight", and
+        // treating it as missing gave label-only edges a spurious weight.
+        const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
         edges.push({ id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: m[2] === '->' || attrs.directed === 'true' || directedGraph });
     }
     const withoutEdges = body.replace(edgeRe, '');
-    const nodeRe = new RegExp('(?:^|;|\\n)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|\\n|$)', 'g');
+    const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
     while ((m = nodeRe.exec(withoutEdges))) {
         const name = cleanDotToken(m[1]);
         if (['graph', 'node', 'edge'].includes(name.toLowerCase()))
@@ -8413,8 +8813,17 @@ function parseDot(text) {
             n.label = attrs.label;
         if (attrs.fillcolor || attrs.color)
             n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
-        if (attrs.shape)
-            n.shape = /diamond/i.test(attrs.shape) ? 'diamond' : /box|square|rect/i.test(attrs.shape) ? 'square' : 'circle';
+        if (attrs.shape) {
+            const shape = parseShape(attrs.shape);
+            if (shape)
+                n.shape = shape;
+            else if (/polygon/i.test(attrs.shape) && String(attrs.sides) === '6')
+                n.shape = 'hexagon';
+        }
+        if (attrs.type)
+            n.type = String(attrs.type).slice(0, 40);
+        if (attrs.order != null && Number.isFinite(Number(attrs.order)))
+            n.order = Math.max(0, Math.trunc(Number(attrs.order)));
         if (attrs.pos) {
             const parts = attrs.pos.replace('!', '').split(',').map(Number);
             if (Number.isFinite(parts[0]))
@@ -8443,10 +8852,12 @@ function parseShape(raw) {
         return 'diamond';
     if (s.includes('square') || s.includes('rect') || s.includes('box'))
         return 'square';
+    // "invtriangle" is DOT's downward triangle; it must be tested before the
+    // generic "triangle" rule below or every downward triangle becomes upward.
+    if (s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down')
+        return 'triangleDown';
     if (s.includes('triangleup') || s === 'triangle up' || s === 'triangle-up')
         return 'triangleUp';
-    if (s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down')
-        return 'triangleDown';
     if (s.includes('hexagon') || s.includes('hex'))
         return 'hexagon';
     if (s.includes('triangle'))
@@ -8542,7 +8953,6 @@ function parseGraphml(text) {
         throw new Error('Invalid XML/GraphML');
     // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
     const keyNames = {};
-    const keyDefaults = {}; // keyed by attr.name, separated by target
     const keyDefaultsByFor = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
@@ -8794,18 +9204,18 @@ function importFile(file, forcedFormat = 'auto') {
     if (!file)
         return;
     if (file.size > MAX_IMPORT_BYTES) {
-        alert(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
+        toast(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
         return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
         try {
             const text = String(reader.result || '');
             assertImportTextSize(text);
             const name = (file.name || '').toLowerCase();
             const format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
             const append = $('#optImportAppend')?.checked;
-            if (!append && (state.nodes.length || state.edges.length) && !confirm(I18N.t('replace_with_import')))
+            if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
                 return;
             if (format === 'dot')
                 importGraphData(parseDot(text), 'DOT', append);
@@ -8835,7 +9245,7 @@ function importFile(file, forcedFormat = 'auto') {
             }
         }
         catch (err) {
-            alert(I18N.t('could_not_import', { msg: err.message }));
+            toast(I18N.t('could_not_import', { msg: err.message }));
         }
     };
     reader.readAsText(file);
@@ -8986,10 +9396,17 @@ function layoutGrid() {
     fitView();
     queueRender(true);
 }
-function layoutForce(iter = 180) {
+function layoutForce(requestedIter = 180) {
     const n = state.nodes.length;
     if (n < 2)
         return;
+    // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
+    // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
+    // work instead so one click always finishes in roughly a second; large
+    // graphs get fewer refinement passes rather than an unresponsive page.
+    const pairs = n * (n - 1) / 2;
+    const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
+    const reduced = iter < requestedIter;
     const area = Math.max(700 * 500, n * 22000), k = Math.sqrt(area / n);
     for (let step = 0; step < iter; step++) {
         const disp = new Map(state.nodes.map(v => [v.id, { x: 0, y: 0 }]));
@@ -9029,9 +9446,11 @@ function layoutForce(iter = 180) {
     pushHistory('relax layout');
     fitView();
     queueRender(true);
+    if (reduced)
+        toast(I18N.t('layout_force_reduced', { iter, n }));
 }
-function addSample() {
-    if (state.nodes.length && !confirm(I18N.t('replace_with_sample')))
+async function addSample() {
+    if (state.nodes.length && !await uiConfirm(I18N.t('replace_with_sample'), { danger: true }))
         return;
     state.nodes = [
         { id: 'n1', label: 'A', x: -220, y: -120, shape: 'circle', color: '#0ea5e9' }, { id: 'n2', label: 'B', x: 0, y: -170, shape: 'circle', color: '#8b5cf6' },
@@ -9060,14 +9479,38 @@ function persistAutosavePreference(enabled) {
     }
     catch { }
 }
+// Autosave failures used to be swallowed, so a full quota looked exactly like
+// a working save while every subsequent edit was lost. Report it once.
+let autosaveFailureReported = false;
+function writeAutosave() {
+    try {
+        localStorage.setItem(STORAGE_KEY, snapshot());
+        autosaveFailureReported = false;
+        return true;
+    }
+    catch {
+        if (!autosaveFailureReported) {
+            autosaveFailureReported = true;
+            toast(I18N.t('autosave_failed'));
+        }
+        return false;
+    }
+}
 function saveSoon() {
     clearTimeout(saveTimer);
     if (!state.settings.autosave)
         return;
-    saveTimer = setTimeout(() => { try {
-        localStorage.setItem(STORAGE_KEY, snapshot());
-    }
-    catch { } }, 250);
+    saveTimer = setTimeout(() => { saveTimer = null; writeAutosave(); }, 250);
+}
+// Flush a pending debounced write when the page goes away; otherwise the last
+// 250 ms of edits are lost by closing the tab right after a change.
+function flushAutosave() {
+    if (!saveTimer)
+        return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if (state.settings.autosave)
+        writeAutosave();
 }
 function loadSaved() {
     try {
@@ -9971,14 +10414,14 @@ function applyPresetToSelection(idx) {
         what.push(I18N.current === 'ru' ? `${edgeIds.length} ребр(о)` : `${edgeIds.length} edge${edgeIds.length === 1 ? '' : 's'}`);
     toast(I18N.t('preset_applied', { name: p.name, what: what.join(I18N.current === 'ru' ? ' и ' : ' and ') }));
 }
-function savePresetFromSelection() {
+async function savePresetFromSelection() {
     const nodeIds = state.selection?.nodes || [];
     const edgeIds = state.selection?.edges || [];
     if (!nodeIds.length && !edgeIds.length) {
         toast(I18N.t('select_node_edge'));
         return;
     }
-    const name = prompt(I18N.t('preset_name'), I18N.t('preset') + ' ' + ((state.settings.stylePresets?.length || 0) + 1));
+    const name = await uiPrompt(I18N.t('preset_name'), I18N.t('preset_name_hint'), I18N.t('preset') + ' ' + ((state.settings.stylePresets?.length || 0) + 1), 60);
     if (!name)
         return;
     const preset = { name: name.slice(0, 40) };
@@ -10328,8 +10771,8 @@ function wireUi() {
             applyPresetToSelection(parseInt(card.dataset.presetIdx, 10));
         }
     });
-    $('#btnClear').addEventListener('click', () => { if (!state.nodes.length && !state.edges.length)
-        return; if (confirm(I18N.t('clear_entire'))) {
+    $('#btnClear').addEventListener('click', async () => { if (!state.nodes.length && !state.edges.length)
+        return; if (await uiConfirm(I18N.t('clear_entire'), { danger: true, confirmLabel: I18N.t('clear') })) {
         state.nodes = [];
         state.edges = [];
         state.selected = null;
@@ -10339,7 +10782,7 @@ function wireUi() {
         pushHistory('clear');
         queueRender(true, true);
     } });
-    $('#btnSample').addEventListener('click', () => { addSample(); closePanels(); });
+    $('#btnSample').addEventListener('click', () => { closePanels(); addSample(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
     $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
@@ -10604,8 +11047,9 @@ function wireUi() {
         // keep checkbox synced when state changes externally (undo/redo, load)
         const syncPreserve = () => { const c = document.getElementById('chkCopyPreserve'); if (c)
             c.checked = state.settings.copyPreserveExternal !== false; };
-        // patch global render hook to also sync preserve - expose for 20-rendering to call
-        window.syncPreserve = syncPreserve;
+        // Renderers that rebuild controls call this hook (10-core defines it) so
+        // the checkbox stays in sync without exposing anything on `window`.
+        syncUiHooks = syncPreserve;
     }
     // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
     document.addEventListener('keydown', ev => {
@@ -11049,6 +11493,10 @@ function wireUi() {
     window.addEventListener('blur', resetInteractionState);
     window.addEventListener('visibilitychange', () => { if (document.hidden)
         resetInteractionState(); });
+    // Persist a pending debounced autosave before the page goes away.
+    window.addEventListener('pagehide', () => flushAutosave());
+    window.addEventListener('visibilitychange', () => { if (document.hidden)
+        flushAutosave(); });
     window.addEventListener('keyup', ev => { if (ev.key === 'Escape')
         resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)

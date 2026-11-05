@@ -15,6 +15,8 @@ npm test            # build plus safety, logic, syntax, and DOM smoke tests
 npm run typecheck   # TypeScript only
 ```
 
+CI (`.github/workflows/ci.yml`) runs `npm run check` on Node 20 and 22 for every push and pull request, and fails if the committed `index.html` differs from what the sources build.
+
 After a successful build, open `index.html` in any modern browser.
 
 ## Source layout
@@ -24,7 +26,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 | File | Responsibility |
 | --- | --- |
 | `src/app/00-i18n.ts` | English/Russian translations and language switching |
-| `src/app/10-core.ts` | Types, state, validation, history, and shared utilities |
+| `src/app/10-core.ts` | Types, state, validation, history, shared utilities, and the in-app dialog system |
 | `src/app/20-rendering.ts` | SVG, matrix, edge-list, and selection rendering |
 | `src/app/30-graph-editing.ts` | Graph mutations, selection, sorting, and matrix editing |
 | `src/app/40-interactions.ts` | Pointer, drag, pan, zoom, and canvas selection behavior |
@@ -68,7 +70,11 @@ The build fails if any of these guarantees are broken:
 - Runtime network APIs such as `fetch`, `XMLHttpRequest`, `WebSocket`, or `EventSource` appear in the output.
 - Static markup contains duplicate element IDs.
 
-Runtime data is also validated before use. Imported graph state is size-limited, malformed records and dangling edges are discarded, IDs are normalized and deduplicated, numeric/style values are clamped, unsafe map keys are isolated in prototype-free records, and required DOM elements fail with a descriptive error instead of causing a later null dereference.
+Runtime data is also validated before use. Every import path — JSON, GraphML, DOT, edge/nodes/matrix CSV and the clipboard — runs through the same sanitizer, so all of them share the 3000-node / 8000-edge caps, labelled-field bounds, colour/shape/stroke validation and dangling-edge removal (a CSV import that exceeds a cap says so in the toast instead of silently building an oversized document that shrinks on the next reload). IDs are normalized and deduplicated, numeric/style values are clamped, unsafe map keys are isolated in prototype-free records, and required DOM elements fail with a descriptive error instead of causing a later null dereference. DOT parsing strips comments only where DOT defines them (a leading `#` on a line, `//` and `/* */` outside quoted strings), so hex colours and labels such as `C#` survive; the line scanner accepts LF, CRLF and lone-CR endings, and string unescaping is a single pass so `\n` (newline), literal `\n`, quotes and trailing backslashes all survive. DOT export/import round-trips labels, positions, colours, node types, node order and the six shapes (hexagon as a regular polygon, triangles as `triangle`/`invtriangle`). CSV export prefixes formula-like cells with an apostrophe and doubles it when the value already starts with one, so imports restore every label byte-for-byte, including text such as `'=1+1`. CSV node rows keep the order column exactly as written — `0` is an order, not a missing value — and fall back to the row position only when the cell is empty. Autosave is flushed on `pagehide`, and a failed write (full or unavailable storage) reports itself instead of failing silently.
+
+## Dialogs and keyboard
+
+Destructive and text-entry actions (clearing the graph or the matrix, replacing the document with an import or the sample graph, naming a preset, the double-click node-label and edge-weight editors) never call the browser's blocking `prompt`/`confirm`/`alert`. `showDialog()` in `src/app/10-core.ts` builds the same modal pattern the rest of the app uses: `role="dialog"`, `aria-modal="true"`, a title wired through `aria-labelledby`, Escape and backdrop-click to cancel, `Tab`/`Shift+Tab` trapped between the visible buttons and the field, and focus restored to the triggering control on close. The buttons are translated (`dialog_ok`, `dialog_cancel`, `dialog_confirm_title`) and the text field opens focused with its value selected, so a double-click rename is type-and-Enter. Import failures and oversized-file notices use the `aria-live` toast stack instead of an alert, so they never steal focus.
 
 ## Performance design
 
@@ -90,7 +96,8 @@ Beyond navigation, the hot interaction paths are engineered so their cost tracks
 - **Frame-coalesced selection tools.** Brush/lasso/rect/line strokes sample every pointermove but run their hit test and overlay redraw once per animation frame; live brush selection defers the sidebar rebuild until the gesture ends.
 - **Stable interaction paint.** `.fast-interaction` records gesture state but intentionally changes no filter, label, or shape paint property. The scene therefore keeps identical visual effects before, during, and after a drag; release cannot force a replacement SVG layer or flash a stale raster.
 - **Zoom-adaptive grid.** The grid layer decimates to every k-th cell (an integer multiple of the configured grid) when zooming out would shrink cells below a readable on-screen minimum. Lines stay locked to world coordinates at every zoom level instead of drifting or desynchronizing from the nodes.
-- **Bounded supporting views.** Large matrices and edge lists render behind configurable limits (defaults: 250 edge rows per page, matrices up to 90×90) independently of graph size; both settings accept any positive integer, so faster computers can raise them without an artificial upper cap. Full data remains available through paging and CSV export.
+- **Bounded supporting views.** Large matrices and edge lists render behind configurable limits (defaults: 250 edge rows per page, matrices hidden above 90 nodes) independently of graph size. Both settings accept any positive integer, but the matrix has a hard rendering ceiling of 14,400 cells (120×120 nodes) regardless of how high the limit is set: an n×n grid costs n² DOM elements, and every cell is an `<input>`. Measured in Chromium on a 350-node document, a full 300×300 render takes ~5.8 s to paint, 150×150 ~1.6 s and 120×120 ~1.2 s, so the ceiling sits where the view stays usable. Larger matrices show as a `120×120 view of N nodes` (the note names the real graph size and the ceiling), with full data still available through paging, the edge list and CSV export.
+- **Budgeted layout runs.** The force-directed layout is all-pairs, so its cost is O(iterations · n²); it now budgets pair work (≈17M interactions) instead of always running 180 passes. Measured on 1,200-node-class graphs this keeps one click near a second (600 nodes: 613 ms for 94 passes, 1,500 nodes: 707 ms for 15 passes) and the toast says when the pass count was reduced. Circle and grid layouts are O(n) and unaffected.
 - **Cheap element access.** Render passes walk the node/edge layers via linked-list traversal (`firstElementChild`/`nextElementSibling`) and read reflected `id` attributes rather than collection indexing or `dataset`, and id→element registries keep drag and selection paths off document-wide lookups. The parallel-edge lane cache rebuilds only when the edge array actually changes.
 - **Per-edge geometry caching.** An edge's path depends only on endpoint positions, node radii, its parallel-edge lane, and direction; when none of those changed, the render pass reuses the previous path result instead of recomputing it. Dash-pattern strings are memoized per (style, stroke size).
 

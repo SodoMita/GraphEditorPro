@@ -8,6 +8,18 @@
   // bounds per-frame work at a few milliseconds.
   const DRAG_LIVE_EDGE_LIMIT = 2000;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+  // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
+  // size is capped independently of the user-facing row limit. Every cell is a
+  // form control: measured in Chromium on a 350-node document, a full render
+  // costs ~0.9 s at 90 nodes, ~1.2 s at 120, ~1.6 s at 150 and ~5.8 s at 300.
+  // 120 keeps the worst case near a second while leaving the matrix usable for
+  // medium graphs. The matrixLimit setting (default 90) decides when the matrix
+  // is hidden *below* this cap; it can never raise the cap itself.
+  const MATRIX_MAX_CELLS = 14400;
+  const MATRIX_MAX_NODES = Math.floor(Math.sqrt(MATRIX_MAX_CELLS));  // 120
+  // Pair-interaction budget for the force layout (see layoutForce): bounds one
+  // click to roughly a second on a mid-range machine instead of O(iter·n²).
+  const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
 
   /** Return a required DOM element or fail immediately with a useful error. */
   const $ = (selector: string, root: ParentNode = document): any => {
@@ -23,10 +35,139 @@
     return element;
   };
   const $$ = (selector: string, root: ParentNode = document): any[] => Array.from(root.querySelectorAll(selector));
-  const isKeyboardVisible = (el: HTMLElement): boolean =>
-    el.tabIndex >= 0 && (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null);
+  // "Can this control take keyboard focus right now?" In browsers that is
+  // checkVisibility() (CSS display/visibility/inert aware). Engines without it
+  // — jsdom, whose offsetParent is always null — fall back to the structural
+  // checks instead of dropping every control from a focus trap.
+  const isKeyboardVisible = (el: HTMLElement): boolean => {
+    if(el.tabIndex < 0 || el.hasAttribute('disabled') || el.getAttribute('aria-hidden') === 'true') return false;
+    const check = (el as any).checkVisibility;
+    return typeof check === 'function' ? Boolean(check.call(el)) : true;
+  };
   const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
   const esc = (value: unknown): string => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
+  // === In-app dialogs ===
+  // Native prompt()/confirm()/alert() block the whole tab, cannot be themed,
+  // ignore the document language and are suppressed in some embeds. These
+  // helpers reuse the app's modal pattern instead: role=dialog, aria-modal,
+  // a focus trap, Escape to cancel and focus restored to the trigger.
+  type DialogOptions = {
+    title: string;
+    message?: string;
+    input?: { value?: string; placeholder?: string; maxLength?: number; label?: string };
+    confirmLabel?: string;
+    cancelLabel?: string;
+    danger?: boolean;
+  };
+  let dialogEl: HTMLElement | null = null;
+  let dialogResolve: ((value: string | boolean | null) => void) | null = null;
+  let dialogReturnFocus: HTMLElement | null = null;
+  let dialogCleanup: (() => void) | null = null;
+  function closeDialog(result: string | boolean | null = null){
+    if(!dialogEl) return;
+    // Detach the document-level listeners *before* restoring focus: they pull
+    // focus back into the dialog, which must not fight the hand-off.
+    dialogCleanup?.();
+    dialogCleanup = null;
+    const resolve = dialogResolve;
+    dialogEl.remove();
+    dialogEl = null;
+    dialogResolve = null;
+    if(dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
+    dialogReturnFocus = null;
+    resolve?.(result);
+  }
+  function showDialog(options: DialogOptions): Promise<string | boolean | null> {
+    closeDialog(null); // only one dialog at a time
+    return new Promise(resolve => {
+      dialogResolve = resolve;
+      dialogReturnFocus = document.activeElement as HTMLElement;
+      const wantsInput = Boolean(options.input);
+      const dialog = document.createElement('div');
+      dialog.className = 'app-dialog';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.setAttribute('aria-labelledby', 'appDialogTitle');
+      if(options.message) dialog.setAttribute('aria-describedby', 'appDialogMessage');
+      const inputId = 'appDialogInput';
+      dialog.innerHTML = `
+        <form class="app-dialog-card">
+          <h2 id="appDialogTitle" class="app-dialog-title">${esc(options.title)}</h2>
+          ${options.message ? `<p id="appDialogMessage" class="app-dialog-message">${esc(options.message)}</p>` : ''}
+          ${wantsInput ? `<div class="app-dialog-field"><input id="${inputId}" class="app-dialog-input" type="text" autocomplete="off" spellcheck="false" aria-label="${esc(options.input?.label || options.title)}" maxlength="${Number(options.input?.maxLength) || 200}" placeholder="${esc(options.input?.placeholder || '')}" value="${esc(options.input?.value || '')}"></div>` : ''}
+          <div class="app-dialog-actions">
+            <button type="button" class="btn small" data-dialog-cancel>${esc(options.cancelLabel || I18N.t('dialog_cancel'))}</button>
+            <button type="submit" class="btn small ${options.danger ? 'danger' : 'good'}" data-dialog-ok>${esc(options.confirmLabel || I18N.t('dialog_ok'))}</button>
+          </div>
+        </form>`;
+      document.body.appendChild(dialog);
+      dialogEl = dialog;
+      const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
+      const form = dialog.querySelector('form');
+      const finish = (result: string | boolean | null) => closeDialog(result);
+      form?.addEventListener('submit', ev => {
+        ev.preventDefault();
+        finish(wantsInput ? (input?.value ?? '') : true);
+      });
+      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
+      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) finish(wantsInput ? null : false); });
+      // The handlers live on the document, not on the dialog element: clicking
+      // the dialog's own title or message moves focus to <body> in Chromium,
+      // and a dialog-scoped keydown never fires from there — Escape and the
+      // Tab trap went dead until focus wandered back inside.
+      const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
+      const focusInside = (target: EventTarget | null) => Boolean(target) && dialog.contains(target as Node);
+      const onKeyDown = (ev: KeyboardEvent) => {
+        if(!dialogEl) return;
+        if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); finish(wantsInput ? null : false); return; }
+        if(ev.key !== 'Tab') return;
+        const items = focusables();
+        if(!items.length) { ev.preventDefault(); return; }
+        const first = items[0], last = items[items.length - 1];
+        // Focus parked outside (title click, backdrop, or a stray programmatic
+        // focus) still gets trapped: the next Tab re-enters the dialog.
+        if(!focusInside(document.activeElement)){ ev.preventDefault(); (ev.shiftKey ? last : first).focus(); return; }
+        if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
+        else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
+      };
+      // A modal keeps focus: anything that pulls it out is redirected to the
+      // dialog's primary control. The trigger's own focus is restored on close.
+      const onFocusIn = (ev: FocusEvent) => {
+        if(!dialogEl || focusInside(ev.target)) return;
+        const items = focusables();
+        (items[items.length - 1] || items[0])?.focus();
+      };
+      document.addEventListener('keydown', onKeyDown, true);
+      document.addEventListener('focusin', onFocusIn, true);
+      dialogCleanup = () => {
+        document.removeEventListener('keydown', onKeyDown, true);
+        document.removeEventListener('focusin', onFocusIn, true);
+      };
+      setTimeout(() => {
+        if(input){
+          input.focus();
+          input.select();
+        } else {
+          dialog.querySelector<HTMLButtonElement>('[data-dialog-ok]')?.focus();
+        }
+      }, 0);
+    });
+  }
+  /** Replace window.confirm with an in-app, translated, focus-trapped dialog. */
+  async function uiConfirm(message: string, options: { title?: string; confirmLabel?: string; danger?: boolean } = {}): Promise<boolean> {
+    return (await showDialog({
+      title: options.title || I18N.t('dialog_confirm_title'),
+      message,
+      confirmLabel: options.confirmLabel,
+      danger: options.danger
+    })) === true;
+  }
+  /** Replace window.prompt: resolves to the text, or null when cancelled. */
+  async function uiPrompt(title: string, message: string, value = '', maxLength = 80): Promise<string | null> {
+    const result = await showDialog({ title, message, input: { value, maxLength } });
+    return typeof result === 'string' ? result : null;
+  }
+
   const svg = $('#graphCanvas');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
@@ -116,6 +257,10 @@
   // Clipboard for copy/paste of nodes+edges
   let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[] } | null = null;
   let pasteOffsetCount = 0;
+  // UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
+  // controls call it instead of reaching for a global, so modules stay
+  // decoupled without leaking implementation state onto `window`.
+  let syncUiHooks: (() => void) | null = null;
 
   function snapshot(){
     flushZoomPreview(); // never persist a camera that is still in compositor preview
@@ -158,16 +303,20 @@
   // memory and eviction cost predictable where an entry cap alone would not.
   const HISTORY_MAX_ENTRIES = 100;
   const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
+  // Snapshots are JS strings (UTF-16), so the memory they occupy is two bytes
+  // per code unit. Counting code units here would make the byte cap twice as
+  // permissive as its name claims.
+  const snapshotBytes = (snap: string) => snap.length * 2;
   let historyBytes = 0;
-  function pushHistory(label='change'){
+  function pushHistory(_label='change'){  // labels are kept for call-site intent/documentation
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
-    historyBytes += snap.length;
+    historyBytes += snapshotBytes(snap);
     appHistoryIndex = appHistory.length - 1;
     while(appHistory.length > 1 && (appHistory.length > HISTORY_MAX_ENTRIES || historyBytes > HISTORY_MAX_BYTES)){
-      historyBytes -= appHistory[0].length;
+      historyBytes -= snapshotBytes(appHistory[0]);
       appHistory.shift();
       appHistoryIndex--;
     }
@@ -177,7 +326,7 @@
   function resetHistory(){
     appHistory = [snapshot()];
     appHistoryIndex = 0;
-    historyBytes = appHistory[0].length;
+    historyBytes = snapshotBytes(appHistory[0]);
     updateUndoRedo();
   }
   function undo(){ if(appHistoryIndex <= 0) return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
@@ -397,7 +546,7 @@
     settings.gridSize = settings.gridSizeX;
     settings.matrixLimit = positiveInteger(settings.matrixLimit, 90);
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
-    settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, 300);
+    settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
     settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
     settings.copyPreserveExternal = settings.copyPreserveExternal !== false;

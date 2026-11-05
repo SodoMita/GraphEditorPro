@@ -282,7 +282,7 @@
   // Creates/removes/updates a node's selection ring and returns the ring
   // element (or null). Safe to call from render passes and the fast
   // selection-sync path alike.
-  function syncNodeSelRing(g: any, n: any, shape: string, w: number, h: number, selected: boolean){
+  function syncNodeSelRing(g: any, _n: any, shape: string, w: number, h: number, selected: boolean){
     const selSig = shape + '|' + w + '|' + h;
     let sel = g.__sel;
     if(selected){
@@ -454,7 +454,7 @@
     const inhEl = $('#optInheritDefaults'); if(inhEl) inhEl.checked = state.settings.inheritDefaults !== false;
     const noLblEl = $('#optNoLabel'); if(noLblEl) noLblEl.checked = Boolean(state.settings.noLabel);
     const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(chkPreserve) chkPreserve.checked = state.settings.copyPreserveExternal !== false;
-    if((window as any).syncPreserve) (window as any).syncPreserve();
+    if(syncUiHooks) syncUiHooks();
     syncStyleControls();
     syncEditTypeLists();
     renderCustomAttributes();
@@ -1195,10 +1195,6 @@
       // Wire node multi-edit controls
       if(nodeCount > 0){
         const nodeIds = state.selection.nodes;
-        const setNodeProp = (prop, val, isInput) => {
-          for(const id of nodeIds){ const n = nodeById(id); if(n){ if(val === '' && isInput) n[prop] = ''; else if(val !== '') n[prop] = isInput ? val : val; } }
-          pushHistory('multi-edit nodes'); queueRender(false); saveSoon();
-        };
         $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of nodeIds){ const n = nodeById(id); if(n) n.label = v; } pushHistory('multi node label'); queueRender(true); markSidebarDirty(); saveSoon(); });
         $('#mulNodeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of nodeIds){ const n = nodeById(id); if(n){ n.type = v; applyTypeStyleToNode(n); } } invalidateGraphIndex(); pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
         $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const ord = clamp(parseInt(v,10)||0, 0, 2147483647); for(const id of nodeIds){ const n = nodeById(id); if(n) n.order = ord; } invalidateGraphIndex(); pushHistory('multi node order'); queueRender(true); saveSoon(); });
@@ -1429,9 +1425,12 @@
     return ids;
   }
   function matrixNodes(){
-    const dim = clamp(parseInt(state.settings.matrixDimension,10) || 0, 0, 300);
+    const dim = clamp(parseInt(state.settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     const sorted = visibleNodes();
-    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted;
+    // Hard ceiling, independent of matrixLimit: every matrix cell is an <input>,
+    // so an n×n grid is n² DOM elements. Without this, a document with a large
+    // matrixLimit (or a big graph and matrixDimension 0) can freeze the tab.
+    return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted.slice(0, MATRIX_MAX_NODES);
   }
   let edgeListRenderLimit = 250;
   function configuredEdgeListPageSize(){
@@ -1441,13 +1440,19 @@
     edgeListRenderLimit = configuredEdgeListPageSize();
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
-    const sizeInput = $('#matrixSize'); if(sizeInput) sizeInput.value = state.settings.matrixDimension || total;
+    const sizeInput = $('#matrixSize'); if(sizeInput){ sizeInput.value = Math.min(state.settings.matrixDimension || total, MATRIX_MAX_NODES); sizeInput.max = String(MATRIX_MAX_NODES); }
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     if(total === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>'; $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; note.textContent=''; return; }
     if(n === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>'; note.textContent = `0 / ${total}`; }
-    else if(n > limit){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + (I18N.current === 'ru' ? `Матрица скрыта для производительности (${n} узлов > лимит ${limit}). Используйте экспорт Matrix CSV или увеличьте лимит.` : `Matrix hidden for performance (${n} nodes > limit ${limit}). Use Matrix CSV export or increase the limit.`) + '</div>'; note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`; }
+    else if(n > limit){
+      // Report the real graph size and the render ceiling, not the already
+      // clamped slice: "300 nodes" for a 350-node graph (with advice to raise a
+      // limit that could not help) was misleading.
+      $('#matrixHost').innerHTML = '<div class="tiny muted">' + esc(I18N.t('matrix_hidden_limit', {total, limit, cap: MATRIX_MAX_NODES})) + '</div>';
+      note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`;
+    }
     else {
       $('#matrixHost').innerHTML = adjacencyMatrixHtml(visNodes);
       note.textContent = rangeActive
@@ -1494,7 +1499,7 @@
       const downDisabled = pos === allSorted.length - 1 ? ' disabled' : '';
       return `<th><div class="matrix-header-cell"><input class="matrix-label-input${isNodeSelected(n.id)?' matrix-selected':''}" data-node-label="${esc(n.id)}" value="${esc(n.label || n.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(n.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="-1" title="${esc(I18N.t('move_left'))}" aria-label="${esc(I18N.t('move_left'))}: ${esc(n.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="${esc(I18N.t('order'))}">${n.order??0}</span><button class="btn small icon matrix-node-move" data-node-move="${esc(n.id)}" data-dir="1" title="${esc(I18N.t('move_right'))}" aria-label="${esc(I18N.t('move_right'))}: ${esc(n.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>`;
     }).join('');
-    parts.push('<table><thead><tr><th></th>', header, '</tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('matrix_corner')) + '</span></th>', header, '</tr></thead><tbody>');
     for(let i=0;i<nodes.length;i++){
       const row = nodes[i];
       const pos = orderPos.get(row.id) ?? i;
@@ -1541,7 +1546,7 @@
     }
     const selectedEdges = selectedEdgeIds();
     const parts: string[] = [];
-    parts.push('<table><thead><tr><th></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
+    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + esc(I18N.t('rows_reorder')) + '</span></th><th>' + I18N.t('col_num') + '</th><th>' + I18N.t('col_id') + '</th><th>' + I18N.t('col_from') + '</th><th>' + I18N.t('col_to') + '</th><th>' + I18N.t('weight') + '</th><th>' + I18N.t('label') + '</th><th>' + I18N.t('type') + '</th><th>' + I18N.t('col_dir') + '</th><th>' + I18N.t('color') + '</th><th>' + I18N.t('col_stroke') + '</th></tr></thead><tbody>');
     for(let i=0;i<renderedEdges.length;i++){
       const e = renderedEdges[i];
       const a = nodeById(e.from), b = nodeById(e.to);

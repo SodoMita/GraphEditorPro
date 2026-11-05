@@ -527,6 +527,9 @@ const I18N: I18nService = {
     'source_tap_target': { en: 'Source selected. Tap a target node or empty canvas.', ru: 'Источник выбран. Нажмите целевой узел или пустой холст.' },
     'node_label_prompt': { en: 'Node label:', ru: 'Метка узла:' },
     'edge_weight_prompt': { en: 'Edge weight:', ru: 'Вес ребра:' },
+    'node_label_hint': { en: 'Leave empty to clear the label.', ru: 'Оставьте пустым, чтобы очистить метку.' },
+    'edge_weight_hint': { en: 'Leave empty to remove the weight.', ru: 'Оставьте пустым, чтобы убрать вес.' },
+    'preset_name_hint': { en: 'Shown in the preset list.', ru: 'Отображается в списке пресетов.' },
     'drag_to_target': { en: 'Drag to a target node or empty canvas…', ru: 'Перетащите к целевому узлу или на пустой холст…' },
     'pinch_zoom_pan': { en: 'Pinch: zoom and pan', ru: 'Щипок: зум и панор.' },
     'pan_mode': { en: 'Pan mode', ru: 'Режим панор.' },
@@ -552,6 +555,21 @@ const I18N: I18nService = {
     'highest_degree': { en: 'Highest degree:', ru: 'Наибольшая степень:' },
     'na': { en: 'n/a', ru: 'н/д' },
     'language_switched': { en: 'Language: English', ru: 'Язык: Русский' },
+    // --- Audit fixes: import feedback, layout budget, autosave, a11y labels ---
+    'appended_n_m': { en: '{label} appended: +{n} nodes, +{m} edges', ru: '{label}: добавлено +{n} узлов, +{m} рёбер' },
+    'appended_n_m_discarded': { en: '{label} appended: +{n} nodes, +{m} edges (discarded {d} dangling)', ru: '{label}: добавлено +{n} узлов, +{m} рёбер (отброшено висячих: {d})' },
+    'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано {imported}; отброшено {dropped} — лимит документа {limit}' },
+    'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано {imported}; пропущено {skipped} записей с неизвестными узлами' },
+    'csv_nodes_replaced_edges': { en: 'Imported {n} node(s); {e} old edge(s) dropped with the replaced graph', ru: 'Импортировано {n} узл(ов); {e} старых рёбер удалено вместе с заменённым графом' },
+    'matrix_cap_reached': { en: 'The matrix renders at most {cap}×{cap} nodes; the graph was not enlarged further.', ru: 'Матрица отображает не более {cap}×{cap} узлов; граф дальше не увеличивался.' },
+    'matrix_hidden_limit': { en: 'Matrix hidden for performance: {total} nodes exceed the limit {limit} (the matrix renders at most {cap}). Raise the limit up to {cap}, or use the edge list / Matrix CSV export.', ru: 'Матрица скрыта для производительности: {total} узлов превышают лимит {limit} (матрица отображается максимум для {cap}). Поднимите лимит до {cap} или используйте список рёбер / экспорт Matrix CSV.' },
+    'layout_force_reduced': { en: 'Large graph: force layout ran {iter} passes instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter} проходов вместо 180, чтобы не подвешивать интерфейс' },
+    'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
+    'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
+    'rows_reorder': { en: 'Reorder row', ru: 'Перестановка строки' },
+    'dialog_ok': { en: 'OK', ru: 'ОК' },
+    'dialog_cancel': { en: 'Cancel', ru: 'Отмена' },
+    'dialog_confirm_title': { en: 'Confirm', ru: 'Подтверждение' },
   },
 
   // Текущий язык
@@ -600,7 +618,13 @@ const I18N: I18nService = {
     });
     // Show the language the button will switch to without replacing its SVG.
     const langCode = document.getElementById('langCode');
-    if (langCode) langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
+    if (langCode){
+      langCode.textContent = this.current === 'en' ? 'RU' : 'EN';
+      // Accessible name must contain the visible label (the code shown), not
+      // just the generic "Switch language" action.
+      const langBtn = document.getElementById('btnLang');
+      if (langBtn) langBtn.setAttribute('aria-label', this.t('lang_switch') + ': ' + langCode.textContent);
+    }
     // Обновить title документа
     const titleInput = document.getElementById('docTitleInput') as HTMLInputElement | null;
     if (titleInput && (titleInput.value === 'untitled' || titleInput.value === 'безымянный')) {
@@ -626,6 +650,3 @@ const I18N: I18nService = {
   }
 };
 
-// Keep the service available for debugging while the application itself uses
-// the typed lexical binding above.
-window.I18N = I18N;

@@ -192,8 +192,8 @@
       const card = ev.target.closest('[data-preset-idx]');
       if(card){ applyPresetToSelection(parseInt(card.dataset.presetIdx, 10)); }
     });
-    $('#btnClear').addEventListener('click', () => { if(!state.nodes.length && !state.edges.length) return; if(confirm(I18N.t('clear_entire'))){ state.nodes=[]; state.edges=[]; state.selected=null; state.selection={nodes: [], edges: []}; state.nextNode=1; state.nextEdge=1; pushHistory('clear'); queueRender(true, true); } });
-    $('#btnSample').addEventListener('click', () => { addSample(); closePanels(); });
+    $('#btnClear').addEventListener('click', async () => { if(!state.nodes.length && !state.edges.length) return; if(await uiConfirm(I18N.t('clear_entire'), {danger: true, confirmLabel: I18N.t('clear')})){ state.nodes=[]; state.edges=[]; state.selected=null; state.selection={nodes: [], edges: []}; state.nextNode=1; state.nextEdge=1; pushHistory('clear'); queueRender(true, true); } });
+    $('#btnSample').addEventListener('click', () => { closePanels(); addSample(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
     $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
@@ -362,8 +362,9 @@
       chkPreserve.addEventListener('change', e => { state.settings.copyPreserveExternal = (e.target as HTMLInputElement).checked; saveSoon(); });
       // keep checkbox synced when state changes externally (undo/redo, load)
       const syncPreserve = () => { const c=document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(c) c.checked = state.settings.copyPreserveExternal !== false; };
-      // patch global render hook to also sync preserve - expose for 20-rendering to call
-      (window as any).syncPreserve = syncPreserve;
+      // Renderers that rebuild controls call this hook (10-core defines it) so
+      // the checkbox stays in sync without exposing anything on `window`.
+      syncUiHooks = syncPreserve;
     }
     // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
     document.addEventListener('keydown', ev => {
@@ -655,6 +656,9 @@
     }
     window.addEventListener('blur', resetInteractionState);
     window.addEventListener('visibilitychange', () => { if(document.hidden) resetInteractionState(); });
+    // Persist a pending debounced autosave before the page goes away.
+    window.addEventListener('pagehide', () => flushAutosave());
+    window.addEventListener('visibilitychange', () => { if(document.hidden) flushAutosave(); });
     window.addEventListener('keyup', ev => { if(ev.key === 'Escape') resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)
     svg.addEventListener('pointercancel', () => resetInteractionState());
