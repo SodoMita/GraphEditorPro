@@ -494,3 +494,101 @@ test('algorithm start select follows selection and label edits', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// === Drag start / drag end ===
+// Both ends of a drag sit between the pointer and the next frame, so they must
+// not carry work that can happen later: the selection panel can be rebuilt on
+// the next frame, and the undo snapshot can wait for idle time.
+test('pressing a node defers the selection panel instead of rebuilding it in the handler', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  const nodeA = document.getElementById('node-a');
+  const panel = document.getElementById('selectionPanel');
+  const pressText = panel.textContent;
+
+  dispatchPointer(window, nodeA, 'pointerdown', { pointerId: 1, clientX: 300, clientY: 330 });
+  // The press is the frame that decides how soon the node follows the pointer.
+  assert.equal(panel.textContent, pressText, 'the press itself does not rebuild the panel');
+  assert.equal(document.getElementById('selNodeLabel'), null, 'no node panel inside the press handler');
+
+  await nextFrame(window);
+  const labelInput = document.getElementById('selNodeLabel');
+  assert.ok(labelInput, 'the panel catches up on the next frame');
+  assert.equal(labelInput.value, 'Alpha', 'and it shows the node that was pressed');
+  assert.equal(nodeA.classList.contains('selected'), true, 'the node itself is selected immediately');
+
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 300, clientY: 330 });
+  await nextFrame(window);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a release leaves the drag undoable before its deferred snapshot runs', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  const nodeB = document.getElementById('node-b');
+
+  dispatchPointer(window, nodeB, 'pointerdown', { pointerId: 1, clientX: 700, clientY: 330 });
+  await nextFrame(window);
+  for (let step = 1; step <= 3; step++) {
+    dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 700 + step * 20, clientY: 330 + step * 10 });
+    await nextFrame(window);
+  }
+  assert.notEqual(nodeB.getAttribute('transform'), 'translate(200,0)', 'the drag moved the node');
+
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 760, clientY: 360 });
+  // No frame in between: the snapshot is deferred, but the entry it belongs to
+  // must already be available to the next input (here Ctrl+Z), so an undo right
+  // after the release still restores the pre-drag position.
+  const undoKey = new window.KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true });
+  document.body.dispatchEvent(undoKey);
+  await nextFrame(window);
+  assert.equal(nodeB.getAttribute('transform'), 'translate(200,0)', 'undo right after the release restores the pre-drag position');
+  assert.equal(document.getElementById('btnRedo').disabled, false, 'the undone drag is redoable');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a very high degree drag re-points its frozen edges at release', async () => {
+  // More edges on one node than the live-drag budget allows: the drag cannot
+  // repaint them frame by frame, so the release has to catch them up (in place,
+  // not by re-rendering the scene).
+  const edges = [];
+  for (let index = 0; index < 2001; index++) edges.push({ id: `p${index}`, from: 'a', to: 'b', directed: true, weight: '1' });
+  const { dom, errors } = createEditorDom({
+    title: 'frozen-edges', mode: 'select',
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0 }, { id: 'b', label: 'B', x: 200, y: 0 }],
+    edges,
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  });
+  await settle(dom.window, 400); // the initial pass renders 2001 edges
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  const nodeB = document.getElementById('node-b');
+  const edge = document.getElementById('edge-p0');
+  const line = edge.querySelector('.edge-line');
+  const before = line.getAttribute('d');
+
+  dispatchPointer(window, nodeB, 'pointerdown', { pointerId: 1, clientX: 700, clientY: 330 });
+  await nextFrame(window);
+  for (let step = 1; step <= 3; step++) {
+    dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 700 + step * 20, clientY: 330 + step * 10 });
+    await nextFrame(window);
+  }
+  assert.equal(line.getAttribute('d'), before, 'a drag past the edge budget leaves its edges frozen');
+
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 760, clientY: 360 });
+  await settle(window, 120); // the catch-up runs one frame later
+  assert.notEqual(line.getAttribute('d'), before, 'the release re-points the frozen edges');
+  assert.equal(document.getElementById('canvasWrap').classList.contains('fast-interaction'), false);
+  assert.equal(nodeB.classList.contains('dragging'), false);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

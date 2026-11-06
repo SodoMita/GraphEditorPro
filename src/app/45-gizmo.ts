@@ -56,12 +56,18 @@
   function gizmoToolLabel(tool: GizmoTool = gizmoTool): string {
     return I18N.t('gizmo_' + tool + '_label');
   }
+  // The tool buttons come from the static template, so the (document-wide,
+  // attribute-selector) query is resolved once. Re-running it per render costs
+  // milliseconds on a large scene — and every selection change renders the
+  // gizmo, so that lands squarely in the press that starts a drag.
+  let gizmoToolButtons: any[] | null = null;
+  function gizmoToolButtonList(){ return gizmoToolButtons || (gizmoToolButtons = $$('[data-gizmotool]')); }
   function syncGizmoControls(targetCount?: number){
-    $$('[data-gizmotool]').forEach(b => {
+    for(const b of gizmoToolButtonList()){
       const active = b.dataset.gizmotool === gizmoTool;
       b.classList.toggle('active', active);
       b.setAttribute('aria-pressed', String(active));
-    });
+    }
     const opt = document.getElementById('optGizmo') as HTMLInputElement | null;
     if(opt && opt.checked !== gizmoEnabled) opt.checked = gizmoEnabled;
     const readout = document.getElementById('gizmoReadout');
@@ -430,8 +436,14 @@
       if(!commit) for(const n of g.nodes){ const s = g.starts.get(n.id); n.x = s.x; n.y = s.y; }
       moveDragFast(g); // flush the final/restored frame synchronously
       for(const n of g.nodes){ const el = nodeEl(n.id); if(el) toggleClass(el, 'dragging', false); }
-      if(commit && g.moved){ pushHistory(g.historyLabel); renderSidebar(); }
-      if(commit && g.moved && !g.liveEdges) queueRender(false);
+      if(commit && g.moved){
+        // Same release contract as a node drag: the panel catches up next
+        // frame, frozen edges are patched in place rather than by re-rendering
+        // the scene, and the history snapshot waits for idle time.
+        pushHistorySoon(g.historyLabel);
+        scheduleSidebarRender();
+        if(!g.liveEdges) scheduleFrozenEdgeRefresh(g.affectedEdges);
+      }
     }
     $('#canvasWrap').classList.remove('fast-interaction');
     gestureActive = false;
@@ -449,7 +461,7 @@
     const liveEdges = affectedEdges.length <= DRAG_LIVE_EDGE_LIMIT;
     moveDragFast({ nodes, affectedEdges, liveEdges, vc: null });
     pushHistory('nudge selection');
-    if(!liveEdges) queueRender(false);
+    if(!liveEdges) scheduleFrozenEdgeRefresh(affectedEdges);
     renderGizmo();
     renderSidebar();
     return true;

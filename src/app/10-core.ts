@@ -308,7 +308,49 @@
   // permissive as its name claims.
   const snapshotBytes = (snap: string) => snap.length * 2;
   let historyBytes = 0;
+  // === Deferred history entries ===
+  // A history entry is a full serialisation of the document, so on a large
+  // graph it is the single most expensive step of a gesture release — and it
+  // buys nothing *at that moment*: the release paints the geometry the drag
+  // already wrote, and the entry is only observed by the next interaction.
+  // Gesture ends therefore schedule the push for idle time (after the release
+  // frame is painted) and every input that could edit the document flushes it
+  // first, so an entry always captures the state it belongs to.
+  let pendingHistoryLabel: string | null = null;
+  let pendingHistoryIdle: any = null;
+  let pendingHistoryTimer: any = null;
+  function pushHistorySoon(label: string){
+    // The newest label wins: only the state at flush time is captured, and the
+    // label is documentation of what moved.
+    pendingHistoryLabel = label;
+    if(pendingHistoryIdle != null || pendingHistoryTimer != null) return;
+    const flush = () => flushPendingHistory();
+    if(typeof (window as any).requestIdleCallback === 'function'){
+      pendingHistoryIdle = (window as any).requestIdleCallback(flush, {timeout: 250});
+    } else {
+      // jsdom and any browser without idle callbacks: one turn later is still
+      // off the release path, and tests advance timers before they read it.
+      pendingHistoryTimer = setTimeout(flush, 0);
+    }
+  }
+  function flushPendingHistory(){
+    const label = pendingHistoryLabel;
+    // Cleared before the push (pushHistory flushes too) and unconditionally, so
+    // a cancelled schedule can never leave a handle behind that would block the
+    // next release from scheduling its own entry.
+    pendingHistoryLabel = null;
+    const idle = pendingHistoryIdle, timer = pendingHistoryTimer;
+    pendingHistoryIdle = null;
+    pendingHistoryTimer = null;
+    if(idle != null){ try { (window as any).cancelIdleCallback?.(idle); } catch {} }
+    if(timer != null) clearTimeout(timer);
+    if(label == null) return;
+    pushHistory(label);
+  }
   function pushHistory(_label='change'){  // labels are kept for call-site intent/documentation
+    // Never reorder history: a deferred entry from a gesture release belongs
+    // before whatever the current caller is about to record.
+    flushPendingHistory();
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
@@ -324,13 +366,16 @@
     saveSoon();
   }
   function resetHistory(){
+    pendingHistoryLabel = null; // a fresh history invalidates any pending entry
     appHistory = [snapshot()];
     appHistoryIndex = 0;
     historyBytes = snapshotBytes(appHistory[0]);
     updateUndoRedo();
   }
-  function undo(){ if(appHistoryIndex <= 0) return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
-  function redo(){ if(appHistoryIndex >= appHistory.length - 1) return; appHistoryIndex++; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('redone')); }
+  // Undo/redo must see the entry a release deferred; flushing first keeps the
+  // step available immediately instead of after the idle callback.
+  function undo(){ flushPendingHistory(); if(appHistoryIndex <= 0) return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
+  function redo(){ flushPendingHistory(); if(appHistoryIndex >= appHistory.length - 1) return; appHistoryIndex++; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('redone')); }
   function updateCommandStates(){
     const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
     $('#btnDelete').disabled = !hasSelection;
