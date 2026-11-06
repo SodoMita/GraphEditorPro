@@ -2626,7 +2626,58 @@ const HISTORY_MAX_BYTES = 48 * 1024 * 1024;
 // permissive as its name claims.
 const snapshotBytes = (snap) => snap.length * 2;
 let historyBytes = 0;
+// === Deferred history entries ===
+// A history entry is a full serialisation of the document, so on a large
+// graph it is the single most expensive step of a gesture release — and it
+// buys nothing *at that moment*: the release paints the geometry the drag
+// already wrote, and the entry is only observed by the next interaction.
+// Gesture ends therefore schedule the push for idle time (after the release
+// frame is painted) and every input that could edit the document flushes it
+// first, so an entry always captures the state it belongs to.
+let pendingHistoryLabel = null;
+let pendingHistoryIdle = null;
+let pendingHistoryTimer = null;
+function pushHistorySoon(label) {
+    // The newest label wins: only the state at flush time is captured, and the
+    // label is documentation of what moved.
+    pendingHistoryLabel = label;
+    if (pendingHistoryIdle != null || pendingHistoryTimer != null)
+        return;
+    const flush = () => flushPendingHistory();
+    if (typeof window.requestIdleCallback === 'function') {
+        pendingHistoryIdle = window.requestIdleCallback(flush, { timeout: 250 });
+    }
+    else {
+        // jsdom and any browser without idle callbacks: one turn later is still
+        // off the release path, and tests advance timers before they read it.
+        pendingHistoryTimer = setTimeout(flush, 0);
+    }
+}
+function flushPendingHistory() {
+    const label = pendingHistoryLabel;
+    // Cleared before the push (pushHistory flushes too) and unconditionally, so
+    // a cancelled schedule can never leave a handle behind that would block the
+    // next release from scheduling its own entry.
+    pendingHistoryLabel = null;
+    const idle = pendingHistoryIdle, timer = pendingHistoryTimer;
+    pendingHistoryIdle = null;
+    pendingHistoryTimer = null;
+    if (idle != null) {
+        try {
+            window.cancelIdleCallback?.(idle);
+        }
+        catch { }
+    }
+    if (timer != null)
+        clearTimeout(timer);
+    if (label == null)
+        return;
+    pushHistory(label);
+}
 function pushHistory(_label = 'change') {
+    // Never reorder history: a deferred entry from a gesture release belongs
+    // before whatever the current caller is about to record.
+    flushPendingHistory();
     const snap = snapshot();
     if (appHistory[appHistoryIndex] === snap)
         return;
@@ -2643,14 +2694,17 @@ function pushHistory(_label = 'change') {
     saveSoon();
 }
 function resetHistory() {
+    pendingHistoryLabel = null; // a fresh history invalidates any pending entry
     appHistory = [snapshot()];
     appHistoryIndex = 0;
     historyBytes = snapshotBytes(appHistory[0]);
     updateUndoRedo();
 }
-function undo() { if (appHistoryIndex <= 0)
+// Undo/redo must see the entry a release deferred; flushing first keeps the
+// step available immediately instead of after the idle callback.
+function undo() { flushPendingHistory(); if (appHistoryIndex <= 0)
     return; appHistoryIndex--; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('undone')); }
-function redo() { if (appHistoryIndex >= appHistory.length - 1)
+function redo() { flushPendingHistory(); if (appHistoryIndex >= appHistory.length - 1)
     return; appHistoryIndex++; applySnapshot(appHistory[appHistoryIndex]); toast(I18N.t('redone')); }
 function updateCommandStates() {
     const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
@@ -3692,6 +3746,25 @@ function queueRender(includeMatrix = false, includeSidebar = false) {
 }
 let sidebarDirty = false;
 function markSidebarDirty() { sidebarDirty = true; }
+// Sidebar-only render, coalesced to one per animation frame. Gesture starts
+// and releases call this instead of rendering the panel synchronously: the
+// pointer is on the canvas, so the panel may catch up one frame later, while
+// the gesture keeps the frame it was given. The panel is rebuilt from live
+// state at run time, so deferring cannot show a stale selection.
+let sidebarFrame = false;
+function scheduleSidebarRender() {
+    sidebarDirty = true;
+    if (sidebarFrame)
+        return;
+    sidebarFrame = true;
+    requestAnimationFrame(() => {
+        sidebarFrame = false;
+        if (!sidebarDirty)
+            return;
+        sidebarDirty = false;
+        renderSidebar();
+    });
+}
 function renderCanvas() {
     beginRenderPass();
     applyCamera();
@@ -3970,6 +4043,44 @@ function updateEdgeFast(edgeOrId, vc = null) {
     // ...and the selection accent with it, or the highlight would be left
     // behind at the edge's old position for the rest of the gesture.
     moveEdgeSelRing(g, d);
+}
+// A gesture whose edge count exceeds the live budget (see
+// DRAG_LIVE_EDGE_LIMIT) skips its edges frame by frame, so they are left at
+// their start geometry. Repaint exactly those edges at release with the same
+// in-place writer the live path uses: the alternative — one render pass over
+// the whole scene — costs a full style/layout/paint of every node and edge,
+// which is a visible stall on the release that follows such a drag.
+function refreshFrozenEdges(edges) {
+    if (!edges || !edges.length)
+        return;
+    const vc = newVisualCache();
+    for (const edge of edges)
+        updateEdgeFast(edge, vc);
+}
+// The release itself stays free of that work: on a very high degree node it
+// is thousands of patched edges, which must not delay the frame that settles
+// the node under the pointer. The edges were already frozen for the whole
+// gesture, so they catch up on the next frame — in one pass, because the
+// scene repaints per frame anyway and splitting the work only repaints the
+// same area several times.
+let frozenRefresh = null, frozenRefreshFrame = false;
+function scheduleFrozenEdgeRefresh(edges) {
+    if (!edges || !edges.length)
+        return;
+    if (!frozenRefresh)
+        frozenRefresh = new Set();
+    for (const edge of edges)
+        frozenRefresh.add(edge);
+    if (frozenRefreshFrame)
+        return;
+    frozenRefreshFrame = true;
+    requestAnimationFrame(() => {
+        frozenRefreshFrame = false;
+        const pending = frozenRefresh;
+        frozenRefresh = null;
+        if (pending)
+            refreshFrozenEdges([...pending]);
+    });
 }
 function scheduleFastNodeMove(id) {
     if (!drag)
@@ -5292,10 +5403,18 @@ function mergeSelection(nodes = [], edges = [], primary = null, combine = 'repla
     else
         state.selected = null;
 }
-function setSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
+function setSelection(nodes = [], edges = [], primary = null, combine = 'replace', 
+// Gesture starts pass true: the panel is rebuilt on the next frame instead
+// of inside the press handler. Selecting the node under the pointer is
+// what makes the drag start feel immediate, and the panel is not part of
+// the gesture — it only has to be right when the frame is painted.
+deferSidebar = false) {
     mergeSelection(nodes, edges, primary, combine);
     syncSelectionDom();
-    renderSidebar();
+    if (deferSidebar)
+        scheduleSidebarRender();
+    else
+        renderSidebar();
     setStatusOnly();
 }
 // Live variant for per-frame selection tools (brush): identical state
@@ -5321,8 +5440,13 @@ function resetSelectionMirror() {
 }
 function syncSelectionDom() {
     const ns = selectedNodeIds(), es = selectedEdgeIds();
+    // The ids whose DOM state actually changes. They are collected here anyway
+    // (the loops below already compare the two sets) and handed to the matrix
+    // mirror, whose grid is n² inputs: a press must not touch every one of them.
+    const changedNodes = [], changedEdges = [];
     for (const id of domSelectedNodes) {
         if (!ns.has(id)) {
+            changedNodes.push(id);
             const el = nodeEl(id);
             if (!el)
                 continue;
@@ -5336,6 +5460,7 @@ function syncSelectionDom() {
     }
     for (const id of ns) {
         if (!domSelectedNodes.has(id)) {
+            changedNodes.push(id);
             const el = nodeEl(id);
             if (!el)
                 continue;
@@ -5349,6 +5474,7 @@ function syncSelectionDom() {
     }
     for (const id of domSelectedEdges) {
         if (!es.has(id)) {
+            changedEdges.push(id);
             const el = edgeEl(id);
             if (!el)
                 continue;
@@ -5360,6 +5486,7 @@ function syncSelectionDom() {
     }
     for (const id of es) {
         if (!domSelectedEdges.has(id)) {
+            changedEdges.push(id);
             const el = edgeEl(id);
             if (!el)
                 continue;
@@ -5374,12 +5501,18 @@ function syncSelectionDom() {
     }
     domSelectedNodes = ns;
     domSelectedEdges = es;
-    updateMatrixSelectionDom();
+    updateMatrixSelectionDom(changedNodes, changedEdges);
     // The gizmo frames the selection, so it follows every selection change
     // that did not go through a full render pass.
     renderGizmo();
 }
-function updateMatrixSelectionDom() {
+function matrixAttrValue(value) {
+    // Ids are sanitised to [A-Za-z0-9_-], so an attribute selector is safe;
+    // escape anyway so a hand-edited document can never inject a selector.
+    const api = window.CSS;
+    return api && typeof api.escape === 'function' ? api.escape(value) : String(value).replace(/["\\]/g, '\\$&');
+}
+function updateMatrixSelectionDom(changedNodes = null, changedEdges = null) {
     const host = $('#matrixHost');
     if (!host || !host.firstElementChild)
         return;
@@ -5389,6 +5522,36 @@ function updateMatrixSelectionDom() {
     if (mainEl && mainEl.dataset?.view === 'graph')
         return;
     const ns = selectedNodeIds(), es = selectedEdgeIds();
+    // O(delta) node columns: a node drag or a plain click changes one or two
+    // ids, so only their cells are looked up, and the edge rows are skipped
+    // entirely when no edge's selection changed. Past DELTA_LOOKUP_LIMIT changed
+    // ids (a brush stroke selecting hundreds of nodes) the per-id lookups cost
+    // more than one scan of the grid, so there the scan is used instead.
+    const DELTA_LOOKUP_LIMIT = 16;
+    if (changedNodes && changedEdges && changedNodes.length <= DELTA_LOOKUP_LIMIT) {
+        for (const id of changedNodes) {
+            for (const input of host.querySelectorAll(`[data-node-label="${matrixAttrValue(id)}"]`)) {
+                toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
+            }
+        }
+        if (!changedEdges.length)
+            return;
+        const changedEdgeSet = new Set(changedEdges);
+        for (const input of host.querySelectorAll('[data-cell-from][data-cell-to]')) {
+            const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+            if (!ids.some(id => changedEdgeSet.has(id)))
+                continue;
+            let selected = false;
+            for (let i = 0; i < ids.length; i++) {
+                if (es.has(ids[i])) {
+                    selected = true;
+                    break;
+                }
+            }
+            toggleClass(input, 'matrix-selected', selected);
+        }
+        return;
+    }
     for (const input of host.querySelectorAll('[data-node-label]')) {
         toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
     }
@@ -6376,6 +6539,16 @@ let gestureActive = false;
 // empty deselects. This makes press-empty → drag → release-on-node select
 // that node, while a plain empty click still clears the selection.
 let singleSweep = null;
+// A gesture release defers its history entry to idle time (pushHistorySoon).
+// Any input that could edit the document flushes it first — in the capture
+// phase, i.e. before the app's own handlers mutate anything — so the entry
+// always captures the state of the release it belongs to and undo can never
+// see a stale history.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+        window.addEventListener(type, () => flushPendingHistory(), { capture: true, passive: true });
+    }
+}
 function registerPointer(ev) {
     // Adopt any pending wheel-zoom before new gesture math runs, and capture
     // the viewport rect once per gesture for clientToWorld.
@@ -6428,7 +6601,7 @@ function beginPinch(a, b) {
         if (drag.fastNodeId)
             moveNodeFast(drag.fastNodeId);
         if (drag.moved)
-            pushHistory('move node');
+            pushHistorySoon('move node');
         const dragNodes = drag.nodes || (drag.node ? [drag.node] : []);
         for (const dn of dragNodes) {
             const el = nodeEl(dn.id);
@@ -6852,7 +7025,9 @@ function onNodePointerDown(ev, id) {
             return;
         }
         pendingEdgeFrom = null;
-        selectItem('node', id);
+        // Same release-free press as a node drag: the panel may follow a frame
+        // later, the drag line must start under the pointer now.
+        setSelection([id], [], { type: 'node', id }, false, true);
         edgeDraft = { pointerId: ev.pointerId, from: id, x: p.x, y: p.y, startClientX: ev.clientX, startClientY: ev.clientY, moved: false };
         gestureActive = true;
         updateDragLine(p, ev.clientX, ev.clientY);
@@ -6886,15 +7061,18 @@ function onNodePointerDown(ev, id) {
     // When the clicked node is already in the current multi-selection,
     // do NOT call setSelection (which would collapse it in Override mode).
     // Instead, keep the existing selection and start dragging the whole group.
+    // Either way the panel is rebuilt on the next frame (deferSidebar): the
+    // press is the frame that decides how quickly the node starts following the
+    // pointer, and the selection panel is not part of the gesture.
     if (!wasSelected) {
-        setSelection([id], [], { type: 'node', id }, combine);
+        setSelection([id], [], { type: 'node', id }, combine, true);
     }
     else {
         // Already selected → preserve the group. Only update primary if needed.
         if (!state.selected || state.selected.id !== id) {
             state.selected = { type: 'node', id };
             syncSelectionDom();
-            renderSidebar();
+            scheduleSidebarRender();
         }
     }
     // Build the list of nodes that will actually be dragged
@@ -7160,28 +7338,30 @@ function finishPointer(ev, cancel = false) {
     if (drag) {
         if (drag.fastNodeId)
             moveDragFast();
-        if (drag.moved)
-            pushHistory('move node');
+        const moved = drag.moved, edgesWereLive = drag.liveEdges !== false, frozenEdges = drag.affectedEdges;
+        const dragNodes = drag.nodes || (drag.node ? [drag.node] : []);
+        drag = null;
         // Robust cleanup: always remove dragging class and reset state
         try {
-            if (drag.nodes) {
-                for (const dn of drag.nodes) {
-                    const el = nodeEl(dn.id);
-                    if (el)
-                        toggleClass(el, 'dragging', false);
-                }
+            for (const dn of dragNodes) {
+                const el = nodeEl(dn.id);
+                if (el)
+                    toggleClass(el, 'dragging', false);
             }
         }
         catch (e) { }
-        const moved = drag.moved, edgesWereLive = drag.liveEdges !== false;
-        drag = null;
         $('#canvasWrap').classList.remove('fast-interaction');
         // A click that never moved left the canvas untouched (selection is synced
         // directly), and a live-edge drag already patched every transform and path
-        // frame-by-frame — either way the full re-render pass is unnecessary.
-        // Only drags whose edges were frozen (very high degree) need a re-render.
+        // frame-by-frame. A frozen-edge drag (very high degree) patched nothing,
+        // so exactly those edges are refreshed here — a full re-render pass would
+        // restyle and repaint the entire scene for a handful of changed lines.
         if (moved && !edgesWereLive)
-            queueRender(false);
+            scheduleFrozenEdgeRefresh(frozenEdges);
+        // The snapshot for undo is deferred to idle time: it serialises the whole
+        // document, and the release frame must belong to the gesture.
+        if (moved)
+            pushHistorySoon('move node');
     }
     if (pan) {
         const completedPan = pan;
@@ -7407,12 +7587,18 @@ function migrateLegacyGizmoPreferences(source) {
 function gizmoToolLabel(tool = gizmoTool) {
     return I18N.t('gizmo_' + tool + '_label');
 }
+// The tool buttons come from the static template, so the (document-wide,
+// attribute-selector) query is resolved once. Re-running it per render costs
+// milliseconds on a large scene — and every selection change renders the
+// gizmo, so that lands squarely in the press that starts a drag.
+let gizmoToolButtons = null;
+function gizmoToolButtonList() { return gizmoToolButtons || (gizmoToolButtons = $$('[data-gizmotool]')); }
 function syncGizmoControls(targetCount) {
-    $$('[data-gizmotool]').forEach(b => {
+    for (const b of gizmoToolButtonList()) {
         const active = b.dataset.gizmotool === gizmoTool;
         b.classList.toggle('active', active);
         b.setAttribute('aria-pressed', String(active));
-    });
+    }
     const opt = document.getElementById('optGizmo');
     if (opt && opt.checked !== gizmoEnabled)
         opt.checked = gizmoEnabled;
@@ -7905,11 +8091,14 @@ function endGizmoDrag(commit = true) {
                 toggleClass(el, 'dragging', false);
         }
         if (commit && g.moved) {
-            pushHistory(g.historyLabel);
-            renderSidebar();
+            // Same release contract as a node drag: the panel catches up next
+            // frame, frozen edges are patched in place rather than by re-rendering
+            // the scene, and the history snapshot waits for idle time.
+            pushHistorySoon(g.historyLabel);
+            scheduleSidebarRender();
+            if (!g.liveEdges)
+                scheduleFrozenEdgeRefresh(g.affectedEdges);
         }
-        if (commit && g.moved && !g.liveEdges)
-            queueRender(false);
     }
     $('#canvasWrap').classList.remove('fast-interaction');
     gestureActive = false;
@@ -7932,7 +8121,7 @@ function nudgeSelection(dx, dy) {
     moveDragFast({ nodes, affectedEdges, liveEdges, vc: null });
     pushHistory('nudge selection');
     if (!liveEdges)
-        queueRender(false);
+        scheduleFrozenEdgeRefresh(affectedEdges);
     renderGizmo();
     renderSidebar();
     return true;
@@ -10680,7 +10869,8 @@ function wireUi() {
     });
     activatePanel('edit');
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
-    $$('[data-gizmotool]').forEach(btn => btn.addEventListener('click', () => setGizmoTool(btn.dataset.gizmotool)));
+    for (const btn of gizmoToolButtonList())
+        btn.addEventListener('click', () => setGizmoTool(btn.dataset.gizmotool));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
     $$('[data-hittest]').forEach(btn => btn.addEventListener('click', () => setHitTestMode(btn.dataset.hittest)));

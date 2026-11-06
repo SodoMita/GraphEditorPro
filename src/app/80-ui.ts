@@ -118,7 +118,7 @@
     activatePanel('edit');
 
     $$('[data-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
-    $$('[data-gizmotool]').forEach(btn => btn.addEventListener('click', () => setGizmoTool(btn.dataset.gizmotool)));
+    for(const btn of gizmoToolButtonList()) btn.addEventListener('click', () => setGizmoTool(btn.dataset.gizmotool));
     $$('[data-selecttool]').forEach(btn => btn.addEventListener('click', () => setSelectTool(btn.dataset.selecttool)));
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
     $$('[data-hittest]').forEach(btn => btn.addEventListener('click', () => setHitTestMode(btn.dataset.hittest)));

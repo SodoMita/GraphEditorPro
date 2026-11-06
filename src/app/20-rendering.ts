@@ -478,6 +478,23 @@
   }
   let sidebarDirty = false;
   function markSidebarDirty(){ sidebarDirty = true; }
+  // Sidebar-only render, coalesced to one per animation frame. Gesture starts
+  // and releases call this instead of rendering the panel synchronously: the
+  // pointer is on the canvas, so the panel may catch up one frame later, while
+  // the gesture keeps the frame it was given. The panel is rebuilt from live
+  // state at run time, so deferring cannot show a stale selection.
+  let sidebarFrame = false;
+  function scheduleSidebarRender(){
+    sidebarDirty = true;
+    if(sidebarFrame) return;
+    sidebarFrame = true;
+    requestAnimationFrame(() => {
+      sidebarFrame = false;
+      if(!sidebarDirty) return;
+      sidebarDirty = false;
+      renderSidebar();
+    });
+  }
   function renderCanvas(){
     beginRenderPass();
     applyCamera();
@@ -713,6 +730,37 @@
     // ...and the selection accent with it, or the highlight would be left
     // behind at the edge's old position for the rest of the gesture.
     moveEdgeSelRing(g, d);
+  }
+  // A gesture whose edge count exceeds the live budget (see
+  // DRAG_LIVE_EDGE_LIMIT) skips its edges frame by frame, so they are left at
+  // their start geometry. Repaint exactly those edges at release with the same
+  // in-place writer the live path uses: the alternative — one render pass over
+  // the whole scene — costs a full style/layout/paint of every node and edge,
+  // which is a visible stall on the release that follows such a drag.
+  function refreshFrozenEdges(edges){
+    if(!edges || !edges.length) return;
+    const vc = newVisualCache();
+    for(const edge of edges) updateEdgeFast(edge, vc);
+  }
+  // The release itself stays free of that work: on a very high degree node it
+  // is thousands of patched edges, which must not delay the frame that settles
+  // the node under the pointer. The edges were already frozen for the whole
+  // gesture, so they catch up on the next frame — in one pass, because the
+  // scene repaints per frame anyway and splitting the work only repaints the
+  // same area several times.
+  let frozenRefresh: Set<any> | null = null, frozenRefreshFrame = false;
+  function scheduleFrozenEdgeRefresh(edges){
+    if(!edges || !edges.length) return;
+    if(!frozenRefresh) frozenRefresh = new Set();
+    for(const edge of edges) frozenRefresh.add(edge);
+    if(frozenRefreshFrame) return;
+    frozenRefreshFrame = true;
+    requestAnimationFrame(() => {
+      frozenRefreshFrame = false;
+      const pending = frozenRefresh;
+      frozenRefresh = null;
+      if(pending) refreshFrozenEdges([...pending]);
+    });
   }
   function scheduleFastNodeMove(id){
     if(!drag) return;

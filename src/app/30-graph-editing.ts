@@ -103,11 +103,16 @@
     nodes: string[] = [],
     edges: string[] = [],
     primary: GraphState['selected'] = null,
-    combine: SelectionCombine | boolean | null = 'replace'
+    combine: SelectionCombine | boolean | null = 'replace',
+    // Gesture starts pass true: the panel is rebuilt on the next frame instead
+    // of inside the press handler. Selecting the node under the pointer is
+    // what makes the drag start feel immediate, and the panel is not part of
+    // the gesture — it only has to be right when the frame is painted.
+    deferSidebar = false
   ){
     mergeSelection(nodes, edges, primary, combine);
     syncSelectionDom();
-    renderSidebar();
+    if(deferSidebar) scheduleSidebarRender(); else renderSidebar();
     setStatusOnly();
   }
   // Live variant for per-frame selection tools (brush): identical state
@@ -136,8 +141,13 @@
   }
   function syncSelectionDom(){
     const ns = selectedNodeIds(), es = selectedEdgeIds();
+    // The ids whose DOM state actually changes. They are collected here anyway
+    // (the loops below already compare the two sets) and handed to the matrix
+    // mirror, whose grid is n² inputs: a press must not touch every one of them.
+    const changedNodes: string[] = [], changedEdges: string[] = [];
     for(const id of domSelectedNodes){
       if(!ns.has(id)){
+        changedNodes.push(id);
         const el = nodeEl(id); if(!el) continue;
         toggleClass(el, 'selected', false);
         const n = nodeById(id); if(n){ const v = nodeVisualC(n); syncNodeSelRing(el, n, v.shape, v.width, v.height, false); }
@@ -145,6 +155,7 @@
     }
     for(const id of ns){
       if(!domSelectedNodes.has(id)){
+        changedNodes.push(id);
         const el = nodeEl(id); if(!el) continue;
         toggleClass(el, 'selected', true);
         const n = nodeById(id); if(n){ const v = nodeVisualC(n); syncNodeSelRing(el, n, v.shape, v.width, v.height, true); }
@@ -152,6 +163,7 @@
     }
     for(const id of domSelectedEdges){
       if(!es.has(id)){
+        changedEdges.push(id);
         const el = edgeEl(id); if(!el) continue;
         toggleClass(el, 'selected', false);
         // Dropping the accent is all it takes: the edge line and its tip were
@@ -161,6 +173,7 @@
     }
     for(const id of es){
       if(!domSelectedEdges.has(id)){
+        changedEdges.push(id);
         const el = edgeEl(id); if(!el) continue;
         toggleClass(el, 'selected', true);
         const e = edgeById(id);
@@ -171,12 +184,18 @@
       }
     }
     domSelectedNodes = ns; domSelectedEdges = es;
-    updateMatrixSelectionDom();
+    updateMatrixSelectionDom(changedNodes, changedEdges);
     // The gizmo frames the selection, so it follows every selection change
     // that did not go through a full render pass.
     renderGizmo();
   }
-  function updateMatrixSelectionDom(){
+  function matrixAttrValue(value: string){
+    // Ids are sanitised to [A-Za-z0-9_-], so an attribute selector is safe;
+    // escape anyway so a hand-edited document can never inject a selector.
+    const api = (window as any).CSS;
+    return api && typeof api.escape === 'function' ? api.escape(value) : String(value).replace(/["\\]/g, '\\$&');
+  }
+  function updateMatrixSelectionDom(changedNodes: string[] | null = null, changedEdges: string[] | null = null){
     const host = $('#matrixHost');
     if(!host || !host.firstElementChild) return;
     // The matrix panel is hidden in "graph" view and its HTML is rebuilt from
@@ -184,6 +203,29 @@
     const mainEl = document.querySelector('.main');
     if(mainEl && (mainEl as HTMLElement).dataset?.view === 'graph') return;
     const ns = selectedNodeIds(), es = selectedEdgeIds();
+    // O(delta) node columns: a node drag or a plain click changes one or two
+    // ids, so only their cells are looked up, and the edge rows are skipped
+    // entirely when no edge's selection changed. Past DELTA_LOOKUP_LIMIT changed
+    // ids (a brush stroke selecting hundreds of nodes) the per-id lookups cost
+    // more than one scan of the grid, so there the scan is used instead.
+    const DELTA_LOOKUP_LIMIT = 16;
+    if(changedNodes && changedEdges && changedNodes.length <= DELTA_LOOKUP_LIMIT){
+      for(const id of changedNodes){
+        for(const input of host.querySelectorAll(`[data-node-label="${matrixAttrValue(id)}"]`)){
+          toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
+        }
+      }
+      if(!changedEdges.length) return;
+      const changedEdgeSet = new Set(changedEdges);
+      for(const input of host.querySelectorAll('[data-cell-from][data-cell-to]')){
+        const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+        if(!ids.some(id => changedEdgeSet.has(id))) continue;
+        let selected = false;
+        for(let i = 0; i < ids.length; i++){ if(es.has(ids[i])){ selected = true; break; } }
+        toggleClass(input, 'matrix-selected', selected);
+      }
+      return;
+    }
     for(const input of host.querySelectorAll('[data-node-label]')){
       toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
     }

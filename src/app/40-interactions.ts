@@ -9,6 +9,16 @@
   // empty deselects. This makes press-empty → drag → release-on-node select
   // that node, while a plain empty click still clears the selection.
   let singleSweep: { pointerId:number; startClientX:number; startClientY:number; moved:boolean } | null = null;
+  // A gesture release defers its history entry to idle time (pushHistorySoon).
+  // Any input that could edit the document flushes it first — in the capture
+  // phase, i.e. before the app's own handlers mutate anything — so the entry
+  // always captures the state of the release it belongs to and undo can never
+  // see a stale history.
+  if(typeof window !== 'undefined' && typeof (window as any).addEventListener === 'function'){
+    for(const type of ['pointerdown','keydown','wheel','touchstart'] as const){
+      window.addEventListener(type, () => flushPendingHistory(), {capture: true, passive: true});
+    }
+  }
   function registerPointer(ev){
     // Adopt any pending wheel-zoom before new gesture math runs, and capture
     // the viewport rect once per gesture for clientToWorld.
@@ -47,7 +57,7 @@
     if(gizmoDrag) endGizmoDrag(true);
     if(drag){
       if(drag.fastNodeId) moveNodeFast(drag.fastNodeId);
-      if(drag.moved) pushHistory('move node');
+      if(drag.moved) pushHistorySoon('move node');
       const dragNodes = drag.nodes || (drag.node ? [drag.node] : []);
       for(const dn of dragNodes){ const el = nodeEl(dn.id); if(el) toggleClass(el, 'dragging', false); }
       drag = null;
@@ -399,7 +409,9 @@
         const from = pendingEdgeFrom; pendingEdgeFrom = null; addEdge(from, id); return;
       }
       pendingEdgeFrom = null;
-      selectItem('node', id);
+      // Same release-free press as a node drag: the panel may follow a frame
+      // later, the drag line must start under the pointer now.
+      setSelection([id], [], {type:'node', id}, false, true);
       edgeDraft = { pointerId:ev.pointerId, from:id, x:p.x, y:p.y, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
       gestureActive = true;
       updateDragLine(p, ev.clientX, ev.clientY); setStatusOnly(); return;
@@ -432,14 +444,17 @@
     // When the clicked node is already in the current multi-selection,
     // do NOT call setSelection (which would collapse it in Override mode).
     // Instead, keep the existing selection and start dragging the whole group.
+    // Either way the panel is rebuilt on the next frame (deferSidebar): the
+    // press is the frame that decides how quickly the node starts following the
+    // pointer, and the selection panel is not part of the gesture.
     if (!wasSelected) {
-      setSelection([id], [], {type:'node', id}, combine);
+      setSelection([id], [], {type:'node', id}, combine, true);
     } else {
       // Already selected → preserve the group. Only update primary if needed.
       if (!state.selected || state.selected.id !== id) {
         state.selected = {type:'node', id};
         syncSelectionDom();
-        renderSidebar();
+        scheduleSidebarRender();
       }
     }
 
@@ -651,24 +666,26 @@
     }
     if(drag){
       if(drag.fastNodeId) moveDragFast();
-      if(drag.moved) pushHistory('move node');
+      const moved = drag.moved, edgesWereLive = drag.liveEdges !== false, frozenEdges = drag.affectedEdges;
+      const dragNodes = drag.nodes || (drag.node ? [drag.node] : []);
+      drag = null;
       // Robust cleanup: always remove dragging class and reset state
       try {
-        if (drag.nodes) {
-          for(const dn of drag.nodes){
-            const el = nodeEl(dn.id);
-            if(el) toggleClass(el, 'dragging', false);
-          }
+        for(const dn of dragNodes){
+          const el = nodeEl(dn.id);
+          if(el) toggleClass(el, 'dragging', false);
         }
       } catch(e){}
-      const moved = drag.moved, edgesWereLive = drag.liveEdges !== false;
-      drag = null;
       $('#canvasWrap').classList.remove('fast-interaction');
       // A click that never moved left the canvas untouched (selection is synced
       // directly), and a live-edge drag already patched every transform and path
-      // frame-by-frame — either way the full re-render pass is unnecessary.
-      // Only drags whose edges were frozen (very high degree) need a re-render.
-      if(moved && !edgesWereLive) queueRender(false);
+      // frame-by-frame. A frozen-edge drag (very high degree) patched nothing,
+      // so exactly those edges are refreshed here — a full re-render pass would
+      // restyle and repaint the entire scene for a handful of changed lines.
+      if(moved && !edgesWereLive) scheduleFrozenEdgeRefresh(frozenEdges);
+      // The snapshot for undo is deferred to idle time: it serialises the whole
+      // document, and the release frame must belong to the gesture.
+      if(moved) pushHistorySoon('move node');
     }
     if(pan){
       const completedPan = pan;
