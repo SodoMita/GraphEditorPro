@@ -993,10 +993,3 @@
       toast(I18N.t('paste_failed', {msg: (e as Error).message}));
     }
   }
-  function handlePasteEventWithData(data: AnyRecord){
-    if(data && data.type === 'graph-editor-clipboard'){
-      pasteClipboardInternal(data);
-      return true;
-    }
-    return false;
-  }

@@ -103,6 +103,17 @@ function exported(document) {
 }
 const nodeMap = graph => Object.fromEntries(graph.nodes.map(n => [n.id, n]));
 
+// jsdom does not implement ClipboardEvent/DataTransfer. Model the native paste
+// event's data and cancellation behavior without simulating text insertion.
+function dispatchNativePaste(window, target, text) {
+  const event = new window.Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { getData: type => type === 'text/plain' ? text : '' },
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
 async function setup(t, graph = baseGraph) {
   const { dom, errors } = createEditorDom(graph);
   t.after(() => { dom.window.close(); assert.deepEqual(errors.map(e => e.message), []); });
@@ -461,4 +472,74 @@ test('merged copy/paste: paste clones selected nodes with internal and preserved
   document.querySelector('#btnUndo').click();
   await nextFrame(window);
   assert.equal(exported(document).nodes.length, 3, 'paste is one undo step');
+});
+
+test('middle-click canvas paste does not add copied nodes', async t => {
+  const { window, document, svg, pointer, clickNode } = await setup(t);
+  await clickNode('n1', 200, 200);
+  document.querySelector('#btnCopy').click();
+  const payload = JSON.stringify({
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'copied', label: 'Copied', x: 200, y: 200 }],
+    edges: [], externalEdges: [],
+  });
+
+  pointer(svg, 'pointerdown', 500, 330, { button: 1 });
+  pointer(svg, 'pointerup', 500, 330, { button: 1 });
+  const paste = dispatchNativePaste(window, svg, payload);
+  pointer(svg, 'auxclick', 500, 330, { button: 1 });
+  await nextFrame(window);
+
+  assert.equal(paste.defaultPrevented, false, 'canvas leaves native paste alone');
+  assert.equal(exported(document).nodes.length, baseGraph.nodes.length,
+    'a middle-click selection paste must not create graph nodes');
+});
+
+test('native text paste and text-field keyboard shortcuts are not graph commands', async t => {
+  const { window, document } = await setup(t);
+  const input = document.createElement('textarea');
+  document.body.appendChild(input);
+  input.focus();
+  const payload = JSON.stringify({
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'copied', label: 'Copied', x: 200, y: 200 }],
+    edges: [], externalEdges: [],
+  });
+
+  const paste = dispatchNativePaste(window, input, payload);
+  const shortcut = new window.KeyboardEvent('keydown', {
+    key: 'v', ctrlKey: true, bubbles: true, cancelable: true,
+  });
+  input.dispatchEvent(shortcut);
+  await nextFrame(window);
+
+  assert.equal(paste.defaultPrevented, false, 'native text paste is preserved');
+  assert.equal(shortcut.defaultPrevented, false, 'text-field Ctrl+V is preserved');
+  assert.equal(exported(document).nodes.length, baseGraph.nodes.length);
+});
+
+test('Ctrl+V still pastes graph JSON from the system clipboard', async t => {
+  const { window, document, svg } = await setup(t);
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: async () => {},
+      readText: async () => JSON.stringify({
+        type: 'graph-editor-clipboard',
+        nodes: [{ id: 'copied', label: 'Copied', x: 200, y: 200 }],
+        edges: [], externalEdges: [],
+      }),
+    },
+  });
+  svg.focus();
+  const shortcut = new window.KeyboardEvent('keydown', {
+    key: 'v', ctrlKey: true, bubbles: true, cancelable: true,
+  });
+  svg.dispatchEvent(shortcut);
+  await nextFrame(window);
+
+  assert.equal(shortcut.defaultPrevented, true);
+  const graph = exported(document);
+  assert.equal(graph.nodes.length, baseGraph.nodes.length + 1);
+  assert.equal(graph.nodes.at(-1).label, 'Copied');
 });
