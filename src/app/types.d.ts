@@ -1,4 +1,9 @@
-type Translation = Readonly<{ en: string; ru: string }>;
+type Translation = Readonly<{
+  en: string;
+  ru: string;
+  /** Russian plural forms for a numeric `{n}`: [one, few, many]. */
+  ruPlural?: readonly [string, string, string];
+}>;
 type AnyRecord = Record<string, any>;
 
 type GraphMode = 'select' | 'move' | 'node' | 'edge';
@@ -78,8 +83,10 @@ interface GraphState {
 interface I18nService {
   strings: Record<string, Translation>;
   dynamic: Record<string, Translation>;
+  nouns: Record<'en' | 'ru', Record<string, readonly string[]>>;
   current: 'en' | 'ru';
   t(key: string, params?: Record<string, unknown>): string;
+  plural(count: unknown, forms: readonly string[]): string;
   applyAll(): void;
   toggle(): void;
   load(): void;
