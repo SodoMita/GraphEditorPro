@@ -509,17 +509,24 @@
     resetSelectionMirror();
     endRenderPass();
   }
+  // Internal selection-tool ids are not user copy: the status pill used to show
+  // "Режим выбора rect" / "Выделение polygon…" for every non-default tool.
+  function selectionToolLabel(tool){
+    const key = 'sel_' + (tool === 'directedAdjacent' ? 'directed_adj' : tool);
+    const label = I18N.t(key);
+    return label === key ? tool : label;
+  }
   function statusText(){
     if(edgeDraft) return I18N.t('drag_to_target');
     if(pendingEdgeFrom) return I18N.t('source_selected', {name: labelOf(pendingEdgeFrom)});
     if(gizmoDrag && gizmoDrag.readout) return gizmoDrag.readout;
-    if(selectDraft) return I18N.t('selection_tool', {tool: selectDraft.tool});
+    if(selectDraft) return I18N.t('selection_tool', {tool: selectionToolLabel(selectDraft.tool)});
     if(pinch) return I18N.t('pinch_zoom_pan');
     if(spaceDown) return I18N.t('pan_mode');
     if(state.mode === 'move') return I18N.t('move_mode_drag');
     if(state.mode === 'node') return I18N.t('node_mode_click');
     if(state.mode === 'edge') return I18N.t('edge_mode_drag');
-    return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: state.selectTool});
+    return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: selectionToolLabel(state.selectTool)});
   }
   function applyCamera(){
     // Adopt any in-flight zoom preview before the camera changes underneath it
@@ -1178,7 +1185,7 @@
     const host = $('#selectionPanel');
     const nodeCount = state.selection?.nodes?.length || 0;
     const edgeCount = state.selection?.edges?.length || 0;
-    if(!state.selected){ host.innerHTML = '<span class="muted" data-i18n="nothing_selected">Nothing selected.</span>'; return; }
+    if(!state.selected){ host.innerHTML = '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>'; return; }
     if(nodeCount + edgeCount > 1){
       const parts = [];
       parts.push(`<div class="tiny muted" style="margin-bottom:8px">${I18N.t('selected_n_m', {n: nodeCount, m: edgeCount})}</div>`);
@@ -1198,17 +1205,17 @@
           <div class="grid2">
             <label class="field" for="mulNodeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulNodeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList">${existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-            <label class="field" for="mulNodeOrder"><span data-i18n="order">Order</span> <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
-            <label class="field" for="mulNodeColor"><span data-i18n="color">Color</span> <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
-            <label class="field" for="mulNodeShape"><span data-i18n="shape">Shape</span> <select id="mulNodeShape">${shapeOptions}</select></label>
+            <label class="field" for="mulNodeOrder">${I18N.t('order')} <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
+            <label class="field" for="mulNodeColor">${I18N.t('color')} <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
+            <label class="field" for="mulNodeShape">${I18N.t('shape')} <select id="mulNodeShape">${shapeOptions}</select></label>
             <label class="field" for="mulNodeWidth"><span data-i18n="width">${I18N.t('width')}</span> <input id="mulNodeWidth" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
             <label class="field" for="mulNodeHeight"><span data-i18n="height">${I18N.t('height')}</span> <input id="mulNodeHeight" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
-            <label class="field" for="mulNodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span> <input id="mulNodeStrokeColor" type="color" value="#e2e8f0"></label>
-            <label class="field" for="mulNodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="mulNodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal"></label>
-            <label class="field" for="mulNodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulNodeStrokeStyle">${strokeOptions}</select></label>
-            <label class="field" for="mulNodeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulNodeLabelColor" type="color" value="#f8fafc"></label>
-            <label class="field" for="mulNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulNodeLabelSize" type="number" min="4" max="72" value="13" inputmode="decimal"></label>
-            <label class="field" for="mulNodeLabelPos"><span data-i18n="label_pos">Label pos</span> <select id="mulNodeLabelPos">${labelPosOptions}</select></label>
+            <label class="field" for="mulNodeStrokeColor">${I18N.t('stroke_color')} <input id="mulNodeStrokeColor" type="color" value="#e2e8f0"></label>
+            <label class="field" for="mulNodeStrokeSize">${I18N.t('stroke_size')} <input id="mulNodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal"></label>
+            <label class="field" for="mulNodeStrokeStyle">${I18N.t('stroke_style')} <select id="mulNodeStrokeStyle">${strokeOptions}</select></label>
+            <label class="field" for="mulNodeLabelColor">${I18N.t('label_color')} <input id="mulNodeLabelColor" type="color" value="#f8fafc"></label>
+            <label class="field" for="mulNodeLabelSize">${I18N.t('label_size')} <input id="mulNodeLabelSize" type="number" min="4" max="72" value="13" inputmode="decimal"></label>
+            <label class="field" for="mulNodeLabelPos">${I18N.t('label_pos')} <select id="mulNodeLabelPos">${labelPosOptions}</select></label>
             <label class="field" for="mulNodeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulNodeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
           </div>
           <div class="row" style="margin-top:6px">
@@ -1223,12 +1230,12 @@
             <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-            <label class="field" for="mulEdgeDirected"><span data-i18n="directed">Directed</span> <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
-            <label class="field" for="mulEdgeColor"><span data-i18n="color">Color</span> <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
-            <label class="field" for="mulEdgeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
-            <label class="field" for="mulEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
-            <label class="field" for="mulEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
-            <label class="field" for="mulEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
+            <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
+            <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
+            <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
+            <label class="field" for="mulEdgeStrokeStyle">${I18N.t('stroke_style')} <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
+            <label class="field" for="mulEdgeLabelColor">${I18N.t('label_color')} <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
+            <label class="field" for="mulEdgeLabelSize">${I18N.t('label_size')} <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
             <label class="field" for="mulEdgeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulEdgeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
           </div>
           <div class="row" style="margin-top:6px">
@@ -1499,13 +1506,13 @@
       // clamped slice: "300 nodes" for a 350-node graph (with advice to raise a
       // limit that could not help) was misleading.
       $('#matrixHost').innerHTML = '<div class="tiny muted">' + esc(I18N.t('matrix_hidden_limit', {total, limit, cap: MATRIX_MAX_NODES})) + '</div>';
-      note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`;
+      note.textContent = I18N.t('matrix_note_hidden', {n, total});
     }
     else {
       $('#matrixHost').innerHTML = adjacencyMatrixHtml(visNodes);
       note.textContent = rangeActive
-        ? `${n}×${n} (` + (I18N.current === 'ru' ? 'диапазон ' : 'range ') + `${vr.start >= 0 ? vr.start : 0}–${vr.end >= 0 ? vr.end : (I18N.current === 'ru' ? 'конец' : 'end')} ` + (I18N.current === 'ru' ? 'из' : 'of') + ` ${total})`
-        : n === total ? `${n}×${n}` : `${n}×${n} ` + (I18N.current === 'ru' ? `вид ${total} узлов` : `view of ${total} nodes`);
+        ? I18N.t('matrix_note_range', {n, start: vr.start >= 0 ? vr.start : 0, end: vr.end >= 0 ? vr.end : I18N.t('matrix_note_end'), total})
+        : n === total ? `${n}×${n}` : I18N.t('matrix_note_view', {n, total});
     }
     $('#edgeListHost').innerHTML = edgeListHtml();
   }
@@ -1588,7 +1595,7 @@
         ? I18N.t('n_edges_filtered', {n: shown, m: total})
         : I18N.t('n_edges', {n: total});
       const pageNote = rendered < shown
-        ? (I18N.current === 'ru' ? ` · показано ${rendered}` : ` · showing ${rendered}`)
+        ? I18N.t('edge_list_showing', {n: rendered})
         : '';
       $('#edgeListNote').textContent = filterNote + pageNote;
     }
@@ -1621,9 +1628,7 @@
     if(renderedEdges.length < filteredEdges.length){
       const remaining = filteredEdges.length - renderedEdges.length;
       const pageSize = configuredEdgeListPageSize();
-      const label = I18N.current === 'ru'
-        ? `Показать ещё ${Math.min(pageSize, remaining)}`
-        : `Show ${Math.min(pageSize, remaining)} more`;
+      const label = I18N.t('edge_list_more', {n: Math.min(pageSize, remaining)});
       parts.push(`<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`);
     }
     return parts.join('');

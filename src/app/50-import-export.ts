@@ -786,7 +786,7 @@
   }
   function parseGraphml(text){
     const doc = new DOMParser().parseFromString(text, 'application/xml');
-    if(doc.querySelector('parsererror')) throw new Error('Invalid XML/GraphML');
+    if(doc.querySelector('parsererror')) throw new Error(I18N.t('err_invalid_graphml'));
     // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
     const keyNames: Record<string, string> = {};
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };

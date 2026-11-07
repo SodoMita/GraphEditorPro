@@ -866,13 +866,13 @@
         <div class="brand-badge">G</div>
         <span class="brand-name" data-i18n="brand_name">Graph Editor Pro</span>
       </div>
-      <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
+      <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" data-i18n-aria-label="group_doc_name" />
       <button id="btnMenu" class="btn icon menu-btn" title="Open panels" data-i18n-title="menu_open" aria-label="Open panels" data-i18n-aria-label="menu_open" aria-controls="toolsPanel" aria-expanded="false">
         <svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
       </button>
 
-      <div class="toolbar" aria-label="Document commands">
-        <div class="view-toggle" role="group" aria-label="View switcher">
+      <div class="toolbar" aria-label="Document commands" data-i18n-aria-label="group_doc_commands">
+        <div class="view-toggle" role="group" aria-label="View switcher" data-i18n-aria-label="group_view_switcher">
           <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
           <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
           <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
@@ -906,7 +906,7 @@
       <aside id="toolsPanel" class="panel sidebar" role="region" aria-label="Tools and properties" data-i18n-aria-label="tools_panel" aria-hidden="true" inert>
         <div class="sheet-grabber" aria-hidden="true"></div>
         <div class="sheet-nav-row">
-          <nav class="tabs" role="tablist" aria-label="Tool panels">
+          <nav class="tabs" role="tablist" aria-label="Tool panels" data-i18n-aria-label="group_tool_panels">
             <button id="tab-edit" class="tab" data-tab="edit" role="tab" aria-selected="false" aria-controls="panel-edit" title="Edit" data-i18n-title="tab_edit" aria-label="Edit" data-i18n-aria-label="tab_edit"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-edit"></use></svg></button>
             <button id="tab-style" class="tab" data-tab="style" role="tab" aria-selected="false" aria-controls="panel-style" title="Style" data-i18n-title="tab_style" aria-label="Style" data-i18n-aria-label="tab_style"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-palette"></use></svg></button>
             <button id="tab-algo" class="tab" data-tab="algo" role="tab" aria-selected="false" aria-controls="panel-algo" title="Algorithms" data-i18n-title="tab_algo" aria-label="Algorithms" data-i18n-aria-label="tab_algo"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-algorithm"></use></svg></button>
@@ -937,7 +937,7 @@
                   </label>
                   <label class="field" for="nodeShape"><span data-i18n="shape">Shape</span>
                     <select id="nodeShape">
-                      <option value="circle" data-i18n="circle">Circle</option>
+                      <option value="circle" data-i18n="shape_circle">Circle</option>
                       <option value="square" data-i18n="shape_square">Square</option>
                       <option value="diamond" data-i18n="shape_diamond">Diamond</option>
                       <option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option>
@@ -995,7 +995,7 @@
                 <span data-i18n="behavior_grid">Behavior &amp; grid</span>
               </summary>
               <div class="sec-body">
-                <label class="chk" for="optInheritDefaults" title="New nodes inherit Style-tab defaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">Inherit defaults</span></label>
+                <label class="chk" for="optInheritDefaults" title="New nodes inherit Style-tab defaults" data-i18n-title="inherit_defaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">Inherit defaults</span></label>
                 <p class="tiny muted" style="margin:2px 0 6px"><span data-i18n="inherit_defaults_desc">When on, new nodes have unset visual properties and follow Style-tab defaults dynamically.</span></p>
                 <label class="chk" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">No label</span></label>
                 <label class="chk" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap grid</span></label>
@@ -1149,10 +1149,10 @@
                   </select>
                 </label>
                 <div id="edgeWeightRangeSection" class="grid2" style="margin-top:6px">
-                  <label class="field" for="defEdgeWeightMin">Weight min <input id="defEdgeWeightMin" type="number" step="any" inputmode="decimal"></label>
-                  <label class="field" for="defEdgeWeightMax">Weight max <input id="defEdgeWeightMax" type="number" step="any" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWeightMin"><span data-i18n="weight_min">Weight min</span> <input id="defEdgeWeightMin" type="number" step="any" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWeightMax"><span data-i18n="weight_max">Weight max</span> <input id="defEdgeWeightMax" type="number" step="any" inputmode="decimal"></label>
                 </div>
-                <label class="field col" for="defEdgeWeightCorr" style="margin-top:6px">Correlation function
+                <label class="field col" for="defEdgeWeightCorr" style="margin-top:6px"><span data-i18n="corr_func">Correlation function</span>
                   <select id="defEdgeWeightCorr">
                     <option value="linear" data-i18n="corr_linear">Linear</option>
                     <option value="log" data-i18n="corr_log">Logarithmic</option>
@@ -1161,19 +1161,19 @@
                   </select>
                 </label>
                 <div id="edgeWidthSection" class="grid2" style="margin-top:6px">
-                  <label class="field" for="defEdgeWidthMin">Width min <input id="defEdgeWidthMin" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
-                  <label class="field" for="defEdgeWidthMax">Width max <input id="defEdgeWidthMax" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWidthMin"><span data-i18n="edge_width_min">Width min</span> <input id="defEdgeWidthMin" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWidthMax"><span data-i18n="edge_width_max">Width max</span> <input id="defEdgeWidthMax" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
                 </div>
                 <div id="edgeColorSection" class="grid2" style="margin-top:6px">
-                  <label class="field" for="defEdgeWeightColorLow">Low color <input id="defEdgeWeightColorLow" type="color"></label>
-                  <label class="field" for="defEdgeWeightColorHigh">High color <input id="defEdgeWeightColorHigh" type="color"></label>
+                  <label class="field" for="defEdgeWeightColorLow"><span data-i18n="gradient_low">Low color</span> <input id="defEdgeWeightColorLow" type="color"></label>
+                  <label class="field" for="defEdgeWeightColorHigh"><span data-i18n="gradient_high">High color</span> <input id="defEdgeWeightColorHigh" type="color"></label>
                 </div>
                 <div class="grid2" style="margin-top:6px">
-                  <label class="field" for="canvasBgColor"><span data-i18n="canvas_bg">Canvas bg</span> <input id="canvasBgColor" type="color" value="#020617"></label>
-                  <label class="field" for="gridMinorColor"><span data-i18n="grid_minor_color">Grid minor</span> <input id="gridMinorColor" type="color" value="#94a3b8"></label>
-                  <label class="field" for="gridMinorAlpha"><span data-i18n="grid_minor_alpha">Minor alpha</span> <input id="gridMinorAlpha" type="number" min="0" max="1" step="0.01" value="0.105" inputmode="decimal"></label>
-                  <label class="field" for="gridMajorColor"><span data-i18n="grid_major_color">Grid major</span> <input id="gridMajorColor" type="color" value="#94a3b8"></label>
-                  <label class="field" for="gridMajorAlpha"><span data-i18n="grid_major_alpha">Major alpha</span> <input id="gridMajorAlpha" type="number" min="0" max="1" step="0.01" value="0.16" inputmode="decimal"></label>
+                  <label class="field" for="canvasBgColor"><span data-i18n="canvas_bg">Canvas background</span> <input id="canvasBgColor" type="color" value="#020617"></label>
+                  <label class="field" for="gridMinorColor"><span data-i18n="grid_minor_color">Grid minor color</span> <input id="gridMinorColor" type="color" value="#94a3b8"></label>
+                  <label class="field" for="gridMinorAlpha"><span data-i18n="grid_minor_alpha">Grid minor alpha</span> <input id="gridMinorAlpha" type="number" min="0" max="1" step="0.01" value="0.105" inputmode="decimal"></label>
+                  <label class="field" for="gridMajorColor"><span data-i18n="grid_major_color">Grid major color</span> <input id="gridMajorColor" type="color" value="#94a3b8"></label>
+                  <label class="field" for="gridMajorAlpha"><span data-i18n="grid_major_alpha">Grid major alpha</span> <input id="gridMajorAlpha" type="number" min="0" max="1" step="0.01" value="0.16" inputmode="decimal"></label>
                 </div>
               </div>
             </details>
@@ -1236,7 +1236,7 @@
                 </label>
                 <div class="grid2" style="margin-top:6px">
                   <label class="field" for="ntsColor"><span data-i18n="color">Color</span> <input id="ntsColor" type="color" value="#0ea5e9"></label>
-                  <label class="field" for="ntsShape"><span data-i18n="shape">Shape</span> <select id="ntsShape"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="circle" data-i18n="circle">Circle</option><option value="square" data-i18n="shape_square">Square</option><option value="diamond" data-i18n="shape_diamond">Diamond</option><option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option><option value="triangleDown" data-i18n="shape_triangleDown">Triangle Down</option><option value="hexagon" data-i18n="shape_hexagon">Hexagon</option></select></label>
+                  <label class="field" for="ntsShape"><span data-i18n="shape">Shape</span> <select id="ntsShape"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="circle" data-i18n="shape_circle">Circle</option><option value="square" data-i18n="shape_square">Square</option><option value="diamond" data-i18n="shape_diamond">Diamond</option><option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option><option value="triangleDown" data-i18n="shape_triangleDown">Triangle Down</option><option value="hexagon" data-i18n="shape_hexagon">Hexagon</option></select></label>
                   <label class="field" for="ntsWidth"><span data-i18n="width">Width</span> <input id="ntsWidth" type="number" min="10" max="300" step="1" value="50"></label>
                   <label class="field" for="ntsHeight"><span data-i18n="height">Height</span> <input id="ntsHeight" type="number" min="10" max="300" step="1" value="50"></label>
                   <label class="field" for="ntsStrokeColor"><span data-i18n="stroke_color">Stroke</span> <input id="ntsStrokeColor" type="color" value="#e2e8f0"></label>
@@ -1289,12 +1289,12 @@
                 <select id="algoStart"></select>
               </label>
               <div class="grid2" style="margin-top:8px">
-                <button id="btnBfs" class="btn">BFS</button>
-                <button id="btnDfs" class="btn">DFS</button>
-                <button id="btnDijkstra" class="btn">Dijkstra</button>
-                <button id="btnComponents" class="btn">Components</button>
-                <button id="btnTopo" class="btn">Topological</button>
-                <button id="btnStats" class="btn">Stats</button>
+                <button id="btnBfs" class="btn" data-i18n-title="algo_bfs_title">BFS</button>
+                <button id="btnDfs" class="btn" data-i18n-title="algo_dfs_title">DFS</button>
+                <button id="btnDijkstra" class="btn" data-i18n-title="algo_dijkstra_title">Dijkstra</button>
+                <button id="btnComponents" class="btn" data-i18n="algo_components">Components</button>
+                <button id="btnTopo" class="btn" data-i18n="algo_topological">Topological</button>
+                <button id="btnStats" class="btn" data-i18n="algo_stats">Stats</button>
               </div>
             </div>
             <div class="section flat">
@@ -1385,13 +1385,13 @@
                 <span data-i18n="layout_view">Layout and view</span>
               </summary>
               <div class="sec-body">
-                <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher">
+                <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher" data-i18n-aria-label="group_view_switcher">
                   <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
                   <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
                   <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
                 </div>
                 <div class="grid2" style="margin-top:8px">
-                  <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
+                  <button id="btnLayoutCircle" class="btn" data-i18n="layout_circle">Circle</button>
                   <button id="btnLayoutGrid" class="btn" data-i18n="grid">Grid</button>
                   <button id="btnLayoutForce" class="btn" data-i18n="relax">Relax</button>
                   <button id="btnFit" class="btn" data-i18n="fit_view">Fit view</button>
@@ -1533,17 +1533,17 @@
 
           <div class="canvas-hud">
             <div id="statusPill" class="status-pill" data-i18n="ready">Ready</div>
-            <div id="statsPill" class="status-pill">0 nodes · 0 edges</div>
+            <div id="statsPill" class="status-pill">0 · 0</div>
           </div>
 
-          <div class="zoom-controls" role="group" aria-label="Zoom controls">
+          <div class="zoom-controls" role="group" aria-label="Zoom controls" data-i18n-aria-label="group_zoom_controls">
             <button id="btnZoomIn" class="btn icon" title="Zoom in" data-i18n-title="zoom_in" aria-label="Zoom in" data-i18n-aria-label="zoom_in"><svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
             <button id="btnZoomOut" class="btn icon" title="Zoom out" data-i18n-title="zoom_out" aria-label="Zoom out" data-i18n-aria-label="zoom_out"><svg class="ui-icon" aria-hidden="true"><use href="#icon-minus"></use></svg></button>
             <button id="btnZoomReset" class="btn" title="Reset zoom" data-i18n-title="reset_zoom">100%</button>
           </div>
 
           <!-- Floating tool switcher — always thumb-reachable -->
-          <div class="mode-fab" role="group" aria-label="Edit modes">
+          <div class="mode-fab" role="group" aria-label="Edit modes" data-i18n-aria-label="group_edit_modes">
             <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" aria-label="Select and move nodes" data-i18n-aria-label="mode_select_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cursor"></use></svg></button>
             <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" aria-label="Pan the canvas by dragging" data-i18n-aria-label="mode_move_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-hand"></use></svg></button>
             <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" aria-label="Click canvas to add nodes" data-i18n-aria-label="mode_node_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-node"></use></svg></button>
@@ -1552,12 +1552,12 @@
 
           <!-- Floating edge tools — a row of their own above the mode switcher,
                visible in Edge mode, mirroring the selection tools row. -->
-          <div class="edge-tools" role="group" aria-label="Edge tools">
+          <div class="edge-tools" role="group" aria-label="Edge tools" data-i18n-aria-label="group_edge_tools">
             <button id="btnFlipEdges" class="btn" title="Flip selected directed edges" data-i18n-title="flip_selected_edges" aria-label="Flip selected directed edges" data-i18n-aria-label="flip_selected_edges" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-flip-edge"></use></svg></button>
           </div>
 
           <!-- Floating selection tools — icon-only, visible in Select mode -->
-          <div class="sel-tools" role="group" aria-label="Selection tools">
+          <div class="sel-tools" role="group" aria-label="Selection tools" data-i18n-aria-label="group_selection_tools">
             <button class="btn" data-selecttool="single" title="Single select" data-i18n-title="sel_single" aria-label="Single select" data-i18n-aria-label="sel_single" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3.5 2.5v11.2l3.4-2.9 2.2 4.4 1.9-.9-2.2-4.4H13z" fill="currentColor"/></svg>
             </button>
@@ -1665,6 +1665,23 @@
 // Система переводов для Graph Editor Pro
 // Поддерживаемые языки: en, ru
 const I18N = {
+    // === Счётные существительные (склонение по числу) ===
+    // Строки вида '{n:node}' подставляют число вместе с правильной формой слова:
+    // en → 1 node / 3 nodes, ru → 1 узел / 3 узла / 5 узлов.
+    nouns: {
+        en: {
+            node: ['node', 'nodes'],
+            edge: ['edge', 'edges'],
+            pass: ['pass', 'passes'],
+            point: ['point', 'points'],
+        },
+        ru: {
+            node: ['узел', 'узла', 'узлов'],
+            edge: ['ребро', 'ребра', 'рёбер'],
+            pass: ['проход', 'прохода', 'проходов'],
+            point: ['точка', 'точки', 'точек'],
+        },
+    },
     // === Статические тексты HTML (по data-i18n ключу) ===
     strings: {
         // --- Topbar / toolbar ---
@@ -1693,7 +1710,7 @@ const I18N = {
         // --- Tabs ---
         'tab_edit': { en: 'Edit', ru: 'Правка' },
         'tab_style': { en: 'Style', ru: 'Стиль' },
-        'tab_algo': { en: 'Algo', ru: 'Алго' },
+        'tab_algo': { en: 'Algo', ru: 'Алгоритмы' },
         'tab_data': { en: 'Data', ru: 'Данные' },
         'tab_help': { en: 'Help', ru: 'Справка' },
         // --- Navigation ---
@@ -1701,6 +1718,25 @@ const I18N = {
         'panel_close': { en: 'Close panels', ru: 'Закрыть панели' },
         'tools_panel': { en: 'Tools and properties', ru: 'Инструменты и свойства' },
         'behavior_grid': { en: 'Behavior & grid', ru: 'Поведение и сетка' },
+        // --- Groups / landmarks (aria-labels, подписи областей) ---
+        'group_doc_name': { en: 'Document name', ru: 'Имя документа' },
+        'group_doc_commands': { en: 'Document commands', ru: 'Команды документа' },
+        'group_view_switcher': { en: 'View switcher', ru: 'Переключение видов' },
+        'group_tool_panels': { en: 'Tool panels', ru: 'Панели инструментов' },
+        'group_zoom_controls': { en: 'Zoom controls', ru: 'Управление масштабом' },
+        'group_edit_modes': { en: 'Edit modes', ru: 'Режимы редактирования' },
+        'group_edge_tools': { en: 'Edge tools', ru: 'Инструменты рёбер' },
+        'group_selection_tools': { en: 'Selection tools', ru: 'Инструменты выделения' },
+        // --- Algo tab: buttons ---
+        'algo_components': { en: 'Components', ru: 'Компоненты' },
+        'algo_topological': { en: 'Topological', ru: 'Топология' },
+        'algo_stats': { en: 'Stats', ru: 'Статистика' },
+        'algo_bfs_title': { en: 'Breadth-first search order from the start node', ru: 'Обход в ширину (BFS) от стартового узла' },
+        'algo_dfs_title': { en: 'Depth-first search order from the start node', ru: 'Обход в глубину (DFS) от стартового узла' },
+        'algo_dijkstra_title': { en: 'Shortest-path distances from the start node', ru: 'Кратчайшие расстояния от стартового узла (Дейкстра)' },
+        // --- Style tab: weight-range field labels ---
+        'weight_min': { en: 'Weight min', ru: 'Мин. вес' },
+        'weight_max': { en: 'Weight max', ru: 'Макс. вес' },
         // --- Edit tab: Mode ---
         'mode_title': { en: 'Mode', ru: 'Режим' },
         'mode_select': { en: 'Select', ru: 'Выбор' },
@@ -1712,17 +1748,17 @@ const I18N = {
         'mode_node_title': { en: 'Click canvas to add nodes', ru: 'Клик по холсту добавляет узлы' },
         'mode_edge_title': { en: 'Drag from a node to another node or empty canvas', ru: 'Перетащить от узла к другому узлу или на пустой холст' },
         'flip_selected_edges': { en: 'Flip selected directed edges', ru: 'Развернуть выбранные направленные рёбра' },
-        'mode_tip': { en: 'Tip: use Move mode or hold Space to pan. Pinch the canvas to zoom/pan on touch screens.', ru: 'Подсказка: используйте режим Перемещение или удерживайте Пробел для панорамирования. Щипок для зума на сенсорных экранах.' },
+        'mode_tip': { en: 'Tip: use Move mode or hold Space to pan. Pinch the canvas to zoom/pan on touch screens.', ru: 'Подсказка: панорамируйте в режиме «Перемещение» или удерживая Пробел. На сенсорных экранах масштабируйте щипком.' },
         // --- Edit tab: Selection ---
         'canvas_selection': { en: 'Canvas selection', ru: 'Выделение на холсте' },
-        'sel_single': { en: 'Single', ru: 'Одиночное' },
-        'sel_rect': { en: 'Rect', ru: 'Прямоуг' },
+        'sel_single': { en: 'Single', ru: 'Одиночное выделение' },
+        'sel_rect': { en: 'Rect', ru: 'Прямоугольник' },
         'sel_brush': { en: 'Brush', ru: 'Кисть' },
         'sel_lasso': { en: 'Lasso', ru: 'Лассо' },
         'sel_line': { en: 'Line', ru: 'Линия' },
         'sel_polygon': { en: 'Polygon', ru: 'Многоугольник' },
         'sel_adjacent': { en: 'Adjacent', ru: 'Смежные' },
-        'sel_directed_adj': { en: 'Directed adjacent', ru: 'Напр. смежные' },
+        'sel_directed_adj': { en: 'Directed adjacent', ru: 'Смежные по направлению' },
         'sel_result': { en: 'Selection result', ru: 'Результат выделения' },
         'sel_override': { en: 'Override', ru: 'Замена' },
         'sel_add': { en: 'Add', ru: 'Добавить' },
@@ -1731,49 +1767,49 @@ const I18N = {
         'sel_add_title': { en: 'Add to current selection', ru: 'Добавить к текущему выделению' },
         'sel_subtract_title': { en: 'Remove from current selection', ru: 'Вычесть из текущего выделения' },
         'brush_diameter': { en: 'Brush diameter', ru: 'Диаметр кисти' },
-        'hit_test': { en: 'Selection hit target', ru: 'Область попадания' },
+        'hit_test': { en: 'Selection hit target', ru: 'Зона срабатывания' },
         'hit_any': { en: 'Any part', ru: 'Любая часть' },
         'hit_center': { en: 'Centres', ru: 'Центры' },
         'hit_any_title': { en: 'Select nodes or edges by any part', ru: 'Выбирать узлы и рёбра по любой части' },
         'hit_center_title': { en: 'Select only at exact centres', ru: 'Выбирать только по точным центрам' },
-        'sel_tip': { en: 'Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.', ru: 'Инструменты выделения работают в режиме Выбора. Используйте Замена/Добавить/Вычесть; Shift временно добавляет к текущему выделению. Многоугольник — кликами; клик по первой точке или двойной клик для замыкания.' },
+        'sel_tip': { en: 'Selection tools work in Select mode. Use Override/Add/Subtract; Shift temporarily adds to the current selection. Polygon uses clicks; click the first point or double-click to close.', ru: 'Инструменты выделения работают в режиме «Выбор». Режим «Результат выделения» задаёт, что делать с текущим выделением: заменить, добавить или вычесть; Shift временно добавляет к выделению. Многоугольник строится кликами — замкните его кликом по первой точке или двойным кликом.' },
         // --- Selection transform gizmo ---
         'gizmo_tools': { en: 'Transform gizmo tools', ru: 'Инструменты гизмо трансформации' },
         'gizmo_move': { en: 'Translate selected nodes: drag the arrows or the centre', ru: 'Перемещение выбранных узлов: тяните стрелки или центр' },
-        'gizmo_rotate': { en: 'Rotate selected nodes around the pivot (Shift = 15° steps)', ru: 'Вращение выбранных узлов вокруг пивота (Shift = шаг 15°)' },
-        'gizmo_scale': { en: 'Scale selected node positions from the pivot (node sizes unchanged)', ru: 'Масштаб позиций выбранных узлов от пивота (размеры узлов не меняются)' },
+        'gizmo_rotate': { en: 'Rotate selected nodes around the pivot (Shift = 15° steps)', ru: 'Вращение выбранных узлов вокруг точки опоры (Shift = шаг 15°)' },
+        'gizmo_scale': { en: 'Scale selected node positions from the pivot (node sizes unchanged)', ru: 'Масштаб позиций выбранных узлов от точки опоры (размеры узлов не меняются)' },
         'gizmo_rect': { en: 'Rect: stretch selected node positions with the bounding box (Alt = from centre, Shift = keep aspect)', ru: 'Прямоугольник: растягивать позиции выбранных узлов рамкой (Alt = от центра, Shift = сохранять пропорции)' },
         'gizmo_enabled': { en: 'Show transform gizmo for the selection (translate / rotate / scale / rect — positions only)', ru: 'Показывать гизмо трансформации выделения (перемещение / вращение / масштаб / рамка — только позиции)' },
-        'gizmo_pivot': { en: 'Pivot — drag to move the rotation/scale centre, double-click to reset', ru: 'Пивот — перетащите, чтобы сместить центр вращения/масштаба, двойной клик — сброс' },
-        'gizmo_section': { en: 'Transform gizmo', ru: 'Гизмо трансформаций' },
+        'gizmo_pivot': { en: 'Pivot — drag to move the rotation/scale centre, double-click to reset', ru: 'Точка опоры — перетащите, чтобы сместить центр вращения/масштаба, двойной клик — сброс' },
+        'gizmo_section': { en: 'Transform gizmo', ru: 'Гизмо трансформации' },
         'gizmo_section_sub': { en: '(positions only)', ru: '(только позиции)' },
-        'gizmo_move_label': { en: 'Move', ru: 'Движение' },
-        'gizmo_rotate_label': { en: 'Rotate', ru: 'Поворот' },
+        'gizmo_move_label': { en: 'Move', ru: 'Перемещение' },
+        'gizmo_rotate_label': { en: 'Rotate', ru: 'Вращение' },
         'gizmo_scale_label': { en: 'Scale', ru: 'Масштаб' },
         'gizmo_rect_label': { en: 'Rect', ru: 'Рамка' },
         'gizmo_note': { en: 'Drag the on-canvas handles to transform the selected nodes (or a selected edge’s endpoints). Only positions change; sizes, shapes, labels, colours and edge styles stay untouched.', ru: 'Перетаскивайте маркеры на холсте, чтобы преобразовать выбранные узлы (или концы выбранного ребра). Меняются только позиции; размеры, формы, подписи, цвета и стили рёбер не затрагиваются.' },
-        'gizmo_keys': { en: 'Keys 1–4 choose a tool; G shows/hides the gizmo. Drag the white pivot in Rotate/Scale/Rect to move the transform centre (double-click resets). Shift snaps rotation and locks proportions; Alt rect-stretches from the centre; Esc cancels; arrows nudge.', ru: 'Клавиши 1–4 выбирают инструмент; G показывает/скрывает гизмо. Белый пивот в Вращении/Масштабе/Рамке перетаскивается (двойной клик — сброс). Shift — шаг поворота и пропорции; Alt — рамка от центра; Esc — отмена; стрелки сдвигают выделение.' },
-        'gizmo_active': { en: 'Active: {mode} · {n} target node(s) · positions only', ru: 'Активно: {mode} · целевых узлов: {n} · только позиции' },
+        'gizmo_keys': { en: 'Keys 1–4 choose a tool; G shows/hides the gizmo. Drag the white pivot in Rotate/Scale/Rect to move the transform centre (double-click resets). Shift snaps rotation and locks proportions; Alt rect-stretches from the centre; Esc cancels; arrows nudge.', ru: 'Клавиши 1–4 выбирают инструмент; G показывает/скрывает гизмо. Белую точку опоры в Вращении/Масштабе/Рамке можно перетаскивать (двойной клик — сброс). Shift — шаг поворота и пропорции; Alt — рамка от центра; Esc — отмена; стрелки сдвигают выделение.' },
+        'gizmo_active': { en: 'Active: {mode} · {n} target node(s) · positions only', ru: 'Активно: {mode} · затронуто {n:node} · только позиции' },
         'gizmo_no_selection': { en: 'Select nodes (or an edge) in Select mode to transform their positions.', ru: 'Выделите узлы (или ребро) в режиме Выбора, чтобы изменить их позиции.' },
         'gizmo_hidden': { en: 'Gizmo hidden — press G or enable “Show transform gizmo”.', ru: 'Гизмо скрыто — нажмите G или включите «Показывать гизмо трансформации».' },
         // --- Edit tab: Node placement ---
-        'node_placement': { en: 'Node placement', ru: 'Размещение узла' },
+        'node_placement': { en: 'Node placement', ru: 'Размещение узлов' },
         'node_placement_sub': { en: '(values for newly added nodes)', ru: '(значения для новых узлов)' },
         'shape': { en: 'Shape', ru: 'Форма' },
         'color': { en: 'Color', ru: 'Цвет' },
         'width': { en: 'Width', ru: 'Ширина' },
         'height': { en: 'Height', ru: 'Высота' },
         'stroke_color': { en: 'Stroke color', ru: 'Цвет обводки' },
-        'stroke_size': { en: 'Stroke size', ru: 'Размер обводки' },
+        'stroke_size': { en: 'Stroke size', ru: 'Толщина обводки' },
         'stroke_style': { en: 'Stroke style', ru: 'Стиль обводки' },
         'type': { en: 'Type', ru: 'Тип' },
         'label_prefix': { en: 'Label prefix / exact label', ru: 'Префикс метки / точная метка' },
         'label_color': { en: 'Label color', ru: 'Цвет метки' },
         'label_font': { en: 'Label font', ru: 'Шрифт метки' },
         'label_size': { en: 'Label size', ru: 'Размер метки' },
-        'label_pos': { en: 'Label position', ru: 'Позиция метки' },
-        'inherit_defaults': { en: 'New nodes inherit Style-tab defaults (unset visual properties)', ru: 'Новые узлы наследуют умолчания вкладки Стиль (визуальные свойства не заданы)' },
-        'inherit_defaults_desc': { en: 'When on, new nodes have unset visual properties and follow Style-tab defaults dynamically. Turn off to bake the values above into each new node.', ru: 'Когда включено, новые узлы имеют незаданные визуальные свойства и динамически следуют умолчаниям вкладки Стиль. Выключите, чтобы зафиксировать значения выше в каждом новом узле.' },
+        'label_pos': { en: 'Label position', ru: 'Положение метки' },
+        'inherit_defaults': { en: 'New nodes inherit Style-tab defaults (unset visual properties)', ru: 'Новые узлы наследуют значения вкладки «Стиль» (визуальные свойства не заданы)' },
+        'inherit_defaults_desc': { en: 'When on, new nodes have unset visual properties and follow Style-tab defaults dynamically. Turn off to bake the values above into each new node.', ru: 'Когда включено, новые узлы не имеют собственных визуальных свойств и следуют значениям вкладки «Стиль». Выключите, чтобы закрепить значения выше за каждым новым узлом.' },
         'no_label': { en: 'Create nodes with no label (empty label — no text shown on canvas)', ru: 'Создавать узлы без метки (пустая метка — текст на холсте не отображается)' },
         'snap_grid': { en: 'Snap nodes to grid', ru: 'Привязка узлов к сетке' },
         'snap_x': { en: 'Snap X to other nodes', ru: 'Привязка X к другим узлам' },
@@ -1785,8 +1821,8 @@ const I18N = {
         'shape_circle': { en: 'Circle', ru: 'Круг' },
         'shape_square': { en: 'Square', ru: 'Квадрат' },
         'shape_diamond': { en: 'Diamond', ru: 'Ромб' },
-        'shape_triangleUp': { en: 'Triangle Up', ru: 'Треугольник вверх' },
-        'shape_triangleDown': { en: 'Triangle Down', ru: 'Треугольник вниз' },
+        'shape_triangleUp': { en: 'Triangle up', ru: 'Треугольник вверх' },
+        'shape_triangleDown': { en: 'Triangle down', ru: 'Треугольник вниз' },
         'shape_hexagon': { en: 'Hexagon', ru: 'Шестиугольник' },
         // --- Stroke styles ---
         'stroke_solid': { en: 'Solid', ru: 'Сплошная' },
@@ -1800,19 +1836,19 @@ const I18N = {
         'pos_left': { en: 'Left', ru: 'Слева' },
         'pos_right': { en: 'Right', ru: 'Справа' },
         // --- Edit tab: Edge defaults ---
-        'edge_defaults': { en: 'New edge defaults', ru: 'Умолчания для новых рёбер' },
+        'edge_defaults': { en: 'New edge defaults', ru: 'Новые рёбра по умолчанию' },
         'weight': { en: 'Weight', ru: 'Вес' },
         'label': { en: 'Label', ru: 'Метка' },
         'directed_edge': { en: 'Directed edge', ru: 'Направленное ребро' },
         'none_placeholder': { en: 'none', ru: 'нет' },
-        'auto_label_placeholder': { en: 'Auto: A, B, C…', ru: 'Авто: А, Б, В…' },
+        'auto_label_placeholder': { en: 'Auto: A, B, C…', ru: 'Авто: A, B, C…' },
         'optional_placeholder': { en: 'Optional', ru: 'Необязательно' },
         'end_placeholder': { en: 'end', ru: 'конец' },
         // --- Edit tab: Selection panel ---
         'selection': { en: 'Selection', ru: 'Выделение' },
         'nothing_selected': { en: 'Nothing selected.', ru: 'Ничего не выбрано.' },
         'adjacent': { en: 'Adjacent', ru: 'Смежные' },
-        'directed_adj_short': { en: 'Directed adj.', ru: 'Напр. смежн.' },
+        'directed_adj_short': { en: 'Directed adj.', ru: 'Смежные по выходу' },
         'clear_sel': { en: 'Clear', ru: 'Очистить' },
         'delete_sel': { en: 'Delete', ru: 'Удалить' },
         'applies_to_all': { en: 'applies to all', ru: 'применить ко всем' },
@@ -1832,62 +1868,62 @@ const I18N = {
         'y_coord': { en: 'Y', ru: 'Y' },
         'id_label': { en: 'ID', ru: 'ID' },
         // --- Style tab ---
-        'graph_defaults': { en: 'Graph defaults', ru: 'Умолчания графа' },
-        'labels_policy': { en: 'Labels policy', ru: 'Политика меток' },
+        'graph_defaults': { en: 'Graph defaults', ru: 'Граф по умолчанию' },
+        'labels_policy': { en: 'Labels policy', ru: 'Отображение меток' },
         'label_outline': { en: 'Label outline', ru: 'Контур меток' },
         'label_outline_mode_outline': { en: 'Outline', ru: 'Контур' },
         'label_outline_mode_plate': { en: 'Background plate', ru: 'Подложка' },
         'label_outline_mode_none': { en: 'None', ru: 'Без контура' },
         'label_outline_color': { en: 'Outline color', ru: 'Цвет контура' },
         'label_outline_width': { en: 'Outline width', ru: 'Толщина контура' },
-        'labels_auto': { en: 'Auto (hide when many nodes)', ru: 'Авто (скрывать при множестве узлов)' },
+        'labels_auto': { en: 'Auto (hide when many nodes)', ru: 'Авто (скрывать, если узлов много)' },
         'labels_on': { en: 'On (always show)', ru: 'Вкл (всегда показывать)' },
         'labels_off': { en: 'Off (never show)', ru: 'Выкл (никогда не показывать)' },
-        'labels_policy_desc': { en: 'Auto hides labels when more than 30 nodes exist. Imported QVGE graphs with no labels stay unlabeled.', ru: 'Авто скрывает метки при более 30 узлах. Импортированные графы QVGE без меток остаются без меток.' },
+        'labels_policy_desc': { en: 'Auto hides labels when more than 30 nodes exist. Imported QVGE graphs with no labels stay unlabeled.', ru: 'В режиме «Авто» метки скрываются, если узлов больше 30. Импортированные графы QVGE без подписей остаются без подписей.' },
         'edge_weight_viz': { en: 'Edge weight visualization', ru: 'Визуализация веса рёбер' },
         'ew_number': { en: 'Show weight as number', ru: 'Показывать вес как число' },
         'ew_color': { en: 'Color gradient by weight', ru: 'Цветовой градиент по весу' },
         'ew_width': { en: 'Edge width by weight', ru: 'Толщина ребра по весу' },
         'ew_none': { en: 'No weight visualization', ru: 'Без визуализации веса' },
-        'weight_range_min': { en: 'Weight range min', ru: 'Мин веса' },
-        'weight_range_max': { en: 'Weight range max', ru: 'Макс веса' },
-        'invert_note': { en: 'Min > max is valid — inverts the mapping (lower values give higher width/color).', ru: 'Мин > макс допустимо — инвертирует отображение (меньшие значения дают большую толщину/цвет).' },
+        'weight_range_min': { en: 'Weight range min', ru: 'Мин. вес' },
+        'weight_range_max': { en: 'Weight range max', ru: 'Макс. вес' },
+        'invert_note': { en: 'Min > max is valid — inverts the mapping (lower values give higher width/color).', ru: 'Мин. больше макс. — это допустимо: отображение инвертируется, и меньшие значения дают большую толщину и более яркий цвет.' },
         'corr_func': { en: 'Correlation function', ru: 'Функция корреляции' },
         'corr_linear': { en: 'Linear', ru: 'Линейная' },
         'corr_log': { en: 'Logarithmic', ru: 'Логарифмическая' },
         'corr_exp': { en: 'Exponential', ru: 'Экспоненциальная' },
         'corr_sqrt': { en: 'Square root', ru: 'Квадратный корень' },
-        'edge_width_min': { en: 'Edge width min', ru: 'Мин толщина' },
-        'edge_width_max': { en: 'Edge width max', ru: 'Макс толщина' },
+        'edge_width_min': { en: 'Edge width min', ru: 'Мин. толщина' },
+        'edge_width_max': { en: 'Edge width max', ru: 'Макс. толщина' },
         'gradient_low': { en: 'Gradient low color', ru: 'Цвет градиента (низ)' },
         'gradient_high': { en: 'Gradient high color', ru: 'Цвет градиента (верх)' },
-        'range_clamp_note': { en: 'In color/width mode, weights outside the range are clamped; the number is shown as text fallback.', ru: 'В режиме цвет/толщина веса вне диапазона ограничиваются; число показывается как текст.' },
+        'range_clamp_note': { en: 'In color/width mode, weights outside the range are clamped; the number is shown as text fallback.', ru: 'В режимах «Цвет» и «Толщина» веса вне диапазона ограничиваются его границами; число показывается как текст.' },
         'canvas_bg': { en: 'Canvas background', ru: 'Фон холста' },
-        'grid_minor_color': { en: 'Grid minor color', ru: 'Цвет малой сетки' },
-        'grid_minor_alpha': { en: 'Grid minor alpha', ru: 'Прозрачность малой сетки' },
-        'grid_major_color': { en: 'Grid major color', ru: 'Цвет главной сетки' },
-        'grid_major_alpha': { en: 'Grid major alpha', ru: 'Прозрачность главной сетки' },
-        'node_defaults': { en: 'Node defaults', ru: 'Умолчания узлов' },
-        'edge_defaults_style': { en: 'Edge defaults', ru: 'Умолчания рёбер' },
-        'apply_to_all_nodes': { en: 'Apply defaults to all nodes', ru: 'Применить умолчания ко всем узлам' },
-        'apply_to_sel_nodes': { en: 'Apply defaults to selected', ru: 'Применить умолчания к выделению' },
-        'apply_to_all_edges': { en: 'Apply defaults to all edges', ru: 'Применить умолчания ко всем рёбрам' },
-        'apply_to_sel_edges': { en: 'Apply defaults to selected', ru: 'Применить умолчания к выделению' },
-        'node_defaults_applied_sel': { en: 'Node defaults applied to {count} node(s)', ru: 'Умолчания узлов применены к {count} узл.' },
-        'edge_defaults_applied_sel': { en: 'Edge defaults applied to {count} edge(s)', ru: 'Умолчания рёбер применены к {count} рёбр.' },
+        'grid_minor_color': { en: 'Grid minor color', ru: 'Цвет мелкой сетки' },
+        'grid_minor_alpha': { en: 'Grid minor alpha', ru: 'Прозрачность мелкой сетки' },
+        'grid_major_color': { en: 'Grid major color', ru: 'Цвет крупной сетки' },
+        'grid_major_alpha': { en: 'Grid major alpha', ru: 'Прозрачность крупной сетки' },
+        'node_defaults': { en: 'Node defaults', ru: 'Узлы по умолчанию' },
+        'edge_defaults_style': { en: 'Edge defaults', ru: 'Рёбра по умолчанию' },
+        'apply_to_all_nodes': { en: 'Apply defaults to all nodes', ru: 'Применить ко всем узлам' },
+        'apply_to_sel_nodes': { en: 'Apply defaults to selected', ru: 'Применить к выделению' },
+        'apply_to_all_edges': { en: 'Apply defaults to all edges', ru: 'Применить ко всем рёбрам' },
+        'apply_to_sel_edges': { en: 'Apply defaults to selected', ru: 'Применить к выделению' },
+        'node_defaults_applied_sel': { en: 'Node defaults applied to {count:node}', ru: 'Значения по умолчанию применены: {count:node}' },
+        'edge_defaults_applied_sel': { en: 'Edge defaults applied to {count:edge}', ru: 'Значения по умолчанию применены: {count:edge}' },
         'no_nodes_selected': { en: 'No nodes selected', ru: 'Нет выбранных узлов' },
         'no_edges_selected': { en: 'No edges selected', ru: 'Нет выбранных рёбер' },
         'type_styles_sub': { en: '(per-type overrides)', ru: '(переопределения по типу)' },
-        'type_styles_desc': { en: 'Type a name, set style, then Save. Nodes with this type (and no per-node override) will use these visuals. Use "Clear per-node" to force type style to take effect.', ru: 'Введите имя, задайте стиль, затем Сохранить. Узлы этого типа (без покрывающих переопределений) будут использовать этот вид. Используйте "Очистить покр. узлы" для применения стиля типа.' },
-        'type_styles_desc_edge': { en: 'Type a name, set style, then Save. Edges with this type (and no per-edge override) will use these visuals.', ru: 'Введите имя, задайте стиль, затем Сохранить. Рёбра этого типа (без покрывающих переопределений) будут использовать этот вид.' },
+        'type_styles_desc': { en: 'Type a name, set style, then Save. Nodes with this type (and no per-node override) will use these visuals. Use "Clear per-node" to force type style to take effect.', ru: 'Введите имя, задайте стиль, затем Сохранить. Узлы этого типа (без своих переопределений) будут использовать этот вид. Используйте "Сбросить стиль узлов", чтобы применить стиль типа.' },
+        'type_styles_desc_edge': { en: 'Type a name, set style, then Save. Edges with this type (and no per-edge override) will use these visuals.', ru: 'Введите имя, задайте стиль, затем Сохранить. Рёбра этого типа (без своих переопределений) будут использовать этот вид.' },
         'enter_type_name': { en: 'Type', ru: 'Тип' },
         'enter_type_placeholder': { en: 'enter type name', ru: 'введите имя типа' },
         'save': { en: 'Save', ru: 'Сохранить' },
         'delete_btn': { en: 'Delete', ru: 'Удалить' },
-        'clear_per_node': { en: 'Clear per-node', ru: 'Очистить покр. узлы' },
-        'clear_per_node_title': { en: 'Clear per-node color/shape overrides so type style takes effect', ru: 'Очистить покрывающие цвет/форму узлов, чтобы стиль типа вступил в силу' },
-        'clear_per_edge': { en: 'Clear per-edge', ru: 'Очистить покр. рёбра' },
-        'clear_per_edge_title': { en: 'Clear per-edge color overrides so type style takes effect', ru: 'Очистить покрывающие цвета рёбер, чтобы стиль типа вступил в силу' },
+        'clear_per_node': { en: 'Clear per-node', ru: 'Сбросить стиль узлов' },
+        'clear_per_node_title': { en: 'Clear per-node color/shape overrides so type style takes effect', ru: 'Сбросить переопределения цвета и формы узлов, чтобы применился стиль типа' },
+        'clear_per_edge': { en: 'Clear per-edge', ru: 'Сбросить стиль рёбер' },
+        'clear_per_edge_title': { en: 'Clear per-edge color overrides so type style takes effect', ru: 'Сбросить переопределения цвета рёбер, чтобы применился стиль типа' },
         'node_type_styles': { en: 'Node type styles', ru: 'Стили типов узлов' },
         'edge_type_styles': { en: 'Edge type styles', ru: 'Стили типов рёбер' },
         // --- Algo tab ---
@@ -1915,7 +1951,7 @@ const I18N = {
         'attribute_updated': { en: 'Custom attribute updated', ru: 'Пользовательский атрибут изменён' },
         'attribute_deleted': { en: 'Custom attribute deleted', ru: 'Пользовательский атрибут удалён' },
         'import_export': { en: 'Import / export', ru: 'Импорт / экспорт' },
-        'append_mode': { en: 'Append to current graph (keep existing nodes/edges, styles, and background)', ru: 'Добавить к текущему графу (сохранить узлы/рёбра, стили и фон)' },
+        'append_mode': { en: 'Append to current graph (keep existing nodes/edges, styles, and background)', ru: 'Добавить к текущему графу (сохранить существующие узлы, рёбра, стили и фон)' },
         'export_json': { en: 'Export JSON', ru: 'Экспорт JSON' },
         'copy_json': { en: 'Copy JSON', ru: 'Копировать JSON' },
         'paste_json': { en: 'Paste JSON', ru: 'Вставить JSON' },
@@ -1941,23 +1977,23 @@ const I18N = {
         'export_nodes_csv': { en: 'Export Nodes CSV', ru: 'Экспорт узлов CSV' },
         'copy_nodes': { en: 'Copy Nodes', ru: 'Копировать узлы' },
         'paste_nodes': { en: 'Paste Nodes', ru: 'Вставить узлы' },
-        'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Используйте "Добавить" для слияния импортированных узлов/рёбер с текущим графом без изменения стилей и фона.' },
+        'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Включите «Добавить», чтобы влить импортированные узлы и рёбра в текущий граф без изменения стилей и фона.' },
         'layout_view': { en: 'Layout and view', ru: 'Раскладка и вид' },
-        'circle': { en: 'Circle', ru: 'Круг' },
+        'layout_circle': { en: 'Circle', ru: 'Круг' },
         'grid': { en: 'Grid', ru: 'Сетка' },
-        'relax': { en: 'Relax', ru: 'Расслабить' },
+        'relax': { en: 'Relax', ru: 'Силовая' },
         'fit_view': { en: 'Fit view', ru: 'Вписать' },
-        'center_on_sel': { en: 'Center on sel.', ru: 'Центр на выбр.' },
+        'center_on_sel': { en: 'Center on sel.', ru: 'Центрировать' },
         'center_on_sel_title': { en: 'Center the view on the single selected node', ru: 'Центрировать вид на выбранном узле' },
         'camera_position': { en: 'Camera position', ru: 'Позиция камеры' },
         'center_x': { en: 'Center X', ru: 'Центр X' },
         'center_y': { en: 'Center Y', ru: 'Центр Y' },
         'apply': { en: 'Apply', ru: 'Применить' },
         'fit': { en: 'Fit', ru: 'Вписать' },
-        'reset_100': { en: 'Reset 100%', ru: 'Сброс 100%' },
+        'reset_100': { en: 'Reset 100%', ru: 'Сброс до 100%' },
         'camera_width': { en: 'Width', ru: 'Ширина' },
         'camera_height': { en: 'Height', ru: 'Высота' },
-        'camera_hint': { en: 'Width/Height control zoom (smaller = zoomed in). Apply pans and zooms precisely.', ru: 'Ширина/Высота управляют зумом (меньше = ближе). Применить точно панорамирует и зумирует.' },
+        'camera_hint': { en: 'Width/Height control zoom (smaller = zoomed in). Apply pans and zooms precisely.', ru: 'Ширина и высота задают масштаб (меньше — ближе). «Применить» точно переносит и масштабирует вид.' },
         'reliability_options': { en: 'Reliability options', ru: 'Настройки надёжности' },
         'autosave': { en: 'Autosave to this browser', ru: 'Автосохранение в этом браузере' },
         'matrix_limit': { en: 'Matrix render limit', ru: 'Лимит отображения матрицы' },
@@ -1968,17 +2004,17 @@ const I18N = {
         'help_node': { en: '<b>Node:</b> choose Node mode, then click the canvas. In Node mode you can also drag existing nodes to reposition them (Blender-style).', ru: '<b>Узел:</b> выберите режим Узел, затем кликните по холсту. В режиме Узел можно также перетаскивать существующие узлы (в стиле Blender).' },
         'help_edge': { en: '<b>Edge:</b> choose Edge mode, then drag from a source node to a target node. On touch screens, tap a source node, then tap a target node.', ru: '<b>Ребро:</b> выберите режим Ребро, затем перетащите от исходного узла к целевому. На сенсорных экранах — нажмите исходный, затем целевой узел.' },
         'help_move_nodes': { en: '<b>Move nodes:</b> choose Select or Node mode and drag nodes.', ru: '<b>Перемещение узлов:</b> выберите режим Выбор или Узел и перетаскивайте узлы.' },
-        'help_gizmo': { en: '<b>Transform gizmo:</b> with nodes selected in Select mode, use the gizmo row (keys <span class="kbd">1</span>–<span class="kbd">4</span>) to translate, rotate, scale or rect-stretch the <i>positions</i> of the selected nodes — node sizes and styles never change. Drag the pivot dot in Rotate/Scale to move the rotation centre (double-click resets it). <span class="kbd">Shift</span> snaps rotation to 15° and locks scale/rect proportions; <span class="kbd">Alt</span> stretches the rect from its centre; <span class="kbd">Esc</span> cancels a gizmo drag. Arrow keys nudge the selection (Shift = bigger step; grid step when snap is on). Key <span class="kbd">G</span> shows/hides the gizmo.', ru: '<b>Гизмо трансформации:</b> когда узлы выбраны в режиме Выбор, строка гизмо (клавиши <span class="kbd">1</span>–<span class="kbd">4</span>) перемещает, вращает, масштабирует или растягивает рамкой <i>позиции</i> выбранных узлов — размеры и стили узлов не меняются. Точка пивота в Вращении/Масштабе перетаскивается, чтобы сместить центр (двойной клик — сброс). <span class="kbd">Shift</span> — шаг вращения 15° и фиксация пропорций; <span class="kbd">Alt</span> — растягивание рамки от центра; <span class="kbd">Esc</span> — отмена перетаскивания гизмо. Стрелки сдвигают выделение (Shift = больший шаг; при привязке — шаг сетки). Клавиша <span class="kbd">G</span> показывает/скрывает гизмо.' },
-        'help_move_canvas': { en: '<b>Move canvas:</b> choose Move mode, hold <span class="kbd">Space</span>, or drag with <span class="kbd">RMB</span>/<span class="kbd">MMB</span> in any mode. On touch screens, pinch to zoom and pan.', ru: '<b>Перемещение холста:</b> выберите режим Перемещение, удерживайте <span class="kbd">Пробел</span> или перетаскивайте <span class="kbd">ПКМ</span>/<span class="kbd">СКМ</span> в любом режиме. На сенсорных — щипок для зума и панорамирования.' },
-        'help_center_edge': { en: '<b>Center on edge:</b> in Move mode, click an edge — the view centers on whichever endpoint is further from the current view center.', ru: '<b>Центр на ребре:</b> в режиме Перемещение кликните по ребру — вид центрируется на более удалённой от центра конечной точке.' },
-        'help_adjust_numbers': { en: '<b>Adjust numbers:</b> hover any numeric field with a ⇆ handle and drag horizontally to change the value (Shift = fine). Type directly to enter an exact value.', ru: '<b>Изменение чисел:</b> наведите на числовое поле с рукояткой ⇆ и перетаскивайте по горизонтали (Shift = точно). Ввод напрямую для точного значения.' },
+        'help_gizmo': { en: '<b>Transform gizmo:</b> with nodes selected in Select mode, use the gizmo row (keys <span class="kbd">1</span>–<span class="kbd">4</span>) to translate, rotate, scale or rect-stretch the <i>positions</i> of the selected nodes — node sizes and styles never change. Drag the pivot dot in Rotate/Scale to move the rotation centre (double-click resets it). <span class="kbd">Shift</span> snaps rotation to 15° and locks scale/rect proportions; <span class="kbd">Alt</span> stretches the rect from its centre; <span class="kbd">Esc</span> cancels a gizmo drag. Arrow keys nudge the selection (Shift = bigger step; grid step when snap is on). Key <span class="kbd">G</span> shows/hides the gizmo.', ru: '<b>Гизмо трансформации:</b> когда узлы выбраны в режиме Выбор, строка гизмо (клавиши <span class="kbd">1</span>–<span class="kbd">4</span>) перемещает, вращает, масштабирует или растягивает рамкой <i>позиции</i> выбранных узлов — размеры и стили узлов не меняются. Точку опоры в Вращении/Масштабе можно перетащить, чтобы сместить центр (двойной клик — сброс). <span class="kbd">Shift</span> — шаг вращения 15° и фиксация пропорций; <span class="kbd">Alt</span> — растягивание рамки от центра; <span class="kbd">Esc</span> — отмена перетаскивания гизмо. Стрелки сдвигают выделение (Shift = больший шаг; при привязке — шаг сетки). Клавиша <span class="kbd">G</span> показывает/скрывает гизмо.' },
+        'help_move_canvas': { en: '<b>Move canvas:</b> choose Move mode, hold <span class="kbd">Space</span>, or drag with <span class="kbd">RMB</span>/<span class="kbd">MMB</span> in any mode. On touch screens, pinch to zoom and pan.', ru: '<b>Перемещение холста:</b> выберите режим «Перемещение», удерживайте <span class="kbd">Пробел</span> или перетаскивайте холст <span class="kbd">ПКМ</span>/<span class="kbd">СКМ</span> в любом режиме. На сенсорных экранах масштабируйте и панорамируйте щипком.' },
+        'help_center_edge': { en: '<b>Center on edge:</b> in Move mode, click an edge — the view centers on whichever endpoint is further from the current view center.', ru: '<b>Центрирование по ребру:</b> в режиме «Перемещение» нажмите на ребро — вид центрируется на том его конце, который дальше от центра экрана.' },
+        'help_adjust_numbers': { en: '<b>Adjust numbers:</b> hover any numeric field with a ⇆ handle and drag horizontally to change the value (Shift = fine). Type directly to enter an exact value.', ru: '<b>Изменение чисел:</b> наведите на числовое поле с рукояткой ⇆ и тяните по горизонтали, чтобы изменить значение (Shift — точнее). Точное значение можно ввести вручную.' },
         'help_matrix_editing': { en: '<b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.', ru: '<b>Редактирование матрицы:</b> кликните по ячейке один раз для выбора без вызова клавиатуры; кликните снова для редактирования. Это позволяет выбирать на мобильных без всплывающей клавиатуры.' },
-        'help_zoom': { en: '<b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.', ru: '<b>Зум:</b> колёсико мыши / трекпад над холстом или щипок на мобильных. Позицию камеры можно задать численно во вкладке Данные.' },
+        'help_zoom': { en: '<b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.', ru: '<b>Масштаб:</b> колесо мыши или трекпад над холстом, щипок на мобильных и планшетах. Положение камеры можно задать числами во вкладке «Данные».' },
         'help_exports': { en: '<b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.', ru: '<b>Экспорт:</b> каждый формат (JSON, DOT, GraphML, Рёбра/Матрица/Узлы CSV) поддерживает скачивание файла и копирование в буфер.' },
         'help_copy_paste': { en: '<b>Copy / paste selection:</b> <span class="kbd">Ctrl+C</span> copies the selected nodes with the edges between them, <span class="kbd">Ctrl+X</span> cuts, <span class="kbd">Ctrl+D</span> duplicates in place, <span class="kbd">Ctrl+V</span> pastes with an offset (also across tabs, via the system clipboard). Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.', ru: '<b>Копирование / вставка выделения:</b> <span class="kbd">Ctrl+C</span> копирует выбранные узлы с рёбрами между ними, <span class="kbd">Ctrl+X</span> вырезает, <span class="kbd">Ctrl+D</span> дублирует на месте, <span class="kbd">Ctrl+V</span> вставляет со смещением (также между вкладками, через системный буфер). Рёбра только с одним концом в выделении восстанавливаются при вставке, если второй конец существует — см. «Сохранять висящие рёбра» во вкладке Правка.' },
         'hotkeys': { en: 'Hotkeys', ru: 'Горячие клавиши' },
-        'reset_defaults': { en: 'Reset to defaults', ru: 'Сбросить к умолчаниям' },
-        'hotkeys_desc': { en: 'Click a key field, then press any key. Backspace/Delete clears. Escape cancels. Undo/Redo are prefixed with Ctrl/⌘ automatically.', ru: 'Кликните по полю клавиши, затем нажмите любую клавишу. Backspace/Delete очищает. Escape отменяет. Undo/Redo автоматически дополняются Ctrl/⌘.' },
+        'reset_defaults': { en: 'Reset to defaults', ru: 'Сбросить по умолчанию' },
+        'hotkeys_desc': { en: 'Click a key field, then press any key. Backspace/Delete clears. Escape cancels. Undo/Redo are prefixed with Ctrl/⌘ automatically.', ru: 'Нажмите на поле клавиши и введите новую комбинацию. Backspace/Delete очищает поле, Escape отменяет ввод. К «Отменить» и «Повторить» сочетание Ctrl/⌘ добавляется автоматически.' },
         'hk_gizmo_move': { en: 'Gizmo: translate', ru: 'Гизмо: перемещение' },
         'hk_gizmo_rotate': { en: 'Gizmo: rotate', ru: 'Гизмо: вращение' },
         'hk_gizmo_scale': { en: 'Gizmo: scale', ru: 'Гизмо: масштаб' },
@@ -1989,24 +2025,24 @@ const I18N = {
         'hk_node': { en: 'Node mode', ru: 'Режим узла' },
         'hk_edge': { en: 'Edge mode', ru: 'Режим ребра' },
         'hk_delete': { en: 'Delete selection', ru: 'Удалить выбранное' },
-        'hk_pan': { en: 'Pan (hold)', ru: 'Панор. (удерж.)' },
-        'hk_undo': { en: 'Undo (Ctrl+)', ru: 'Отменить (Ctrl+)' },
-        'hk_redo': { en: 'Redo (Ctrl+)', ru: 'Повторить (Ctrl+)' },
+        'hk_pan': { en: 'Pan (hold)', ru: 'Панорамирование (удерживать)' },
+        'hk_undo': { en: 'Undo (Ctrl+)', ru: 'Отменить (Ctrl/⌘)' },
+        'hk_redo': { en: 'Redo (Ctrl+)', ru: 'Повторить (Ctrl/⌘)' },
         'whats_improved': { en: "What's improved", ru: 'Что улучшено' },
-        'improved_1': { en: 'Single-file/offline preview: no external fonts, CSS, or icons required.', ru: 'Однофайловый/офлайн предпросмотр: не требуются внешние шрифты, CSS и иконки.' },
-        'improved_2': { en: 'Robust undo/redo, autosave, import validation, and safe CSV downloads.', ru: 'Надёжные undo/redo, автосохранение, валидация импорта и безопасное скачивание CSV.' },
-        'improved_3': { en: 'Pan/zoom canvas, snap-to-grid, fit view, and layout helpers.', ru: 'Панорамирование/зум холста, привязка к сетке, вписывание и помощники раскладки.' },
+        'improved_1': { en: 'Single-file/offline preview: no external fonts, CSS, or icons required.', ru: 'Один файл, работа офлайн: внешние шрифты, CSS и иконки не нужны.' },
+        'improved_2': { en: 'Robust undo/redo, autosave, import validation, and safe CSV downloads.', ru: 'Надёжные отмена и повтор, автосохранение, проверка импорта и безопасное скачивание CSV.' },
+        'improved_3': { en: 'Pan/zoom canvas, snap-to-grid, fit view, and layout helpers.', ru: 'Панорамирование и масштабирование холста, привязка к сетке, вписывание вида и раскладки.' },
         'improved_4': { en: 'CSV exports for edges, nodes, and adjacency matrix; copy-to-clipboard for every format.', ru: 'CSV-экспорт рёбер, узлов и матрицы смежности; копирование в буфер для каждого формата.' },
-        'improved_5': { en: 'Blender-style drag-to-change numeric inputs for node coordinates.', ru: 'Перетаскивание для изменения чисел в стиле Blender для координат узлов.' },
+        'improved_5': { en: 'Blender-style drag-to-change numeric inputs for node coordinates.', ru: 'Изменение координат узлов перетаскиванием чисел — как в Blender.' },
         'improved_6': { en: 'Configurable hotkeys, camera position inputs, and center-on-selection.', ru: 'Настраиваемые горячие клавиши, ввод позиции камеры и центрирование на выделении.' },
-        'improved_7': { en: 'Matrix cells require a selection click before editing — no more mobile-keyboard surprises.', ru: 'Ячейки матрицы требуют клика выбора перед редактированием — больше никаких сюрпризов с мобильной клавиатурой.' },
+        'improved_7': { en: 'Matrix cells require a selection click before editing — no more mobile-keyboard surprises.', ru: 'Ячейку матрицы сначала нужно выбрать кликом и только потом править — экранная клавиатура больше не выскакивает неожиданно.' },
         // --- Canvas HUD ---
         'ready': { en: 'Ready', ru: 'Готово' },
         'graph_canvas': { en: 'Interactive graph editor canvas', ru: 'Интерактивный холст редактора графов' },
         'zoom_in': { en: 'Zoom in', ru: 'Приблизить' },
         'zoom_out': { en: 'Zoom out', ru: 'Отдалить' },
-        'reset_zoom': { en: 'Reset zoom', ru: 'Сбросить зум' },
-        'empty_hint': { en: 'Choose Node, then click the canvas — or open Help to load the sample graph.', ru: 'Выберите Узел и нажмите на холст — либо откройте Справку, чтобы загрузить пример.' },
+        'reset_zoom': { en: 'Reset zoom', ru: 'Сбросить масштаб' },
+        'empty_hint': { en: 'Choose Node, then click the canvas — or open Help to load the sample graph.', ru: 'Выберите режим «Узел» и нажмите на холст — или откройте «Справку», чтобы загрузить пример.' },
         // --- Matrix panel ---
         'adjacency_matrix': { en: 'Adjacency matrix', ru: 'Матрица смежности' },
         'matrix_view': { en: 'Matrix view', ru: 'Вид матрицы' },
@@ -2014,13 +2050,13 @@ const I18N = {
         'set_dimensions': { en: 'Set dimensions', ru: 'Задать размерность' },
         'set_dim_title': { en: 'Resize matrix view without deleting or rearranging existing graph', ru: 'Изменить размер матрицы без удаления или перестановки графа' },
         'add_node': { en: 'Add node', ru: 'Добавить узел' },
-        'insert_before_sel': { en: 'Insert before selected', ru: 'Вставить перед выбр.' },
+        'insert_before_sel': { en: 'Insert before selected', ru: 'Вставить перед выделенными' },
         'insert_title': { en: 'Insert a new node before each selected node', ru: 'Вставить новый узел перед каждым выбранным' },
-        'sort_by_id': { en: 'Sort by ID', ru: 'Сорт. по ID' },
+        'sort_by_id': { en: 'Sort by ID', ru: 'Сортировать по ID' },
         'sort_by_id_title': { en: 'Sort nodes by ID', ru: 'Сортировать узлы по ID' },
-        'sort_by_label': { en: 'Sort by label', ru: 'Сорт. по метке' },
+        'sort_by_label': { en: 'Sort by label', ru: 'Сортировать по метке' },
         'sort_by_label_title': { en: 'Sort nodes by label', ru: 'Сортировать узлы по метке' },
-        'renumber_order': { en: 'Renumber order', ru: 'Перенумеровать' },
+        'renumber_order': { en: 'Renumber order', ru: 'Перенумеровать порядок' },
         'renumber_title': { en: 'Renumber node order sequentially (0,1,2,...) by current position', ru: 'Перенумеровать порядок узлов (0,1,2,...) по текущей позиции' },
         'clear_edges': { en: 'Clear edges', ru: 'Очистить рёбра' },
         'visible_range': { en: 'Visible range (by order):', ru: 'Видимый диапазон (по порядку):' },
@@ -2035,8 +2071,16 @@ const I18N = {
         'no_edges_yet': { en: 'No edges yet.', ru: 'Рёбер пока нет.' },
         'no_nodes_range': { en: 'No nodes in visible range.', ru: 'Нет узлов в видимом диапазоне.' },
         'no_edges_range': { en: 'No edges in visible range.', ru: 'Нет рёбер в видимом диапазоне.' },
-        'n_edges': { en: '{n} edge(s)', ru: '{n} ребр(о)' },
-        'n_edges_filtered': { en: '{n}/{m} edge(s) (filtered by visible range)', ru: '{n}/{m} ребр(о) (фильтр по диапазону)' },
+        'n_edges': { en: '{n:edge}', ru: '{n:edge}' },
+        // --- Matrix / edge-list notes (inline in rendering) ---
+        'matrix_note_hidden': { en: 'hidden ({n} of {total:node})', ru: 'скрыто ({n} из {total:node})' },
+        'matrix_note_range': { en: '{n}×{n} (range {start}–{end} of {total})', ru: '{n}×{n} (диапазон {start}–{end} из {total})' },
+        'matrix_note_end': { en: 'end', ru: 'конец' },
+        'matrix_note_view': { en: '{n}×{n} view of {total:node}', ru: '{n}×{n} — вид {total:node}' },
+        'edge_list_showing': { en: ' · showing {n}', ru: ' · показано {n}' },
+        'edge_list_more': { en: 'Show {n} more', ru: 'Показать ещё {n}' },
+        'visible_count': { en: '({n}/{total} visible)', ru: '({n}/{total} видимо)' },
+        'n_edges_filtered': { en: '{n}/{m} edges (filtered by visible range)', ru: '{n}/{m} рёбер (фильтр по диапазону)' },
         // --- Edge list ---
         'edge_list': { en: 'Edge list', ru: 'Список рёбер' },
         'col_num': { en: '#', ru: '№' },
@@ -2046,14 +2090,14 @@ const I18N = {
         'col_weight': { en: 'Weight', ru: 'Вес' },
         'col_label': { en: 'Label', ru: 'Метка' },
         'col_type': { en: 'Type', ru: 'Тип' },
-        'col_dir': { en: 'Dir', ru: 'Напр' },
+        'col_dir': { en: 'Dir', ru: 'Направл.' },
         'col_stroke': { en: 'Stroke', ru: 'Обводка' },
         'move_up': { en: 'Move up', ru: 'Переместить вверх' },
         'move_down': { en: 'Move down', ru: 'Переместить вниз' },
         'move_left': { en: 'Move left', ru: 'Переместить влево' },
         'move_right': { en: 'Move right', ru: 'Переместить вправо' },
         'matrix_node_hint': { en: 'Click to select node; click again to rename', ru: 'Нажмите, чтобы выбрать узел; повторно — чтобы переименовать' },
-        'matrix_cell_hint': { en: 'Click to select edge(s); click again to edit weights', ru: 'Нажмите, чтобы выбрать рёбра; повторно — чтобы изменить веса' },
+        'matrix_cell_hint': { en: 'Click to select the edges in this cell; click again to edit the weights', ru: 'Нажмите, чтобы выбрать рёбра в ячейке; нажмите повторно, чтобы изменить веса' },
         'edge_id_hint': { en: 'Click to select edge; edit to change ID', ru: 'Нажмите, чтобы выбрать ребро; измените поле, чтобы сменить ID' },
         'edge_from_hint': { en: 'Source: {node} — type a node label or ID to reassign', ru: 'Источник: {node} — введите метку или ID узла, чтобы переназначить' },
         'edge_to_hint': { en: 'Target: {node} — type a node label or ID to reassign', ru: 'Цель: {node} — введите метку или ID узла, чтобы переназначить' },
@@ -2061,9 +2105,9 @@ const I18N = {
         'edit_label': { en: 'Edit label', ru: 'Изменить метку' },
         'edit_type': { en: 'Edit type', ru: 'Изменить тип' },
         'edge_color': { en: 'Edge color', ru: 'Цвет ребра' },
-        'sort_edge_id': { en: 'Sort by ID', ru: 'Сорт. по ID' },
-        'sort_edge_from': { en: 'Sort by from', ru: 'Сорт. по источнику' },
-        'sort_edge_to': { en: 'Sort by to', ru: 'Сорт. по цели' },
+        'sort_edge_id': { en: 'Sort by ID', ru: 'Сортировать по ID' },
+        'sort_edge_from': { en: 'Sort by from', ru: 'Сортировать по источнику' },
+        'sort_edge_to': { en: 'Sort by to', ru: 'Сортировать по цели' },
         'sort_edge_id_title': { en: 'Sort edges by ID', ru: 'Сортировать рёбра по ID' },
         'sort_edge_from_title': { en: 'Sort edges by source node order', ru: 'Сортировать рёбра по порядку источника' },
         'sort_edge_to_title': { en: 'Sort edges by target node order', ru: 'Сортировать рёбра по порядку цели' },
@@ -2071,17 +2115,17 @@ const I18N = {
         'style_presets': { en: 'Style presets', ru: 'Пресеты стилей' },
         'save_from_sel': { en: 'Save from selection', ru: 'Сохранить из выделения' },
         'close': { en: 'Close', ru: 'Закрыть' },
-        'presets_desc': { en: 'Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.', ru: 'Кликните по пресету для применения стиля к выделению. Используйте "Сохранить из выделения" с выбранным узлом или ребром для создания нового пресета.' },
-        'no_presets': { en: 'No presets yet. Select a node or edge and click "Save from selection".', ru: 'Пресетов пока нет. Выберите узел или ребро и нажмите "Сохранить из выделения".' },
+        'presets_desc': { en: 'Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.', ru: 'Нажмите на пресет, чтобы применить его стиль к выделению. Чтобы создать новый пресет, выберите узел или ребро и нажмите «Сохранить из выделения».' },
+        'no_presets': { en: 'No presets yet. Select a node or edge and click "Save from selection".', ru: 'Пресетов пока нет. Выберите узел или ребро и нажмите «Сохранить из выделения».' },
         'delete_preset': { en: 'Delete preset', ru: 'Удалить пресет' },
         'apply_preset': { en: 'Apply preset to selection', ru: 'Применить пресет к выделению' },
         // --- Export modal ---
         'append': { en: 'Append', ru: 'Добавить' },
         'import_btn': { en: 'Import', ru: 'Импорт' },
         'download': { en: 'Download', ru: 'Скачать' },
-        'export_modal_desc': { en: 'Editable — modify the text, or paste content here when clipboard read is blocked, then click Import.', ru: 'Редактируемо — измените текст или вставьте содержимое здесь при блокировке чтения буфера, затем нажмите Импорт.' },
+        'export_modal_desc': { en: 'Editable — modify the text, or paste content here when clipboard read is blocked, then click Import.', ru: 'Текст можно править: измените его или вставьте содержимое здесь, если браузер блокирует чтение буфера, затем нажмите «Импорт».' },
         // --- Multi-select panel ---
-        'selected_n_m': { en: 'Selected {n} node(s) and {m} edge(s).', ru: 'Выбрано {n} узл(ов) и {m} ребр(о).' },
+        'selected_n_m': { en: 'Selected {n:node} and {m:edge}.', ru: 'Выбрано: {n:node} и {m:edge}.' },
         'copy_selected': { en: 'Copy', ru: 'Копировать' },
         'cut_selected': { en: 'Cut', ru: 'Вырезать' },
         'duplicate_selected': { en: 'Duplicate', ru: 'Дублировать' },
@@ -2100,10 +2144,10 @@ const I18N = {
         'undone': { en: 'Undone', ru: 'Отменено' },
         'redone': { en: 'Redone', ru: 'Повторено' },
         'node_added_circle': { en: 'Node added on circle', ru: 'Узел добавлен по кругу' },
-        'inserted_n_before': { en: 'Inserted {n} node(s) before selected, arranged in a circle', ru: 'Вставлено {n} узл(ов) перед выбранными по кругу' },
+        'inserted_n_before': { en: 'Inserted {n:node} before the selection, arranged in a circle', ru: 'Вставлено {n:node} перед выделением, по кругу' },
         'select_matrix_labels_first': { en: 'Select one or more matrix row or column labels first.', ru: 'Сначала выберите одну или несколько меток строк или столбцов матрицы.' },
-        'matrix_expanded': { en: 'Matrix expanded to {n}×{n}; existing graph preserved', ru: 'Матрица расширена до {n}×{n}; существующий граф сохранён' },
-        'matrix_view_set': { en: 'Matrix view set to {n}×{n}; existing {m}-node graph preserved', ru: 'Вид матрицы установлен {n}×{n}; существующий {m}-узл. граф сохранён' },
+        'matrix_expanded': { en: 'Matrix expanded to {n}×{n}; the existing graph is preserved', ru: 'Матрица расширена до {n}×{n}; существующий граф сохранён' },
+        'matrix_view_set': { en: 'Matrix view set to {n}×{n}; the existing graph of {m:node} is preserved', ru: 'Вид матрицы установлен {n}×{n}; существующий граф из {m:node} сохранён' },
         'matrix_unchanged': { en: 'Matrix set to {n}×{n}; graph unchanged', ru: 'Матрица установлена {n}×{n}; граф без изменений' },
         'node_order_renumbered': { en: 'Node order renumbered', ru: 'Порядок узлов перенумерован' },
         'nodes_sorted_id': { en: 'Nodes sorted by ID', ru: 'Узлы отсортированы по ID' },
@@ -2111,21 +2155,21 @@ const I18N = {
         'edges_sorted_id': { en: 'Edges sorted by ID', ru: 'Рёбра отсортированы по ID' },
         'edges_sorted_from': { en: 'Edges sorted by source', ru: 'Рёбра отсортированы по источнику' },
         'edges_sorted_to': { en: 'Edges sorted by target', ru: 'Рёбра отсортированы по цели' },
-        'deleted_n_m': { en: 'Deleted {n} node(s) and {m} edge(s)', ru: 'Удалено {n} узл(ов) и {m} ребр(о)' },
-        'selected_n_m': { en: 'Selected {n} node(s) and {m} edge(s)', ru: 'Выбрано {n} узл(ов) и {m} ребр(о)' },
-        'polygon_selected': { en: 'Polygon selected {n} node(s) and {m} edge(s)', ru: 'Многоугольником выбрано {n} узл(ов) и {m} ребр(о)' },
-        'polygon_needs_3': { en: 'Polygon needs at least 3 points', ru: 'Многоугольнику нужно минимум 3 точки' },
+        'deleted_n_m': { en: 'Deleted {n:node} and {m:edge}', ru: 'Удалено: {n:node} и {m:edge}' },
+        'selected_n_m': { en: 'Selected {n:node} and {m:edge}', ru: 'Выбрано: {n:node} и {m:edge}' },
+        'polygon_selected': { en: 'Polygon selected {n:node} and {m:edge}', ru: 'Многоугольником выбрано: {n:node} и {m:edge}' },
+        'polygon_needs_3': { en: 'Polygon needs at least 3 points', ru: 'Для многоугольника нужно минимум 3 точки' },
         'select_at_least_one': { en: 'Select at least one node first.', ru: 'Сначала выберите хотя бы один узел.' },
         'selected_adjacent': { en: 'Selected adjacent items', ru: 'Выбраны смежные элементы' },
         'selected_directed_adj': { en: 'Selected directed adjacent items', ru: 'Выбраны направленные смежные элементы' },
-        'imported': { en: '{label} imported', ru: '{label} импортирован' },
-        'imported_n_edges': { en: 'Imported {n} edge(s)', ru: 'Импортировано {n} ребр(о)' },
-        'imported_n_nodes': { en: 'Imported {n} node(s)', ru: 'Импортировано {n} узл(ов)' },
+        'imported': { en: '{label} imported', ru: '{label}: импорт выполнен' },
+        'imported_n_edges': { en: 'Imported {n:edge}', ru: 'Импортировано: {n:edge}' },
+        'imported_n_nodes': { en: 'Imported {n:node}', ru: 'Импортировано: {n:node}' },
         'nothing_to_copy': { en: 'Nothing to copy', ru: 'Нечего копировать' },
-        'copied_n_m': { en: 'Copied {n} node(s), {m} edge(s)', ru: 'Скопировано {n} узл(ов), {m} рёбер' },
-        'copied_edges': { en: 'Copied {n} edge(s)', ru: 'Скопировано {n} ребр(о)' },
-        'pasted_n_m': { en: 'Pasted {n} node(s), {m} edge(s)', ru: 'Вставлено {n} узл(ов), {m} ребр(о)' },
-        'pasted_edges': { en: 'Pasted {n} edge(s)', ru: 'Вставлено {n} ребр(о)' },
+        'copied_n_m': { en: 'Copied {n:node}, {m:edge}', ru: 'Скопировано: {n:node}, {m:edge}' },
+        'copied_edges': { en: 'Copied {n:edge}', ru: 'Скопировано: {n:edge}' },
+        'pasted_n_m': { en: 'Pasted {n:node}, {m:edge}', ru: 'Вставлено: {n:node}, {m:edge}' },
+        'pasted_edges': { en: 'Pasted {n:edge}', ru: 'Вставлено: {n:edge}' },
         'nodes_reversed': { en: 'Node order reversed', ru: 'Порядок узлов обращён' },
         'nodes_shuffled': { en: 'Node order shuffled', ru: 'Порядок узлов перемешан' },
         'no_edge_data': { en: 'No edge data', ru: 'Нет данных рёбер' },
@@ -2138,34 +2182,34 @@ const I18N = {
         'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
         'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },
         'copied': { en: 'Copied', ru: 'Скопировано' },
-        'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание "{name}" — если ничего не произошло, нажмите "Копировать"' },
+        'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание «{name}» — если ничего не произошло, нажмите «Копировать»' },
         'textarea_empty': { en: 'Textarea is empty', ru: 'Поле пусто' },
         'sample_loaded': { en: 'Sample graph loaded', ru: 'Загружен пример графа' },
         'replace_with_sample': { en: 'Replace current graph with a sample?', ru: 'Заменить текущий граф примером?' },
         'replace_with_import': { en: 'Replace current graph with imported file?', ru: 'Заменить текущий граф импортированным файлом?' },
         'clear_entire': { en: 'Clear the entire graph?', ru: 'Очистить весь граф?' },
         'clear_matrix_edges': { en: 'Clear all edges in the adjacency matrix?', ru: 'Очистить все рёбра в матрице смежности?' },
-        'node_defaults_applied': { en: 'Node defaults applied to all', ru: 'Умолчания узлов применены ко всем' },
-        'edge_defaults_applied': { en: 'Edge defaults applied to all', ru: 'Умолчания рёбер применены ко всем' },
-        'saved_style_type': { en: 'Saved style for type "{type}"', ru: 'Сохранён стиль для типа "{type}"' },
-        'deleted_style_type': { en: 'Deleted style for type "{type}"', ru: 'Удалён стиль для типа "{type}"' },
-        'cleared_overrides_n': { en: 'Cleared overrides on {n} node(s)', ru: 'Очищены переопределения на {n} узл(ах)' },
+        'node_defaults_applied': { en: 'Node defaults applied to all', ru: 'Значения по умолчанию применены ко всем узлам' },
+        'edge_defaults_applied': { en: 'Edge defaults applied to all', ru: 'Значения по умолчанию применены ко всем рёбрам' },
+        'saved_style_type': { en: 'Saved style for type "{type}"', ru: 'Сохранён стиль типа «{type}»' },
+        'deleted_style_type': { en: 'Deleted style for type "{type}"', ru: 'Удалён стиль типа «{type}»' },
+        'cleared_overrides_n': { en: 'Cleared style overrides: {n:node}', ru: 'Очищены переопределения: {n:node}' },
         'no_nodes_type': { en: 'No nodes with that type', ru: 'Нет узлов этого типа' },
-        'cleared_overrides_e': { en: 'Cleared overrides on {n} edge(s)', ru: 'Очищены переопределения на {n} ребр(ах)' },
+        'cleared_overrides_e': { en: 'Cleared style overrides: {n:edge}', ru: 'Очищены переопределения: {n:edge}' },
         'no_edges_type': { en: 'No edges with that type', ru: 'Нет рёбер этого типа' },
         'enter_type_first': { en: 'Enter a type name first', ru: 'Сначала введите имя типа' },
         'select_nodes_edges': { en: 'Select nodes or edges first', ru: 'Сначала выберите узлы или рёбра' },
         'select_node_edge': { en: 'Select a node or edge first', ru: 'Сначала выберите узел или ребро' },
-        'preset_applied': { en: 'Preset "{name}" applied to {what}', ru: 'Пресет "{name}" применён к {what}' },
-        'preset_saved': { en: 'Preset "{name}" saved', ru: 'Пресет "{name}" сохранён' },
+        'preset_applied': { en: 'Preset "{name}" applied to {what}', ru: 'Пресет «{name}» применён: {what}' },
+        'preset_saved': { en: 'Preset "{name}" saved', ru: 'Пресет «{name}» сохранён' },
         'preset_name': { en: 'Preset name:', ru: 'Имя пресета:' },
         'preset': { en: 'preset', ru: 'пресет' },
         'camera_updated': { en: 'Camera updated', ru: 'Камера обновлена' },
         'camera_reset': { en: 'Camera reset to 100%', ru: 'Камера сброшена на 100%' },
-        'centered_on': { en: 'Centered on {name}', ru: 'Центр на {name}' },
+        'centered_on': { en: 'Centered on {name}', ru: 'Вид центрирован на «{name}»' },
         'select_single_node': { en: 'Select a single node first to center on it', ru: 'Сначала выберите один узел для центрирования' },
         'hotkeys_reset': { en: 'Hotkeys reset to defaults', ru: 'Горячие клавиши сброшены' },
-        'source_selected': { en: 'Source {name} selected: tap target', ru: 'Источник {name} выбран: нажмите цель' },
+        'source_selected': { en: 'Source {name} selected: tap target', ru: 'Источник «{name}» выбран: нажмите целевой узел' },
         'source_tap_target': { en: 'Source selected. Tap a target node or empty canvas.', ru: 'Источник выбран. Нажмите целевой узел или пустой холст.' },
         'node_label_prompt': { en: 'Node label:', ru: 'Метка узла:' },
         'edge_weight_prompt': { en: 'Edge weight:', ru: 'Вес ребра:' },
@@ -2173,15 +2217,15 @@ const I18N = {
         'edge_weight_hint': { en: 'Leave empty to remove the weight.', ru: 'Оставьте пустым, чтобы убрать вес.' },
         'preset_name_hint': { en: 'Shown in the preset list.', ru: 'Отображается в списке пресетов.' },
         'drag_to_target': { en: 'Drag to a target node or empty canvas…', ru: 'Перетащите к целевому узлу или на пустой холст…' },
-        'pinch_zoom_pan': { en: 'Pinch: zoom and pan', ru: 'Щипок: зум и панор.' },
-        'pan_mode': { en: 'Pan mode', ru: 'Режим панор.' },
+        'pinch_zoom_pan': { en: 'Pinch: zoom and pan', ru: 'Щипок: масштаб и панорамирование' },
+        'pan_mode': { en: 'Pan mode', ru: 'Режим панорамирования' },
         'move_mode_drag': { en: 'Move mode: drag canvas to pan', ru: 'Режим перемещения: перетащите холст' },
         'node_mode_click': { en: 'Node mode: click canvas to add', ru: 'Режим узла: клик по холсту' },
         'edge_mode_drag': { en: 'Edge mode: drag to a node or empty canvas', ru: 'Режим ребра: перетащите к узлу или на пустой холст' },
         'select_mode': { en: 'Select mode', ru: 'Режим выбора' },
-        'select_tool_mode': { en: '{tool} select mode', ru: 'Режим выбора {tool}' },
-        'selection_tool': { en: '{tool} selection…', ru: 'Выделение {tool}…' },
-        'n_nodes_m_edges': { en: '{n} node(s) · {m} edge(s)', ru: '{n} узл(ов) · {m} ребр(о)' },
+        'select_tool_mode': { en: '{tool} select mode', ru: 'Режим выбора: {tool}' },
+        'selection_tool': { en: '{tool} selection…', ru: 'Выделение: {tool}…' },
+        'n_nodes_m_edges': { en: '{n:node} · {m:edge}', ru: '{n:node} · {m:edge}' },
         'no_start_node': { en: 'No start node.', ru: 'Нет стартового узла.' },
         'bfs_order': { en: 'BFS order:', ru: 'Порядок BFS:' },
         'dfs_order': { en: 'DFS order:', ru: 'Порядок DFS:' },
@@ -2189,7 +2233,7 @@ const I18N = {
         'components_n': { en: 'Weakly connected components ({n}):', ru: 'Слабо связные компоненты ({n}):' },
         'topo_order': { en: 'Topological order:', ru: 'Топологический порядок:' },
         'topo_cycle': { en: 'The directed graph has at least one cycle; no topological ordering exists.', ru: 'Ориентированный граф имеет цикл; топологическая сортировка невозможна.' },
-        'topo_undirected': { en: 'Topological sort requires all edges to be directed.', ru: 'Топологическая сортировка требует все рёбра направленные.' },
+        'topo_undirected': { en: 'Topological sort requires all edges to be directed.', ru: 'Топологическая сортировка возможна только для направленных рёбер.' },
         'graph_statistics': { en: 'Graph statistics', ru: 'Статистика графа' },
         'nodes_label': { en: 'Nodes:', ru: 'Узлы:' },
         'edges_label': { en: 'Edges:', ru: 'Рёбра:' },
@@ -2198,23 +2242,42 @@ const I18N = {
         'na': { en: 'n/a', ru: 'н/д' },
         'language_switched': { en: 'Language: English', ru: 'Язык: Русский' },
         // --- Audit fixes: import feedback, layout budget, autosave, a11y labels ---
-        'appended_n_m': { en: '{label} appended: +{n} nodes, +{m} edges', ru: '{label}: добавлено +{n} узлов, +{m} рёбер' },
-        'appended_n_m_discarded': { en: '{label} appended: +{n} nodes, +{m} edges (discarded {d} dangling)', ru: '{label}: добавлено +{n} узлов, +{m} рёбер (отброшено висячих: {d})' },
-        'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано {imported}; отброшено {dropped} — лимит документа {limit}' },
-        'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано {imported}; пропущено {skipped} записей с неизвестными узлами' },
-        'csv_nodes_replaced_edges': { en: 'Imported {n} node(s); {e} old edge(s) dropped with the replaced graph', ru: 'Импортировано {n} узл(ов); {e} старых рёбер удалено вместе с заменённым графом' },
+        'appended_n_m': { en: '{label} appended: {n:node}, {m:edge}', ru: '{label}: добавлено {n:node}, {m:edge}' },
+        'appended_n_m_discarded': { en: '{label} appended: {n:node}, {m:edge} (discarded {d:edge} with a missing endpoint)', ru: '{label}: добавлено {n:node}, {m:edge} (отброшено висячих рёбер: {d})' },
+        'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано: {imported}; отброшено: {dropped} — предел документа {limit}' },
+        'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано: {imported}; пропущено записей с неизвестными узлами: {skipped}' },
+        'csv_nodes_replaced_edges': { en: 'Imported {n:node}; {e} old edges were dropped together with the replaced graph', ru: 'Импортировано: {n:node}; вместе с заменённым графом удалено старых рёбер: {e}' },
         'matrix_cap_reached': { en: 'The matrix renders at most {cap}×{cap} nodes; the graph was not enlarged further.', ru: 'Матрица отображает не более {cap}×{cap} узлов; граф дальше не увеличивался.' },
-        'matrix_hidden_limit': { en: 'Matrix hidden for performance: {total} nodes exceed the limit {limit} (the matrix renders at most {cap}). Raise the limit up to {cap}, or use the edge list / Matrix CSV export.', ru: 'Матрица скрыта для производительности: {total} узлов превышают лимит {limit} (матрица отображается максимум для {cap}). Поднимите лимит до {cap} или используйте список рёбер / экспорт Matrix CSV.' },
-        'layout_force_reduced': { en: 'Large graph: force layout ran {iter} passes instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter} проходов вместо 180, чтобы не подвешивать интерфейс' },
+        'matrix_hidden_limit': { en: 'Matrix hidden for performance: {total:node} exceed the limit {limit} (the matrix renders at most {cap}). Raise the limit up to {cap}, or use the edge list / Matrix CSV export.', ru: 'Матрица скрыта для производительности: {total:node} превышают лимит {limit} (матрица отображается максимум для {cap}). Поднимите лимит до {cap} или используйте список рёбер или экспорт «Матрица CSV».' },
+        'layout_force_reduced': { en: 'Large graph: force layout ran {iter:pass} instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter:pass} вместо 180, чтобы не подвешивать интерфейс' },
         'autosave_failed': { en: 'Autosave failed: browser storage is full or unavailable. Export your graph to keep it.', ru: 'Автосохранение не удалось: хранилище браузера заполнено или недоступно. Экспортируйте граф.' },
         'matrix_corner': { en: 'Row and column nodes', ru: 'Узлы строк и столбцов' },
         'rows_reorder': { en: 'Reorder row', ru: 'Перестановка строки' },
         'dialog_ok': { en: 'OK', ru: 'ОК' },
         'dialog_cancel': { en: 'Cancel', ru: 'Отмена' },
         'dialog_confirm_title': { en: 'Confirm', ru: 'Подтверждение' },
+        'no_custom_attrs': { en: 'No custom attributes defined.', ru: 'Пользовательские атрибуты не заданы.' },
+        'err_not_node_clipboard': { en: 'the clipboard does not contain nodes', ru: 'в буфере обмена нет узлов' },
+        'err_invalid_graphml': { en: 'invalid XML/GraphML', ru: 'некорректный XML/GraphML' },
+        'camera_readout': { en: 'center ({x}, {y}) · zoom {zoom}%', ru: 'центр ({x}, {y}) · масштаб {zoom}%' },
+        'preset_what_nodes': { en: '{n:node}', ru: '{n:node}' },
+        'preset_what_edges': { en: '{n:edge}', ru: '{n:edge}' },
+        'list_and': { en: ' and ', ru: ' и ' },
     },
     // Текущий язык
     current: 'en',
+    // Форма счётного существительного для числа (ru: 1 узел, 2 узла, 5 узлов)
+    plural(count, forms) {
+        const n = Math.abs(Number(count) || 0);
+        if (this.current !== 'ru')
+            return n === 1 ? forms[0] : forms[1];
+        const mod10 = n % 10, mod100 = n % 100;
+        if (mod10 === 1 && mod100 !== 11)
+            return forms[0];
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+            return forms[1];
+        return forms[2];
+    },
     // Получить перевод строки по ключу
     t(key, params = {}) {
         const entry = this.strings[key] || this.dynamic[key];
@@ -2222,6 +2285,14 @@ const I18N = {
             return key;
         let s = entry[this.current] || entry.en || key;
         if (params) {
+            // {n:node} → "{n} узел/узла/узлов" — число и склонённое слово вместе.
+            s = s.replace(/\{(\w+):(\w+)\}/g, (_match, paramName, nounName) => {
+                const forms = (this.nouns[this.current] || this.nouns.en)[nounName];
+                const value = Number(params[paramName]);
+                if (!forms || !Number.isFinite(value))
+                    return String(params[paramName] ?? '');
+                return `${value} ${this.plural(value, forms)}`;
+            });
             for (const [k, v] of Object.entries(params)) {
                 s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), () => String(v));
             }
@@ -3779,6 +3850,13 @@ function renderCanvas() {
     resetSelectionMirror();
     endRenderPass();
 }
+// Internal selection-tool ids are not user copy: the status pill used to show
+// "Режим выбора rect" / "Выделение polygon…" for every non-default tool.
+function selectionToolLabel(tool) {
+    const key = 'sel_' + (tool === 'directedAdjacent' ? 'directed_adj' : tool);
+    const label = I18N.t(key);
+    return label === key ? tool : label;
+}
 function statusText() {
     if (edgeDraft)
         return I18N.t('drag_to_target');
@@ -3787,7 +3865,7 @@ function statusText() {
     if (gizmoDrag && gizmoDrag.readout)
         return gizmoDrag.readout;
     if (selectDraft)
-        return I18N.t('selection_tool', { tool: selectDraft.tool });
+        return I18N.t('selection_tool', { tool: selectionToolLabel(selectDraft.tool) });
     if (pinch)
         return I18N.t('pinch_zoom_pan');
     if (spaceDown)
@@ -3798,7 +3876,7 @@ function statusText() {
         return I18N.t('node_mode_click');
     if (state.mode === 'edge')
         return I18N.t('edge_mode_drag');
-    return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', { tool: state.selectTool });
+    return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', { tool: selectionToolLabel(state.selectTool) });
 }
 function applyCamera() {
     // Adopt any in-flight zoom preview before the camera changes underneath it
@@ -4642,7 +4720,7 @@ function renderSelectionPanel() {
     const nodeCount = state.selection?.nodes?.length || 0;
     const edgeCount = state.selection?.edges?.length || 0;
     if (!state.selected) {
-        host.innerHTML = '<span class="muted" data-i18n="nothing_selected">Nothing selected.</span>';
+        host.innerHTML = '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>';
         return;
     }
     if (nodeCount + edgeCount > 1) {
@@ -4664,17 +4742,17 @@ function renderSelectionPanel() {
           <div class="grid2">
             <label class="field" for="mulNodeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulNodeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList">${existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-            <label class="field" for="mulNodeOrder"><span data-i18n="order">Order</span> <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
-            <label class="field" for="mulNodeColor"><span data-i18n="color">Color</span> <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
-            <label class="field" for="mulNodeShape"><span data-i18n="shape">Shape</span> <select id="mulNodeShape">${shapeOptions}</select></label>
+            <label class="field" for="mulNodeOrder">${I18N.t('order')} <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
+            <label class="field" for="mulNodeColor">${I18N.t('color')} <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
+            <label class="field" for="mulNodeShape">${I18N.t('shape')} <select id="mulNodeShape">${shapeOptions}</select></label>
             <label class="field" for="mulNodeWidth"><span data-i18n="width">${I18N.t('width')}</span> <input id="mulNodeWidth" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
             <label class="field" for="mulNodeHeight"><span data-i18n="height">${I18N.t('height')}</span> <input id="mulNodeHeight" type="number" min="10" max="300" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
-            <label class="field" for="mulNodeStrokeColor"><span data-i18n="stroke_color">Stroke color</span> <input id="mulNodeStrokeColor" type="color" value="#e2e8f0"></label>
-            <label class="field" for="mulNodeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="mulNodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal"></label>
-            <label class="field" for="mulNodeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulNodeStrokeStyle">${strokeOptions}</select></label>
-            <label class="field" for="mulNodeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulNodeLabelColor" type="color" value="#f8fafc"></label>
-            <label class="field" for="mulNodeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulNodeLabelSize" type="number" min="4" max="72" value="13" inputmode="decimal"></label>
-            <label class="field" for="mulNodeLabelPos"><span data-i18n="label_pos">Label pos</span> <select id="mulNodeLabelPos">${labelPosOptions}</select></label>
+            <label class="field" for="mulNodeStrokeColor">${I18N.t('stroke_color')} <input id="mulNodeStrokeColor" type="color" value="#e2e8f0"></label>
+            <label class="field" for="mulNodeStrokeSize">${I18N.t('stroke_size')} <input id="mulNodeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.2" inputmode="decimal"></label>
+            <label class="field" for="mulNodeStrokeStyle">${I18N.t('stroke_style')} <select id="mulNodeStrokeStyle">${strokeOptions}</select></label>
+            <label class="field" for="mulNodeLabelColor">${I18N.t('label_color')} <input id="mulNodeLabelColor" type="color" value="#f8fafc"></label>
+            <label class="field" for="mulNodeLabelSize">${I18N.t('label_size')} <input id="mulNodeLabelSize" type="number" min="4" max="72" value="13" inputmode="decimal"></label>
+            <label class="field" for="mulNodeLabelPos">${I18N.t('label_pos')} <select id="mulNodeLabelPos">${labelPosOptions}</select></label>
             <label class="field" for="mulNodeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulNodeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
           </div>
           <div class="row" style="margin-top:6px">
@@ -4689,12 +4767,12 @@ function renderSelectionPanel() {
             <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-            <label class="field" for="mulEdgeDirected"><span data-i18n="directed">Directed</span> <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
-            <label class="field" for="mulEdgeColor"><span data-i18n="color">Color</span> <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
-            <label class="field" for="mulEdgeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
-            <label class="field" for="mulEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
-            <label class="field" for="mulEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
-            <label class="field" for="mulEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
+            <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
+            <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
+            <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
+            <label class="field" for="mulEdgeStrokeStyle">${I18N.t('stroke_style')} <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
+            <label class="field" for="mulEdgeLabelColor">${I18N.t('label_color')} <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
+            <label class="field" for="mulEdgeLabelSize">${I18N.t('label_size')} <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
             <label class="field" for="mulEdgeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulEdgeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
           </div>
           <div class="row" style="margin-top:6px">
@@ -5147,13 +5225,13 @@ function renderMatrixAndList() {
         // clamped slice: "300 nodes" for a 350-node graph (with advice to raise a
         // limit that could not help) was misleading.
         $('#matrixHost').innerHTML = '<div class="tiny muted">' + esc(I18N.t('matrix_hidden_limit', { total, limit, cap: MATRIX_MAX_NODES })) + '</div>';
-        note.textContent = I18N.current === 'ru' ? `скрыто (${n} из ${total} узлов)` : `hidden (${n} of ${total} nodes)`;
+        note.textContent = I18N.t('matrix_note_hidden', { n, total });
     }
     else {
         $('#matrixHost').innerHTML = adjacencyMatrixHtml(visNodes);
         note.textContent = rangeActive
-            ? `${n}×${n} (` + (I18N.current === 'ru' ? 'диапазон ' : 'range ') + `${vr.start >= 0 ? vr.start : 0}–${vr.end >= 0 ? vr.end : (I18N.current === 'ru' ? 'конец' : 'end')} ` + (I18N.current === 'ru' ? 'из' : 'of') + ` ${total})`
-            : n === total ? `${n}×${n}` : `${n}×${n} ` + (I18N.current === 'ru' ? `вид ${total} узлов` : `view of ${total} nodes`);
+            ? I18N.t('matrix_note_range', { n, start: vr.start >= 0 ? vr.start : 0, end: vr.end >= 0 ? vr.end : I18N.t('matrix_note_end'), total })
+            : n === total ? `${n}×${n}` : I18N.t('matrix_note_view', { n, total });
     }
     $('#edgeListHost').innerHTML = edgeListHtml();
 }
@@ -5245,7 +5323,7 @@ function edgeListHtml() {
             ? I18N.t('n_edges_filtered', { n: shown, m: total })
             : I18N.t('n_edges', { n: total });
         const pageNote = rendered < shown
-            ? (I18N.current === 'ru' ? ` · показано ${rendered}` : ` · showing ${rendered}`)
+            ? I18N.t('edge_list_showing', { n: rendered })
             : '';
         $('#edgeListNote').textContent = filterNote + pageNote;
     }
@@ -5278,9 +5356,7 @@ function edgeListHtml() {
     if (renderedEdges.length < filteredEdges.length) {
         const remaining = filteredEdges.length - renderedEdges.length;
         const pageSize = configuredEdgeListPageSize();
-        const label = I18N.current === 'ru'
-            ? `Показать ещё ${Math.min(pageSize, remaining)}`
-            : `Show ${Math.min(pageSize, remaining)} more`;
+        const label = I18N.t('edge_list_more', { n: Math.min(pageSize, remaining) });
         parts.push(`<div class="row" style="justify-content:center;padding:8px"><button id="btnEdgeListMore" class="btn small">${label}</button></div>`);
     }
     return parts.join('');
@@ -6512,7 +6588,7 @@ async function pasteFromSystemClipboard() {
         // If it looks like a graph (has nodes), import as append?
         if (data && Array.isArray(data.nodes)) {
             // Use append import logic as fallback
-            toast(I18N.t('paste_failed', { msg: 'Not a node clipboard' }));
+            toast(I18N.t('paste_failed', { msg: I18N.t('err_not_node_clipboard') }));
             return;
         }
         toast(I18N.t('clipboard_empty'));
@@ -9139,7 +9215,7 @@ function parseDirection(raw) {
 function parseGraphml(text) {
     const doc = new DOMParser().parseFromString(text, 'application/xml');
     if (doc.querySelector('parsererror'))
-        throw new Error('Invalid XML/GraphML');
+        throw new Error(I18N.t('err_invalid_graphml'));
     // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
     const keyNames = {};
     const keyDefaultsByFor = { graph: {}, node: {}, edge: {} };
@@ -9852,7 +9928,7 @@ function syncCameraInputs() {
         hEl.value = Math.round(state.viewBox.h);
     const readout = $('#cameraReadout');
     if (readout) {
-        const text = (I18N.current === 'ru' ? 'центр' : 'center') + ` (${Math.round(cx)}, ${Math.round(cy)}) · ` + (I18N.current === 'ru' ? 'зум' : 'zoom') + ` ${(1000 / state.viewBox.w * 100).toFixed(0)}%`;
+        const text = I18N.t('camera_readout', { x: Math.round(cx), y: Math.round(cy), zoom: (1000 / state.viewBox.w * 100).toFixed(0) });
         if (readout.textContent !== text)
             readout.textContent = text;
     }
@@ -10033,8 +10109,15 @@ function unlockMatrixInput(el) {
 // === Style tab: populate + sync default controls ===
 function populateStyleSelects() {
     const shapeSel = $('#defNodeShape');
-    if (shapeSel && !shapeSel.options.length) {
-        shapeSel.innerHTML = NODE_SHAPES.map(s => `<option value="${s}">${{ circle: 'Circle', square: 'Square', diamond: 'Diamond', triangleUp: 'Triangle Up', triangleDown: 'Triangle Down', hexagon: 'Hexagon' }[s]}</option>`).join('');
+    // Labels must be resolved through I18N — a hardcoded English map kept this
+    // select in English forever, and it is repopulated on a language switch
+    // because syncStyleControls() runs from the i18n-change handler.
+    if (shapeSel) {
+        const wanted = NODE_SHAPES.map(s => `<option value="${s}">${I18N.t('shape_' + s)}</option>`).join('');
+        if (shapeSel.innerHTML !== wanted)
+            shapeSel.innerHTML = wanted;
+        if (shapeSel.value !== state.settings.nodeDefaults?.shape)
+            shapeSel.value = state.settings.nodeDefaults?.shape ?? '';
     }
     const fontList = $('#fontList');
     if (fontList && !fontList.options.length) {
@@ -10598,10 +10681,10 @@ function applyPresetToSelection(idx) {
     saveSoon();
     const what = [];
     if (p.node && nodeIds.length)
-        what.push(I18N.current === 'ru' ? `${nodeIds.length} узл(ов)` : `${nodeIds.length} node${nodeIds.length === 1 ? '' : 's'}`);
+        what.push(I18N.t('preset_what_nodes', { n: nodeIds.length }));
     if (p.edge && edgeIds.length)
-        what.push(I18N.current === 'ru' ? `${edgeIds.length} ребр(о)` : `${edgeIds.length} edge${edgeIds.length === 1 ? '' : 's'}`);
-    toast(I18N.t('preset_applied', { name: p.name, what: what.join(I18N.current === 'ru' ? ' и ' : ' and ') }));
+        what.push(I18N.t('preset_what_edges', { n: edgeIds.length }));
+    toast(I18N.t('preset_applied', { name: p.name, what: what.join(I18N.t('list_and')) }));
 }
 async function savePresetFromSelection() {
     const nodeIds = state.selection?.nodes || [];
@@ -10691,7 +10774,7 @@ function renderCustomAttributes() {
     if (!host)
         return;
     if (!state.customAttributes.length) {
-        host.innerHTML = `<div class="tiny muted">${esc(I18N.current === 'ru' ? 'Пользовательские атрибуты не заданы.' : 'No custom attributes defined.')}</div>`;
+        host.innerHTML = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
         return;
     }
     host.innerHTML = state.customAttributes.map((attribute, index) => `

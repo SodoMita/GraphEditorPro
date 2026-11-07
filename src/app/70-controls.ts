@@ -76,7 +76,7 @@
     if(hEl && document.activeElement !== hEl && hEl.value !== String(Math.round(state.viewBox.h))) hEl.value = Math.round(state.viewBox.h);
     const readout = $('#cameraReadout');
     if(readout){
-      const text = (I18N.current === 'ru' ? 'центр' : 'center') + ` (${Math.round(cx)}, ${Math.round(cy)}) · ` + (I18N.current === 'ru' ? 'зум' : 'zoom') + ` ${(1000/state.viewBox.w*100).toFixed(0)}%`;
+      const text = I18N.t('camera_readout', {x: Math.round(cx), y: Math.round(cy), zoom: (1000/state.viewBox.w*100).toFixed(0)});
       if(readout.textContent !== text) readout.textContent = text;
     }
   }
@@ -221,8 +221,13 @@
   // === Style tab: populate + sync default controls ===
   function populateStyleSelects(){
     const shapeSel = $('#defNodeShape');
-    if(shapeSel && !shapeSel.options.length){
-      shapeSel.innerHTML = NODE_SHAPES.map(s => `<option value="${s}">${{circle:'Circle',square:'Square',diamond:'Diamond',triangleUp:'Triangle Up',triangleDown:'Triangle Down',hexagon:'Hexagon'}[s]}</option>`).join('');
+    // Labels must be resolved through I18N — a hardcoded English map kept this
+    // select in English forever, and it is repopulated on a language switch
+    // because syncStyleControls() runs from the i18n-change handler.
+    if(shapeSel){
+      const wanted = NODE_SHAPES.map(s => `<option value="${s}">${I18N.t('shape_' + s)}</option>`).join('');
+      if(shapeSel.innerHTML !== wanted) shapeSel.innerHTML = wanted;
+      if(shapeSel.value !== state.settings.nodeDefaults?.shape) shapeSel.value = state.settings.nodeDefaults?.shape ?? '';
     }
     const fontList = $('#fontList');
     if(fontList && !fontList.options.length){
@@ -606,9 +611,9 @@
     }
     pushHistory('apply preset'); queueRender(false); saveSoon();
     const what = [];
-    if(p.node && nodeIds.length) what.push(I18N.current === 'ru' ? `${nodeIds.length} узл(ов)` : `${nodeIds.length} node${nodeIds.length===1?'':'s'}`);
-    if(p.edge && edgeIds.length) what.push(I18N.current === 'ru' ? `${edgeIds.length} ребр(о)` : `${edgeIds.length} edge${edgeIds.length===1?'':'s'}`);
-    toast(I18N.t('preset_applied', {name: p.name, what: what.join(I18N.current==='ru'?' и ':' and ')}));
+    if(p.node && nodeIds.length) what.push(I18N.t('preset_what_nodes', {n: nodeIds.length}));
+    if(p.edge && edgeIds.length) what.push(I18N.t('preset_what_edges', {n: edgeIds.length}));
+    toast(I18N.t('preset_applied', {name: p.name, what: what.join(I18N.t('list_and'))}));
   }
   async function savePresetFromSelection(){
     const nodeIds = state.selection?.nodes || [];
@@ -682,7 +687,7 @@
     const host = $('#customAttributesList');
     if(!host) return;
     if(!state.customAttributes.length){
-      host.innerHTML = `<div class="tiny muted">${esc(I18N.current === 'ru' ? 'Пользовательские атрибуты не заданы.' : 'No custom attributes defined.')}</div>`;
+      host.innerHTML = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
       return;
     }
     host.innerHTML = state.customAttributes.map((attribute, index) => `

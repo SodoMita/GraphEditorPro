@@ -985,7 +985,7 @@
       // If it looks like a graph (has nodes), import as append?
       if(data && Array.isArray(data.nodes)){
         // Use append import logic as fallback
-        toast(I18N.t('paste_failed', {msg: 'Not a node clipboard'}));
+        toast(I18N.t('paste_failed', {msg: I18N.t('err_not_node_clipboard')}));
         return;
       }
       toast(I18N.t('clipboard_empty'));

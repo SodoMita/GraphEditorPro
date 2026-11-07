@@ -63,13 +63,13 @@
         <div class="brand-badge">G</div>
         <span class="brand-name" data-i18n="brand_name">Graph Editor Pro</span>
       </div>
-      <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" />
+      <input id="docTitleInput" class="title-input" value="untitled" aria-label="Document name" data-i18n-aria-label="group_doc_name" />
       <button id="btnMenu" class="btn icon menu-btn" title="Open panels" data-i18n-title="menu_open" aria-label="Open panels" data-i18n-aria-label="menu_open" aria-controls="toolsPanel" aria-expanded="false">
         <svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
       </button>
 
-      <div class="toolbar" aria-label="Document commands">
-        <div class="view-toggle" role="group" aria-label="View switcher">
+      <div class="toolbar" aria-label="Document commands" data-i18n-aria-label="group_doc_commands">
+        <div class="view-toggle" role="group" aria-label="View switcher" data-i18n-aria-label="group_view_switcher">
           <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
           <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
           <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
@@ -103,7 +103,7 @@
       <aside id="toolsPanel" class="panel sidebar" role="region" aria-label="Tools and properties" data-i18n-aria-label="tools_panel" aria-hidden="true" inert>
         <div class="sheet-grabber" aria-hidden="true"></div>
         <div class="sheet-nav-row">
-          <nav class="tabs" role="tablist" aria-label="Tool panels">
+          <nav class="tabs" role="tablist" aria-label="Tool panels" data-i18n-aria-label="group_tool_panels">
             <button id="tab-edit" class="tab" data-tab="edit" role="tab" aria-selected="false" aria-controls="panel-edit" title="Edit" data-i18n-title="tab_edit" aria-label="Edit" data-i18n-aria-label="tab_edit"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-edit"></use></svg></button>
             <button id="tab-style" class="tab" data-tab="style" role="tab" aria-selected="false" aria-controls="panel-style" title="Style" data-i18n-title="tab_style" aria-label="Style" data-i18n-aria-label="tab_style"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-palette"></use></svg></button>
             <button id="tab-algo" class="tab" data-tab="algo" role="tab" aria-selected="false" aria-controls="panel-algo" title="Algorithms" data-i18n-title="tab_algo" aria-label="Algorithms" data-i18n-aria-label="tab_algo"><svg class="tab-ico ui-icon" aria-hidden="true"><use href="#icon-algorithm"></use></svg></button>
@@ -134,7 +134,7 @@
                   </label>
                   <label class="field" for="nodeShape"><span data-i18n="shape">Shape</span>
                     <select id="nodeShape">
-                      <option value="circle" data-i18n="circle">Circle</option>
+                      <option value="circle" data-i18n="shape_circle">Circle</option>
                       <option value="square" data-i18n="shape_square">Square</option>
                       <option value="diamond" data-i18n="shape_diamond">Diamond</option>
                       <option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option>
@@ -192,7 +192,7 @@
                 <span data-i18n="behavior_grid">Behavior &amp; grid</span>
               </summary>
               <div class="sec-body">
-                <label class="chk" for="optInheritDefaults" title="New nodes inherit Style-tab defaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">Inherit defaults</span></label>
+                <label class="chk" for="optInheritDefaults" title="New nodes inherit Style-tab defaults" data-i18n-title="inherit_defaults"><input id="optInheritDefaults" type="checkbox" checked /> <span data-i18n="inherit_defaults">Inherit defaults</span></label>
                 <p class="tiny muted" style="margin:2px 0 6px"><span data-i18n="inherit_defaults_desc">When on, new nodes have unset visual properties and follow Style-tab defaults dynamically.</span></p>
                 <label class="chk" for="optNoLabel"><input id="optNoLabel" type="checkbox" /> <span data-i18n="no_label">No label</span></label>
                 <label class="chk" for="optSnap"><input id="optSnap" type="checkbox" /> <span data-i18n="snap_grid">Snap grid</span></label>
@@ -346,10 +346,10 @@
                   </select>
                 </label>
                 <div id="edgeWeightRangeSection" class="grid2" style="margin-top:6px">
-                  <label class="field" for="defEdgeWeightMin">Weight min <input id="defEdgeWeightMin" type="number" step="any" inputmode="decimal"></label>
-                  <label class="field" for="defEdgeWeightMax">Weight max <input id="defEdgeWeightMax" type="number" step="any" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWeightMin"><span data-i18n="weight_min">Weight min</span> <input id="defEdgeWeightMin" type="number" step="any" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWeightMax"><span data-i18n="weight_max">Weight max</span> <input id="defEdgeWeightMax" type="number" step="any" inputmode="decimal"></label>
                 </div>
-                <label class="field col" for="defEdgeWeightCorr" style="margin-top:6px">Correlation function
+                <label class="field col" for="defEdgeWeightCorr" style="margin-top:6px"><span data-i18n="corr_func">Correlation function</span>
                   <select id="defEdgeWeightCorr">
                     <option value="linear" data-i18n="corr_linear">Linear</option>
                     <option value="log" data-i18n="corr_log">Logarithmic</option>
@@ -358,19 +358,19 @@
                   </select>
                 </label>
                 <div id="edgeWidthSection" class="grid2" style="margin-top:6px">
-                  <label class="field" for="defEdgeWidthMin">Width min <input id="defEdgeWidthMin" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
-                  <label class="field" for="defEdgeWidthMax">Width max <input id="defEdgeWidthMax" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWidthMin"><span data-i18n="edge_width_min">Width min</span> <input id="defEdgeWidthMin" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
+                  <label class="field" for="defEdgeWidthMax"><span data-i18n="edge_width_max">Width max</span> <input id="defEdgeWidthMax" type="number" min="0.1" max="50" step="0.1" inputmode="decimal"></label>
                 </div>
                 <div id="edgeColorSection" class="grid2" style="margin-top:6px">
-                  <label class="field" for="defEdgeWeightColorLow">Low color <input id="defEdgeWeightColorLow" type="color"></label>
-                  <label class="field" for="defEdgeWeightColorHigh">High color <input id="defEdgeWeightColorHigh" type="color"></label>
+                  <label class="field" for="defEdgeWeightColorLow"><span data-i18n="gradient_low">Low color</span> <input id="defEdgeWeightColorLow" type="color"></label>
+                  <label class="field" for="defEdgeWeightColorHigh"><span data-i18n="gradient_high">High color</span> <input id="defEdgeWeightColorHigh" type="color"></label>
                 </div>
                 <div class="grid2" style="margin-top:6px">
-                  <label class="field" for="canvasBgColor"><span data-i18n="canvas_bg">Canvas bg</span> <input id="canvasBgColor" type="color" value="#020617"></label>
-                  <label class="field" for="gridMinorColor"><span data-i18n="grid_minor_color">Grid minor</span> <input id="gridMinorColor" type="color" value="#94a3b8"></label>
-                  <label class="field" for="gridMinorAlpha"><span data-i18n="grid_minor_alpha">Minor alpha</span> <input id="gridMinorAlpha" type="number" min="0" max="1" step="0.01" value="0.105" inputmode="decimal"></label>
-                  <label class="field" for="gridMajorColor"><span data-i18n="grid_major_color">Grid major</span> <input id="gridMajorColor" type="color" value="#94a3b8"></label>
-                  <label class="field" for="gridMajorAlpha"><span data-i18n="grid_major_alpha">Major alpha</span> <input id="gridMajorAlpha" type="number" min="0" max="1" step="0.01" value="0.16" inputmode="decimal"></label>
+                  <label class="field" for="canvasBgColor"><span data-i18n="canvas_bg">Canvas background</span> <input id="canvasBgColor" type="color" value="#020617"></label>
+                  <label class="field" for="gridMinorColor"><span data-i18n="grid_minor_color">Grid minor color</span> <input id="gridMinorColor" type="color" value="#94a3b8"></label>
+                  <label class="field" for="gridMinorAlpha"><span data-i18n="grid_minor_alpha">Grid minor alpha</span> <input id="gridMinorAlpha" type="number" min="0" max="1" step="0.01" value="0.105" inputmode="decimal"></label>
+                  <label class="field" for="gridMajorColor"><span data-i18n="grid_major_color">Grid major color</span> <input id="gridMajorColor" type="color" value="#94a3b8"></label>
+                  <label class="field" for="gridMajorAlpha"><span data-i18n="grid_major_alpha">Grid major alpha</span> <input id="gridMajorAlpha" type="number" min="0" max="1" step="0.01" value="0.16" inputmode="decimal"></label>
                 </div>
               </div>
             </details>
@@ -433,7 +433,7 @@
                 </label>
                 <div class="grid2" style="margin-top:6px">
                   <label class="field" for="ntsColor"><span data-i18n="color">Color</span> <input id="ntsColor" type="color" value="#0ea5e9"></label>
-                  <label class="field" for="ntsShape"><span data-i18n="shape">Shape</span> <select id="ntsShape"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="circle" data-i18n="circle">Circle</option><option value="square" data-i18n="shape_square">Square</option><option value="diamond" data-i18n="shape_diamond">Diamond</option><option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option><option value="triangleDown" data-i18n="shape_triangleDown">Triangle Down</option><option value="hexagon" data-i18n="shape_hexagon">Hexagon</option></select></label>
+                  <label class="field" for="ntsShape"><span data-i18n="shape">Shape</span> <select id="ntsShape"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="circle" data-i18n="shape_circle">Circle</option><option value="square" data-i18n="shape_square">Square</option><option value="diamond" data-i18n="shape_diamond">Diamond</option><option value="triangleUp" data-i18n="shape_triangleUp">Triangle Up</option><option value="triangleDown" data-i18n="shape_triangleDown">Triangle Down</option><option value="hexagon" data-i18n="shape_hexagon">Hexagon</option></select></label>
                   <label class="field" for="ntsWidth"><span data-i18n="width">Width</span> <input id="ntsWidth" type="number" min="10" max="300" step="1" value="50"></label>
                   <label class="field" for="ntsHeight"><span data-i18n="height">Height</span> <input id="ntsHeight" type="number" min="10" max="300" step="1" value="50"></label>
                   <label class="field" for="ntsStrokeColor"><span data-i18n="stroke_color">Stroke</span> <input id="ntsStrokeColor" type="color" value="#e2e8f0"></label>
@@ -486,12 +486,12 @@
                 <select id="algoStart"></select>
               </label>
               <div class="grid2" style="margin-top:8px">
-                <button id="btnBfs" class="btn">BFS</button>
-                <button id="btnDfs" class="btn">DFS</button>
-                <button id="btnDijkstra" class="btn">Dijkstra</button>
-                <button id="btnComponents" class="btn">Components</button>
-                <button id="btnTopo" class="btn">Topological</button>
-                <button id="btnStats" class="btn">Stats</button>
+                <button id="btnBfs" class="btn" data-i18n-title="algo_bfs_title">BFS</button>
+                <button id="btnDfs" class="btn" data-i18n-title="algo_dfs_title">DFS</button>
+                <button id="btnDijkstra" class="btn" data-i18n-title="algo_dijkstra_title">Dijkstra</button>
+                <button id="btnComponents" class="btn" data-i18n="algo_components">Components</button>
+                <button id="btnTopo" class="btn" data-i18n="algo_topological">Topological</button>
+                <button id="btnStats" class="btn" data-i18n="algo_stats">Stats</button>
               </div>
             </div>
             <div class="section flat">
@@ -582,13 +582,13 @@
                 <span data-i18n="layout_view">Layout and view</span>
               </summary>
               <div class="sec-body">
-                <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher">
+                <div class="view-toggle sheet-toggle" role="group" aria-label="View switcher" data-i18n-aria-label="group_view_switcher">
                   <button class="btn small symbol-only active" data-view-btn="graph" title="Show/hide graph canvas" data-i18n-title="view_graph_title" aria-label="Show/hide graph canvas" data-i18n-aria-label="view_graph_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-sample"></use></svg></button>
                   <button class="btn small symbol-only active" data-view-btn="matrix" title="Show/hide adjacency matrix" data-i18n-title="view_matrix_title" aria-label="Show/hide adjacency matrix" data-i18n-aria-label="view_matrix_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-matrix"></use></svg></button>
                   <button class="btn small symbol-only active" data-view-btn="edges" title="Show/hide edge list" data-i18n-title="view_edges_title" aria-label="Show/hide edge list" data-i18n-aria-label="view_edges_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-list"></use></svg></button>
                 </div>
                 <div class="grid2" style="margin-top:8px">
-                  <button id="btnLayoutCircle" class="btn" data-i18n="circle">Circle</button>
+                  <button id="btnLayoutCircle" class="btn" data-i18n="layout_circle">Circle</button>
                   <button id="btnLayoutGrid" class="btn" data-i18n="grid">Grid</button>
                   <button id="btnLayoutForce" class="btn" data-i18n="relax">Relax</button>
                   <button id="btnFit" class="btn" data-i18n="fit_view">Fit view</button>
@@ -730,17 +730,17 @@
 
           <div class="canvas-hud">
             <div id="statusPill" class="status-pill" data-i18n="ready">Ready</div>
-            <div id="statsPill" class="status-pill">0 nodes · 0 edges</div>
+            <div id="statsPill" class="status-pill">0 · 0</div>
           </div>
 
-          <div class="zoom-controls" role="group" aria-label="Zoom controls">
+          <div class="zoom-controls" role="group" aria-label="Zoom controls" data-i18n-aria-label="group_zoom_controls">
             <button id="btnZoomIn" class="btn icon" title="Zoom in" data-i18n-title="zoom_in" aria-label="Zoom in" data-i18n-aria-label="zoom_in"><svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
             <button id="btnZoomOut" class="btn icon" title="Zoom out" data-i18n-title="zoom_out" aria-label="Zoom out" data-i18n-aria-label="zoom_out"><svg class="ui-icon" aria-hidden="true"><use href="#icon-minus"></use></svg></button>
             <button id="btnZoomReset" class="btn" title="Reset zoom" data-i18n-title="reset_zoom">100%</button>
           </div>
 
           <!-- Floating tool switcher — always thumb-reachable -->
-          <div class="mode-fab" role="group" aria-label="Edit modes">
+          <div class="mode-fab" role="group" aria-label="Edit modes" data-i18n-aria-label="group_edit_modes">
             <button id="modeSelect" class="btn seg active" data-mode="select" title="Select and move nodes" data-i18n-title="mode_select_title" aria-label="Select and move nodes" data-i18n-aria-label="mode_select_title" aria-pressed="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cursor"></use></svg></button>
             <button id="modeMove" class="btn seg" data-mode="move" title="Pan the canvas by dragging" data-i18n-title="mode_move_title" aria-label="Pan the canvas by dragging" data-i18n-aria-label="mode_move_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-hand"></use></svg></button>
             <button id="modeNode" class="btn seg" data-mode="node" title="Click canvas to add nodes" data-i18n-title="mode_node_title" aria-label="Click canvas to add nodes" data-i18n-aria-label="mode_node_title" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-node"></use></svg></button>
@@ -749,12 +749,12 @@
 
           <!-- Floating edge tools — a row of their own above the mode switcher,
                visible in Edge mode, mirroring the selection tools row. -->
-          <div class="edge-tools" role="group" aria-label="Edge tools">
+          <div class="edge-tools" role="group" aria-label="Edge tools" data-i18n-aria-label="group_edge_tools">
             <button id="btnFlipEdges" class="btn" title="Flip selected directed edges" data-i18n-title="flip_selected_edges" aria-label="Flip selected directed edges" data-i18n-aria-label="flip_selected_edges" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-flip-edge"></use></svg></button>
           </div>
 
           <!-- Floating selection tools — icon-only, visible in Select mode -->
-          <div class="sel-tools" role="group" aria-label="Selection tools">
+          <div class="sel-tools" role="group" aria-label="Selection tools" data-i18n-aria-label="group_selection_tools">
             <button class="btn" data-selecttool="single" title="Single select" data-i18n-title="sel_single" aria-label="Single select" data-i18n-aria-label="sel_single" aria-pressed="false">
               <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3.5 2.5v11.2l3.4-2.9 2.2 4.4 1.9-.9-2.2-4.4H13z" fill="currentColor"/></svg>
             </button>
