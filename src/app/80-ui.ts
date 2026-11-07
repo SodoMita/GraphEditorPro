@@ -397,22 +397,9 @@
         }
       }
     });
-    // Handle system paste event (Ctrl+V via browser) when app has focus and clipboard contains our JSON
-    document.addEventListener('paste', async ev => {
-      // If user is editing a matrix cell label, let the default paste happen
-      const target = ev.target as HTMLElement;
-      const isEditingInput = target && (target as any).matches && (target as HTMLElement).matches('input:not([readonly]), textarea, [contenteditable]');
-      if(isEditingInput) return;
-      try {
-        const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
-        if(!text) return;
-        const data = JSON.parse(text);
-        if(data && data.type === 'graph-editor-clipboard'){
-          ev.preventDefault();
-          handlePasteEventWithData(data);
-        }
-      } catch {}
-    });
+    // Graph paste uses the explicit shortcuts/buttons above. Leave native
+    // paste events alone so MMB selection paste cannot create graph nodes,
+    // while paste into text fields keeps its normal browser behavior.
     $('#btnFlipEdges').addEventListener('click', flipSelectedEdges);
     $('#btnExportJson').addEventListener('click', exportJson);
     $('#btnImportJson').addEventListener('click', () => chooseImport('json', 'application/json,.json'));
