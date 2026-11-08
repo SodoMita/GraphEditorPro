@@ -524,12 +524,14 @@
   // structural or in-place edit bumps it) and selection is compared per
   // element; what a revision cannot see is a setting edited directly in place,
   // which is exactly the style/default surface. Every repaint request therefore
-  // advances the style revision. `paintOnly` is for the handful of callers that
-  // genuinely changed no visual input (a viewport resize, a camera commit): the
-  // pass may then take its cheap path, which only re-confirms selection and
-  // re-syncs the layers' bookkeeping.
-  function queueRender(includeMatrix=false, includeSidebar=false, paintOnly=false){
-    if(!paintOnly){ invalidateStyleCache(); documentDirty = true; }
+  // advances the style revision.
+  //
+  // There is deliberately no "nothing changed" request: a caller that changed
+  // no visual input should not ask for a pass at all (the camera and the grid
+  // have their own writers — see `applyCamera`/`updateGridBackground`, which the
+  // resize and zoom paths call directly).
+  function queueRender(includeMatrix=false, includeSidebar=false){
+    invalidateStyleCache(); documentDirty = true;
     if(includeMatrix){ clearTimeout(matrixTimer); matrixTimer = setTimeout(renderMatrixAndList, 60); }
     if(renderQueued) return;
     renderQueued = true;
@@ -566,10 +568,11 @@
   // Whether the document may have changed since the last pass. A repaint
   // request is a declaration that *something* changed, and the document is the
   // common case (edits are written straight into node/edge objects, which no
-  // revision counter can observe). Only a repaint that explicitly changed no
-  // visual input may leave this false, and only then can a pass skip elements:
-  // its element-level checks (geometry signature, label text, selection) would
-  // otherwise be the only thing keeping the DOM honest.
+  // revision counter can observe). A pass may only skip elements while this is
+  // false, and it is cleared at the end of every full pass, so the flag means
+  // "nothing has been edited since the layers were last painted" — exactly the
+  // condition each element's own checks (geometry signature, label text,
+  // selection) need in order to be trusted.
   let documentDirty = true;
   // Which *kind* of style work that revision implies. A node colour edit must
   // repaint nodes, but edges keep their own colours and widths: repainting them
@@ -622,18 +625,6 @@
     $('#canvasWrap').classList.toggle('empty', paths === 0);
     setText($('#statsPill'), I18N.t('n_nodes_m_edges', {n: state.nodes.length, m: state.edges.length}));
     setText($('#statusPill'), statusText());
-    // A pass with nothing new to paint: same document revision, same style
-    // revision, and a selection the layer passes already know about. This is
-    // what a viewport resize, an orientation toggle or a deferred confirmation
-    // render costs — the camera, the pills and the gizmo, but no per-element
-    // walk of either layer. (`queueRender` only allows this when its caller
-    // declared it changed no visual input.)
-    if(lastPaintedGen >= 0 && !documentDirty && paintedStyleRev === styleRev && selectionIsPainted()){
-      renderGizmo();
-      updateUndoRedo();
-      endRenderPass();
-      return;
-    }
     // A new generation: from here on, every element the passes touch is stamped
     // with this number, and anything still carrying an older one is out of date.
     renderGen++;
@@ -647,23 +638,10 @@
     paintedEdgeStyle = styleFingerprint('edge');
     documentDirty = false;
     lastPaintedGen = renderGen;
-    paintedSelection = selectionSignature();
     renderGizmo();
     updateUndoRedo();
     resetSelectionMirror();
     endRenderPass();
-  }
-  // The selection the layers were last painted with, as an order-independent
-  // signature: two passes that agree on it cannot need a selection write.
-  let paintedSelection = '\u0000';
-  function selectionSignature(){
-    const sel = state.selection;
-    const nodes = (sel && sel.nodes) || [], edges = (sel && sel.edges) || [];
-    if(!nodes.length && !edges.length) return '';
-    return [...nodes].sort().join('\u0001') + '\u0002' + [...edges].sort().join('\u0001');
-  }
-  function selectionIsPainted(){
-    return paintedSelection === selectionSignature();
   }
   // Internal selection-tool ids are not user copy: the status pill used to show
   // "Режим выбора rect" / "Выделение polygon…" for every non-default tool.

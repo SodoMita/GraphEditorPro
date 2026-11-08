@@ -115,16 +115,20 @@ function dispatchPointer(window, target, type, options) {
 const nodeShape = (document, id) => document.getElementById('node-' + id).querySelector('.node-shape');
 const edgeLine = (document, id) => document.getElementById('edge-' + id).querySelector('.edge-line');
 
-test('a repaint with no change writes nothing to the scene', async t => {
+test('a repaint that changes nothing still writes nothing to the scene', async t => {
   const { window, document } = await setup(t);
   const before = snapshot(document);
-  // The label policy select is the cheapest way to request a render pass.
+  // The label policy select is the cheapest way to request a render pass. The
+  // request itself marks the document dirty, so the pass walks both layers and
+  // it is the per-element checks (geometry signature, label text, paint stamp,
+  // selection) that have to conclude "nothing to write" — this test is what
+  // holds those checks to their word.
   document.querySelector('#defLabelsPolicy').dispatchEvent(new window.Event('change', { bubbles: true }));
   await nextFrame(window);
   assert.equal(snapshot(document), before, 'an unchanged document repaints to an identical layer');
 
-  // And again, three times in a row: the pass must stay a no-op, not just the
-  // first time (a stale stamp would show up on the second pass).
+  // And again, three times in a row: every pass must stay a no-op, not just the
+  // first (a stale stamp would show up on the second pass).
   for (let i = 0; i < 3; i++) {
     document.querySelector('#defLabelsPolicy').dispatchEvent(new window.Event('change', { bubbles: true }));
     await nextFrame(window);

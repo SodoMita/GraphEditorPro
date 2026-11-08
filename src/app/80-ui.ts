@@ -613,11 +613,7 @@
       }
     });
     window.addEventListener('keyup', ev => { if(matchesHotkey(ev, 'pan')){ spaceDown = false; setStatusOnly(); } });
-    // A resize changes the viewport, not the document: the camera, the grid and
-    // the gizmo must follow the new canvas rect, while every node and edge
-    // already has the attributes this pass would write. It is the one repaint
-    // request that can say so.
-    window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false, false, true); });
+    window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
     // Перерисовать матрицу и канвас при смене языка
     window.addEventListener('i18n-change', () => {
       // Обновить state.title если он дефолтный
