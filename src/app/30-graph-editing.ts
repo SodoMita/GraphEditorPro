@@ -141,6 +141,10 @@
   }
   function syncSelectionDom(){
     const ns = selectedNodeIds(), es = selectedEdgeIds();
+    // One decision for the whole update, for the same reason the render pass
+    // makes one: the edge accent look is chosen for the new selection as a
+    // whole, so a single frame can never be half outlined and half coloured.
+    const bulk = accentBudgetExceeded(ns.size, es.size);
     // The ids whose DOM state actually changes. They are collected here anyway
     // (the loops below already compare the two sets) and handed to the matrix
     // mirror, whose grid is n² inputs: a press must not touch every one of them.
@@ -168,7 +172,7 @@
         toggleClass(el, 'selected', false);
         // Dropping the accent is all it takes: the edge line and its tip were
         // never repainted, so the arrow keeps the colour the render gave it.
-        syncEdgeSelRing(el, edgeById(id), null, null, false);
+        syncEdgeAccent(el, edgeById(id), edgeRenderStyleC(edgeById(id)), null, false, bulk);
       }
     }
     for(const id of es){
@@ -180,7 +184,7 @@
         // Stroke width of the accent follows the edge's own width, so the
         // merged style is read here (and cached for this pass) only for the
         // edges whose selection actually changed.
-        if(e) syncEdgeSelRing(el, e, edgeRenderStyleC(e), null, true);
+        if(e) syncEdgeAccent(el, e, edgeRenderStyleC(e), null, true, bulk);
       }
     }
     domSelectedNodes = ns; domSelectedEdges = es;
