@@ -150,24 +150,24 @@
       position:absolute; inset:0; pointer-events:none;
       background-color:#020617;
     }
-    /* #cameraStage is the ONLY compositor-promoted layer on the canvas path,
-       sized to 200% x 200% (a 0.5x-viewport overscan apron on all 4 sides) so
-       pan and zoom-out previews immediately reveal pre-rasterized off-screen
-       nodes, edges, labels and grid without blank margins. If a marathon pan
-       or deep zoom-out approaches the outer edge of the 2x2 apron,
-       applyPreviewCamera() re-bases #cameraLayer once so newly exposed world
-       areas stay populated continuously. #cameraLayer must NOT carry
-       will-change:transform, otherwise Chromium re-rasterizes its nested layer
-       on every stage scale frame. */
-    .camera-stage{
-      position:absolute; left:-50%; top:-50%; width:200%; height:200%;
-      transform-origin:0 0;
-      will-change:transform; transform:matrix(1, 0, 0, 1, 0, 0);
-    }
+    /* ONE paint system on the canvas path. Gesture previews and the committed
+       camera are the same single `transform` write on #cameraLayer (see the
+       camera note in 20-rendering.ts). There is deliberately NO CSS-transformed
+       wrapper above the <svg> and no second camera surface: two systems that
+       update on two clocks can display one frame that mixes the new camera with
+       a stale second layer, which reads as the view jumping and then returning.
+       That bug has been fixed three times (af90851, aa081b7, 12df425) — do not
+       reintroduce a second surface here to make previews cheaper. */
     #graphCanvas{
-      position:relative; width:100%; height:100%; display:block; background:transparent;
+      position:absolute; inset:0; display:block; background:transparent;
       touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
       overscroll-behavior:none;
+      /* Gesture previews move this element with a CSS transform (see the camera
+         note in 20-rendering.ts). Without its own compositing layer Chromium
+         re-rasterizes the whole SVG on every preview frame: measured at 1200
+         nodes, task 664ms vs 168ms and 19 vs 2 dropped frames over one pan.
+         will-change is what buys the layer; contain:paint alone buys nothing. */
+      will-change:transform; transform-origin:0 0;
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     #gridRect{pointer-events:none}

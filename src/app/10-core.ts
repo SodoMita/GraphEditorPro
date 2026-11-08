@@ -170,16 +170,14 @@
 
   const canvasWrap = $('#canvasWrap');
   const svg = $('#graphCanvas');
-  const cameraStage = $('#cameraStage');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
   function isCanvasOverlayControl(target: any){
     return Boolean(target?.closest?.('.canvas-hud, .zoom-controls, .mode-fab, .edge-tools, .sel-tools, .gizmo-tools'));
   }
-  // Active pan/zoom/pinch previews transform #cameraStage (HTML compositor
-  // layer above <svg>) so scaling never triggers SVG layout or vector tile
-  // re-rasterization; committed cameras rest as a vector matrix on #cameraLayer
-  // above a fixed reference viewBox.
+  // #cameraLayer carries ONE matrix for both gesture previews and the
+  // committed camera, above a fixed reference viewBox on the <svg> — a camera
+  // change is a single attribute write, never a second paint system.
   const cameraLayer = $('#cameraLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
