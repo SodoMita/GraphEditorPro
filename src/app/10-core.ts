@@ -168,13 +168,18 @@
     return typeof result === 'string' ? result : null;
   }
 
+  const canvasWrap = $('#canvasWrap');
   const svg = $('#graphCanvas');
+  const cameraStage = $('#cameraStage');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
-  // Navigation moves only the camera group, which carries the composed camera
-  // matrix for previews and commits alike and is the single compositor-promoted
-  // layer on the canvas path. The scene group is an ordinary child holding the
-  // grid and the graph; nothing applies a transform to it.
+  function isCanvasOverlayControl(target: any){
+    return Boolean(target?.closest?.('.canvas-hud, .zoom-controls, .mode-fab, .edge-tools, .sel-tools, .gizmo-tools'));
+  }
+  // Active pan/zoom/pinch previews transform #cameraStage (HTML compositor
+  // layer above <svg>) so scaling never triggers SVG layout or vector tile
+  // re-rasterization; committed cameras rest as a vector matrix on #cameraLayer
+  // above a fixed reference viewBox.
   const cameraLayer = $('#cameraLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
@@ -263,15 +268,16 @@
   let syncUiHooks: (() => void) | null = null;
 
   function snapshot(){
-    flushZoomPreview(); // never persist a camera that is still in compositor preview
+    const vb = currentCamera(); // persist active camera without forcing a mid-gesture SVG commit
     return JSON.stringify({
       title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, nextNode:state.nextNode, nextEdge:state.nextEdge,
-      nodes:state.nodes, edges:state.edges, customAttributes:state.customAttributes, settings:state.settings, viewBox:state.viewBox,
+      nodes:state.nodes, edges:state.edges, customAttributes:state.customAttributes, settings:state.settings, viewBox:vb,
       // Preserve user focus across undo/redo so editing the same object stays ergonomic
       selected:state.selected, selection:state.selection
     });
   }
   function applySnapshot(raw){
+    cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
     const sane = sanitizeState(data);

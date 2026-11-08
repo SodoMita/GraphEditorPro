@@ -529,73 +529,157 @@
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: selectionToolLabel(state.selectTool)});
   }
   function applyCamera(){
-    // Adopt any in-flight zoom preview before the camera changes underneath it
-    // (fit view, camera inputs, undo, import, ...).
-    flushZoomPreview();
-    applyCameraTransform(state.viewBox);
-    updateGridBackground(state.viewBox);
+    // Adopt any pending wheel/button zoom preview into state.viewBox before
+    // rendering so unrelated re-renders (e.g. changing default node color or
+    // editing labels during the 220ms zoom debounce) never snap back to the
+    // pre-zoom camera. Explicit camera-replacement callers (fitView,
+    // resetCamera, setCameraFromInputs, undo/redo, import) cancel first.
+    if(zoomPreview){
+      state.viewBox = {...zoomPreview.preview};
+      cancelZoomPreview();
+      saveSoon();
+    }
+    const viewport = applyCameraTransform(state.viewBox);
+    updateGridBackground(state.viewBox, viewport);
     syncCameraInputs();
     // Gizmo handles are sized in screen pixels, so a committed zoom change
-    // re-sizes them (signature-guarded: a no-op when nothing changed).
+    // re-sizes them in place (signature-guarded: a no-op when nothing changed).
     renderGizmo();
   }
 
   // === Camera ===
-  // The root viewBox is a fixed world reference frame, written once. The logical
-  // camera (state.viewBox) is applied as a matrix on the promoted #cameraLayer,
-  // which holds the grid and the whole graph scene. Gesture previews and
-  // committed cameras therefore share ONE mechanism: the composited property
-  // simply moves, and a commit is the same write with the final value (a no-op
-  // when the preview already reached it), so there is no mechanism handoff — and
-  // no handoff boundary — anywhere in navigation.
-  //
-  // Never drive the camera through the root viewBox: rewriting it re-resolves
-  // style and re-runs layout for every node, edge, label and grid cell in the
-  // scene on each camera update (measured ~13 ms of style+layout per update at
-  // 100 nodes and ~19 ms at 1200 nodes on a software-raster Chromium, i.e. the
-  // main thread saturated for the whole gesture), while a promoted transform
-  // update measured ~0.1 ms at every size.
+  // Two-tier overscan camera that avoids reconstructing or re-rasterizing the
+  // SVG per frame while keeping off-screen content visible during pan/zoom-out:
+  //   1. #cameraStage is sized to 200% x 200% (STAGE_OVERSCAN = 0.5 viewport
+  //      bleed on every side) above a fixed reference viewBox on <svg>, so a
+  //      2x2-viewport world region around state.viewBox is vector-rasterized
+  //      into #cameraLayer at rest.
+  //   2. During active pan / wheel-zoom / pinch gestures, #cameraStage
+  //      transforms that pre-rasterized 2x2 bitmap relative to stageBaseCamera
+  //      (0 SVG layouts, 0 tile rasterizations, 0 SVG DOM mutations per frame),
+  //      revealing pre-rendered off-screen nodes, edges and grid smoothly. If
+  //      a deep zoom-out or multi-screen pan reaches the outer edge of the 2x2
+  //      apron, applyPreviewCamera() re-bases #cameraLayer onto the current
+  //      preview once so newly exposed areas never go blank.
+  //   3. When the gesture settles (or a pointer gesture adopts it),
+  //      #cameraStage resets to identity in the same commit that writes the
+  //      final matrix to #cameraLayer.
   const REFERENCE_VIEWBOX = {x:-500, y:-330, w:1000, h:660};
+  const STAGE_OVERSCAN = 0.5;
+  const STAGE_SPAN = 1 + 2 * STAGE_OVERSCAN;
+  const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
   let referenceViewBoxInstalled = false;
+  let stageBaseCamera: ViewBox | null = null;
+  let stageBaseViewport: { width: number; height: number } | null = null;
+  let stageTransformActive = false;
+  function canvasViewportRect(cachedRect: any = null){
+    if(cachedRect && cachedRect.width && cachedRect.height) return cachedRect;
+    // #cameraStage (and #graphCanvas inside it) is overscanned to 200% x 200%
+    // and CSS-transformed during previews, whereas #gridLayer has inset:0 inside
+    // #canvasWrap with no transform — so #gridLayer always reports the exact
+    // 1x1 viewport rect in real browsers. Fall back to svg in jsdom (0x0 layout).
+    if(gridLayer){
+      const gr = gridLayer.getBoundingClientRect();
+      if(gr.width && gr.height) return gr;
+    }
+    return svg.getBoundingClientRect();
+  }
   function cameraMatrixText(matrix){
     const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
     return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
   }
+  function stageMatrixText(matrix){
+    const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
+    const s = clean(matrix.scale);
+    return `matrix(${s}, 0, 0, ${s}, ${clean(matrix.tx)}, ${clean(matrix.ty)})`;
+  }
   function cameraDeltaMatrix(camera, base, viewport){
-    // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings (the
-    // reference frame and the camera). This stays exact even when camera
-    // width/height or the viewport aspect ratio differ, which fit view and the
-    // numeric camera controls both produce.
+    // Map logical `camera` onto the visible centre 1x1 viewport inside the
+    // STAGE_SPAN x STAGE_SPAN overscanned <svg> (whose own preserveAspectRatio
+    // "xMidYMid meet" maps `base` across STAGE_SPAN * viewport). Exact across
+    // arbitrary aspect ratios and letterboxing, while pre-rendering the
+    // surrounding STAGE_OVERSCAN apron on all 4 sides.
     const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const refPixels = STAGE_SPAN * basePixels;
     const cameraPixels = Math.min(viewport.width / camera.w, viewport.height / camera.h);
-    const scale = cameraPixels / basePixels;
-    const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
-    const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
+    const scale = cameraPixels / refPixels;
+    const refOffsetX = STAGE_SPAN * ((viewport.width - base.w * basePixels) / 2);
+    const refOffsetY = STAGE_SPAN * ((viewport.height - base.h * basePixels) / 2);
     const cameraOffsetX = (viewport.width - camera.w * cameraPixels) / 2;
     const cameraOffsetY = (viewport.height - camera.h * cameraPixels) / 2;
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
     return {
       scale,
-      tx:base.x + (cameraOffsetX - baseOffsetX) / basePixels - scale * camera.x,
-      ty:base.y + (cameraOffsetY - baseOffsetY) / basePixels - scale * camera.y
+      tx:base.x + (padX + cameraOffsetX - refOffsetX) / refPixels - scale * camera.x,
+      ty:base.y + (padY + cameraOffsetY - refOffsetY) / refPixels - scale * camera.y
     };
   }
-  function applyCameraTransform(camera=state.viewBox, rect=null){
-    // The reference frame does not depend on the viewport, so it is installed
-    // even when the canvas has no size yet (hidden tab, pre-layout render).
+  function cameraStageMatrix(preview, base, viewport){
+    // Screen-pixel delta mapping the overscanned base camera raster (anchored
+    // at (-padX, -padY) in #canvasWrap with transform-origin: 0 0) to the
+    // preview camera. Exact across letterboxing and simultaneous pan+zoom.
+    const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const previewPixels = Math.min(viewport.width / preview.w, viewport.height / preview.h);
+    const scale = previewPixels / basePixels;
+    const baseOriginX = (viewport.width - base.w * basePixels) / 2 - base.x * basePixels;
+    const baseOriginY = (viewport.height - base.h * basePixels) / 2 - base.y * basePixels;
+    const previewOriginX = (viewport.width - preview.w * previewPixels) / 2 - preview.x * previewPixels;
+    const previewOriginY = (viewport.height - preview.h * previewPixels) / 2 - preview.y * previewPixels;
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
+    return {
+      scale,
+      tx:padX * (1 - scale) + previewOriginX - scale * baseOriginX,
+      ty:padY * (1 - scale) + previewOriginY - scale * baseOriginY
+    };
+  }
+  function stageCoversViewport(m, viewport){
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
+    const left = -padX + m.tx;
+    const top = -padY + m.ty;
+    const right = left + STAGE_SPAN * viewport.width * m.scale;
+    const bottom = top + STAGE_SPAN * viewport.height * m.scale;
+    return left <= 0.5 && top <= 0.5 && right >= viewport.width - 0.5 && bottom >= viewport.height - 0.5;
+  }
+  function ensureReferenceViewBox(){
     if(!referenceViewBoxInstalled){
       referenceViewBoxInstalled = true;
       setAttr(svg, 'viewBox', `${REFERENCE_VIEWBOX.x} ${REFERENCE_VIEWBOX.y} ${REFERENCE_VIEWBOX.w} ${REFERENCE_VIEWBOX.h}`);
     }
-    const viewport = rect || svg.getBoundingClientRect();
-    if(!viewport.width || !viewport.height) return null;
+  }
+  function applyCameraTransform(camera=state.viewBox, rect=null){
+    // The reference frame does not depend on the viewport, so it is installed
+    // even when the canvas has no size yet (hidden tab, pre-layout render).
+    ensureReferenceViewBox();
+    const viewport = canvasViewportRect(rect);
+    if(cameraStage) setStyleIfChanged(cameraStage.style, 'transform', STAGE_IDENTITY);
+    stageTransformActive = false;
+    const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
     // Always derived from the fixed reference frame, never composed with the
     // previous frame's matrix, so no drift can accumulate across gestures.
-    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, viewport)));
-    return viewport;
+    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, projViewport)));
+    stageBaseCamera = {x:camera.x, y:camera.y, w:camera.w, h:camera.h};
+    stageBaseViewport = {width:projViewport.width, height:projViewport.height};
+    return (viewport.width && viewport.height) ? viewport : null;
   }
   function applyPreviewCamera(preview, rect=null){
-    const viewport = applyCameraTransform(preview, rect);
-    if(viewport) updateGridBackground(preview, viewport);
+    ensureReferenceViewBox();
+    const viewport = canvasViewportRect(rect);
+    if(!viewport.width || !viewport.height) return;
+    if(!stageBaseCamera || !stageBaseViewport || stageBaseViewport.width !== viewport.width || stageBaseViewport.height !== viewport.height){
+      applyCameraTransform(state.viewBox, viewport);
+    }
+    if(!cameraStage || !stageBaseCamera) return;
+    const m = cameraStageMatrix(preview, stageBaseCamera, viewport);
+    if(!stageCoversViewport(m, viewport)){
+      applyCameraTransform(preview, viewport);
+      updateGridBackground(preview, viewport);
+      return;
+    }
+    setStyleIfChanged(cameraStage.style, 'transform', stageMatrixText(m));
+    stageTransformActive = Math.abs(m.scale - 1) >= 1e-12 || Math.abs(m.tx) >= 1e-12 || Math.abs(m.ty) >= 1e-12;
   }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
@@ -607,10 +691,32 @@
     if(style[property] !== value) style[property] = value;
   }
   let gridSig = '';
+  let gridPaths: any[] | null = null;
   function invalidateGridCache(){ gridSig = ''; }
+  function ensureGridPaths(){
+    if(gridPaths && gridPaths.length === 3 && gridPaths[0].parentNode === gridPattern) return gridPaths;
+    const existing: any[] = [];
+    for(let c: any = gridPattern.firstElementChild; c; c = c.nextElementSibling){
+      if(c.tagName === 'path' || c.localName === 'path') existing.push(c);
+    }
+    while(existing.length < 3){
+      const p: any = document.createElementNS(NS, 'path');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('vector-effect', 'non-scaling-stroke');
+      gridPattern.appendChild(p);
+      existing.push(p);
+    }
+    while(existing.length > 3) existing.pop().remove();
+    for(const p of existing){
+      setAttr(p, 'fill', 'none');
+      setAttr(p, 'vector-effect', 'non-scaling-stroke');
+    }
+    gridPaths = existing;
+    return gridPaths;
+  }
   function updateGridBackground(vb=state.viewBox, cachedRect=null){
     const settings = state.settings;
-    const rect = cachedRect || svg.getBoundingClientRect();
+    const rect = canvasViewportRect(cachedRect);
     if(!rect.width || !rect.height) return;
     setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
     const gx = settings.gridSizeX || settings.gridSize || 40;
@@ -620,59 +726,42 @@
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
     // The grid renders as a world-anchored SVG pattern (#gridRect inside the
     // camera scene), so the grid rides the camera matrix and is painted by the
-    // same raster as the graph. A viewport-sized CSS-background grid on a layer
-    // of its own was a second paint system whose updates could land a frame off
-    // the graph's; the div now only carries the static background color.
+    // same raster as the graph.
     //
     // Zoom-adaptive grid: when a cell would shrink below the readable minimum
     // in screen pixels, the grid decimates to every k-th cell. Integer
     // multiples keep the lines locked to world coordinates, so the grid never
-    // drifts or shifts diagonally relative to the nodes at low zoom (the old
-    // hard 4px clamp rescaled the pattern independently of the scene, which
-    // desynchronized it as soon as it kicked in). Major lines stay on every
-    // 5th world cell — or the nearest achievable multiple of the decimated
-    // step, always at least 2× the minor spacing.
+    // drifts or shifts diagonally relative to the nodes at low zoom.
     const GRID_MIN_PX = 8;
     const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / (gx * scale)));
     const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / (gy * scale)));
-    // Major sizes are world units (pattern space); the SVG raster maps them
-    // to screen pixels with the same camera transform as the graph.
     const majorXSize = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
     const majorYSize = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
     const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
     const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-    // One pattern tile spans a full major period and holds every minor line
-    // inside it; majors sit on the tile edges. patternUnits=userSpaceOnUse
-    // anchors the tile to the world origin, so no per-frame offset math is
-    // needed: panning never rebuilds the pattern, and zooming rebuilds it only
-    // when the decimated step actually changes.
     const sig = `${stepX},${stepY},${majorXSize.toFixed(6)},${majorYSize.toFixed(6)},${minorColor},${majorColor}`;
     if(sig === gridSig) return;
     gridSig = sig;
-    gridPattern.setAttribute('width', String(majorXSize));
-    gridPattern.setAttribute('height', String(majorYSize));
-    gridPattern.setAttribute('data-minor-x', String(stepX));
-    gridPattern.setAttribute('data-minor-y', String(stepY));
-    // vector-effect keeps strokes at a constant screen width at every zoom
-    // (the old CSS grid was always 1px), so line width needs no per-frame
-    // scale compensation.
-    while(gridPattern.firstChild) gridPattern.removeChild(gridPattern.firstChild);
-    const line = (d, color, width) => {
-      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      p.setAttribute('d', d);
-      p.setAttribute('fill', 'none');
-      p.setAttribute('stroke', color);
-      p.setAttribute('stroke-width', String(width));
-      p.setAttribute('vector-effect', 'non-scaling-stroke');
-      gridPattern.appendChild(p);
-    };
-    // Minor lines at every interior step (the tile edges carry the majors).
+    setAttr(gridPattern, 'width', String(majorXSize));
+    setAttr(gridPattern, 'height', String(majorYSize));
+    setAttr(gridPattern, 'data-minor-x', String(stepX));
+    setAttr(gridPattern, 'data-minor-y', String(stepY));
+    // Update the three persistent <path> elements in place instead of tearing
+    // down and recreating child nodes when zoom crosses a decimation step.
+    const [minorPath, majorVPath, majorHPath] = ensureGridPaths();
     let minors = '';
     for(let x = stepX; x < majorXSize - 1e-9; x += stepX) minors += `M ${x} 0 V ${majorYSize} `;
     for(let y = stepY; y < majorYSize - 1e-9; y += stepY) minors += `M 0 ${y} H ${majorXSize} `;
-    if(minors) line(minors.trim(), minorColor, 1);
-    line(`M 0 0 V ${majorYSize}`, majorColor, 1.3);
-    line(`M 0 0 H ${majorXSize}`, majorColor, 1.3);
+    const minorD = minors.trim();
+    setAttr(minorPath, 'd', minorD);
+    setAttr(minorPath, 'stroke', minorColor);
+    setAttr(minorPath, 'stroke-width', minorD ? '1' : '0');
+    setAttr(majorVPath, 'd', `M 0 0 V ${majorYSize}`);
+    setAttr(majorVPath, 'stroke', majorColor);
+    setAttr(majorVPath, 'stroke-width', '1.3');
+    setAttr(majorHPath, 'd', `M 0 0 H ${majorXSize}`);
+    setAttr(majorHPath, 'stroke', majorColor);
+    setAttr(majorHPath, 'stroke-width', '1.3');
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by
@@ -818,6 +907,7 @@
         g.id = 'edge-' + e.id; g.dataset.id = e.id; g.dataset.from = e.from; g.dataset.to = e.to;
         g.addEventListener('pointerdown', ev => {
           ev.stopPropagation();
+          flushZoomPreview();
           if(ev.button === 1 || ev.button === 2){ registerPointer(ev); pendingEdgeFrom = null; startPan(ev); return; }
           if(ev.button !== 0) return;
           if(polygonToolActive()){ registerPointer(ev); handlePolygonPointerDown(ev); return; }
@@ -827,7 +917,7 @@
           if(state.settings.hitTestMode === 'center'){
             const pa = nodeById(e.from), pb = nodeById(e.to);
             if(pa && pb){
-              const p = clientToWorld(ev.clientX, ev.clientY, state.viewBox);
+              const p = clientToWorld(ev.clientX, ev.clientY, currentCamera());
               const mx=(pa.x+pb.x)/2, my=(pa.y+pb.y)/2;
               const len = Math.hypot(pb.x-pa.x, pb.y-pa.y) || 1;
               if(Math.hypot(p.x-mx, p.y-my) > Math.max(10, len*0.18)){ deselect(); return; }
@@ -836,7 +926,7 @@
           const combine = effectiveSelectCombine(ev);
           setSelection([], [e.id], {type:'edge', id:e.id}, combine);
         });
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
+        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
       }
@@ -1059,7 +1149,7 @@
         g = document.createElementNS(NS,'g'); g.classList.add('node');
         g.id = 'node-' + n.id; g.dataset.id = n.id;
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
+        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
         nodesLayer.appendChild(g);
         nodeEls.set(n.id, g);
       }

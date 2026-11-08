@@ -147,7 +147,7 @@
       grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas";
       overflow:hidden;
     }
-    .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0}
+    .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0; touch-action:none}
     /* The canvas background color lives on this div; the grid LINES are drawn
        inside the SVG (world-anchored #gridRect pattern) so grid and graph are
        always painted by the same pass. This div is NOT promoted: a composited
@@ -157,6 +157,20 @@
       position:absolute; inset:0; pointer-events:none;
       background-color:#020617;
     }
+    /* #cameraStage is the ONLY compositor-promoted layer on the canvas path,
+       sized to 200% x 200% (a 0.5x-viewport overscan apron on all 4 sides) so
+       pan and zoom-out previews immediately reveal pre-rasterized off-screen
+       nodes, edges, labels and grid without blank margins. If a marathon pan
+       or deep zoom-out approaches the outer edge of the 2x2 apron,
+       applyPreviewCamera() re-bases #cameraLayer once so newly exposed world
+       areas stay populated continuously. #cameraLayer must NOT carry
+       will-change:transform, otherwise Chromium re-rasterizes its nested layer
+       on every stage scale frame. */
+    .camera-stage{
+      position:absolute; left:-50%; top:-50%; width:200%; height:200%;
+      transform-origin:0 0;
+      will-change:transform; transform:matrix(1, 0, 0, 1, 0, 0);
+    }
     #graphCanvas{
       position:relative; width:100%; height:100%; display:block; background:transparent;
       touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
@@ -164,18 +178,6 @@
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     #gridRect{pointer-events:none}
-    /* The camera group is the ONLY promoted layer, and navigation only ever
-       changes its transform: gesture previews and committed cameras are the
-       same composited write, so the transform moves the already-rasterized
-       scene at ~0.1 ms per frame instead of re-laying-out thousands of vector
-       elements. The scene group and the world-locked grid pattern ride inside
-       that same layer, so grid and graph always paint together. The root viewBox
-       stays a fixed world reference frame: rewriting it would re-run style and
-       layout for the whole scene on every camera update. There is deliberately
-       no second promoted layer (the old CSS-background grid div): two layers
-       update on two clocks, and the slower one showed the previous camera for a
-       frame at pan/zoom begin and end. */
-    #cameraLayer{will-change:transform}
     .canvas-hud{position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; max-width:60%}
     .canvas-hud > *{pointer-events:auto}
     .status-pill{
@@ -544,8 +546,8 @@
     .node text{font-weight:800; paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
-    .canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
-    .canvas-wrap.panning #graphCanvas{cursor:grabbing}
+    .canvas-wrap.move-mode,.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
+    .canvas-wrap.panning,.canvas-wrap.panning #graphCanvas{cursor:grabbing}
     .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
     .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
     .edge-arrow{pointer-events:none}
@@ -1493,43 +1495,51 @@
       <main class="main v-canvas">
         <section id="canvasWrap" class="panel canvas-wrap empty">
           <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
-          <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor canvas" data-i18n-aria-label="graph_canvas">
-            <defs>
-              <pattern id="gridPattern" width="200" height="200" patternUnits="userSpaceOnUse">
-                <!-- Content is rebuilt by updateGridBackground(): one tile holds
-                     the decimated minor lines plus the major lines at its edges. -->
-                <path d="" fill="none"></path>
-              </pattern>
-              <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-                <path d="M 1 1 L 11 6 L 1 11 z" fill="#94a3b8"></path>
-              </marker>
-              <marker id="arrowSelected" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-                <path d="M 1 1 L 11 6 L 1 11 z" fill="#22d3ee"></path>
-              </marker>
-            </defs>
-            <!-- #cameraLayer carries the camera matrix — the SAME write for
-                 gesture previews and for the committed camera — and is the only
-                 compositor-promoted layer. The root viewBox above it is a fixed
-                 world reference frame, so nothing on the camera path re-runs
-                 style or layout over the scene. -->
-            <g id="cameraLayer">
-              <g id="sceneLayer">
-                <!-- The grid is a world-anchored pattern INSIDE the camera
-                     scene: it rides the camera matrix, so grid and graph are
-                     always painted by the same raster and can never desync by a
-                     frame (a separate CSS-background grid layer could). -->
-                <rect id="gridRect" x="-100000" y="-100000" width="200000" height="200000" fill="url(#gridPattern)"></rect>
-                <g id="edgesLayer"></g>
-                <path id="dragLine" class="drag-line" d="" style="display:none"></path>
-                <g id="selectionOverlayLayer"></g>
-                <g id="nodesLayer"></g>
-                <!-- Selection transform gizmo (translate/rotate/scale/rect
-                     handles) — above the nodes so its handles stay grabbable;
-                     only the handles take pointer events, never a filled area. -->
-                <g id="gizmoLayer"></g>
+          <!-- #cameraStage is the single compositor-promoted HTML layer above
+               the SVG. Active pan/zoom/pinch gestures move/scale its already-
+               rasterized bitmap with zero SVG layout, zero tile re-rasterization
+               and zero SVG DOM writes; when a gesture settles, #cameraStage
+               returns to identity in the same frame #cameraLayer commits the
+               crisp vector camera. -->
+          <div id="cameraStage" class="camera-stage">
+            <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor canvas" data-i18n-aria-label="graph_canvas">
+              <defs>
+                <pattern id="gridPattern" width="200" height="200" patternUnits="userSpaceOnUse">
+                  <!-- Persistent paths updated in place by updateGridBackground():
+                       minor interior lines plus the two major tile-edge axes. -->
+                  <path d="" fill="none" vector-effect="non-scaling-stroke"></path>
+                  <path d="" fill="none" vector-effect="non-scaling-stroke"></path>
+                  <path d="" fill="none" vector-effect="non-scaling-stroke"></path>
+                </pattern>
+                <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                  <path d="M 1 1 L 11 6 L 1 11 z" fill="#94a3b8"></path>
+                </marker>
+                <marker id="arrowSelected" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                  <path d="M 1 1 L 11 6 L 1 11 z" fill="#22d3ee"></path>
+                </marker>
+              </defs>
+              <!-- #cameraLayer carries the committed vector camera matrix above a
+                   fixed reference viewBox; #cameraStage above <svg> carries live
+                   gesture previews so scaling never re-runs SVG layout or raster. -->
+              <g id="cameraLayer">
+                <g id="sceneLayer">
+                  <!-- The grid is a world-anchored pattern INSIDE the camera
+                       scene: it rides the camera matrix, so grid and graph are
+                       always painted by the same raster and can never desync by a
+                       frame (a separate CSS-background grid layer could). -->
+                  <rect id="gridRect" x="-100000" y="-100000" width="200000" height="200000" fill="url(#gridPattern)"></rect>
+                  <g id="edgesLayer"></g>
+                  <path id="dragLine" class="drag-line" d="" style="display:none"></path>
+                  <g id="selectionOverlayLayer"></g>
+                  <g id="nodesLayer"></g>
+                  <!-- Selection transform gizmo (translate/rotate/scale/rect
+                       handles) — above the nodes so its handles stay grabbable;
+                       only the handles take pointer events, never a filled area. -->
+                  <g id="gizmoLayer"></g>
+                </g>
               </g>
-            </g>
-          </svg>
+            </svg>
+          </div>
 
           <div class="canvas-hud">
             <div id="statusPill" class="status-pill" data-i18n="ready">Ready</div>
@@ -2548,13 +2558,18 @@ async function uiPrompt(title, message, value = '', maxLength = 80) {
     const result = await showDialog({ title, message, input: { value, maxLength } });
     return typeof result === 'string' ? result : null;
 }
+const canvasWrap = $('#canvasWrap');
 const svg = $('#graphCanvas');
+const cameraStage = $('#cameraStage');
 const gridLayer = $('#gridLayer');
 const gridRect = $('#gridRect');
-// Navigation moves only the camera group, which carries the composed camera
-// matrix for previews and commits alike and is the single compositor-promoted
-// layer on the canvas path. The scene group is an ordinary child holding the
-// grid and the graph; nothing applies a transform to it.
+function isCanvasOverlayControl(target) {
+    return Boolean(target?.closest?.('.canvas-hud, .zoom-controls, .mode-fab, .edge-tools, .sel-tools, .gizmo-tools'));
+}
+// Active pan/zoom/pinch previews transform #cameraStage (HTML compositor
+// layer above <svg>) so scaling never triggers SVG layout or vector tile
+// re-rasterization; committed cameras rest as a vector matrix on #cameraLayer
+// above a fixed reference viewBox.
 const cameraLayer = $('#cameraLayer');
 const edgesLayer = $('#edgesLayer');
 const nodesLayer = $('#nodesLayer');
@@ -2640,15 +2655,16 @@ let pasteOffsetCount = 0;
 // decoupled without leaking implementation state onto `window`.
 let syncUiHooks = null;
 function snapshot() {
-    flushZoomPreview(); // never persist a camera that is still in compositor preview
+    const vb = currentCamera(); // persist active camera without forcing a mid-gesture SVG commit
     return JSON.stringify({
         title: state.title, mode: state.mode, selectTool: state.selectTool, selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
-        nodes: state.nodes, edges: state.edges, customAttributes: state.customAttributes, settings: state.settings, viewBox: state.viewBox,
+        nodes: state.nodes, edges: state.edges, customAttributes: state.customAttributes, settings: state.settings, viewBox: vb,
         // Preserve user focus across undo/redo so editing the same object stays ergonomic
         selected: state.selected, selection: state.selection
     });
 }
 function applySnapshot(raw) {
+    cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
     const sane = sanitizeState(data);
@@ -3879,74 +3895,161 @@ function statusText() {
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', { tool: selectionToolLabel(state.selectTool) });
 }
 function applyCamera() {
-    // Adopt any in-flight zoom preview before the camera changes underneath it
-    // (fit view, camera inputs, undo, import, ...).
-    flushZoomPreview();
-    applyCameraTransform(state.viewBox);
-    updateGridBackground(state.viewBox);
+    // Adopt any pending wheel/button zoom preview into state.viewBox before
+    // rendering so unrelated re-renders (e.g. changing default node color or
+    // editing labels during the 220ms zoom debounce) never snap back to the
+    // pre-zoom camera. Explicit camera-replacement callers (fitView,
+    // resetCamera, setCameraFromInputs, undo/redo, import) cancel first.
+    if (zoomPreview) {
+        state.viewBox = { ...zoomPreview.preview };
+        cancelZoomPreview();
+        saveSoon();
+    }
+    const viewport = applyCameraTransform(state.viewBox);
+    updateGridBackground(state.viewBox, viewport);
     syncCameraInputs();
     // Gizmo handles are sized in screen pixels, so a committed zoom change
-    // re-sizes them (signature-guarded: a no-op when nothing changed).
+    // re-sizes them in place (signature-guarded: a no-op when nothing changed).
     renderGizmo();
 }
 // === Camera ===
-// The root viewBox is a fixed world reference frame, written once. The logical
-// camera (state.viewBox) is applied as a matrix on the promoted #cameraLayer,
-// which holds the grid and the whole graph scene. Gesture previews and
-// committed cameras therefore share ONE mechanism: the composited property
-// simply moves, and a commit is the same write with the final value (a no-op
-// when the preview already reached it), so there is no mechanism handoff — and
-// no handoff boundary — anywhere in navigation.
-//
-// Never drive the camera through the root viewBox: rewriting it re-resolves
-// style and re-runs layout for every node, edge, label and grid cell in the
-// scene on each camera update (measured ~13 ms of style+layout per update at
-// 100 nodes and ~19 ms at 1200 nodes on a software-raster Chromium, i.e. the
-// main thread saturated for the whole gesture), while a promoted transform
-// update measured ~0.1 ms at every size.
+// Two-tier overscan camera that avoids reconstructing or re-rasterizing the
+// SVG per frame while keeping off-screen content visible during pan/zoom-out:
+//   1. #cameraStage is sized to 200% x 200% (STAGE_OVERSCAN = 0.5 viewport
+//      bleed on every side) above a fixed reference viewBox on <svg>, so a
+//      2x2-viewport world region around state.viewBox is vector-rasterized
+//      into #cameraLayer at rest.
+//   2. During active pan / wheel-zoom / pinch gestures, #cameraStage
+//      transforms that pre-rasterized 2x2 bitmap relative to stageBaseCamera
+//      (0 SVG layouts, 0 tile rasterizations, 0 SVG DOM mutations per frame),
+//      revealing pre-rendered off-screen nodes, edges and grid smoothly. If
+//      a deep zoom-out or multi-screen pan reaches the outer edge of the 2x2
+//      apron, applyPreviewCamera() re-bases #cameraLayer onto the current
+//      preview once so newly exposed areas never go blank.
+//   3. When the gesture settles (or a pointer gesture adopts it),
+//      #cameraStage resets to identity in the same commit that writes the
+//      final matrix to #cameraLayer.
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
+const STAGE_OVERSCAN = 0.5;
+const STAGE_SPAN = 1 + 2 * STAGE_OVERSCAN;
+const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
 let referenceViewBoxInstalled = false;
+let stageBaseCamera = null;
+let stageBaseViewport = null;
+let stageTransformActive = false;
+function canvasViewportRect(cachedRect = null) {
+    if (cachedRect && cachedRect.width && cachedRect.height)
+        return cachedRect;
+    // #cameraStage (and #graphCanvas inside it) is overscanned to 200% x 200%
+    // and CSS-transformed during previews, whereas #gridLayer has inset:0 inside
+    // #canvasWrap with no transform — so #gridLayer always reports the exact
+    // 1x1 viewport rect in real browsers. Fall back to svg in jsdom (0x0 layout).
+    if (gridLayer) {
+        const gr = gridLayer.getBoundingClientRect();
+        if (gr.width && gr.height)
+            return gr;
+    }
+    return svg.getBoundingClientRect();
+}
 function cameraMatrixText(matrix) {
     const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
     return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
 }
+function stageMatrixText(matrix) {
+    const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
+    const s = clean(matrix.scale);
+    return `matrix(${s}, 0, 0, ${s}, ${clean(matrix.tx)}, ${clean(matrix.ty)})`;
+}
 function cameraDeltaMatrix(camera, base, viewport) {
-    // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings (the
-    // reference frame and the camera). This stays exact even when camera
-    // width/height or the viewport aspect ratio differ, which fit view and the
-    // numeric camera controls both produce.
+    // Map logical `camera` onto the visible centre 1x1 viewport inside the
+    // STAGE_SPAN x STAGE_SPAN overscanned <svg> (whose own preserveAspectRatio
+    // "xMidYMid meet" maps `base` across STAGE_SPAN * viewport). Exact across
+    // arbitrary aspect ratios and letterboxing, while pre-rendering the
+    // surrounding STAGE_OVERSCAN apron on all 4 sides.
     const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const refPixels = STAGE_SPAN * basePixels;
     const cameraPixels = Math.min(viewport.width / camera.w, viewport.height / camera.h);
-    const scale = cameraPixels / basePixels;
-    const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
-    const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
+    const scale = cameraPixels / refPixels;
+    const refOffsetX = STAGE_SPAN * ((viewport.width - base.w * basePixels) / 2);
+    const refOffsetY = STAGE_SPAN * ((viewport.height - base.h * basePixels) / 2);
     const cameraOffsetX = (viewport.width - camera.w * cameraPixels) / 2;
     const cameraOffsetY = (viewport.height - camera.h * cameraPixels) / 2;
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
     return {
         scale,
-        tx: base.x + (cameraOffsetX - baseOffsetX) / basePixels - scale * camera.x,
-        ty: base.y + (cameraOffsetY - baseOffsetY) / basePixels - scale * camera.y
+        tx: base.x + (padX + cameraOffsetX - refOffsetX) / refPixels - scale * camera.x,
+        ty: base.y + (padY + cameraOffsetY - refOffsetY) / refPixels - scale * camera.y
     };
 }
-function applyCameraTransform(camera = state.viewBox, rect = null) {
-    // The reference frame does not depend on the viewport, so it is installed
-    // even when the canvas has no size yet (hidden tab, pre-layout render).
+function cameraStageMatrix(preview, base, viewport) {
+    // Screen-pixel delta mapping the overscanned base camera raster (anchored
+    // at (-padX, -padY) in #canvasWrap with transform-origin: 0 0) to the
+    // preview camera. Exact across letterboxing and simultaneous pan+zoom.
+    const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const previewPixels = Math.min(viewport.width / preview.w, viewport.height / preview.h);
+    const scale = previewPixels / basePixels;
+    const baseOriginX = (viewport.width - base.w * basePixels) / 2 - base.x * basePixels;
+    const baseOriginY = (viewport.height - base.h * basePixels) / 2 - base.y * basePixels;
+    const previewOriginX = (viewport.width - preview.w * previewPixels) / 2 - preview.x * previewPixels;
+    const previewOriginY = (viewport.height - preview.h * previewPixels) / 2 - preview.y * previewPixels;
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
+    return {
+        scale,
+        tx: padX * (1 - scale) + previewOriginX - scale * baseOriginX,
+        ty: padY * (1 - scale) + previewOriginY - scale * baseOriginY
+    };
+}
+function stageCoversViewport(m, viewport) {
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
+    const left = -padX + m.tx;
+    const top = -padY + m.ty;
+    const right = left + STAGE_SPAN * viewport.width * m.scale;
+    const bottom = top + STAGE_SPAN * viewport.height * m.scale;
+    return left <= 0.5 && top <= 0.5 && right >= viewport.width - 0.5 && bottom >= viewport.height - 0.5;
+}
+function ensureReferenceViewBox() {
     if (!referenceViewBoxInstalled) {
         referenceViewBoxInstalled = true;
         setAttr(svg, 'viewBox', `${REFERENCE_VIEWBOX.x} ${REFERENCE_VIEWBOX.y} ${REFERENCE_VIEWBOX.w} ${REFERENCE_VIEWBOX.h}`);
     }
-    const viewport = rect || svg.getBoundingClientRect();
-    if (!viewport.width || !viewport.height)
-        return null;
+}
+function applyCameraTransform(camera = state.viewBox, rect = null) {
+    // The reference frame does not depend on the viewport, so it is installed
+    // even when the canvas has no size yet (hidden tab, pre-layout render).
+    ensureReferenceViewBox();
+    const viewport = canvasViewportRect(rect);
+    if (cameraStage)
+        setStyleIfChanged(cameraStage.style, 'transform', STAGE_IDENTITY);
+    stageTransformActive = false;
+    const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
     // Always derived from the fixed reference frame, never composed with the
     // previous frame's matrix, so no drift can accumulate across gestures.
-    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, viewport)));
-    return viewport;
+    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, projViewport)));
+    stageBaseCamera = { x: camera.x, y: camera.y, w: camera.w, h: camera.h };
+    stageBaseViewport = { width: projViewport.width, height: projViewport.height };
+    return (viewport.width && viewport.height) ? viewport : null;
 }
 function applyPreviewCamera(preview, rect = null) {
-    const viewport = applyCameraTransform(preview, rect);
-    if (viewport)
+    ensureReferenceViewBox();
+    const viewport = canvasViewportRect(rect);
+    if (!viewport.width || !viewport.height)
+        return;
+    if (!stageBaseCamera || !stageBaseViewport || stageBaseViewport.width !== viewport.width || stageBaseViewport.height !== viewport.height) {
+        applyCameraTransform(state.viewBox, viewport);
+    }
+    if (!cameraStage || !stageBaseCamera)
+        return;
+    const m = cameraStageMatrix(preview, stageBaseCamera, viewport);
+    if (!stageCoversViewport(m, viewport)) {
+        applyCameraTransform(preview, viewport);
         updateGridBackground(preview, viewport);
+        return;
+    }
+    setStyleIfChanged(cameraStage.style, 'transform', stageMatrixText(m));
+    stageTransformActive = Math.abs(m.scale - 1) >= 1e-12 || Math.abs(m.tx) >= 1e-12 || Math.abs(m.ty) >= 1e-12;
 }
 function hexToRgba(hex, alpha) {
     const h = String(hex || '#94a3b8').replace('#', '');
@@ -3960,10 +4063,35 @@ function setStyleIfChanged(style, property, value) {
         style[property] = value;
 }
 let gridSig = '';
+let gridPaths = null;
 function invalidateGridCache() { gridSig = ''; }
+function ensureGridPaths() {
+    if (gridPaths && gridPaths.length === 3 && gridPaths[0].parentNode === gridPattern)
+        return gridPaths;
+    const existing = [];
+    for (let c = gridPattern.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.tagName === 'path' || c.localName === 'path')
+            existing.push(c);
+    }
+    while (existing.length < 3) {
+        const p = document.createElementNS(NS, 'path');
+        p.setAttribute('fill', 'none');
+        p.setAttribute('vector-effect', 'non-scaling-stroke');
+        gridPattern.appendChild(p);
+        existing.push(p);
+    }
+    while (existing.length > 3)
+        existing.pop().remove();
+    for (const p of existing) {
+        setAttr(p, 'fill', 'none');
+        setAttr(p, 'vector-effect', 'non-scaling-stroke');
+    }
+    gridPaths = existing;
+    return gridPaths;
+}
 function updateGridBackground(vb = state.viewBox, cachedRect = null) {
     const settings = state.settings;
-    const rect = cachedRect || svg.getBoundingClientRect();
+    const rect = canvasViewportRect(cachedRect);
     if (!rect.width || !rect.height)
         return;
     setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
@@ -3973,64 +4101,45 @@ function updateGridBackground(vb = state.viewBox, cachedRect = null) {
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
     // The grid renders as a world-anchored SVG pattern (#gridRect inside the
     // camera scene), so the grid rides the camera matrix and is painted by the
-    // same raster as the graph. A viewport-sized CSS-background grid on a layer
-    // of its own was a second paint system whose updates could land a frame off
-    // the graph's; the div now only carries the static background color.
+    // same raster as the graph.
     //
     // Zoom-adaptive grid: when a cell would shrink below the readable minimum
     // in screen pixels, the grid decimates to every k-th cell. Integer
     // multiples keep the lines locked to world coordinates, so the grid never
-    // drifts or shifts diagonally relative to the nodes at low zoom (the old
-    // hard 4px clamp rescaled the pattern independently of the scene, which
-    // desynchronized it as soon as it kicked in). Major lines stay on every
-    // 5th world cell — or the nearest achievable multiple of the decimated
-    // step, always at least 2× the minor spacing.
+    // drifts or shifts diagonally relative to the nodes at low zoom.
     const GRID_MIN_PX = 8;
     const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / (gx * scale)));
     const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / (gy * scale)));
-    // Major sizes are world units (pattern space); the SVG raster maps them
-    // to screen pixels with the same camera transform as the graph.
     const majorXSize = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
     const majorYSize = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
     const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
     const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-    // One pattern tile spans a full major period and holds every minor line
-    // inside it; majors sit on the tile edges. patternUnits=userSpaceOnUse
-    // anchors the tile to the world origin, so no per-frame offset math is
-    // needed: panning never rebuilds the pattern, and zooming rebuilds it only
-    // when the decimated step actually changes.
     const sig = `${stepX},${stepY},${majorXSize.toFixed(6)},${majorYSize.toFixed(6)},${minorColor},${majorColor}`;
     if (sig === gridSig)
         return;
     gridSig = sig;
-    gridPattern.setAttribute('width', String(majorXSize));
-    gridPattern.setAttribute('height', String(majorYSize));
-    gridPattern.setAttribute('data-minor-x', String(stepX));
-    gridPattern.setAttribute('data-minor-y', String(stepY));
-    // vector-effect keeps strokes at a constant screen width at every zoom
-    // (the old CSS grid was always 1px), so line width needs no per-frame
-    // scale compensation.
-    while (gridPattern.firstChild)
-        gridPattern.removeChild(gridPattern.firstChild);
-    const line = (d, color, width) => {
-        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        p.setAttribute('d', d);
-        p.setAttribute('fill', 'none');
-        p.setAttribute('stroke', color);
-        p.setAttribute('stroke-width', String(width));
-        p.setAttribute('vector-effect', 'non-scaling-stroke');
-        gridPattern.appendChild(p);
-    };
-    // Minor lines at every interior step (the tile edges carry the majors).
+    setAttr(gridPattern, 'width', String(majorXSize));
+    setAttr(gridPattern, 'height', String(majorYSize));
+    setAttr(gridPattern, 'data-minor-x', String(stepX));
+    setAttr(gridPattern, 'data-minor-y', String(stepY));
+    // Update the three persistent <path> elements in place instead of tearing
+    // down and recreating child nodes when zoom crosses a decimation step.
+    const [minorPath, majorVPath, majorHPath] = ensureGridPaths();
     let minors = '';
     for (let x = stepX; x < majorXSize - 1e-9; x += stepX)
         minors += `M ${x} 0 V ${majorYSize} `;
     for (let y = stepY; y < majorYSize - 1e-9; y += stepY)
         minors += `M 0 ${y} H ${majorXSize} `;
-    if (minors)
-        line(minors.trim(), minorColor, 1);
-    line(`M 0 0 V ${majorYSize}`, majorColor, 1.3);
-    line(`M 0 0 H ${majorXSize}`, majorColor, 1.3);
+    const minorD = minors.trim();
+    setAttr(minorPath, 'd', minorD);
+    setAttr(minorPath, 'stroke', minorColor);
+    setAttr(minorPath, 'stroke-width', minorD ? '1' : '0');
+    setAttr(majorVPath, 'd', `M 0 0 V ${majorYSize}`);
+    setAttr(majorVPath, 'stroke', majorColor);
+    setAttr(majorVPath, 'stroke-width', '1.3');
+    setAttr(majorHPath, 'd', `M 0 0 H ${majorXSize}`);
+    setAttr(majorHPath, 'stroke', majorColor);
+    setAttr(majorHPath, 'stroke-width', '1.3');
 }
 function setStatusOnly() { setText($('#statusPill'), statusText()); updateCommandStates(); }
 // Id→element registries for rendered graph elements. They are maintained by
@@ -4219,6 +4328,7 @@ function renderEdges() {
             g.dataset.to = e.to;
             g.addEventListener('pointerdown', ev => {
                 ev.stopPropagation();
+                flushZoomPreview();
                 if (ev.button === 1 || ev.button === 2) {
                     registerPointer(ev);
                     pendingEdgeFrom = null;
@@ -4241,7 +4351,7 @@ function renderEdges() {
                 if (state.settings.hitTestMode === 'center') {
                     const pa = nodeById(e.from), pb = nodeById(e.to);
                     if (pa && pb) {
-                        const p = clientToWorld(ev.clientX, ev.clientY, state.viewBox);
+                        const p = clientToWorld(ev.clientX, ev.clientY, currentCamera());
                         const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
                         const len = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
                         if (Math.hypot(p.x - mx, p.y - my) > Math.max(10, len * 0.18)) {
@@ -4253,7 +4363,7 @@ function renderEdges() {
                 const combine = effectiveSelectCombine(ev);
                 setSelection([], [e.id], { type: 'edge', id: e.id }, combine);
             });
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
+            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
                 finishPolygonSelection(false);
             else
                 editEdgeQuick(e.id); });
@@ -4531,7 +4641,7 @@ function renderNodes() {
             g.id = 'node-' + n.id;
             g.dataset.id = n.id;
             g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
+            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
                 finishPolygonSelection(false);
             else
                 editNodeQuick(n.id); });
@@ -5695,7 +5805,7 @@ function expandSelection(directedOnly = false) {
     toast(directedOnly ? I18N.t('selected_directed_adj') : I18N.t('selected_adjacent'));
 }
 function snapThresholdWorld() {
-    return clamp(state.viewBox.w / 70, 10, 32);
+    return clamp(currentCamera().w / 70, 10, 32);
 }
 function snapPointToEnabled(x, y, ignoreId = null) {
     const ignored = ignoreId instanceof Set ? ignoreId : new Set(ignoreId ? [ignoreId] : []);
@@ -5763,8 +5873,9 @@ function snapAxisValue(axis, value, ignoreId = null) {
 }
 function coordinateBounds(n) {
     // Single pass min/max without intermediate arrays or spread — avoids O(n) allocations and call-stack blow-up on large graphs
-    let minX = state.viewBox.x, maxX = state.viewBox.x + state.viewBox.w;
-    let minY = state.viewBox.y, maxY = state.viewBox.y + state.viewBox.h;
+    const vb = currentCamera();
+    let minX = vb.x, maxX = vb.x + vb.w;
+    let minY = vb.y, maxY = vb.y + vb.h;
     // include the edited node's own position
     if (n.x < minX)
         minX = n.x;
@@ -5963,7 +6074,8 @@ function graphCenter(nodes = state.nodes) {
     if (nodes.length) {
         return { x: nodes.reduce((sum, n) => sum + n.x, 0) / nodes.length, y: nodes.reduce((sum, n) => sum + n.y, 0) / nodes.length };
     }
-    return { x: state.viewBox.x + state.viewBox.w / 2, y: state.viewBox.y + state.viewBox.h / 2 };
+    const vb = currentCamera();
+    return { x: vb.x + vb.w / 2, y: vb.y + vb.h / 2 };
 }
 function circlePositionsForNewNodes(count, aroundNodes = state.nodes) {
     count = Math.max(1, count | 0);
@@ -6624,7 +6736,7 @@ function registerPointer(ev) {
     flushZoomPreview();
     activePointers.set(ev.pointerId, { id: ev.pointerId, type: ev.pointerType || 'mouse', clientX: ev.clientX, clientY: ev.clientY });
     if (!pointerRect)
-        pointerRect = svg.getBoundingClientRect();
+        pointerRect = canvasViewportRect();
 }
 function updatePointer(ev) { const p = activePointers.get(ev.pointerId); if (p) {
     p.clientX = ev.clientX;
@@ -6635,8 +6747,14 @@ function unregisterPointer(ev) { activePointers.delete(ev.pointerId); if (!activ
 function touchPointers() { return [...activePointers.values()].filter(p => p.type === 'touch'); }
 function distClient(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
 function centerClient(a, b) { return { clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 }; }
-function clientToWorld(clientX, clientY, viewBox = state.viewBox, rect = null) {
-    const r = rect || pointerRect || svg.getBoundingClientRect();
+function currentCamera() {
+    return zoomPreview ? zoomPreview.preview : state.viewBox;
+}
+function hasActiveCanvasGesture() {
+    return Boolean(singleSweep || pinch || selectDraft || pendingNodeTap || edgeDraft || gizmoDrag || drag || pan);
+}
+function clientToWorld(clientX, clientY, viewBox = currentCamera(), rect = null) {
+    const r = canvasViewportRect(rect || pointerRect);
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly, otherwise cursor-based
     // gestures drift when the canvas aspect ratio differs from the viewBox.
     const scale = Math.min(r.width / viewBox.w, r.height / viewBox.h);
@@ -6647,7 +6765,7 @@ function clientToWorld(clientX, clientY, viewBox = state.viewBox, rect = null) {
         y: viewBox.y + (clientY - r.top - offsetY) / scale
     };
 }
-function worldAtClient(clientX, clientY, viewBox = state.viewBox) { return clientToWorld(clientX, clientY, viewBox); }
+function worldAtClient(clientX, clientY, viewBox = currentCamera()) { return clientToWorld(clientX, clientY, viewBox); }
 function maybeStartPinch() {
     const pts = touchPointers();
     if (pts.length < 2)
@@ -6681,14 +6799,18 @@ function beginPinch(a, b) {
         syncSelectionDom();
     }
     if (pan) {
+        // Keep stageBaseCamera on #cameraLayer intact so pan -> pinch continues
+        // smoothly on the promoted #cameraStage without a mid-gesture SVG commit.
         state.viewBox = { ...pan.previewViewBox };
         pan = null;
-        applyCamera();
     }
+    if (selectDraft)
+        finishSelectionDraft(true);
     pendingEdgeFrom = null;
     pendingNodeTap = null;
+    singleSweep = null;
     const c = centerClient(a, b);
-    pinch = { startDistance: distClient(a, b), startViewBox: { ...state.viewBox }, startWorld: null, rect: svg.getBoundingClientRect(), previewViewBox: { ...state.viewBox }, frame: false };
+    pinch = { startDistance: distClient(a, b), startViewBox: { ...state.viewBox }, startWorld: null, rect: canvasViewportRect(), previewViewBox: { ...state.viewBox }, frame: false };
     pinch.startWorld = clientToWorld(c.clientX, c.clientY, state.viewBox, pinch.rect);
     $('#canvasWrap').classList.add('panning');
     $('#canvasWrap').classList.add('fast-interaction');
@@ -6698,7 +6820,7 @@ function updatePinch() {
     const pts = touchPointers();
     if (!pinch || pts.length < 2)
         return;
-    const a = pts[0], b = pts[1], c = centerClient(a, b), r = pinch.rect || svg.getBoundingClientRect();
+    const a = pts[0], b = pts[1], c = centerClient(a, b), r = canvasViewportRect(pinch.rect);
     const scale = clamp(pinch.startDistance / distClient(a, b), 0.05, 20);
     const nw = clamp(pinch.startViewBox.w * scale, 120, 20000);
     const nh = clamp(pinch.startViewBox.h * scale, 90, 20000);
@@ -6737,7 +6859,7 @@ function polygonToolActive() { return state.mode === 'select' && state.selectToo
 function beginSelectionDraft(ev) {
     ev.preventDefault();
     try {
-        svg.setPointerCapture(ev.pointerId);
+        canvasWrap.setPointerCapture(ev.pointerId);
     }
     catch { }
     const p = pointFromEvent(ev);
@@ -7047,17 +7169,17 @@ function pointInPolygon(p, poly) {
     }
     return inside;
 }
-function pointFromEvent(ev) { return clientToWorld(ev.clientX, ev.clientY, state.viewBox); }
+function pointFromEvent(ev) { return clientToWorld(ev.clientX, ev.clientY, currentCamera()); }
 function isEmptyCanvasTarget(el) {
-    // Pointer capture retargets pointerup to the SVG even over toolbars or
+    // Pointer capture retargets pointerup to #canvasWrap even over toolbars or
     // outside the canvas, so use the actual element under the pointer.
-    return Boolean(el && svg.contains(el) && !el.closest('.node,.edge'));
+    return Boolean(el && canvasWrap.contains(el) && !isCanvasOverlayControl(el) && !el.closest('.node,.edge'));
 }
 function onNodePointerDown(ev, id) {
     ev.preventDefault();
     ev.stopPropagation();
     try {
-        svg.setPointerCapture(ev.pointerId);
+        canvasWrap.setPointerCapture(ev.pointerId);
     }
     catch { }
     registerPointer(ev);
@@ -7163,7 +7285,12 @@ function onNodePointerDown(ev, id) {
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
 }
-svg.addEventListener('pointerdown', ev => {
+// Attach canvas pointer/wheel listeners to the stable, viewport-sized
+// #canvasWrap rather than the transformed #cameraStage/<svg>, so input over
+// every pixel of the canvas viewport is always received during zoom-out/pan.
+canvasWrap.addEventListener('pointerdown', ev => {
+    if (isCanvasOverlayControl(ev.target))
+        return;
     svg.focus();
     registerPointer(ev);
     if (maybeStartPinch())
@@ -7193,7 +7320,7 @@ svg.addEventListener('pointerdown', ev => {
         const p = pointFromEvent(ev);
         pendingNodeTap = { mode: 'edge', from, pointerId: ev.pointerId, startClientX: ev.clientX, startClientY: ev.clientY, x: p.x, y: p.y, moved: false };
         try {
-            svg.setPointerCapture(ev.pointerId);
+            canvasWrap.setPointerCapture(ev.pointerId);
         }
         catch { }
         return;
@@ -7215,7 +7342,7 @@ svg.addEventListener('pointerdown', ev => {
             singleSweep = { pointerId: ev.pointerId, startClientX: ev.clientX, startClientY: ev.clientY, moved: false };
             gestureActive = true;
             try {
-                svg.setPointerCapture(ev.pointerId);
+                canvasWrap.setPointerCapture(ev.pointerId);
             }
             catch { }
         }
@@ -7224,7 +7351,9 @@ svg.addEventListener('pointerdown', ev => {
         }
     }
 });
-svg.addEventListener('dblclick', ev => {
+canvasWrap.addEventListener('dblclick', ev => {
+    if (isCanvasOverlayControl(ev.target))
+        return;
     if (polygonToolActive() && selectDraft?.tool === 'polygon') {
         ev.preventDefault();
         finishPolygonSelection(false);
@@ -7233,10 +7362,12 @@ svg.addEventListener('dblclick', ev => {
     // Node creation is intentionally handled only by Node-mode pointerdown/tap.
     // This avoids accidental nodes from double-clicks in selection tools or edge mode.
 });
-svg.addEventListener('pointermove', ev => {
+canvasWrap.addEventListener('pointermove', ev => {
     updatePointer(ev);
+    if (!pinch && !pan && !selectDraft && !pendingNodeTap && !singleSweep && !edgeDraft && !gizmoDrag && !drag)
+        return;
     // A pending wheel-zoom distorts clientToWorld (the device camera is the
-    // preview, not state.viewBox). Commit it before any gesture math.
+    // preview, not state.viewBox). Commit it before active gesture math.
     if (zoomPreview)
         flushZoomPreview();
     if (pinch) {
@@ -7244,10 +7375,9 @@ svg.addEventListener('pointermove', ev => {
         return;
     }
     if (pan) {
-        // Pan only moves the logical camera and re-applies the composited camera
-        // matrix: the root viewBox never changes, so no style or layout work is
-        // triggered over the scene while the pointer moves.
-        const rect = pan.rect || svg.getBoundingClientRect();
+        // Pan only moves the logical camera and re-applies the composited stage
+        // matrix: the SVG scene and #cameraLayer stay untouched while moving.
+        const rect = canvasViewportRect(pan.rect);
         const start = pan.startViewBox;
         const scale = Math.min(rect.width / start.w, rect.height / start.h);
         const dx = (ev.clientX - pan.startClientX) / scale;
@@ -7313,17 +7443,23 @@ svg.addEventListener('pointermove', ev => {
         return;
     }
 });
-svg.addEventListener('pointerup', ev => finishPointer(ev));
-svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
+canvasWrap.addEventListener('pointerup', ev => finishPointer(ev));
+canvasWrap.addEventListener('pointercancel', ev => finishPointer(ev, true));
 function finishPointer(ev, cancel = false) {
+    // Ignore bubbling pointerup/pointercancel from floating HUD, mode, or zoom
+    // buttons (and pointers that never started a canvas gesture) so physical
+    // clicks on #btnZoomIn/#btnZoomOut coalesce on #cameraStage instead of
+    // flushing the preview on every button release.
+    if (!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId))
+        return;
     if (zoomPreview)
         flushZoomPreview(); // hit-testing must see committed geometry
     if (singleSweep && ev.pointerId === singleSweep.pointerId) {
         singleSweep = null;
         gestureActive = false;
         try {
-            if (svg.hasPointerCapture?.(ev.pointerId))
-                svg.releasePointerCapture(ev.pointerId);
+            if (canvasWrap.hasPointerCapture?.(ev.pointerId))
+                canvasWrap.releasePointerCapture(ev.pointerId);
         }
         catch { }
         if (!cancel) {
@@ -7470,7 +7606,7 @@ function startPan(ev) {
     ev.preventDefault();
     gestureActive = true;
     try {
-        svg.setPointerCapture(ev.pointerId);
+        canvasWrap.setPointerCapture(ev.pointerId);
     }
     catch { }
     pan = {
@@ -7478,36 +7614,47 @@ function startPan(ev) {
         startClientY: ev.clientY,
         startViewBox: { ...state.viewBox },
         previewViewBox: { ...state.viewBox },
-        rect: svg.getBoundingClientRect(),
+        rect: canvasViewportRect(),
         frame: false
     };
     $('#canvasWrap').classList.add('panning');
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
 }
-svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, { passive: false });
-// === Wheel zoom ===
-// Wheel events update the logical camera and re-apply the composited camera
-// matrix (the same mechanism panning uses), so the wheel never re-lays-out
-// the scene. The camera is then committed to state exactly once, when the
-// wheel settles.
+canvasWrap.addEventListener('wheel', ev => {
+    if (isCanvasOverlayControl(ev.target))
+        return;
+    ev.preventDefault();
+    zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY);
+}, { passive: false });
+// === Wheel / button zoom ===
+// Wheel events and rapid zoom-button clicks drive the GPU-composited HTML
+// #cameraStage wrapper relative to the base SVG camera, so active scaling
+// never triggers Blink SVG layout or tile re-rasterization per frame. Once
+// zooming settles, commitZoomPreview() atomically resets #cameraStage to
+// identity and writes the settled matrix to #cameraLayer.
 let zoomPreview = null; // {preview, rect, frame, timer}
 // Debounce the commit: a rapid scroll burst should settle (persist the camera,
 // refresh the numeric camera fields) once the wheel goes idle, not per pause.
 const ZOOM_COMMIT_DELAY = 220;
 function zoomAt(factor, clientX, clientY) {
-    // A wheel arriving mid pan/pinch would fight the gesture's transform —
-    // finalize the gesture first so zoom starts from what is on screen.
+    // A wheel arriving mid pan/pinch adopts the in-flight camera without an
+    // intermediate SVG commit so #cameraStage keeps compositing against
+    // stageBaseCamera seamlessly.
     if (pan) {
         state.viewBox = { ...pan.previewViewBox };
         pan = null;
-        applyCamera();
         $('#canvasWrap').classList.remove('panning');
+        gestureActive = false;
     }
-    if (pinch)
-        endPinch();
+    if (pinch) {
+        state.viewBox = { ...pinch.previewViewBox };
+        pinch = null;
+        $('#canvasWrap').classList.remove('panning');
+        gestureActive = false;
+    }
     const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
-    const r = zoomPreview ? zoomPreview.rect : svg.getBoundingClientRect();
+    const r = zoomPreview ? zoomPreview.rect : canvasViewportRect();
     const anchor = clientToWorld(clientX, clientY, cur, r);
     const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
     // Preserve the exact world point under the cursor, including the centered
@@ -7539,30 +7686,49 @@ function zoomAt(factor, clientX, clientY) {
     clearTimeout(zoomPreview.timer);
     zoomPreview.timer = setTimeout(commitZoomPreview, ZOOM_COMMIT_DELAY);
 }
+function cancelZoomPreview() {
+    if (!zoomPreview)
+        return;
+    clearTimeout(zoomPreview.timer);
+    zoomPreview = null;
+    $('#canvasWrap').classList.remove('fast-interaction');
+}
 function commitZoomPreview() {
     if (!zoomPreview)
         return;
-    const z = zoomPreview;
-    zoomPreview = null;
-    clearTimeout(z.timer);
-    state.viewBox = { ...z.preview };
+    const preview = zoomPreview.preview;
+    cancelZoomPreview();
+    state.viewBox = { ...preview };
     applyCamera();
-    $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
 }
 function flushZoomPreview() { if (zoomPreview)
     commitZoomPreview(); }
 function fitView() {
+    cancelZoomPreview();
     if (!state.nodes.length) {
         state.viewBox = { x: -500, y: -330, w: 1000, h: 660 };
-        queueRender(false);
+        applyCamera();
         saveSoon();
         return;
     }
-    const xs = state.nodes.map(n => n.x), ys = state.nodes.map(n => n.y);
-    const minX = Math.min(...xs) - 120, maxX = Math.max(...xs) + 120, minY = Math.min(...ys) - 120, maxY = Math.max(...ys) + 120;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const n of state.nodes) {
+        if (n.x < minX)
+            minX = n.x;
+        if (n.x > maxX)
+            maxX = n.x;
+        if (n.y < minY)
+            minY = n.y;
+        if (n.y > maxY)
+            maxY = n.y;
+    }
+    minX -= 120;
+    maxX += 120;
+    minY -= 120;
+    maxY += 120;
     state.viewBox = { x: minX, y: minY, w: Math.max(260, maxX - minX), h: Math.max(220, maxY - minY) };
-    queueRender(false);
+    applyCamera();
     saveSoon();
 }
 async function editNodeQuick(id) {
@@ -7751,9 +7917,10 @@ function gizmoTargetNodes() {
     return nodes;
 }
 function gizmoWorldPerPixel() {
-    const r = pointerRect || svg.getBoundingClientRect();
-    const s = (r && r.width) ? Math.min(r.width / state.viewBox.w, r.height / state.viewBox.h) : 0;
-    return s > 0 ? 1 / s : state.viewBox.w / 1000;
+    const r = canvasViewportRect(pointerRect);
+    const vb = currentCamera();
+    const s = (r && r.width) ? Math.min(r.width / vb.w, r.height / vb.h) : 0;
+    return s > 0 ? 1 / s : vb.w / 1000;
 }
 // Bounds of the node bodies (centres ± half size), i.e. the frame the rect
 // gizmo stretches and the centre the other tools pivot around by default.
@@ -7782,18 +7949,147 @@ function gizmoEl(name, attrs = null, cls = null) {
             el.setAttribute(k, attrs[k]);
     return el;
 }
+// Persistent per-tool SVG subtrees so zoom commits and gizmo drags update
+// coordinates/sizes in place instead of reconstructing SVG elements.
+const gizmoTrees = {};
+function getGizmoTree(tool) {
+    let tree = gizmoTrees[tool];
+    if (tree)
+        return tree;
+    const root = gizmoEl('g', null, 'gizmo-root');
+    const handles = [];
+    const makeHandle = (kind) => {
+        const g = gizmoEl('g', { 'data-gizmo': kind }, 'gizmo-handle');
+        root.appendChild(g);
+        handles.push({ kind, g });
+        return g;
+    };
+    tree = { tool, root, handles };
+    if (tool === 'rect') {
+        tree.rectBox = gizmoEl('rect', null, 'gizmo-rectbox');
+        root.appendChild(tree.rectBox);
+        tree.edges = ['rect-n', 'rect-e', 'rect-s', 'rect-w'].map(kind => {
+            const g = makeHandle(kind);
+            const hitLine = gizmoEl('line', null, 'gizmo-hit-stroke');
+            const hitRect = gizmoEl('rect', null, 'gizmo-hit');
+            const visRect = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+            g.appendChild(hitLine);
+            g.appendChild(hitRect);
+            g.appendChild(visRect);
+            return { kind, g, hitLine, hitRect, visRect };
+        });
+        tree.corners = ['rect-nw', 'rect-ne', 'rect-se', 'rect-sw'].map(kind => {
+            const g = makeHandle(kind);
+            const hitRect = gizmoEl('rect', null, 'gizmo-hit');
+            const visRect = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+            g.appendChild(hitRect);
+            g.appendChild(visRect);
+            return { kind, g, hitRect, visRect };
+        });
+        const centre = makeHandle('rect-move');
+        tree.centreHit = gizmoEl('circle', null, 'gizmo-hit');
+        tree.centreBox = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+        centre.appendChild(tree.centreHit);
+        centre.appendChild(tree.centreBox);
+    }
+    else if (tool === 'rotate') {
+        const ring = makeHandle('rotate');
+        tree.ringHit = gizmoEl('circle', null, 'gizmo-hit-stroke');
+        tree.ringVis = gizmoEl('circle', null, 'gizmo-ring gizmo-vis');
+        tree.spoke = gizmoEl('line', null, 'gizmo-spoke gizmo-vis');
+        tree.knob = gizmoEl('circle', null, 'gizmo-handle-box gizmo-box-amber gizmo-vis');
+        ring.appendChild(tree.ringHit);
+        ring.appendChild(tree.ringVis);
+        ring.appendChild(tree.spoke);
+        ring.appendChild(tree.knob);
+    }
+    else {
+        tree.bounds = gizmoEl('rect', null, 'gizmo-bounds');
+        root.appendChild(tree.bounds);
+        const buildAxis = (kind, dx, dy, axisCls, boxCls, label) => {
+            const g = makeHandle(kind);
+            const hitLine = gizmoEl('line', null, 'gizmo-hit-stroke');
+            const axisLine = gizmoEl('line', null, 'gizmo-axis ' + axisCls + ' gizmo-vis');
+            g.appendChild(hitLine);
+            g.appendChild(axisLine);
+            if (tool === 'move') {
+                const hitCircle = gizmoEl('circle', null, 'gizmo-hit');
+                const arrow = gizmoEl('polygon', null, 'gizmo-arrow-' + (dx ? 'x' : 'y') + ' gizmo-vis');
+                const text = gizmoEl('text', { fill: dx ? '#fb7185' : '#4ade80' }, 'gizmo-axis-label');
+                text.textContent = label;
+                g.appendChild(hitCircle);
+                g.appendChild(arrow);
+                g.appendChild(text);
+                return { dx, dy, hitLine, axisLine, hitCircle, arrow, text };
+            }
+            const hitRect = gizmoEl('rect', null, 'gizmo-hit');
+            const visRect = gizmoEl('rect', null, 'gizmo-handle-box ' + boxCls + ' gizmo-vis');
+            g.appendChild(hitRect);
+            g.appendChild(visRect);
+            return { dx, dy, hitLine, axisLine, hitRect, visRect };
+        };
+        tree.axisX = buildAxis(tool === 'move' ? 'move-x' : 'scale-x', 1, 0, 'gizmo-axis-x', 'gizmo-box-x', 'x');
+        tree.axisY = buildAxis(tool === 'move' ? 'move-y' : 'scale-y', 0, 1, 'gizmo-axis-y', 'gizmo-box-y', 'y');
+        const centre = makeHandle(tool === 'move' ? 'move-free' : 'scale-uniform');
+        tree.centreHit = gizmoEl('circle', null, 'gizmo-hit');
+        centre.appendChild(tree.centreHit);
+        if (tool === 'move') {
+            tree.centreVis = gizmoEl('circle', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+        }
+        else {
+            tree.centreVis = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+        }
+        centre.appendChild(tree.centreVis);
+    }
+    if (tool === 'rotate' || tool === 'scale' || tool === 'rect') {
+        const pv = makeHandle('pivot');
+        tree.pivotTitle = gizmoEl('title');
+        tree.pivotHit = gizmoEl('circle', null, 'gizmo-hit');
+        tree.pivotRing = gizmoEl('circle', null, 'gizmo-pivot-ring gizmo-vis');
+        tree.pivotDot = gizmoEl('circle', null, 'gizmo-pivot-dot gizmo-vis');
+        pv.appendChild(tree.pivotTitle);
+        pv.appendChild(tree.pivotHit);
+        pv.appendChild(tree.pivotRing);
+        pv.appendChild(tree.pivotDot);
+    }
+    else {
+        tree.pivotRing = gizmoEl('circle', null, 'gizmo-pivot-ring gizmo-vis');
+        root.appendChild(tree.pivotRing);
+    }
+    tree.readout = gizmoEl('text', null, 'gizmo-readout');
+    tree.readout.style.display = 'none';
+    root.appendChild(tree.readout);
+    gizmoTrees[tool] = tree;
+    return tree;
+}
+function setRectAttrs(el, x, y, w, h) {
+    setAttr(el, 'x', x);
+    setAttr(el, 'y', y);
+    setAttr(el, 'width', w);
+    setAttr(el, 'height', h);
+}
+function setCircleAttrs(el, cx, cy, r) {
+    setAttr(el, 'cx', cx);
+    setAttr(el, 'cy', cy);
+    setAttr(el, 'r', r);
+}
+function setLineAttrs(el, x1, y1, x2, y2) {
+    setAttr(el, 'x1', x1);
+    setAttr(el, 'y1', y1);
+    setAttr(el, 'x2', x2);
+    setAttr(el, 'y2', y2);
+}
 function renderGizmo() {
     const wrap = $('#canvasWrap');
-    const show = state.mode === 'select' && gizmoEnabled && !selectDraft && !edgeDraft && !pinch && !pan;
+    const show = state.mode === 'select' && gizmoEnabled && !selectDraft && !edgeDraft;
     const nodes = show ? gizmoTargetNodes() : [];
     syncGizmoControls(nodes.length);
     if (!nodes.length) {
-        if (gizmoSig) {
-            gizmoLayer.textContent = '';
-            gizmoSig = '';
-            gizmoRootEl = null;
-            gizmoAnchor = null;
-        }
+        if (gizmoRootEl && gizmoRootEl.parentNode)
+            gizmoRootEl.remove();
+        gizmoSig = '';
+        gizmoRootEl = null;
+        gizmoAnchor = null;
         wrap.classList.toggle('gizmo-active', false);
         return;
     }
@@ -7808,126 +8104,131 @@ function renderGizmo() {
     const tool = gizmoTool;
     const active = gizmoDrag?.handle || '';
     const pointer = gizmoDrag?.pointer;
+    const readoutText = gizmoDrag?.readout || '';
+    const pivotLabel = I18N.t('gizmo_pivot');
     const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(4), active,
-        gizmoDrag?.readout || '', pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
+        readoutText, pivotLabel, pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
     wrap.classList.toggle('gizmo-active', true);
-    if (sig === gizmoSig)
+    const tree = getGizmoTree(tool);
+    if (gizmoRootEl !== tree.root) {
+        if (gizmoRootEl && gizmoRootEl.parentNode)
+            gizmoRootEl.remove();
+        gizmoLayer.appendChild(tree.root);
+        gizmoRootEl = tree.root;
+        gizmoSig = '';
+    }
+    if (sig === gizmoSig) {
+        // Clear any plain-drag translation if renderGizmo was called after a node drag commit
+        setAttr(tree.root, 'transform', null);
+        gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
         return;
+    }
     gizmoSig = sig;
     gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
-    gizmoLayer.textContent = '';
-    const root = gizmoEl('g', null, 'gizmo-root');
-    gizmoRootEl = root;
-    gizmoLayer.appendChild(root);
-    const handle = (kind) => {
-        const g = gizmoEl('g', { 'data-gizmo': kind }, 'gizmo-handle' + (active === kind ? ' active' : ''));
-        root.appendChild(g);
-        return g;
-    };
+    setAttr(tree.root, 'transform', null);
+    for (const h of tree.handles)
+        toggleClass(h.g, 'active', active === h.kind);
     const armLen = 52 * u, armStart = 11 * u;
     let topY = b.minY;
     if (tool === 'rect') {
-        root.appendChild(gizmoEl('rect', { x: b.minX, y: b.minY, width: b.w, height: b.h }, 'gizmo-rectbox'));
+        setRectAttrs(tree.rectBox, b.minX, b.minY, b.w, b.h);
         const hit = 7 * u, box = 11 * u, boxHit = 21 * u;
-        const edges = [
-            ['rect-n', b.minX, b.minY, b.maxX, b.minY, b.cx, b.minY],
-            ['rect-e', b.maxX, b.minY, b.maxX, b.maxY, b.maxX, b.cy],
-            ['rect-s', b.minX, b.maxY, b.maxX, b.maxY, b.cx, b.maxY],
-            ['rect-w', b.minX, b.minY, b.minX, b.maxY, b.minX, b.cy],
+        const edgeCoords = [
+            [b.minX, b.minY, b.maxX, b.minY, b.cx, b.minY],
+            [b.maxX, b.minY, b.maxX, b.maxY, b.maxX, b.cy],
+            [b.minX, b.maxY, b.maxX, b.maxY, b.cx, b.maxY],
+            [b.minX, b.minY, b.minX, b.maxY, b.minX, b.cy],
         ];
-        for (const [kind, x1, y1, x2, y2, hx, hy] of edges) {
-            const g = handle(kind);
-            g.appendChild(gizmoEl('line', { x1, y1, x2, y2, 'stroke-width': 2 * hit }, 'gizmo-hit-stroke'));
-            g.appendChild(gizmoEl('rect', { x: hx - boxHit / 2, y: hy - boxHit / 2, width: boxHit, height: boxHit }, 'gizmo-hit'));
-            g.appendChild(gizmoEl('rect', { x: hx - box / 2, y: hy - box / 2, width: box, height: box }, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+        for (let i = 0; i < 4; i++) {
+            const e = tree.edges[i];
+            const [x1, y1, x2, y2, hx, hy] = edgeCoords[i];
+            setLineAttrs(e.hitLine, x1, y1, x2, y2);
+            setAttr(e.hitLine, 'stroke-width', 2 * hit);
+            setRectAttrs(e.hitRect, hx - boxHit / 2, hy - boxHit / 2, boxHit, boxHit);
+            setRectAttrs(e.visRect, hx - box / 2, hy - box / 2, box, box);
         }
-        const corners = [
-            ['rect-nw', b.minX, b.minY], ['rect-ne', b.maxX, b.minY],
-            ['rect-se', b.maxX, b.maxY], ['rect-sw', b.minX, b.maxY],
+        const cornerCoords = [
+            [b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY],
         ];
-        for (const [kind, hx, hy] of corners) {
-            const g = handle(kind);
-            g.appendChild(gizmoEl('rect', { x: hx - boxHit / 2, y: hy - boxHit / 2, width: boxHit, height: boxHit }, 'gizmo-hit'));
-            g.appendChild(gizmoEl('rect', { x: hx - box / 2, y: hy - box / 2, width: box, height: box }, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+        for (let i = 0; i < 4; i++) {
+            const c = tree.corners[i];
+            const [hx, hy] = cornerCoords[i];
+            setRectAttrs(c.hitRect, hx - boxHit / 2, hy - boxHit / 2, boxHit, boxHit);
+            setRectAttrs(c.visRect, hx - box / 2, hy - box / 2, box, box);
         }
-        const centre = handle('rect-move');
-        centre.appendChild(gizmoEl('circle', { cx: b.cx, cy: b.cy, r: 13 * u }, 'gizmo-hit'));
-        centre.appendChild(gizmoEl('rect', { x: b.cx - box / 2, y: b.cy - box / 2, width: box, height: box }, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+        setCircleAttrs(tree.centreHit, b.cx, b.cy, 13 * u);
+        setRectAttrs(tree.centreBox, b.cx - box / 2, b.cy - box / 2, box, box);
     }
     else if (tool === 'rotate') {
-        // Fixed on-screen ring around the pivot (not a ring enclosing the
-        // whole selection): the drag is angular, so the ring size does not
-        // affect the math, and a constant-size ring never leaves the canvas
-        // for large selections.
         const Rr = 72 * u;
-        topY = P.y - Rr; // readout rides the ring, not the (rotating) bounds
-        const ring = handle('rotate');
-        ring.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: Rr, 'stroke-width': 18 * u }, 'gizmo-hit-stroke'));
-        ring.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: Rr }, 'gizmo-ring gizmo-vis'));
+        topY = P.y - Rr;
+        setCircleAttrs(tree.ringHit, P.x, P.y, Rr);
+        setAttr(tree.ringHit, 'stroke-width', 18 * u);
+        setCircleAttrs(tree.ringVis, P.x, P.y, Rr);
         const a = (gizmoDrag?.tool === 'rotate' && pointer) ? Math.atan2(pointer.y - P.y, pointer.x - P.x) : -Math.PI / 2;
         const hx = P.x + Math.cos(a) * Rr, hy = P.y + Math.sin(a) * Rr;
-        if (gizmoDrag?.tool === 'rotate')
-            ring.appendChild(gizmoEl('line', { x1: P.x, y1: P.y, x2: hx, y2: hy }, 'gizmo-spoke gizmo-vis'));
-        ring.appendChild(gizmoEl('circle', { cx: hx, cy: hy, r: 6.5 * u }, 'gizmo-handle-box gizmo-box-amber gizmo-vis'));
+        if (gizmoDrag?.tool === 'rotate') {
+            setLineAttrs(tree.spoke, P.x, P.y, hx, hy);
+            setStyleIfChanged(tree.spoke.style, 'display', '');
+        }
+        else {
+            setStyleIfChanged(tree.spoke.style, 'display', 'none');
+        }
+        setCircleAttrs(tree.knob, hx, hy, 6.5 * u);
     }
     else {
-        // move & scale share the axis arms; they differ in the end handles.
-        root.appendChild(gizmoEl('rect', { x: b.minX, y: b.minY, width: b.w, height: b.h }, 'gizmo-bounds'));
-        const axisHandle = (kind, dx, dy, axisCls, boxCls, label) => {
-            const g = handle(kind);
+        setRectAttrs(tree.bounds, b.minX, b.minY, b.w, b.h);
+        const updateAxis = (ax) => {
+            const { dx, dy } = ax;
             const ex = P.x + dx * armLen, ey = P.y + dy * armLen;
-            g.appendChild(gizmoEl('line', { x1: P.x + dx * armStart, y1: P.y + dy * armStart, x2: ex, y2: ey, 'stroke-width': 16 * u }, 'gizmo-hit-stroke'));
-            g.appendChild(gizmoEl('line', { x1: P.x + dx * armStart, y1: P.y + dy * armStart, x2: ex, y2: ey }, 'gizmo-axis ' + axisCls + ' gizmo-vis'));
+            setLineAttrs(ax.hitLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
+            setAttr(ax.hitLine, 'stroke-width', 16 * u);
+            setLineAttrs(ax.axisLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
             if (tool === 'move') {
                 const al = 12 * u, aw = 5 * u;
                 const tipX = P.x + dx * (armLen + al), tipY = P.y + dy * (armLen + al);
                 const pts = `${tipX},${tipY} ${ex - dy * aw},${ey + dx * aw} ${ex + dy * aw},${ey - dx * aw}`;
-                g.appendChild(gizmoEl('circle', { cx: ex + dx * al / 2, cy: ey + dy * al / 2, r: 11 * u }, 'gizmo-hit'));
-                g.appendChild(gizmoEl('polygon', { points: pts }, 'gizmo-arrow-' + (dx ? 'x' : 'y') + ' gizmo-vis'));
-                const t = gizmoEl('text', { x: tipX + dx * 9 * u - (dy ? 3 * u : 0), y: tipY + dy * 12 * u + (dx ? 4 * u : 0), 'font-size': 11 * u, fill: dx ? '#fb7185' : '#4ade80' }, 'gizmo-axis-label');
-                t.textContent = label;
-                g.appendChild(t);
+                setCircleAttrs(ax.hitCircle, ex + dx * al / 2, ey + dy * al / 2, 11 * u);
+                setAttr(ax.arrow, 'points', pts);
+                setAttr(ax.text, 'x', tipX + dx * 9 * u - (dy ? 3 * u : 0));
+                setAttr(ax.text, 'y', tipY + dy * 12 * u + (dx ? 4 * u : 0));
+                setAttr(ax.text, 'font-size', 11 * u);
             }
             else {
                 const box = 13 * u;
-                g.appendChild(gizmoEl('rect', { x: ex - 11 * u, y: ey - 11 * u, width: 22 * u, height: 22 * u }, 'gizmo-hit'));
-                g.appendChild(gizmoEl('rect', { x: ex - box / 2, y: ey - box / 2, width: box, height: box }, 'gizmo-handle-box ' + boxCls + ' gizmo-vis'));
+                setRectAttrs(ax.hitRect, ex - 11 * u, ey - 11 * u, 22 * u, 22 * u);
+                setRectAttrs(ax.visRect, ex - box / 2, ey - box / 2, box, box);
             }
-            return g;
         };
-        axisHandle(tool === 'move' ? 'move-x' : 'scale-x', 1, 0, 'gizmo-axis-x', 'gizmo-box-x', 'x');
-        axisHandle(tool === 'move' ? 'move-y' : 'scale-y', 0, 1, 'gizmo-axis-y', 'gizmo-box-y', 'y');
-        const centre = handle(tool === 'move' ? 'move-free' : 'scale-uniform');
-        centre.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: 13 * u }, 'gizmo-hit'));
+        updateAxis(tree.axisX);
+        updateAxis(tree.axisY);
+        setCircleAttrs(tree.centreHit, P.x, P.y, 13 * u);
         if (tool === 'move') {
-            centre.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: 7.5 * u }, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+            setCircleAttrs(tree.centreVis, P.x, P.y, 7.5 * u);
         }
         else {
             const box = 14 * u;
-            centre.appendChild(gizmoEl('rect', { x: P.x - box / 2, y: P.y - box / 2, width: box, height: box }, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+            setRectAttrs(tree.centreVis, P.x - box / 2, P.y - box / 2, box, box);
         }
     }
-    // Pivot: marker for every tool; directly draggable in rotate/scale/rect
-    // (in move/rect the centre handle already owns that spot, so the small
-    // dot on top of it is the pivot grab). Double-click resets to centre.
     if (tool === 'rotate' || tool === 'scale' || tool === 'rect') {
-        const pv = handle('pivot');
-        const title = gizmoEl('title');
-        title.textContent = I18N.t('gizmo_pivot');
-        pv.appendChild(title);
-        // In scale/rect the pivot sits inside the centre handle: keep its hit
-        // area to the dot itself so the centre handle stays grabbable around it.
-        pv.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: (tool === 'rotate' ? 11 : 7) * u }, 'gizmo-hit'));
-        pv.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: 6 * u }, 'gizmo-pivot-ring gizmo-vis'));
-        pv.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: 2 * u }, 'gizmo-pivot-dot gizmo-vis'));
+        setText(tree.pivotTitle, pivotLabel);
+        setCircleAttrs(tree.pivotHit, P.x, P.y, (tool === 'rotate' ? 11 : 7) * u);
+        setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
+        setCircleAttrs(tree.pivotDot, P.x, P.y, 2 * u);
     }
     else {
-        root.appendChild(gizmoEl('circle', { cx: P.x, cy: P.y, r: 6 * u }, 'gizmo-pivot-ring gizmo-vis'));
+        setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
     }
-    if (gizmoDrag?.readout) {
-        const t = gizmoEl('text', { x: tool === 'rect' ? b.cx : P.x, y: topY - 10 * u, 'font-size': 12.5 * u }, 'gizmo-readout');
-        t.textContent = gizmoDrag.readout;
-        root.appendChild(t);
+    if (readoutText) {
+        setAttr(tree.readout, 'x', tool === 'rect' ? b.cx : P.x);
+        setAttr(tree.readout, 'y', topY - 10 * u);
+        setAttr(tree.readout, 'font-size', 12.5 * u);
+        setText(tree.readout, readoutText);
+        setStyleIfChanged(tree.readout.style, 'display', '');
+    }
+    else {
+        setStyleIfChanged(tree.readout.style, 'display', 'none');
     }
 }
 // Integration hook for moveDragFast: a plain node/group drag translates
@@ -7975,7 +8276,7 @@ function onGizmoPointerDown(ev) {
     ev.stopPropagation();
     svg.focus();
     try {
-        svg.setPointerCapture(ev.pointerId);
+        canvasWrap.setPointerCapture(ev.pointerId);
     }
     catch { }
     registerPointer(ev);
@@ -8201,6 +8502,7 @@ gizmoLayer.addEventListener('dblclick', ev => {
         return;
     ev.preventDefault();
     ev.stopPropagation();
+    flushZoomPreview();
     gizmoPivot = null;
     renderGizmo();
 });
@@ -8582,6 +8884,7 @@ function exportGraphmlText() {
 function exportGraphml() { showExportPreview(`${fileBase()}.graphml`, exportGraphmlText(), 'application/graphml+xml;charset=utf-8'); }
 function exportJsonText() { return JSON.stringify(JSON.parse(snapshot()), null, 2); }
 function replaceWithImportedGraph(data, label = 'graph') {
+    cancelZoomPreview();
     // Preserve current graph defaults (Style tab) when importing — only override
     // if the file explicitly carries its own defaults.
     const mergedSettings = { ...state.settings, ...(data.settings || {}) };
@@ -8757,7 +9060,7 @@ function commitCsvGraph(nodes, edges, label) {
         title: state.title, mode: state.mode, selectTool: state.selectTool,
         selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
         nodes, edges, customAttributes: state.customAttributes,
-        settings: state.settings, viewBox: state.viewBox
+        settings: state.settings, viewBox: currentCamera()
     });
     const droppedNodes = nodes.length - sane.nodes.length;
     const droppedEdges = edges.length - sane.edges.length;
@@ -9907,37 +10210,62 @@ function attachDragNumber(input, options = {}) {
     handle.addEventListener('pointercancel', endDrag);
 }
 // === Camera position controls ===
-function syncCameraInputs() {
-    const cx = state.viewBox.x + state.viewBox.w / 2;
-    const cy = state.viewBox.y + state.viewBox.h / 2;
-    const xEl = $('#cameraX'), yEl = $('#cameraY'), wEl = $('#cameraW'), hEl = $('#cameraH');
-    if (xEl && document.activeElement !== xEl && xEl.value !== String(Math.round(cx)))
-        xEl.value = Math.round(cx);
-    if (yEl && document.activeElement !== yEl && yEl.value !== String(Math.round(cy)))
-        yEl.value = Math.round(cy);
-    if (wEl && document.activeElement !== wEl && wEl.value !== String(Math.round(state.viewBox.w)))
-        wEl.value = Math.round(state.viewBox.w);
-    if (hEl && document.activeElement !== hEl && hEl.value !== String(Math.round(state.viewBox.h)))
-        hEl.value = Math.round(state.viewBox.h);
+function syncCameraInputField(el, value, force = false) {
+    if (!el)
+        return;
+    const str = String(Math.round(value));
+    if (force || document.activeElement !== el) {
+        if (el.value !== str)
+            el.value = str;
+        el._syncedValue = str;
+        el._userDirty = false;
+    }
+}
+function isCameraInputEdited(el) {
+    if (!el)
+        return false;
+    if (el._userDirty)
+        return true;
+    return el._syncedValue !== undefined ? el.value !== el._syncedValue : el.value !== '';
+}
+function syncCameraInputs(force = false) {
+    const vb = currentCamera();
+    const cx = vb.x + vb.w / 2;
+    const cy = vb.y + vb.h / 2;
+    syncCameraInputField($('#cameraX'), cx, force);
+    syncCameraInputField($('#cameraY'), cy, force);
+    syncCameraInputField($('#cameraW'), vb.w, force);
+    syncCameraInputField($('#cameraH'), vb.h, force);
     const readout = $('#cameraReadout');
     if (readout) {
-        const text = I18N.t('camera_readout', { x: Math.round(cx), y: Math.round(cy), zoom: (1000 / state.viewBox.w * 100).toFixed(0) });
+        const text = I18N.t('camera_readout', { x: Math.round(cx), y: Math.round(cy), zoom: (1000 / vb.w * 100).toFixed(0) });
         if (readout.textContent !== text)
             readout.textContent = text;
     }
 }
-function setCameraFromInputs() {
-    const cx = finite($('#cameraX').value, state.viewBox.x + state.viewBox.w / 2);
-    const cy = finite($('#cameraY').value, state.viewBox.y + state.viewBox.h / 2);
-    const w = clamp(finite($('#cameraW').value, state.viewBox.w), 100, 20000);
-    const h = clamp(finite($('#cameraH').value, state.viewBox.h), 90, 20000);
+function setCameraFromInputs(sourceEl = null) {
+    // Apply only fields actually edited by the user (or explicitly submitted
+    // via Enter in `sourceEl`), falling back to `currentCamera()` for untouched
+    // fields so an in-flight wheel/button zoom is never reverted by stale
+    // pre-preview values still sitting in the other inputs.
+    const base = currentCamera();
+    const xEl = $('#cameraX'), yEl = $('#cameraY'), wEl = $('#cameraW'), hEl = $('#cameraH');
+    const useField = (el) => Boolean(el && (el === sourceEl || isCameraInputEdited(el)));
+    const baseCx = base.x + base.w / 2;
+    const baseCy = base.y + base.h / 2;
+    const cx = useField(xEl) ? finite(xEl.value, baseCx) : baseCx;
+    const cy = useField(yEl) ? finite(yEl.value, baseCy) : baseCy;
+    const w = clamp(useField(wEl) ? finite(wEl.value, base.w) : base.w, 100, 20000);
+    const h = clamp(useField(hEl) ? finite(hEl.value, base.h) : base.h, 90, 20000);
+    cancelZoomPreview();
     state.viewBox = { x: cx - w / 2, y: cy - h / 2, w, h };
     applyCamera();
     saveSoon();
-    syncCameraInputs();
+    syncCameraInputs(true);
     toast(I18N.t('camera_updated'));
 }
 function resetCamera() {
+    cancelZoomPreview();
     state.viewBox = { x: -500, y: -330, w: 1000, h: 660 };
     applyCamera();
     saveSoon();
@@ -9947,6 +10275,7 @@ function resetCamera() {
 function centerOnNode(n) {
     if (!n)
         return;
+    flushZoomPreview();
     state.viewBox.x = n.x - state.viewBox.w / 2;
     state.viewBox.y = n.y - state.viewBox.h / 2;
     applyCamera();
@@ -9977,6 +10306,7 @@ function centerOnFurthestNodeOfEdge(edge) {
     const a = nodeById(edge.from), b = nodeById(edge.to);
     if (!a || !b)
         return;
+    flushZoomPreview();
     const cx = state.viewBox.x + state.viewBox.w / 2;
     const cy = state.viewBox.y + state.viewBox.h / 2;
     const da = Math.hypot(a.x - cx, a.y - cy);
@@ -10850,9 +11180,12 @@ function wireUi() {
         pushHistory('edit custom attribute');
         toast(I18N.t('attribute_updated'));
     });
-    svg.addEventListener('selectstart', ev => ev.preventDefault());
-    svg.addEventListener('contextmenu', ev => ev.preventDefault());
-    svg.addEventListener('auxclick', ev => ev.preventDefault());
+    canvasWrap.addEventListener('selectstart', ev => { if (!isCanvasOverlayControl(ev.target))
+        ev.preventDefault(); });
+    canvasWrap.addEventListener('contextmenu', ev => { if (!isCanvasOverlayControl(ev.target))
+        ev.preventDefault(); });
+    canvasWrap.addEventListener('auxclick', ev => { if (!isCanvasOverlayControl(ev.target))
+        ev.preventDefault(); });
     // One non-modal tools surface: a bottom sheet on portrait phones and a
     // right drawer elsewhere. The uncovered graph stays fully interactive;
     // only the off-screen drawer itself becomes inert when closed.
@@ -11050,8 +11383,8 @@ function wireUi() {
     } });
     $('#btnSample').addEventListener('click', () => { closePanels(); addSample(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
-    $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
-    $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r = svg.getBoundingClientRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
+    $('#btnZoomIn').addEventListener('click', () => { const r = canvasViewportRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
+    $('#btnZoomOut').addEventListener('click', () => { const r = canvasViewportRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
     $('#btnZoomReset').addEventListener('click', fitView);
     $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
@@ -11388,17 +11721,29 @@ function wireUi() {
     $('#btnLayoutForce').addEventListener('click', () => layoutForce());
     $('#btnCenterSelection').addEventListener('click', centerOnSelection);
     // Camera position controls
-    $('#btnCameraSet').addEventListener('click', setCameraFromInputs);
+    $('#btnCameraSet').addEventListener('click', () => setCameraFromInputs());
     $('#btnCameraFit').addEventListener('click', fitView);
     $('#btnCameraReset').addEventListener('click', resetCamera);
     ['cameraX', 'cameraY', 'cameraW', 'cameraH'].forEach(id => {
         const el = $('#' + id);
         if (el) {
-            el.addEventListener('keydown', ev => { if (ev.key === 'Enter') {
-                ev.preventDefault();
-                setCameraFromInputs();
-            } });
-            el.addEventListener('change', setCameraFromInputs);
+            el.addEventListener('input', () => { el._userDirty = true; el._appliedViaEnter = undefined; });
+            el.addEventListener('keydown', ev => {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    setCameraFromInputs(el);
+                    el._appliedViaEnter = el.value;
+                }
+            });
+            el.addEventListener('change', () => {
+                if (el._appliedViaEnter === el.value && !el._userDirty) {
+                    el._appliedViaEnter = undefined;
+                    return;
+                }
+                setCameraFromInputs(el);
+            });
+            el.addEventListener('blur', () => { el._appliedViaEnter = undefined; if (!isCameraInputEdited(el))
+                syncCameraInputs(); });
         }
     });
     // Hotkey configuration
@@ -11512,8 +11857,8 @@ function wireUi() {
                 }
                 mainEl.classList.toggle(cls);
                 syncViewButtons();
-                // Trigger a render to resize the canvas to its new container
-                setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
+                // Resize the camera/grid to the new container without reconciling SVG nodes
+                setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); renderMatrixAndList(); }, 0);
             });
         });
         syncViewButtons();
@@ -11533,7 +11878,7 @@ function wireUi() {
                 mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
                 if (syncOrientBtn)
                     syncOrientBtn();
-                setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
+                setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); }, 0);
             });
             if (mainEl.dataset.orient)
                 syncOrientBtn();
@@ -11556,7 +11901,7 @@ function wireUi() {
                 if (syncOrientBtn)
                     syncOrientBtn();
             }
-            setTimeout(() => { invalidateGridCache(); queueRender(true); }, 50);
+            setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); renderMatrixAndList(); }, 50);
         });
     }
     $('#btnBfs').addEventListener('click', runBfs);
@@ -11673,7 +12018,7 @@ function wireUi() {
         spaceDown = false;
         setStatusOnly();
     } });
-    window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
+    window.addEventListener('resize', () => { flushZoomPreview(); invalidateGridCache(); applyCamera(); });
     // Перерисовать матрицу и канвас при смене языка
     window.addEventListener('i18n-change', () => {
         // Обновить state.title если он дефолтный
@@ -11698,6 +12043,12 @@ function wireUi() {
                 pushHistory('move node');
             drag = null;
             changed = true;
+        }
+        if (zoomPreview) {
+            state.viewBox = { ...zoomPreview.preview };
+            cancelZoomPreview();
+            changed = true;
+            navigationChanged = true;
         }
         if (pan) {
             state.viewBox = { ...pan.previewViewBox };
@@ -11725,6 +12076,10 @@ function wireUi() {
             pendingNodeTap = null;
             changed = true;
         }
+        if (singleSweep) {
+            singleSweep = null;
+            changed = true;
+        }
         if (selectDraft) {
             finishSelectionDraft(true);
             changed = true;
@@ -11750,7 +12105,11 @@ function wireUi() {
     window.addEventListener('keyup', ev => { if (ev.key === 'Escape')
         resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)
-    svg.addEventListener('pointercancel', () => resetInteractionState());
+    canvasWrap.addEventListener('pointercancel', ev => {
+        if (!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId))
+            return;
+        resetInteractionState();
+    });
 }
 function init() {
     // Загрузить язык и применить переводы до рендеринга

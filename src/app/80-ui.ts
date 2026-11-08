@@ -32,9 +32,9 @@
       state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'};
       renderCustomAttributes(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
     });
-    svg.addEventListener('selectstart', ev => ev.preventDefault());
-    svg.addEventListener('contextmenu', ev => ev.preventDefault());
-    svg.addEventListener('auxclick', ev => ev.preventDefault());
+    canvasWrap.addEventListener('selectstart', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
+    canvasWrap.addEventListener('contextmenu', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
+    canvasWrap.addEventListener('auxclick', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
 
     // One non-modal tools surface: a bottom sheet on portrait phones and a
     // right drawer elsewhere. The uncovered graph stays fully interactive;
@@ -195,8 +195,8 @@
     $('#btnClear').addEventListener('click', async () => { if(!state.nodes.length && !state.edges.length) return; if(await uiConfirm(I18N.t('clear_entire'), {danger: true, confirmLabel: I18N.t('clear')})){ state.nodes=[]; state.edges=[]; state.selected=null; state.selection={nodes: [], edges: []}; state.nextNode=1; state.nextEdge=1; pushHistory('clear'); queueRender(true, true); } });
     $('#btnSample').addEventListener('click', () => { closePanels(); addSample(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
-    $('#btnZoomIn').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
-    $('#btnZoomOut').addEventListener('click', () => { flushZoomPreview(); const r=svg.getBoundingClientRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
+    $('#btnZoomIn').addEventListener('click', () => { const r=canvasViewportRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
+    $('#btnZoomOut').addEventListener('click', () => { const r=canvasViewportRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
     $('#btnZoomReset').addEventListener('click', fitView); $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
     $('#matrixSize').addEventListener('keydown', ev => { if(ev.key === 'Enter') setMatrixDimension(ev.target.value); });
@@ -427,14 +427,25 @@
     $('#btnLayoutCircle').addEventListener('click', layoutCircle); $('#btnLayoutGrid').addEventListener('click', layoutGrid); $('#btnLayoutForce').addEventListener('click', () => layoutForce());
     $('#btnCenterSelection').addEventListener('click', centerOnSelection);
     // Camera position controls
-    $('#btnCameraSet').addEventListener('click', setCameraFromInputs);
+    $('#btnCameraSet').addEventListener('click', () => setCameraFromInputs());
     $('#btnCameraFit').addEventListener('click', fitView);
     $('#btnCameraReset').addEventListener('click', resetCamera);
     ['cameraX','cameraY','cameraW','cameraH'].forEach(id => {
-      const el = $('#'+id);
+      const el = $('#'+id) as any;
       if(el){
-        el.addEventListener('keydown', ev => { if(ev.key === 'Enter'){ ev.preventDefault(); setCameraFromInputs(); } });
-        el.addEventListener('change', setCameraFromInputs);
+        el.addEventListener('input', () => { el._userDirty = true; el._appliedViaEnter = undefined; });
+        el.addEventListener('keydown', ev => {
+          if(ev.key === 'Enter'){
+            ev.preventDefault();
+            setCameraFromInputs(el);
+            el._appliedViaEnter = el.value;
+          }
+        });
+        el.addEventListener('change', () => {
+          if(el._appliedViaEnter === el.value && !el._userDirty){ el._appliedViaEnter = undefined; return; }
+          setCameraFromInputs(el);
+        });
+        el.addEventListener('blur', () => { el._appliedViaEnter = undefined; if(!isCameraInputEdited(el)) syncCameraInputs(); });
       }
     });
     // Hotkey configuration
@@ -538,8 +549,8 @@
           if(turningOff && visibleViewCount() <= 1){ toast(I18N.t('view_keep_last')); return; }
           mainEl.classList.toggle(cls);
           syncViewButtons();
-          // Trigger a render to resize the canvas to its new container
-          setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
+          // Resize the camera/grid to the new container without reconciling SVG nodes
+          setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); renderMatrixAndList(); }, 0);
         });
       });
       syncViewButtons();
@@ -558,7 +569,7 @@
           const cur = mainEl.dataset.orient || 'v';
           mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
           if(syncOrientBtn) syncOrientBtn();
-          setTimeout(() => { invalidateGridCache(); queueRender(true); }, 0);
+          setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); }, 0);
         });
         if(mainEl.dataset.orient) syncOrientBtn();
       }
@@ -576,7 +587,7 @@
           }
           if(syncOrientBtn) syncOrientBtn();
         }
-        setTimeout(() => { invalidateGridCache(); queueRender(true); }, 50);
+        setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); renderMatrixAndList(); }, 50);
       });
     }
     $('#btnBfs').addEventListener('click', runBfs); $('#btnDfs').addEventListener('click', runDfs); $('#btnDijkstra').addEventListener('click', runDijkstra); $('#btnComponents').addEventListener('click', runComponents); $('#btnTopo').addEventListener('click', runTopo); $('#btnStats').addEventListener('click', runStats);
@@ -613,7 +624,7 @@
       }
     });
     window.addEventListener('keyup', ev => { if(matchesHotkey(ev, 'pan')){ spaceDown = false; setStatusOnly(); } });
-    window.addEventListener('resize', () => { invalidateGridCache(); queueRender(false); });
+    window.addEventListener('resize', () => { flushZoomPreview(); invalidateGridCache(); applyCamera(); });
     // Перерисовать матрицу и канвас при смене языка
     window.addEventListener('i18n-change', () => {
       // Обновить state.title если он дефолтный
@@ -632,11 +643,13 @@
         if(drag.moved) pushHistory('move node');
         drag = null; changed = true;
       }
+      if(zoomPreview){ state.viewBox = {...zoomPreview.preview}; cancelZoomPreview(); changed = true; navigationChanged = true; }
       if(pan){ state.viewBox = {...pan.previewViewBox}; pan = null; changed = true; navigationChanged = true; }
       if(pinch){ state.viewBox = {...pinch.previewViewBox}; pinch = null; changed = true; navigationChanged = true; }
       if(edgeDraft){ edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d',''); changed = true; }
       if(pendingEdgeFrom){ pendingEdgeFrom = null; changed = true; }
       if(pendingNodeTap){ pendingNodeTap = null; changed = true; }
+      if(singleSweep){ singleSweep = null; changed = true; }
       if(selectDraft){ finishSelectionDraft(true); changed = true; }
       if(navigationChanged){ applyCamera(); saveSoon(); }
       if(changed){ syncSelectionDom(); setStatusOnly(); $('#canvasWrap').classList.remove('panning'); activePointers.clear(); }
@@ -648,5 +661,8 @@
     window.addEventListener('visibilitychange', () => { if(document.hidden) flushAutosave(); });
     window.addEventListener('keyup', ev => { if(ev.key === 'Escape') resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)
-    svg.addEventListener('pointercancel', () => resetInteractionState());
+    canvasWrap.addEventListener('pointercancel', ev => {
+      if(!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId)) return;
+      resetInteractionState();
+    });
   }

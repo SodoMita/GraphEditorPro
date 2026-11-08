@@ -150,7 +150,7 @@ async function openBuild(browser, build, graph) {
 async function measureDrag(page, steps) {
   return page.evaluate(async steps => {
     const svg = document.querySelector('#graphCanvas');
-    const rect = svg.getBoundingClientRect();
+    const rect = (document.querySelector('#gridLayer') || svg).getBoundingClientRect();
     const nodes = [...document.querySelectorAll('#sceneLayer [id^="node-"]')];
     const target = document.getElementById('node-hub') || nodes[Math.floor(nodes.length / 2)];
     const box = target.getBoundingClientRect();
@@ -218,7 +218,7 @@ async function profileOnce(page, kind) {
   await cdp.send('Profiler.start');
   await page.evaluate(async kind => {
     const svg = document.querySelector('#graphCanvas');
-    const rect = svg.getBoundingClientRect();
+    const rect = (document.querySelector('#gridLayer') || svg).getBoundingClientRect();
     const nodes = [...document.querySelectorAll('#sceneLayer [id^="node-"]')];
     const target = document.getElementById('node-hub') || nodes[Math.floor(nodes.length / 2)];
     const box = target.getBoundingClientRect();

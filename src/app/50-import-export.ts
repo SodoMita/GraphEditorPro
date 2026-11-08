@@ -321,6 +321,7 @@
   function exportGraphml(){ showExportPreview(`${fileBase()}.graphml`, exportGraphmlText(), 'application/graphml+xml;charset=utf-8'); }
   function exportJsonText(){ return JSON.stringify(JSON.parse(snapshot()), null, 2); }
   function replaceWithImportedGraph(data, label='graph'){
+    cancelZoomPreview();
     // Preserve current graph defaults (Style tab) when importing — only override
     // if the file explicitly carries its own defaults.
     const mergedSettings = {...state.settings, ...(data.settings || {})};
@@ -450,7 +451,7 @@
       title: state.title, mode: state.mode, selectTool: state.selectTool,
       selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
       nodes, edges, customAttributes: state.customAttributes,
-      settings: state.settings, viewBox: state.viewBox
+      settings: state.settings, viewBox: currentCamera()
     });
     const droppedNodes = nodes.length - sane.nodes.length;
     const droppedEdges = edges.length - sane.edges.length;

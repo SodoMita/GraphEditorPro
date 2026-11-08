@@ -270,7 +270,7 @@
   }
 
   function snapThresholdWorld(){
-    return clamp(state.viewBox.w / 70, 10, 32);
+    return clamp(currentCamera().w / 70, 10, 32);
   }
   function snapPointToEnabled(x, y, ignoreId=null){
     const ignored = ignoreId instanceof Set ? ignoreId : new Set(ignoreId ? [ignoreId] : []);
@@ -324,8 +324,9 @@
   }
   function coordinateBounds(n){
     // Single pass min/max without intermediate arrays or spread — avoids O(n) allocations and call-stack blow-up on large graphs
-    let minX = state.viewBox.x, maxX = state.viewBox.x + state.viewBox.w;
-    let minY = state.viewBox.y, maxY = state.viewBox.y + state.viewBox.h;
+    const vb = currentCamera();
+    let minX = vb.x, maxX = vb.x + vb.w;
+    let minY = vb.y, maxY = vb.y + vb.h;
     // include the edited node's own position
     if(n.x < minX) minX = n.x; if(n.x > maxX) maxX = n.x;
     if(n.y < minY) minY = n.y; if(n.y > maxY) maxY = n.y;
@@ -471,7 +472,8 @@
     if(nodes.length){
       return { x:nodes.reduce((sum,n)=>sum+n.x,0)/nodes.length, y:nodes.reduce((sum,n)=>sum+n.y,0)/nodes.length };
     }
-    return { x:state.viewBox.x + state.viewBox.w/2, y:state.viewBox.y + state.viewBox.h/2 };
+    const vb = currentCamera();
+    return { x:vb.x + vb.w/2, y:vb.y + vb.h/2 };
   }
   function circlePositionsForNewNodes(count, aroundNodes=state.nodes){
     count = Math.max(1, count|0);

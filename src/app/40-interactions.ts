@@ -24,15 +24,21 @@
     // the viewport rect once per gesture for clientToWorld.
     flushZoomPreview();
     activePointers.set(ev.pointerId, {id:ev.pointerId, type:ev.pointerType || 'mouse', clientX:ev.clientX, clientY:ev.clientY});
-    if(!pointerRect) pointerRect = svg.getBoundingClientRect();
+    if(!pointerRect) pointerRect = canvasViewportRect();
   }
   function updatePointer(ev){ const p = activePointers.get(ev.pointerId); if(p){ p.clientX = ev.clientX; p.clientY = ev.clientY; } }
   function unregisterPointer(ev){ activePointers.delete(ev.pointerId); if(!activePointers.size) pointerRect = null; }
   function touchPointers(){ return [...activePointers.values()].filter(p => p.type === 'touch'); }
   function distClient(a,b){ return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
   function centerClient(a,b){ return {clientX:(a.clientX + b.clientX) / 2, clientY:(a.clientY + b.clientY) / 2}; }
-  function clientToWorld(clientX, clientY, viewBox=state.viewBox, rect=null){
-    const r = rect || pointerRect || svg.getBoundingClientRect();
+  function currentCamera(): ViewBox {
+    return zoomPreview ? zoomPreview.preview : state.viewBox;
+  }
+  function hasActiveCanvasGesture(){
+    return Boolean(singleSweep || pinch || selectDraft || pendingNodeTap || edgeDraft || gizmoDrag || drag || pan);
+  }
+  function clientToWorld(clientX, clientY, viewBox=currentCamera(), rect=null){
+    const r = canvasViewportRect(rect || pointerRect);
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly, otherwise cursor-based
     // gestures drift when the canvas aspect ratio differs from the viewBox.
     const scale = Math.min(r.width / viewBox.w, r.height / viewBox.h);
@@ -43,7 +49,7 @@
       y: viewBox.y + (clientY - r.top - offsetY) / scale
     };
   }
-  function worldAtClient(clientX, clientY, viewBox=state.viewBox){ return clientToWorld(clientX, clientY, viewBox); }
+  function worldAtClient(clientX, clientY, viewBox=currentCamera()){ return clientToWorld(clientX, clientY, viewBox); }
   function maybeStartPinch(){
     const pts = touchPointers();
     if(pts.length < 2) return false;
@@ -64,13 +70,15 @@
       syncSelectionDom();
     }
     if(pan){
+      // Keep stageBaseCamera on #cameraLayer intact so pan -> pinch continues
+      // smoothly on the promoted #cameraStage without a mid-gesture SVG commit.
       state.viewBox = {...pan.previewViewBox};
       pan = null;
-      applyCamera();
     }
-    pendingEdgeFrom = null; pendingNodeTap = null;
+    if(selectDraft) finishSelectionDraft(true);
+    pendingEdgeFrom = null; pendingNodeTap = null; singleSweep = null;
     const c = centerClient(a,b);
-    pinch = { startDistance:distClient(a,b), startViewBox:{...state.viewBox}, startWorld:null, rect:svg.getBoundingClientRect(), previewViewBox:{...state.viewBox}, frame:false };
+    pinch = { startDistance:distClient(a,b), startViewBox:{...state.viewBox}, startWorld:null, rect:canvasViewportRect(), previewViewBox:{...state.viewBox}, frame:false };
     pinch.startWorld = clientToWorld(c.clientX, c.clientY, state.viewBox, pinch.rect);
     $('#canvasWrap').classList.add('panning');
     $('#canvasWrap').classList.add('fast-interaction');
@@ -79,7 +87,7 @@
   function updatePinch(){
     const pts = touchPointers();
     if(!pinch || pts.length < 2) return;
-    const a = pts[0], b = pts[1], c = centerClient(a,b), r = pinch.rect || svg.getBoundingClientRect();
+    const a = pts[0], b = pts[1], c = centerClient(a,b), r = canvasViewportRect(pinch.rect);
     const scale = clamp(pinch.startDistance / distClient(a,b), 0.05, 20);
     const nw = clamp(pinch.startViewBox.w * scale, 120, 20000);
     const nh = clamp(pinch.startViewBox.h * scale, 90, 20000);
@@ -113,7 +121,7 @@
   function polygonToolActive(){ return state.mode === 'select' && state.selectTool === 'polygon'; }
   function beginSelectionDraft(ev){
     ev.preventDefault();
-    try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     const p = pointFromEvent(ev);
     selectDraft = { tool:state.selectTool, pointerId:ev.pointerId, start:p, end:p, points:[p], combine:effectiveSelectCombine(ev), moved:false };
     $('#canvasWrap').classList.add('fast-interaction');
@@ -372,14 +380,14 @@
     return inside;
   }
 
-  function pointFromEvent(ev){ return clientToWorld(ev.clientX, ev.clientY, state.viewBox); }
+  function pointFromEvent(ev){ return clientToWorld(ev.clientX, ev.clientY, currentCamera()); }
   function isEmptyCanvasTarget(el: Element | null){
-    // Pointer capture retargets pointerup to the SVG even over toolbars or
+    // Pointer capture retargets pointerup to #canvasWrap even over toolbars or
     // outside the canvas, so use the actual element under the pointer.
-    return Boolean(el && svg.contains(el) && !el.closest('.node,.edge'));
+    return Boolean(el && canvasWrap.contains(el) && !isCanvasOverlayControl(el) && !el.closest('.node,.edge'));
   }
   function onNodePointerDown(ev, id){
-    ev.preventDefault(); ev.stopPropagation(); try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    ev.preventDefault(); ev.stopPropagation(); try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     registerPointer(ev);
     if(ev.button === 1 || ev.button === 2){
       pendingEdgeFrom = null;
@@ -474,7 +482,11 @@
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
   }
-  svg.addEventListener('pointerdown', ev => {
+  // Attach canvas pointer/wheel listeners to the stable, viewport-sized
+  // #canvasWrap rather than the transformed #cameraStage/<svg>, so input over
+  // every pixel of the canvas viewport is always received during zoom-out/pan.
+  canvasWrap.addEventListener('pointerdown', ev => {
+    if(isCanvasOverlayControl(ev.target)) return;
     svg.focus();
     registerPointer(ev);
     if(maybeStartPinch()) return;
@@ -500,7 +512,7 @@
       pendingEdgeFrom = null;
       const p = pointFromEvent(ev);
       pendingNodeTap = { mode:'edge', from, pointerId:ev.pointerId, startClientX:ev.clientX, startClientY:ev.clientY, x:p.x, y:p.y, moved:false };
-      try{ svg.setPointerCapture(ev.pointerId); }catch{}
+      try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
       return;
     }
     if(state.mode === 'node'){
@@ -517,13 +529,14 @@
         // it. A plain click on empty still deselects on release.
         singleSweep = { pointerId:ev.pointerId, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
         gestureActive = true;
-        try{ svg.setPointerCapture(ev.pointerId); }catch{}
+        try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
       } else {
         deselect();
       }
     }
   });
-  svg.addEventListener('dblclick', ev => {
+  canvasWrap.addEventListener('dblclick', ev => {
+    if(isCanvasOverlayControl(ev.target)) return;
     if(polygonToolActive() && selectDraft?.tool === 'polygon'){
       ev.preventDefault();
       finishPolygonSelection(false);
@@ -532,17 +545,17 @@
     // Node creation is intentionally handled only by Node-mode pointerdown/tap.
     // This avoids accidental nodes from double-clicks in selection tools or edge mode.
   });
-  svg.addEventListener('pointermove', ev => {
+  canvasWrap.addEventListener('pointermove', ev => {
     updatePointer(ev);
+    if(!pinch && !pan && !selectDraft && !pendingNodeTap && !singleSweep && !edgeDraft && !gizmoDrag && !drag) return;
     // A pending wheel-zoom distorts clientToWorld (the device camera is the
-    // preview, not state.viewBox). Commit it before any gesture math.
+    // preview, not state.viewBox). Commit it before active gesture math.
     if(zoomPreview) flushZoomPreview();
     if(pinch){ updatePinch(); return; }
     if(pan){
-      // Pan only moves the logical camera and re-applies the composited camera
-      // matrix: the root viewBox never changes, so no style or layout work is
-      // triggered over the scene while the pointer moves.
-      const rect = pan.rect || svg.getBoundingClientRect();
+      // Pan only moves the logical camera and re-applies the composited stage
+      // matrix: the SVG scene and #cameraLayer stay untouched while moving.
+      const rect = canvasViewportRect(pan.rect);
       const start = pan.startViewBox;
       const scale = Math.min(rect.width / start.w, rect.height / start.h);
       const dx = (ev.clientX - pan.startClientX) / scale;
@@ -588,14 +601,19 @@
       scheduleFastNodeMove(n.id); return;
     }
   });
-  svg.addEventListener('pointerup', ev => finishPointer(ev));
-  svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
+  canvasWrap.addEventListener('pointerup', ev => finishPointer(ev));
+  canvasWrap.addEventListener('pointercancel', ev => finishPointer(ev, true));
   function finishPointer(ev, cancel=false){
+    // Ignore bubbling pointerup/pointercancel from floating HUD, mode, or zoom
+    // buttons (and pointers that never started a canvas gesture) so physical
+    // clicks on #btnZoomIn/#btnZoomOut coalesce on #cameraStage instead of
+    // flushing the preview on every button release.
+    if(!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId)) return;
     if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
     if(singleSweep && ev.pointerId === singleSweep.pointerId){
       singleSweep = null;
       gestureActive = false;
-      try{ if(svg.hasPointerCapture?.(ev.pointerId)) svg.releasePointerCapture(ev.pointerId); }catch{}
+      try{ if(canvasWrap.hasPointerCapture?.(ev.pointerId)) canvasWrap.releasePointerCapture(ev.pointerId); }catch{}
       if(!cancel){
         const el = typeof document.elementFromPoint === 'function'
           ? document.elementFromPoint(ev.clientX, ev.clientY)
@@ -720,13 +738,13 @@
   function startPan(ev){
     ev.preventDefault();
     gestureActive = true;
-    try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     pan = {
       startClientX:ev.clientX,
       startClientY:ev.clientY,
       startViewBox:{...state.viewBox},
       previewViewBox:{...state.viewBox},
-      rect:svg.getBoundingClientRect(),
+      rect:canvasViewportRect(),
       frame:false
     };
     $('#canvasWrap').classList.add('panning');
@@ -734,28 +752,39 @@
     setStatusOnly();
   }
 
-  svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, {passive:false});
-  // === Wheel zoom ===
-  // Wheel events update the logical camera and re-apply the composited camera
-  // matrix (the same mechanism panning uses), so the wheel never re-lays-out
-  // the scene. The camera is then committed to state exactly once, when the
-  // wheel settles.
+  canvasWrap.addEventListener('wheel', ev => {
+    if(isCanvasOverlayControl(ev.target)) return;
+    ev.preventDefault();
+    zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY);
+  }, {passive:false});
+  // === Wheel / button zoom ===
+  // Wheel events and rapid zoom-button clicks drive the GPU-composited HTML
+  // #cameraStage wrapper relative to the base SVG camera, so active scaling
+  // never triggers Blink SVG layout or tile re-rasterization per frame. Once
+  // zooming settles, commitZoomPreview() atomically resets #cameraStage to
+  // identity and writes the settled matrix to #cameraLayer.
   let zoomPreview = null; // {preview, rect, frame, timer}
   // Debounce the commit: a rapid scroll burst should settle (persist the camera,
   // refresh the numeric camera fields) once the wheel goes idle, not per pause.
   const ZOOM_COMMIT_DELAY = 220;
   function zoomAt(factor, clientX, clientY){
-    // A wheel arriving mid pan/pinch would fight the gesture's transform —
-    // finalize the gesture first so zoom starts from what is on screen.
+    // A wheel arriving mid pan/pinch adopts the in-flight camera without an
+    // intermediate SVG commit so #cameraStage keeps compositing against
+    // stageBaseCamera seamlessly.
     if(pan){
       state.viewBox = {...pan.previewViewBox};
       pan = null;
-      applyCamera();
       $('#canvasWrap').classList.remove('panning');
+      gestureActive = false;
     }
-    if(pinch) endPinch();
+    if(pinch){
+      state.viewBox = {...pinch.previewViewBox};
+      pinch = null;
+      $('#canvasWrap').classList.remove('panning');
+      gestureActive = false;
+    }
     const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
-    const r = zoomPreview ? zoomPreview.rect : svg.getBoundingClientRect();
+    const r = zoomPreview ? zoomPreview.rect : canvasViewportRect();
     const anchor = clientToWorld(clientX, clientY, cur, r);
     const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
     // Preserve the exact world point under the cursor, including the centered
@@ -782,21 +811,40 @@
     clearTimeout(zoomPreview.timer);
     zoomPreview.timer = setTimeout(commitZoomPreview, ZOOM_COMMIT_DELAY);
   }
+  function cancelZoomPreview(){
+    if(!zoomPreview) return;
+    clearTimeout(zoomPreview.timer);
+    zoomPreview = null;
+    $('#canvasWrap').classList.remove('fast-interaction');
+  }
   function commitZoomPreview(){
     if(!zoomPreview) return;
-    const z = zoomPreview; zoomPreview = null;
-    clearTimeout(z.timer);
-    state.viewBox = {...z.preview};
+    const preview = zoomPreview.preview;
+    cancelZoomPreview();
+    state.viewBox = {...preview};
     applyCamera();
-    $('#canvasWrap').classList.remove('fast-interaction');
     saveSoon();
   }
   function flushZoomPreview(){ if(zoomPreview) commitZoomPreview(); }
   function fitView(){
-    if(!state.nodes.length){ state.viewBox = {x:-500,y:-330,w:1000,h:660}; queueRender(false); saveSoon(); return; }
-    const xs = state.nodes.map(n=>n.x), ys = state.nodes.map(n=>n.y);
-    const minX=Math.min(...xs)-120, maxX=Math.max(...xs)+120, minY=Math.min(...ys)-120, maxY=Math.max(...ys)+120;
-    state.viewBox = {x:minX, y:minY, w:Math.max(260,maxX-minX), h:Math.max(220,maxY-minY)}; queueRender(false); saveSoon();
+    cancelZoomPreview();
+    if(!state.nodes.length){
+      state.viewBox = {x:-500,y:-330,w:1000,h:660};
+      applyCamera();
+      saveSoon();
+      return;
+    }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for(const n of state.nodes){
+      if(n.x < minX) minX = n.x;
+      if(n.x > maxX) maxX = n.x;
+      if(n.y < minY) minY = n.y;
+      if(n.y > maxY) maxY = n.y;
+    }
+    minX -= 120; maxX += 120; minY -= 120; maxY += 120;
+    state.viewBox = {x:minX, y:minY, w:Math.max(260,maxX-minX), h:Math.max(220,maxY-minY)};
+    applyCamera();
+    saveSoon();
   }
 
   async function editNodeQuick(id){

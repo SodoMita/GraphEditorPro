@@ -140,7 +140,7 @@
       grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas";
       overflow:hidden;
     }
-    .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0}
+    .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0; touch-action:none}
     /* The canvas background color lives on this div; the grid LINES are drawn
        inside the SVG (world-anchored #gridRect pattern) so grid and graph are
        always painted by the same pass. This div is NOT promoted: a composited
@@ -150,6 +150,20 @@
       position:absolute; inset:0; pointer-events:none;
       background-color:#020617;
     }
+    /* #cameraStage is the ONLY compositor-promoted layer on the canvas path,
+       sized to 200% x 200% (a 0.5x-viewport overscan apron on all 4 sides) so
+       pan and zoom-out previews immediately reveal pre-rasterized off-screen
+       nodes, edges, labels and grid without blank margins. If a marathon pan
+       or deep zoom-out approaches the outer edge of the 2x2 apron,
+       applyPreviewCamera() re-bases #cameraLayer once so newly exposed world
+       areas stay populated continuously. #cameraLayer must NOT carry
+       will-change:transform, otherwise Chromium re-rasterizes its nested layer
+       on every stage scale frame. */
+    .camera-stage{
+      position:absolute; left:-50%; top:-50%; width:200%; height:200%;
+      transform-origin:0 0;
+      will-change:transform; transform:matrix(1, 0, 0, 1, 0, 0);
+    }
     #graphCanvas{
       position:relative; width:100%; height:100%; display:block; background:transparent;
       touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
@@ -157,18 +171,6 @@
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     #gridRect{pointer-events:none}
-    /* The camera group is the ONLY promoted layer, and navigation only ever
-       changes its transform: gesture previews and committed cameras are the
-       same composited write, so the transform moves the already-rasterized
-       scene at ~0.1 ms per frame instead of re-laying-out thousands of vector
-       elements. The scene group and the world-locked grid pattern ride inside
-       that same layer, so grid and graph always paint together. The root viewBox
-       stays a fixed world reference frame: rewriting it would re-run style and
-       layout for the whole scene on every camera update. There is deliberately
-       no second promoted layer (the old CSS-background grid div): two layers
-       update on two clocks, and the slower one showed the previous camera for a
-       frame at pan/zoom begin and end. */
-    #cameraLayer{will-change:transform}
     .canvas-hud{position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; max-width:60%}
     .canvas-hud > *{pointer-events:auto}
     .status-pill{
@@ -537,8 +539,8 @@
     .node text{font-weight:800; paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
-    .canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
-    .canvas-wrap.panning #graphCanvas{cursor:grabbing}
+    .canvas-wrap.move-mode,.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
+    .canvas-wrap.panning,.canvas-wrap.panning #graphCanvas{cursor:grabbing}
     .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
     .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
     .edge-arrow{pointer-events:none}

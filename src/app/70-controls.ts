@@ -66,38 +66,64 @@
   }
 
   // === Camera position controls ===
-  function syncCameraInputs(){
-    const cx = state.viewBox.x + state.viewBox.w/2;
-    const cy = state.viewBox.y + state.viewBox.h/2;
-    const xEl = $('#cameraX'), yEl = $('#cameraY'), wEl = $('#cameraW'), hEl = $('#cameraH');
-    if(xEl && document.activeElement !== xEl && xEl.value !== String(Math.round(cx))) xEl.value = Math.round(cx);
-    if(yEl && document.activeElement !== yEl && yEl.value !== String(Math.round(cy))) yEl.value = Math.round(cy);
-    if(wEl && document.activeElement !== wEl && wEl.value !== String(Math.round(state.viewBox.w))) wEl.value = Math.round(state.viewBox.w);
-    if(hEl && document.activeElement !== hEl && hEl.value !== String(Math.round(state.viewBox.h))) hEl.value = Math.round(state.viewBox.h);
+  function syncCameraInputField(el: any, value: number, force = false){
+    if(!el) return;
+    const str = String(Math.round(value));
+    if(force || document.activeElement !== el){
+      if(el.value !== str) el.value = str;
+      el._syncedValue = str;
+      el._userDirty = false;
+    }
+  }
+  function isCameraInputEdited(el: any){
+    if(!el) return false;
+    if(el._userDirty) return true;
+    return el._syncedValue !== undefined ? el.value !== el._syncedValue : el.value !== '';
+  }
+  function syncCameraInputs(force = false){
+    const vb = currentCamera();
+    const cx = vb.x + vb.w/2;
+    const cy = vb.y + vb.h/2;
+    syncCameraInputField($('#cameraX'), cx, force);
+    syncCameraInputField($('#cameraY'), cy, force);
+    syncCameraInputField($('#cameraW'), vb.w, force);
+    syncCameraInputField($('#cameraH'), vb.h, force);
     const readout = $('#cameraReadout');
     if(readout){
-      const text = I18N.t('camera_readout', {x: Math.round(cx), y: Math.round(cy), zoom: (1000/state.viewBox.w*100).toFixed(0)});
+      const text = I18N.t('camera_readout', {x: Math.round(cx), y: Math.round(cy), zoom: (1000/vb.w*100).toFixed(0)});
       if(readout.textContent !== text) readout.textContent = text;
     }
   }
-  function setCameraFromInputs(){
-    const cx = finite($('#cameraX').value, state.viewBox.x + state.viewBox.w/2);
-    const cy = finite($('#cameraY').value, state.viewBox.y + state.viewBox.h/2);
-    const w = clamp(finite($('#cameraW').value, state.viewBox.w), 100, 20000);
-    const h = clamp(finite($('#cameraH').value, state.viewBox.h), 90, 20000);
+  function setCameraFromInputs(sourceEl: any = null){
+    // Apply only fields actually edited by the user (or explicitly submitted
+    // via Enter in `sourceEl`), falling back to `currentCamera()` for untouched
+    // fields so an in-flight wheel/button zoom is never reverted by stale
+    // pre-preview values still sitting in the other inputs.
+    const base = currentCamera();
+    const xEl = $('#cameraX') as any, yEl = $('#cameraY') as any, wEl = $('#cameraW') as any, hEl = $('#cameraH') as any;
+    const useField = (el: any) => Boolean(el && (el === sourceEl || isCameraInputEdited(el)));
+    const baseCx = base.x + base.w/2;
+    const baseCy = base.y + base.h/2;
+    const cx = useField(xEl) ? finite(xEl.value, baseCx) : baseCx;
+    const cy = useField(yEl) ? finite(yEl.value, baseCy) : baseCy;
+    const w = clamp(useField(wEl) ? finite(wEl.value, base.w) : base.w, 100, 20000);
+    const h = clamp(useField(hEl) ? finite(hEl.value, base.h) : base.h, 90, 20000);
+    cancelZoomPreview();
     state.viewBox = { x: cx - w/2, y: cy - h/2, w, h };
     applyCamera();
     saveSoon();
-    syncCameraInputs();
+    syncCameraInputs(true);
     toast(I18N.t('camera_updated'));
   }
   function resetCamera(){
+    cancelZoomPreview();
     state.viewBox = {x:-500, y:-330, w:1000, h:660};
     applyCamera(); saveSoon(); syncCameraInputs();
     toast(I18N.t('camera_reset'));
   }
   function centerOnNode(n){
     if(!n) return;
+    flushZoomPreview();
     state.viewBox.x = n.x - state.viewBox.w/2;
     state.viewBox.y = n.y - state.viewBox.h/2;
     applyCamera(); saveSoon(); syncCameraInputs();
@@ -117,6 +143,7 @@
   function centerOnFurthestNodeOfEdge(edge){
     const a = nodeById(edge.from), b = nodeById(edge.to);
     if(!a || !b) return;
+    flushZoomPreview();
     const cx = state.viewBox.x + state.viewBox.w/2;
     const cy = state.viewBox.y + state.viewBox.h/2;
     const da = Math.hypot(a.x - cx, a.y - cy);
