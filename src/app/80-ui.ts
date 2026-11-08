@@ -32,9 +32,9 @@
       state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'};
       renderCustomAttributes(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
     });
-    svg.addEventListener('selectstart', ev => ev.preventDefault());
-    svg.addEventListener('contextmenu', ev => ev.preventDefault());
-    svg.addEventListener('auxclick', ev => ev.preventDefault());
+    canvasWrap.addEventListener('selectstart', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
+    canvasWrap.addEventListener('contextmenu', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
+    canvasWrap.addEventListener('auxclick', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
 
     // One non-modal tools surface: a bottom sheet on portrait phones and a
     // right drawer elsewhere. The uncovered graph stays fully interactive;
@@ -650,5 +650,5 @@
     window.addEventListener('visibilitychange', () => { if(document.hidden) flushAutosave(); });
     window.addEventListener('keyup', ev => { if(ev.key === 'Escape') resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)
-    svg.addEventListener('pointercancel', () => resetInteractionState());
+    canvasWrap.addEventListener('pointercancel', () => resetInteractionState());
   }

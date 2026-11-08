@@ -81,11 +81,14 @@
     }
   }
   function setCameraFromInputs(){
-    flushZoomPreview();
-    const cx = finite($('#cameraX').value, state.viewBox.x + state.viewBox.w/2);
-    const cy = finite($('#cameraY').value, state.viewBox.y + state.viewBox.h/2);
-    const w = clamp(finite($('#cameraW').value, state.viewBox.w), 100, 20000);
-    const h = clamp(finite($('#cameraH').value, state.viewBox.h), 90, 20000);
+    // Read input values BEFORE cancelling/syncing any pending zoom preview so
+    // syncCameraInputs() cannot overwrite unfocused fields before they are read.
+    const base = zoomPreview ? zoomPreview.preview : state.viewBox;
+    const cx = finite($('#cameraX').value, base.x + base.w/2);
+    const cy = finite($('#cameraY').value, base.y + base.h/2);
+    const w = clamp(finite($('#cameraW').value, base.w), 100, 20000);
+    const h = clamp(finite($('#cameraH').value, base.h), 90, 20000);
+    cancelZoomPreview();
     state.viewBox = { x: cx - w/2, y: cy - h/2, w, h };
     applyCamera();
     saveSoon();

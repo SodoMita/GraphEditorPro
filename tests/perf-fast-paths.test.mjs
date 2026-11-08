@@ -91,6 +91,8 @@ function assertCentresMatch(accent, shape) {
 // fixed reference frame mapped with preserveAspectRatio="xMidYMid meet".
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
+const STAGE_OVERSCAN = 0.5;
+const STAGE_SPAN = 1 + 2 * STAGE_OVERSCAN;
 const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
 
 function parseMatrix2d(raw, label) {
@@ -116,17 +118,30 @@ function cameraMatrix(element) {
   return parseMatrix2d(element.getAttribute('transform'), `#${element.id}`);
 }
 
+function stageViewportBounds(camera, viewport = VIEWPORT) {
+  const stage = stageMatrix(camera);
+  const left = -STAGE_OVERSCAN * viewport.width + stage.tx;
+  const top = -STAGE_OVERSCAN * viewport.height + stage.ty;
+  return {
+    left,
+    top,
+    right: left + STAGE_SPAN * viewport.width * stage.scale,
+    bottom: top + STAGE_SPAN * viewport.height * stage.scale,
+  };
+}
+
 function projectWorldPoint(camera, x, y, viewport = VIEWPORT) {
   const layer = cameraMatrix(camera);
   const stage = stageMatrix(camera);
   const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
-  const baseOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
-  const baseOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
-  const svgX = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * basePixels + baseOffsetX;
-  const svgY = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * basePixels + baseOffsetY;
+  const refPixels = STAGE_SPAN * basePixels;
+  const refOffsetX = STAGE_SPAN * ((viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2);
+  const refOffsetY = STAGE_SPAN * ((viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2);
+  const svgX = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * refPixels + refOffsetX;
+  const svgY = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * refPixels + refOffsetY;
   return {
-    x: stage.scale * svgX + stage.tx,
-    y: stage.scale * svgY + stage.ty,
+    x: -STAGE_OVERSCAN * viewport.width + stage.scale * svgX + stage.tx,
+    y: -STAGE_OVERSCAN * viewport.height + stage.scale * svgY + stage.ty,
   };
 }
 
@@ -728,18 +743,18 @@ test('cursor anchor stays locked in world space when CSS transform scales svg.ge
 
   // Simulate real browser geometry: #gridLayer stays at the untransformed
   // viewport rect (1000x660), while #graphCanvas's getBoundingClientRect()
-  // reflects #cameraStage's CSS matrix!
+  // reflects the 200%x200% overscan box AND #cameraStage's CSS matrix!
   grid.getBoundingClientRect = () => ({
     x: 0, y: 0, left: 0, top: 0,
     width: 1000, height: 660, right: 1000, bottom: 660,
     toJSON() { return this; },
   });
   svg.getBoundingClientRect = () => {
-    const s = stageMatrix(camera);
+    const b = stageViewportBounds(camera);
     return {
-      x: s.tx, y: s.ty, left: s.tx, top: s.ty,
-      width: 1000 * s.scale, height: 660 * s.scale,
-      right: s.tx + 1000 * s.scale, bottom: s.ty + 660 * s.scale,
+      x: b.left, y: b.top, left: b.left, top: b.top,
+      width: b.right - b.left, height: b.bottom - b.top,
+      right: b.right, bottom: b.bottom,
       toJSON() { return this; },
     };
   };
@@ -763,6 +778,146 @@ test('cursor anchor stays locked in world space when CSS transform scales svg.ge
   const afterScreen = projectWorldPoint(camera, -250, -165);
   assert.ok(Math.abs(afterScreen.x - anchorX) < 1e-6 && Math.abs(afterScreen.y - anchorY) < 1e-6,
     `world anchor stayed under cursor after commit (${afterScreen.x}, ${afterScreen.y})`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('overscan stage keeps off-screen world content rendered during pan and zoom-out without blank margins', async () => {
+  const graph = {
+    ...smallGraph(),
+    nodes: [
+      ...smallGraph().nodes,
+      // Off-screen at rest (initial viewBox x ∈ [-500, +500], y ∈ [-330, +330])
+      { id: 'offRight', label: 'OffRight', x: 760, y: 0 },
+      { id: 'farLeft', label: 'FarLeft', x: -1600, y: 0 },
+    ],
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  const camera = document.querySelector('#cameraLayer');
+  setCanvasRect(svg);
+
+  // At rest, offRight (x=760) is outside the 1000px viewport (x=1260 > 1000)
+  // YET inside the 200%x200% overscanned SVG user-space bounds [-500..+500]:
+  const layerAtRest = cameraMatrix(camera);
+  const offRightSvgUserX = layerAtRest.scale * 760 + layerAtRest.tx;
+  assert.ok(offRightSvgUserX >= REFERENCE_VIEWBOX.x && offRightSvgUserX <= REFERENCE_VIEWBOX.x + REFERENCE_VIEWBOX.w,
+    `off-screen node x=760 is pre-rendered inside the overscan SVG reference frame (userX=${offRightSvgUserX})`);
+
+  // 1. Mid-pan left by 360px (NO pointerup -> pure #cameraStage preview):
+  //    offRight slides into the visible [0..1000] viewport and #cameraStage still covers [0..1000]x[0..660].
+  document.querySelector('#modeMove').click();
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 600, clientY: 330 });
+  dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 240, clientY: 330 });
+  await nextFrame(window);
+  const panBounds = stageViewportBounds(camera);
+  assert.ok(panBounds.left <= 0.5 && panBounds.right >= VIEWPORT.width - 0.5,
+    `overscan stage covers full viewport width during pan (${panBounds.left}..${panBounds.right})`);
+  const offRightDuringPan = projectWorldPoint(camera, 760, 0);
+  assert.ok(offRightDuringPan.x > 0 && offRightDuringPan.x < VIEWPORT.width,
+    `off-screen node appears inside viewport during live pan preview (x=${offRightDuringPan.x})`);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 240, clientY: 330 });
+  document.querySelector('#btnCameraReset').click();
+
+  // 2. Moderate wheel zoom-out (3 steps, ~1.48x, pure #cameraStage preview) AND
+  //    deep wheel zoom-out (10 steps total, ~3.7x, crossing 2x apron -> auto-rebase):
+  //    every frame keeps #cameraStage covering 100% of [0..1000]x[0..660]!
+  for (let i = 0; i < 10; i++) {
+    svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: 100 }));
+    await nextFrame(window);
+    const bounds = stageViewportBounds(camera);
+    assert.ok(bounds.left <= 0.5 && bounds.top <= 0.5 && bounds.right >= VIEWPORT.width - 0.5 && bounds.bottom >= VIEWPORT.height - 0.5,
+      `zoom-out step ${i + 1} leaves zero blank margin (${JSON.stringify(bounds)})`);
+  }
+  const farLeftDuringDeepZoom = projectWorldPoint(camera, -1600, 0);
+  assert.ok(farLeftDuringDeepZoom.x > 0 && farLeftDuringDeepZoom.x < VIEWPORT.width,
+    `far off-screen node (-1600) is rendered inside viewport during deep zoom-out preview (x=${farLeftDuringDeepZoom.x})`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('wheel and pointer events on #canvasWrap / #gridLayer outside <svg> drive zoom and pan while HUD controls stay isolated', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const wrap = document.querySelector('#canvasWrap');
+  const grid = document.querySelector('#gridLayer');
+  const svg = document.querySelector('#graphCanvas');
+  const camera = document.querySelector('#cameraLayer');
+  setCanvasRect(svg);
+
+  // Dispatch wheel directly on #gridLayer (as happens if a pointer target is outside <svg> inside #canvasWrap)
+  grid.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 50, clientY: 50, deltaY: 100 }));
+  await nextFrame(window);
+  await settle(window, 260);
+  const afterWheelW = Number(document.querySelector('#cameraW').value);
+  assert.equal(afterWheelW, 1140, 'wheel on #gridLayer zoomed out from 1000 to 1140');
+
+  // Dispatch pan pointer sequence directly on #canvasWrap in Move mode
+  document.querySelector('#modeMove').click();
+  dispatchPointer(window, wrap, 'pointerdown', { pointerId: 5, clientX: 40, clientY: 40 });
+  dispatchPointer(window, wrap, 'pointermove', { pointerId: 5, clientX: 140, clientY: 90 });
+  await nextFrame(window);
+  dispatchPointer(window, wrap, 'pointerup', { pointerId: 5, clientX: 140, clientY: 90 });
+  assert.notEqual(Number(document.querySelector('#cameraX').value), 0, 'panning on #canvasWrap moved the camera');
+
+  // Clicking a floating HUD button inside #canvasWrap must NOT trigger canvas pointerdown/pan
+  const camBeforeBtn = camera.getAttribute('transform');
+  dispatchPointer(window, document.querySelector('#modeSelect'), 'pointerdown', { pointerId: 6, clientX: 20, clientY: 600 });
+  dispatchPointer(window, document.querySelector('#modeSelect'), 'pointerup', { pointerId: 6, clientX: 20, clientY: 600 });
+  assert.equal(camera.getAttribute('transform'), camBeforeBtn, 'HUD button pointer events do not pan the canvas');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('unrelated re-renders during pending wheel zoom preserve the zoomed camera, and camera inputs are never overwritten before apply', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  const camera = document.querySelector('#cameraLayer');
+  setCanvasRect(svg);
+
+  // 1. Trigger a wheel zoom-in, then trigger an unrelated renderCanvas() (changing
+  //    default node color) BEFORE the 220ms settle timer expires.
+  svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
+  svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
+  await nextFrame(window);
+  const expectedW = 1000 * 0.88 * 0.88;
+  const expectedH = 660 * 0.88 * 0.88;
+  assertCameraRendersViewBox(camera, { x: -expectedW / 2, y: -expectedH / 2, w: expectedW, h: expectedH });
+
+  const defColor = document.querySelector('#defNodeColor');
+  defColor.value = '#f97316';
+  defColor.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await settle(window, 60); // renderCanvas() runs while debounce was still < 220ms
+  assertCameraRendersViewBox(camera, { x: -expectedW / 2, y: -expectedH / 2, w: expectedW, h: expectedH });
+  assert.equal(Number(document.querySelector('#cameraW').value), Math.round(expectedW),
+    'unrelated renderCanvas() adopted the pending zoom instead of reverting to 1000');
+
+  // 2. While another wheel preview is pending, enter numeric camera values,
+  //    move focus off the inputs onto #btnCameraSet, and click Apply.
+  svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
+  await nextFrame(window);
+  const camX = document.querySelector('#cameraX');
+  const camY = document.querySelector('#cameraY');
+  const camW = document.querySelector('#cameraW');
+  const camH = document.querySelector('#cameraH');
+  const applyBtn = document.querySelector('#btnCameraSet');
+  camX.value = '250';
+  camY.value = '-120';
+  camW.value = '800';
+  camH.value = '528';
+  applyBtn.focus(); // none of the 4 inputs is document.activeElement
+  applyBtn.click();
+
+  assertCameraRendersViewBox(camera, { x: 250 - 400, y: -120 - 264, w: 800, h: 528 });
+  assert.equal(camX.value, '250', 'entered cameraX was not overwritten by syncCameraInputs');
+  assert.equal(camY.value, '-120', 'entered cameraY was not overwritten by syncCameraInputs');
+  assert.equal(camW.value, '800', 'entered cameraW was not overwritten by syncCameraInputs');
+  assert.equal(camH.value, '528', 'entered cameraH was not overwritten by syncCameraInputs');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

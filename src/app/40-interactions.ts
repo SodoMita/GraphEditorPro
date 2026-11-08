@@ -115,7 +115,7 @@
   function polygonToolActive(){ return state.mode === 'select' && state.selectTool === 'polygon'; }
   function beginSelectionDraft(ev){
     ev.preventDefault();
-    try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     const p = pointFromEvent(ev);
     selectDraft = { tool:state.selectTool, pointerId:ev.pointerId, start:p, end:p, points:[p], combine:effectiveSelectCombine(ev), moved:false };
     $('#canvasWrap').classList.add('fast-interaction');
@@ -376,12 +376,12 @@
 
   function pointFromEvent(ev){ return clientToWorld(ev.clientX, ev.clientY, state.viewBox); }
   function isEmptyCanvasTarget(el: Element | null){
-    // Pointer capture retargets pointerup to the SVG even over toolbars or
+    // Pointer capture retargets pointerup to #canvasWrap even over toolbars or
     // outside the canvas, so use the actual element under the pointer.
-    return Boolean(el && svg.contains(el) && !el.closest('.node,.edge'));
+    return Boolean(el && canvasWrap.contains(el) && !isCanvasOverlayControl(el) && !el.closest('.node,.edge'));
   }
   function onNodePointerDown(ev, id){
-    ev.preventDefault(); ev.stopPropagation(); try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    ev.preventDefault(); ev.stopPropagation(); try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     registerPointer(ev);
     if(ev.button === 1 || ev.button === 2){
       pendingEdgeFrom = null;
@@ -476,7 +476,11 @@
     $('#canvasWrap').classList.add('fast-interaction');
     setStatusOnly();
   }
-  svg.addEventListener('pointerdown', ev => {
+  // Attach canvas pointer/wheel listeners to the stable, viewport-sized
+  // #canvasWrap rather than the transformed #cameraStage/<svg>, so input over
+  // every pixel of the canvas viewport is always received during zoom-out/pan.
+  canvasWrap.addEventListener('pointerdown', ev => {
+    if(isCanvasOverlayControl(ev.target)) return;
     svg.focus();
     registerPointer(ev);
     if(maybeStartPinch()) return;
@@ -502,7 +506,7 @@
       pendingEdgeFrom = null;
       const p = pointFromEvent(ev);
       pendingNodeTap = { mode:'edge', from, pointerId:ev.pointerId, startClientX:ev.clientX, startClientY:ev.clientY, x:p.x, y:p.y, moved:false };
-      try{ svg.setPointerCapture(ev.pointerId); }catch{}
+      try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
       return;
     }
     if(state.mode === 'node'){
@@ -519,13 +523,14 @@
         // it. A plain click on empty still deselects on release.
         singleSweep = { pointerId:ev.pointerId, startClientX:ev.clientX, startClientY:ev.clientY, moved:false };
         gestureActive = true;
-        try{ svg.setPointerCapture(ev.pointerId); }catch{}
+        try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
       } else {
         deselect();
       }
     }
   });
-  svg.addEventListener('dblclick', ev => {
+  canvasWrap.addEventListener('dblclick', ev => {
+    if(isCanvasOverlayControl(ev.target)) return;
     if(polygonToolActive() && selectDraft?.tool === 'polygon'){
       ev.preventDefault();
       finishPolygonSelection(false);
@@ -534,7 +539,7 @@
     // Node creation is intentionally handled only by Node-mode pointerdown/tap.
     // This avoids accidental nodes from double-clicks in selection tools or edge mode.
   });
-  svg.addEventListener('pointermove', ev => {
+  canvasWrap.addEventListener('pointermove', ev => {
     updatePointer(ev);
     if(!pinch && !pan && !selectDraft && !pendingNodeTap && !singleSweep && !edgeDraft && !gizmoDrag && !drag) return;
     // A pending wheel-zoom distorts clientToWorld (the device camera is the
@@ -590,14 +595,14 @@
       scheduleFastNodeMove(n.id); return;
     }
   });
-  svg.addEventListener('pointerup', ev => finishPointer(ev));
-  svg.addEventListener('pointercancel', ev => finishPointer(ev, true));
+  canvasWrap.addEventListener('pointerup', ev => finishPointer(ev));
+  canvasWrap.addEventListener('pointercancel', ev => finishPointer(ev, true));
   function finishPointer(ev, cancel=false){
     if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
     if(singleSweep && ev.pointerId === singleSweep.pointerId){
       singleSweep = null;
       gestureActive = false;
-      try{ if(svg.hasPointerCapture?.(ev.pointerId)) svg.releasePointerCapture(ev.pointerId); }catch{}
+      try{ if(canvasWrap.hasPointerCapture?.(ev.pointerId)) canvasWrap.releasePointerCapture(ev.pointerId); }catch{}
       if(!cancel){
         const el = typeof document.elementFromPoint === 'function'
           ? document.elementFromPoint(ev.clientX, ev.clientY)
@@ -722,7 +727,7 @@
   function startPan(ev){
     ev.preventDefault();
     gestureActive = true;
-    try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     pan = {
       startClientX:ev.clientX,
       startClientY:ev.clientY,
@@ -736,7 +741,11 @@
     setStatusOnly();
   }
 
-  svg.addEventListener('wheel', ev => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY); }, {passive:false});
+  canvasWrap.addEventListener('wheel', ev => {
+    if(isCanvasOverlayControl(ev.target)) return;
+    ev.preventDefault();
+    zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY);
+  }, {passive:false});
   // === Wheel / button zoom ===
   // Wheel events and rapid zoom-button clicks drive the GPU-composited HTML
   // #cameraStage wrapper relative to the base SVG camera, so active scaling

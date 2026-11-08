@@ -431,7 +431,7 @@
     if(state.mode !== 'select' || spaceDown || selectDraft || drag || gizmoDrag || pinch || pan) return;
     ev.preventDefault(); ev.stopPropagation();
     svg.focus();
-    try{ svg.setPointerCapture(ev.pointerId); }catch{}
+    try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     registerPointer(ev);
     if(ev.button === 1 || ev.button === 2){ pendingEdgeFrom = null; startPan(ev); return; }
     if(ev.button !== 0) return;

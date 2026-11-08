@@ -140,7 +140,7 @@
       grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas";
       overflow:hidden;
     }
-    .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0}
+    .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0; touch-action:none}
     /* The canvas background color lives on this div; the grid LINES are drawn
        inside the SVG (world-anchored #gridRect pattern) so grid and graph are
        always painted by the same pass. This div is NOT promoted: a composited
@@ -150,18 +150,18 @@
       position:absolute; inset:0; pointer-events:none;
       background-color:#020617;
     }
-    /* #cameraStage is the ONLY compositor-promoted layer on the canvas path.
-       Scaling an <svg:g> (#cameraLayer) forces Blink's SVG layout engine to
-       run ScreenScaleFactorChanged + Paint + vector tile rasterization across
-       every node, edge and label on each zoom frame (~50 ms/frame at 1500
-       nodes). Transforming an HTML box ABOVE <svg> with will-change:transform
-       locks the compositor raster scale during active pan/wheel/pinch gestures
-       (0 SVG layouts, 0 tile rasterizations, 0 SVG DOM writes), and commits
-       back to #cameraLayer + identity stage in one atomic sync-tree swap when
-       the gesture settles. #cameraLayer must NOT carry will-change:transform,
-       otherwise Chromium re-rasterizes its nested layer when the stage scales. */
+    /* #cameraStage is the ONLY compositor-promoted layer on the canvas path,
+       sized to 200% x 200% (a 0.5x-viewport overscan apron on all 4 sides) so
+       pan and zoom-out previews immediately reveal pre-rasterized off-screen
+       nodes, edges, labels and grid without blank margins. If a marathon pan
+       or deep zoom-out approaches the outer edge of the 2x2 apron,
+       applyPreviewCamera() re-bases #cameraLayer once so newly exposed world
+       areas stay populated continuously. #cameraLayer must NOT carry
+       will-change:transform, otherwise Chromium re-rasterizes its nested layer
+       on every stage scale frame. */
     .camera-stage{
-      position:absolute; inset:0; transform-origin:0 0;
+      position:absolute; left:-50%; top:-50%; width:200%; height:200%;
+      transform-origin:0 0;
       will-change:transform; transform:matrix(1, 0, 0, 1, 0, 0);
     }
     #graphCanvas{
@@ -539,8 +539,8 @@
     .node text{font-weight:800; paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
-    .canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
-    .canvas-wrap.panning #graphCanvas{cursor:grabbing}
+    .canvas-wrap.move-mode,.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
+    .canvas-wrap.panning,.canvas-wrap.panning #graphCanvas{cursor:grabbing}
     .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
     .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
     .edge-arrow{pointer-events:none}

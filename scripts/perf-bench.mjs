@@ -199,7 +199,8 @@ function summary(samples) {
 // ------------------------------------------------------------------ gestures
 async function panGesture(page, cdp, steps, stepMs) {
   const box = await page.evaluate(() => {
-    const rect = document.querySelector('#graphCanvas').getBoundingClientRect();
+    const el = document.querySelector('#gridLayer') || document.querySelector('#graphCanvas');
+    const rect = el.getBoundingClientRect();
     return { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
   });
   const y = box.y + box.h / 2, from = box.x + box.w * 0.3, to = box.x + box.w * 0.7;
@@ -215,7 +216,8 @@ async function panGesture(page, cdp, steps, stepMs) {
 }
 async function wheelGesture(page, cdp, steps, stepMs) {
   const box = await page.evaluate(() => {
-    const rect = document.querySelector('#graphCanvas').getBoundingClientRect();
+    const el = document.querySelector('#gridLayer') || document.querySelector('#graphCanvas');
+    const rect = el.getBoundingClientRect();
     return { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
   });
   const x = box.x + box.w / 2, y = box.y + box.h / 2;

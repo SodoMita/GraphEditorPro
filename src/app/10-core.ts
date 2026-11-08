@@ -168,10 +168,14 @@
     return typeof result === 'string' ? result : null;
   }
 
+  const canvasWrap = $('#canvasWrap');
   const svg = $('#graphCanvas');
   const cameraStage = $('#cameraStage');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
+  function isCanvasOverlayControl(target: any){
+    return Boolean(target?.closest?.('.canvas-hud, .zoom-controls, .mode-fab, .edge-tools, .sel-tools, .gizmo-tools'));
+  }
   // Active pan/zoom/pinch previews transform #cameraStage (HTML compositor
   // layer above <svg>) so scaling never triggers SVG layout or vector tile
   // re-rasterization; committed cameras rest as a vector matrix on #cameraLayer
@@ -273,6 +277,7 @@
     });
   }
   function applySnapshot(raw){
+    cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
     const sane = sanitizeState(data);

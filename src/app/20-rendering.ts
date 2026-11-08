@@ -529,9 +529,16 @@
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: selectionToolLabel(state.selectTool)});
   }
   function applyCamera(){
-    // Cancel any pending wheel-zoom debounce: state.viewBox is already the
-    // camera being committed (pointer adoption flushes zoomPreview beforehand).
-    cancelZoomPreview();
+    // Adopt any pending wheel/button zoom preview into state.viewBox before
+    // rendering so unrelated re-renders (e.g. changing default node color or
+    // editing labels during the 220ms zoom debounce) never snap back to the
+    // pre-zoom camera. Explicit camera-replacement callers (fitView,
+    // resetCamera, setCameraFromInputs, undo/redo, import) cancel first.
+    if(zoomPreview){
+      state.viewBox = {...zoomPreview.preview};
+      cancelZoomPreview();
+      saveSoon();
+    }
     const viewport = applyCameraTransform(state.viewBox);
     updateGridBackground(state.viewBox, viewport);
     syncCameraInputs();
@@ -541,22 +548,25 @@
   }
 
   // === Camera ===
-  // Two-tier camera that avoids reconstructing or re-rasterizing the SVG
-  // during scaling:
-  //   1. At rest, the root viewBox is a fixed world reference frame (written
-  //      once) and #cameraLayer carries the crisp vector camera matrix.
-  //   2. During active pan / wheel-zoom / pinch gestures, #cameraStage (the
-  //      single will-change:transform HTML container above <svg>) transforms
-  //      the already-rasterized bitmap relative to stageBaseCamera. Scaling an
-  //      <svg:g> inside <svg> forces Blink's SVG layout engine to re-layout
-  //      and re-rasterize every node, edge and label on each zoom frame; the
-  //      stage CSS matrix above <svg> keeps SVG layout, vector rasterization
-  //      and SVG DOM mutations at zero for the entire gesture.
+  // Two-tier overscan camera that avoids reconstructing or re-rasterizing the
+  // SVG per frame while keeping off-screen content visible during pan/zoom-out:
+  //   1. #cameraStage is sized to 200% x 200% (STAGE_OVERSCAN = 0.5 viewport
+  //      bleed on every side) above a fixed reference viewBox on <svg>, so a
+  //      2x2-viewport world region around state.viewBox is vector-rasterized
+  //      into #cameraLayer at rest.
+  //   2. During active pan / wheel-zoom / pinch gestures, #cameraStage
+  //      transforms that pre-rasterized 2x2 bitmap relative to stageBaseCamera
+  //      (0 SVG layouts, 0 tile rasterizations, 0 SVG DOM mutations per frame),
+  //      revealing pre-rendered off-screen nodes, edges and grid smoothly. If
+  //      a deep zoom-out or multi-screen pan reaches the outer edge of the 2x2
+  //      apron, applyPreviewCamera() re-bases #cameraLayer onto the current
+  //      preview once so newly exposed areas never go blank.
   //   3. When the gesture settles (or a pointer gesture adopts it),
   //      #cameraStage resets to identity in the same commit that writes the
-  //      final matrix to #cameraLayer, so Chromium's pending->active sync-tree
-  //      swap lands both atomically with no intermediate flash.
+  //      final matrix to #cameraLayer.
   const REFERENCE_VIEWBOX = {x:-500, y:-330, w:1000, h:660};
+  const STAGE_OVERSCAN = 0.5;
+  const STAGE_SPAN = 1 + 2 * STAGE_OVERSCAN;
   const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
   let referenceViewBoxInstalled = false;
   let stageBaseCamera: ViewBox | null = null;
@@ -564,11 +574,11 @@
   let stageTransformActive = false;
   function canvasViewportRect(cachedRect: any = null){
     if(cachedRect && cachedRect.width && cachedRect.height) return cachedRect;
-    // While #cameraStage carries a non-identity CSS transform, svg's own
-    // getBoundingClientRect() reflects that scaled/translated box in real
-    // browsers; #gridLayer shares exact inset:0 bounds inside #canvasWrap and
-    // is never transformed. Fall back to svg when layout sizes are 0 (jsdom).
-    if(stageTransformActive && gridLayer){
+    // #cameraStage (and #graphCanvas inside it) is overscanned to 200% x 200%
+    // and CSS-transformed during previews, whereas #gridLayer has inset:0 inside
+    // #canvasWrap with no transform — so #gridLayer always reports the exact
+    // 1x1 viewport rect in real browsers. Fall back to svg in jsdom (0x0 layout).
+    if(gridLayer){
       const gr = gridLayer.getBoundingClientRect();
       if(gr.width && gr.height) return gr;
     }
@@ -584,27 +594,31 @@
     return `matrix(${s}, 0, 0, ${s}, ${clean(matrix.tx)}, ${clean(matrix.ty)})`;
   }
   function cameraDeltaMatrix(camera, base, viewport){
-    // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings (the
-    // reference frame and the camera). This stays exact even when camera
-    // width/height or the viewport aspect ratio differ, which fit view and the
-    // numeric camera controls both produce.
+    // Map logical `camera` onto the visible centre 1x1 viewport inside the
+    // STAGE_SPAN x STAGE_SPAN overscanned <svg> (whose own preserveAspectRatio
+    // "xMidYMid meet" maps `base` across STAGE_SPAN * viewport). Exact across
+    // arbitrary aspect ratios and letterboxing, while pre-rendering the
+    // surrounding STAGE_OVERSCAN apron on all 4 sides.
     const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const refPixels = STAGE_SPAN * basePixels;
     const cameraPixels = Math.min(viewport.width / camera.w, viewport.height / camera.h);
-    const scale = cameraPixels / basePixels;
-    const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
-    const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
+    const scale = cameraPixels / refPixels;
+    const refOffsetX = STAGE_SPAN * ((viewport.width - base.w * basePixels) / 2);
+    const refOffsetY = STAGE_SPAN * ((viewport.height - base.h * basePixels) / 2);
     const cameraOffsetX = (viewport.width - camera.w * cameraPixels) / 2;
     const cameraOffsetY = (viewport.height - camera.h * cameraPixels) / 2;
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
     return {
       scale,
-      tx:base.x + (cameraOffsetX - baseOffsetX) / basePixels - scale * camera.x,
-      ty:base.y + (cameraOffsetY - baseOffsetY) / basePixels - scale * camera.y
+      tx:base.x + (padX + cameraOffsetX - refOffsetX) / refPixels - scale * camera.x,
+      ty:base.y + (padY + cameraOffsetY - refOffsetY) / refPixels - scale * camera.y
     };
   }
   function cameraStageMatrix(preview, base, viewport){
-    // Screen-pixel delta mapping the base camera raster (already painted in
-    // #cameraLayer) to the preview camera, with transform-origin: 0 0 on
-    // #cameraStage. Exact across letterboxing and simultaneous pan+zoom.
+    // Screen-pixel delta mapping the overscanned base camera raster (anchored
+    // at (-padX, -padY) in #canvasWrap with transform-origin: 0 0) to the
+    // preview camera. Exact across letterboxing and simultaneous pan+zoom.
     const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
     const previewPixels = Math.min(viewport.width / preview.w, viewport.height / preview.h);
     const scale = previewPixels / basePixels;
@@ -612,11 +626,22 @@
     const baseOriginY = (viewport.height - base.h * basePixels) / 2 - base.y * basePixels;
     const previewOriginX = (viewport.width - preview.w * previewPixels) / 2 - preview.x * previewPixels;
     const previewOriginY = (viewport.height - preview.h * previewPixels) / 2 - preview.y * previewPixels;
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
     return {
       scale,
-      tx:previewOriginX - scale * baseOriginX,
-      ty:previewOriginY - scale * baseOriginY
+      tx:padX * (1 - scale) + previewOriginX - scale * baseOriginX,
+      ty:padY * (1 - scale) + previewOriginY - scale * baseOriginY
     };
+  }
+  function stageCoversViewport(m, viewport){
+    const padX = STAGE_OVERSCAN * viewport.width;
+    const padY = STAGE_OVERSCAN * viewport.height;
+    const left = -padX + m.tx;
+    const top = -padY + m.ty;
+    const right = left + STAGE_SPAN * viewport.width * m.scale;
+    const bottom = top + STAGE_SPAN * viewport.height * m.scale;
+    return left <= 0.5 && top <= 0.5 && right >= viewport.width - 0.5 && bottom >= viewport.height - 0.5;
   }
   function ensureReferenceViewBox(){
     if(!referenceViewBoxInstalled){
@@ -648,6 +673,11 @@
     }
     if(!cameraStage || !stageBaseCamera) return;
     const m = cameraStageMatrix(preview, stageBaseCamera, viewport);
+    if(!stageCoversViewport(m, viewport)){
+      applyCameraTransform(preview, viewport);
+      updateGridBackground(preview, viewport);
+      return;
+    }
     setStyleIfChanged(cameraStage.style, 'transform', stageMatrixText(m));
     stageTransformActive = Math.abs(m.scale - 1) >= 1e-12 || Math.abs(m.tx) >= 1e-12 || Math.abs(m.ty) >= 1e-12;
   }

@@ -80,6 +80,8 @@ const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30
 // compose #cameraStage + #cameraLayer independently of the implementation.
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
+const STAGE_OVERSCAN = 0.5;
+const STAGE_SPAN = 1 + 2 * STAGE_OVERSCAN;
 const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
 
 function parseMatrix2d(raw, label) {
@@ -105,20 +107,21 @@ function stageTransformOf(camera) {
 function cameraScale(camera) {
   const layer = parseMatrix2d(camera.getAttribute('transform'), `#${camera.id}`);
   const stage = stageTransformOf(camera);
-  return layer.scale * stage.scale;
+  return layer.scale * STAGE_SPAN * stage.scale;
 }
 
 function projectWorldPoint(camera, x, y, viewport = VIEWPORT) {
   const layer = parseMatrix2d(camera.getAttribute('transform'), `#${camera.id}`);
   const stage = stageTransformOf(camera);
   const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
-  const baseOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
-  const baseOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
-  const svgX = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * basePixels + baseOffsetX;
-  const svgY = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * basePixels + baseOffsetY;
+  const refPixels = STAGE_SPAN * basePixels;
+  const refOffsetX = STAGE_SPAN * ((viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2);
+  const refOffsetY = STAGE_SPAN * ((viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2);
+  const svgX = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * refPixels + refOffsetX;
+  const svgY = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * refPixels + refOffsetY;
   return {
-    x: stage.scale * svgX + stage.tx,
-    y: stage.scale * svgY + stage.ty,
+    x: -STAGE_OVERSCAN * viewport.width + stage.scale * svgX + stage.tx,
+    y: -STAGE_OVERSCAN * viewport.height + stage.scale * svgY + stage.ty,
   };
 }
 

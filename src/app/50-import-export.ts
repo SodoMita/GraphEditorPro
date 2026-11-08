@@ -321,6 +321,7 @@
   function exportGraphml(){ showExportPreview(`${fileBase()}.graphml`, exportGraphmlText(), 'application/graphml+xml;charset=utf-8'); }
   function exportJsonText(){ return JSON.stringify(JSON.parse(snapshot()), null, 2); }
   function replaceWithImportedGraph(data, label='graph'){
+    cancelZoomPreview();
     // Preserve current graph defaults (Style tab) when importing — only override
     // if the file explicitly carries its own defaults.
     const mergedSettings = {...state.settings, ...(data.settings || {})};
