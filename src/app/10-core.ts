@@ -268,10 +268,10 @@
   let syncUiHooks: (() => void) | null = null;
 
   function snapshot(){
-    flushZoomPreview(); // never persist a camera that is still in compositor preview
+    const vb = currentCamera(); // persist active camera without forcing a mid-gesture SVG commit
     return JSON.stringify({
       title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, nextNode:state.nextNode, nextEdge:state.nextEdge,
-      nodes:state.nodes, edges:state.edges, customAttributes:state.customAttributes, settings:state.settings, viewBox:state.viewBox,
+      nodes:state.nodes, edges:state.edges, customAttributes:state.customAttributes, settings:state.settings, viewBox:vb,
       // Preserve user focus across undo/redo so editing the same object stays ergonomic
       selected:state.selected, selection:state.selection
     });

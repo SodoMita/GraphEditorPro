@@ -451,7 +451,7 @@
       title: state.title, mode: state.mode, selectTool: state.selectTool,
       selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
       nodes, edges, customAttributes: state.customAttributes,
-      settings: state.settings, viewBox: state.viewBox
+      settings: state.settings, viewBox: currentCamera()
     });
     const droppedNodes = nodes.length - sane.nodes.length;
     const droppedEdges = edges.length - sane.edges.length;

@@ -126,8 +126,9 @@
   }
   function gizmoWorldPerPixel(){
     const r = canvasViewportRect(pointerRect);
-    const s = (r && r.width) ? Math.min(r.width / state.viewBox.w, r.height / state.viewBox.h) : 0;
-    return s > 0 ? 1 / s : state.viewBox.w / 1000;
+    const vb = currentCamera();
+    const s = (r && r.width) ? Math.min(r.width / vb.w, r.height / vb.h) : 0;
+    return s > 0 ? 1 / s : vb.w / 1000;
   }
   // Bounds of the node bodies (centres ± half size), i.e. the frame the rect
   // gizmo stretches and the centre the other tools pivot around by default.
@@ -582,6 +583,7 @@
   gizmoLayer.addEventListener('dblclick', ev => {
     if(!(ev.target as Element)?.closest?.('[data-gizmo="pivot"]')) return;
     ev.preventDefault(); ev.stopPropagation();
+    flushZoomPreview();
     gizmoPivot = null;
     renderGizmo();
   });

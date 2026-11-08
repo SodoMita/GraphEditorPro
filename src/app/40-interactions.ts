@@ -31,7 +31,13 @@
   function touchPointers(){ return [...activePointers.values()].filter(p => p.type === 'touch'); }
   function distClient(a,b){ return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
   function centerClient(a,b){ return {clientX:(a.clientX + b.clientX) / 2, clientY:(a.clientY + b.clientY) / 2}; }
-  function clientToWorld(clientX, clientY, viewBox=state.viewBox, rect=null){
+  function currentCamera(): ViewBox {
+    return zoomPreview ? zoomPreview.preview : state.viewBox;
+  }
+  function hasActiveCanvasGesture(){
+    return Boolean(singleSweep || pinch || selectDraft || pendingNodeTap || edgeDraft || gizmoDrag || drag || pan);
+  }
+  function clientToWorld(clientX, clientY, viewBox=currentCamera(), rect=null){
     const r = canvasViewportRect(rect || pointerRect);
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly, otherwise cursor-based
     // gestures drift when the canvas aspect ratio differs from the viewBox.
@@ -43,7 +49,7 @@
       y: viewBox.y + (clientY - r.top - offsetY) / scale
     };
   }
-  function worldAtClient(clientX, clientY, viewBox=state.viewBox){ return clientToWorld(clientX, clientY, viewBox); }
+  function worldAtClient(clientX, clientY, viewBox=currentCamera()){ return clientToWorld(clientX, clientY, viewBox); }
   function maybeStartPinch(){
     const pts = touchPointers();
     if(pts.length < 2) return false;
@@ -374,7 +380,7 @@
     return inside;
   }
 
-  function pointFromEvent(ev){ return clientToWorld(ev.clientX, ev.clientY, state.viewBox); }
+  function pointFromEvent(ev){ return clientToWorld(ev.clientX, ev.clientY, currentCamera()); }
   function isEmptyCanvasTarget(el: Element | null){
     // Pointer capture retargets pointerup to #canvasWrap even over toolbars or
     // outside the canvas, so use the actual element under the pointer.
@@ -598,6 +604,11 @@
   canvasWrap.addEventListener('pointerup', ev => finishPointer(ev));
   canvasWrap.addEventListener('pointercancel', ev => finishPointer(ev, true));
   function finishPointer(ev, cancel=false){
+    // Ignore bubbling pointerup/pointercancel from floating HUD, mode, or zoom
+    // buttons (and pointers that never started a canvas gesture) so physical
+    // clicks on #btnZoomIn/#btnZoomOut coalesce on #cameraStage instead of
+    // flushing the preview on every button release.
+    if(!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId)) return;
     if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
     if(singleSweep && ev.pointerId === singleSweep.pointerId){
       singleSweep = null;

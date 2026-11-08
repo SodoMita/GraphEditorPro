@@ -2655,10 +2655,10 @@ let pasteOffsetCount = 0;
 // decoupled without leaking implementation state onto `window`.
 let syncUiHooks = null;
 function snapshot() {
-    flushZoomPreview(); // never persist a camera that is still in compositor preview
+    const vb = currentCamera(); // persist active camera without forcing a mid-gesture SVG commit
     return JSON.stringify({
         title: state.title, mode: state.mode, selectTool: state.selectTool, selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
-        nodes: state.nodes, edges: state.edges, customAttributes: state.customAttributes, settings: state.settings, viewBox: state.viewBox,
+        nodes: state.nodes, edges: state.edges, customAttributes: state.customAttributes, settings: state.settings, viewBox: vb,
         // Preserve user focus across undo/redo so editing the same object stays ergonomic
         selected: state.selected, selection: state.selection
     });
@@ -4328,6 +4328,7 @@ function renderEdges() {
             g.dataset.to = e.to;
             g.addEventListener('pointerdown', ev => {
                 ev.stopPropagation();
+                flushZoomPreview();
                 if (ev.button === 1 || ev.button === 2) {
                     registerPointer(ev);
                     pendingEdgeFrom = null;
@@ -4350,7 +4351,7 @@ function renderEdges() {
                 if (state.settings.hitTestMode === 'center') {
                     const pa = nodeById(e.from), pb = nodeById(e.to);
                     if (pa && pb) {
-                        const p = clientToWorld(ev.clientX, ev.clientY, state.viewBox);
+                        const p = clientToWorld(ev.clientX, ev.clientY, currentCamera());
                         const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
                         const len = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
                         if (Math.hypot(p.x - mx, p.y - my) > Math.max(10, len * 0.18)) {
@@ -4362,7 +4363,7 @@ function renderEdges() {
                 const combine = effectiveSelectCombine(ev);
                 setSelection([], [e.id], { type: 'edge', id: e.id }, combine);
             });
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
+            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
                 finishPolygonSelection(false);
             else
                 editEdgeQuick(e.id); });
@@ -4640,7 +4641,7 @@ function renderNodes() {
             g.id = 'node-' + n.id;
             g.dataset.id = n.id;
             g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
+            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
                 finishPolygonSelection(false);
             else
                 editNodeQuick(n.id); });
@@ -5804,7 +5805,7 @@ function expandSelection(directedOnly = false) {
     toast(directedOnly ? I18N.t('selected_directed_adj') : I18N.t('selected_adjacent'));
 }
 function snapThresholdWorld() {
-    return clamp(state.viewBox.w / 70, 10, 32);
+    return clamp(currentCamera().w / 70, 10, 32);
 }
 function snapPointToEnabled(x, y, ignoreId = null) {
     const ignored = ignoreId instanceof Set ? ignoreId : new Set(ignoreId ? [ignoreId] : []);
@@ -5872,8 +5873,9 @@ function snapAxisValue(axis, value, ignoreId = null) {
 }
 function coordinateBounds(n) {
     // Single pass min/max without intermediate arrays or spread — avoids O(n) allocations and call-stack blow-up on large graphs
-    let minX = state.viewBox.x, maxX = state.viewBox.x + state.viewBox.w;
-    let minY = state.viewBox.y, maxY = state.viewBox.y + state.viewBox.h;
+    const vb = currentCamera();
+    let minX = vb.x, maxX = vb.x + vb.w;
+    let minY = vb.y, maxY = vb.y + vb.h;
     // include the edited node's own position
     if (n.x < minX)
         minX = n.x;
@@ -6072,7 +6074,8 @@ function graphCenter(nodes = state.nodes) {
     if (nodes.length) {
         return { x: nodes.reduce((sum, n) => sum + n.x, 0) / nodes.length, y: nodes.reduce((sum, n) => sum + n.y, 0) / nodes.length };
     }
-    return { x: state.viewBox.x + state.viewBox.w / 2, y: state.viewBox.y + state.viewBox.h / 2 };
+    const vb = currentCamera();
+    return { x: vb.x + vb.w / 2, y: vb.y + vb.h / 2 };
 }
 function circlePositionsForNewNodes(count, aroundNodes = state.nodes) {
     count = Math.max(1, count | 0);
@@ -6744,7 +6747,13 @@ function unregisterPointer(ev) { activePointers.delete(ev.pointerId); if (!activ
 function touchPointers() { return [...activePointers.values()].filter(p => p.type === 'touch'); }
 function distClient(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
 function centerClient(a, b) { return { clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 }; }
-function clientToWorld(clientX, clientY, viewBox = state.viewBox, rect = null) {
+function currentCamera() {
+    return zoomPreview ? zoomPreview.preview : state.viewBox;
+}
+function hasActiveCanvasGesture() {
+    return Boolean(singleSweep || pinch || selectDraft || pendingNodeTap || edgeDraft || gizmoDrag || drag || pan);
+}
+function clientToWorld(clientX, clientY, viewBox = currentCamera(), rect = null) {
     const r = canvasViewportRect(rect || pointerRect);
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly, otherwise cursor-based
     // gestures drift when the canvas aspect ratio differs from the viewBox.
@@ -6756,7 +6765,7 @@ function clientToWorld(clientX, clientY, viewBox = state.viewBox, rect = null) {
         y: viewBox.y + (clientY - r.top - offsetY) / scale
     };
 }
-function worldAtClient(clientX, clientY, viewBox = state.viewBox) { return clientToWorld(clientX, clientY, viewBox); }
+function worldAtClient(clientX, clientY, viewBox = currentCamera()) { return clientToWorld(clientX, clientY, viewBox); }
 function maybeStartPinch() {
     const pts = touchPointers();
     if (pts.length < 2)
@@ -7160,7 +7169,7 @@ function pointInPolygon(p, poly) {
     }
     return inside;
 }
-function pointFromEvent(ev) { return clientToWorld(ev.clientX, ev.clientY, state.viewBox); }
+function pointFromEvent(ev) { return clientToWorld(ev.clientX, ev.clientY, currentCamera()); }
 function isEmptyCanvasTarget(el) {
     // Pointer capture retargets pointerup to #canvasWrap even over toolbars or
     // outside the canvas, so use the actual element under the pointer.
@@ -7437,6 +7446,12 @@ canvasWrap.addEventListener('pointermove', ev => {
 canvasWrap.addEventListener('pointerup', ev => finishPointer(ev));
 canvasWrap.addEventListener('pointercancel', ev => finishPointer(ev, true));
 function finishPointer(ev, cancel = false) {
+    // Ignore bubbling pointerup/pointercancel from floating HUD, mode, or zoom
+    // buttons (and pointers that never started a canvas gesture) so physical
+    // clicks on #btnZoomIn/#btnZoomOut coalesce on #cameraStage instead of
+    // flushing the preview on every button release.
+    if (!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId))
+        return;
     if (zoomPreview)
         flushZoomPreview(); // hit-testing must see committed geometry
     if (singleSweep && ev.pointerId === singleSweep.pointerId) {
@@ -7903,8 +7918,9 @@ function gizmoTargetNodes() {
 }
 function gizmoWorldPerPixel() {
     const r = canvasViewportRect(pointerRect);
-    const s = (r && r.width) ? Math.min(r.width / state.viewBox.w, r.height / state.viewBox.h) : 0;
-    return s > 0 ? 1 / s : state.viewBox.w / 1000;
+    const vb = currentCamera();
+    const s = (r && r.width) ? Math.min(r.width / vb.w, r.height / vb.h) : 0;
+    return s > 0 ? 1 / s : vb.w / 1000;
 }
 // Bounds of the node bodies (centres ± half size), i.e. the frame the rect
 // gizmo stretches and the centre the other tools pivot around by default.
@@ -8486,6 +8502,7 @@ gizmoLayer.addEventListener('dblclick', ev => {
         return;
     ev.preventDefault();
     ev.stopPropagation();
+    flushZoomPreview();
     gizmoPivot = null;
     renderGizmo();
 });
@@ -9043,7 +9060,7 @@ function commitCsvGraph(nodes, edges, label) {
         title: state.title, mode: state.mode, selectTool: state.selectTool,
         selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
         nodes, edges, customAttributes: state.customAttributes,
-        settings: state.settings, viewBox: state.viewBox
+        settings: state.settings, viewBox: currentCamera()
     });
     const droppedNodes = nodes.length - sane.nodes.length;
     const droppedEdges = edges.length - sane.edges.length;
@@ -10193,38 +10210,58 @@ function attachDragNumber(input, options = {}) {
     handle.addEventListener('pointercancel', endDrag);
 }
 // === Camera position controls ===
-function syncCameraInputs() {
-    const cx = state.viewBox.x + state.viewBox.w / 2;
-    const cy = state.viewBox.y + state.viewBox.h / 2;
-    const xEl = $('#cameraX'), yEl = $('#cameraY'), wEl = $('#cameraW'), hEl = $('#cameraH');
-    if (xEl && document.activeElement !== xEl && xEl.value !== String(Math.round(cx)))
-        xEl.value = Math.round(cx);
-    if (yEl && document.activeElement !== yEl && yEl.value !== String(Math.round(cy)))
-        yEl.value = Math.round(cy);
-    if (wEl && document.activeElement !== wEl && wEl.value !== String(Math.round(state.viewBox.w)))
-        wEl.value = Math.round(state.viewBox.w);
-    if (hEl && document.activeElement !== hEl && hEl.value !== String(Math.round(state.viewBox.h)))
-        hEl.value = Math.round(state.viewBox.h);
+function syncCameraInputField(el, value, force = false) {
+    if (!el)
+        return;
+    const str = String(Math.round(value));
+    if (force || document.activeElement !== el) {
+        if (el.value !== str)
+            el.value = str;
+        el._syncedValue = str;
+        el._userDirty = false;
+    }
+}
+function isCameraInputEdited(el) {
+    if (!el)
+        return false;
+    if (el._userDirty)
+        return true;
+    return el._syncedValue !== undefined ? el.value !== el._syncedValue : el.value !== '';
+}
+function syncCameraInputs(force = false) {
+    const vb = currentCamera();
+    const cx = vb.x + vb.w / 2;
+    const cy = vb.y + vb.h / 2;
+    syncCameraInputField($('#cameraX'), cx, force);
+    syncCameraInputField($('#cameraY'), cy, force);
+    syncCameraInputField($('#cameraW'), vb.w, force);
+    syncCameraInputField($('#cameraH'), vb.h, force);
     const readout = $('#cameraReadout');
     if (readout) {
-        const text = I18N.t('camera_readout', { x: Math.round(cx), y: Math.round(cy), zoom: (1000 / state.viewBox.w * 100).toFixed(0) });
+        const text = I18N.t('camera_readout', { x: Math.round(cx), y: Math.round(cy), zoom: (1000 / vb.w * 100).toFixed(0) });
         if (readout.textContent !== text)
             readout.textContent = text;
     }
 }
-function setCameraFromInputs() {
-    // Read input values BEFORE cancelling/syncing any pending zoom preview so
-    // syncCameraInputs() cannot overwrite unfocused fields before they are read.
-    const base = zoomPreview ? zoomPreview.preview : state.viewBox;
-    const cx = finite($('#cameraX').value, base.x + base.w / 2);
-    const cy = finite($('#cameraY').value, base.y + base.h / 2);
-    const w = clamp(finite($('#cameraW').value, base.w), 100, 20000);
-    const h = clamp(finite($('#cameraH').value, base.h), 90, 20000);
+function setCameraFromInputs(sourceEl = null) {
+    // Apply only fields actually edited by the user (or explicitly submitted
+    // via Enter in `sourceEl`), falling back to `currentCamera()` for untouched
+    // fields so an in-flight wheel/button zoom is never reverted by stale
+    // pre-preview values still sitting in the other inputs.
+    const base = currentCamera();
+    const xEl = $('#cameraX'), yEl = $('#cameraY'), wEl = $('#cameraW'), hEl = $('#cameraH');
+    const useField = (el) => Boolean(el && (el === sourceEl || isCameraInputEdited(el)));
+    const baseCx = base.x + base.w / 2;
+    const baseCy = base.y + base.h / 2;
+    const cx = useField(xEl) ? finite(xEl.value, baseCx) : baseCx;
+    const cy = useField(yEl) ? finite(yEl.value, baseCy) : baseCy;
+    const w = clamp(useField(wEl) ? finite(wEl.value, base.w) : base.w, 100, 20000);
+    const h = clamp(useField(hEl) ? finite(hEl.value, base.h) : base.h, 90, 20000);
     cancelZoomPreview();
     state.viewBox = { x: cx - w / 2, y: cy - h / 2, w, h };
     applyCamera();
     saveSoon();
-    syncCameraInputs();
+    syncCameraInputs(true);
     toast(I18N.t('camera_updated'));
 }
 function resetCamera() {
@@ -11684,17 +11721,29 @@ function wireUi() {
     $('#btnLayoutForce').addEventListener('click', () => layoutForce());
     $('#btnCenterSelection').addEventListener('click', centerOnSelection);
     // Camera position controls
-    $('#btnCameraSet').addEventListener('click', setCameraFromInputs);
+    $('#btnCameraSet').addEventListener('click', () => setCameraFromInputs());
     $('#btnCameraFit').addEventListener('click', fitView);
     $('#btnCameraReset').addEventListener('click', resetCamera);
     ['cameraX', 'cameraY', 'cameraW', 'cameraH'].forEach(id => {
         const el = $('#' + id);
         if (el) {
-            el.addEventListener('keydown', ev => { if (ev.key === 'Enter') {
-                ev.preventDefault();
-                setCameraFromInputs();
-            } });
-            el.addEventListener('change', setCameraFromInputs);
+            el.addEventListener('input', () => { el._userDirty = true; el._appliedViaEnter = undefined; });
+            el.addEventListener('keydown', ev => {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    setCameraFromInputs(el);
+                    el._appliedViaEnter = el.value;
+                }
+            });
+            el.addEventListener('change', () => {
+                if (el._appliedViaEnter === el.value && !el._userDirty) {
+                    el._appliedViaEnter = undefined;
+                    return;
+                }
+                setCameraFromInputs(el);
+            });
+            el.addEventListener('blur', () => { el._appliedViaEnter = undefined; if (!isCameraInputEdited(el))
+                syncCameraInputs(); });
         }
     });
     // Hotkey configuration
@@ -12056,7 +12105,11 @@ function wireUi() {
     window.addEventListener('keyup', ev => { if (ev.key === 'Escape')
         resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)
-    canvasWrap.addEventListener('pointercancel', () => resetInteractionState());
+    canvasWrap.addEventListener('pointercancel', ev => {
+        if (!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId))
+            return;
+        resetInteractionState();
+    });
 }
 function init() {
     // Загрузить язык и применить переводы до рендеринга

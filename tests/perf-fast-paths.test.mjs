@@ -921,3 +921,106 @@ test('unrelated re-renders during pending wheel zoom preserve the zoomed camera,
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('edge centre-hit selection during an off-centre zoom preview hits at the visible midpoint on the first click', async () => {
+  const graph = {
+    ...smallGraph(),
+    nodes: [
+      { id: 'n1', label: 'A', x: -120, y: -60 },
+      { id: 'n2', label: 'B', x: 120, y: 60 },
+    ],
+    edges: [{ id: 'e1', from: 'n1', to: 'n2' }],
+    settings: { hitTestMode: 'center' },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  const camera = document.querySelector('#cameraLayer');
+  const edge = document.querySelector('#edge-e1');
+  setCanvasRect(svg);
+
+  // Off-centre wheel zoom near (120, 90) so the visible midpoint of e1 (world 0,0)
+  // moves far away from its pre-zoom screen position (500, 330).
+  for (let i = 0; i < 4; i++) {
+    svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 120, clientY: 90, deltaY: -100 }));
+  }
+  await nextFrame(window);
+  const visibleMidpoint = projectWorldPoint(camera, 0, 0);
+  assert.ok(Math.hypot(visibleMidpoint.x - 500, visibleMidpoint.y - 330) > 120,
+    `off-centre zoom shifted visible midpoint to (${visibleMidpoint.x}, ${visibleMidpoint.y})`);
+
+  // Click the visible midpoint BEFORE the 220ms zoom commit fires.
+  dispatchPointer(window, edge, 'pointerdown', { pointerId: 11, clientX: visibleMidpoint.x, clientY: visibleMidpoint.y });
+  dispatchPointer(window, edge, 'pointerup', { pointerId: 11, clientX: visibleMidpoint.x, clientY: visibleMidpoint.y });
+  assert.equal(edge.classList.contains('selected'), true,
+    'edge must be selected on the first click at its visible midpoint during zoom preview');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('physical pointerdown/pointerup/click bursts on #btnZoomIn coalesce on #cameraStage with zero intermediate commits', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  const camera = document.querySelector('#cameraLayer');
+  const stage = document.querySelector('#cameraStage');
+  const btnZoomIn = document.querySelector('#btnZoomIn');
+  setCanvasRect(svg);
+
+  const cameraWrites = trackAttrWrites(camera, 'transform');
+
+  // Three physical clicks 50ms apart: each dispatches bubbling pointerdown ->
+  // pointerup -> click on #btnZoomIn (inside #canvasWrap).
+  for (let i = 0; i < 3; i++) {
+    dispatchPointer(window, btnZoomIn, 'pointerdown', { pointerId: 20 + i, clientX: 960, clientY: 620 });
+    dispatchPointer(window, btnZoomIn, 'pointerup', { pointerId: 20 + i, clientX: 960, clientY: 620 });
+    btnZoomIn.click();
+    await settle(window, 50);
+  }
+  assert.equal(cameraWrites.count, 0,
+    'physical zoom-button clicks 50ms apart must not flush #cameraLayer on button pointerup');
+  assert.notEqual(stage.style.transform, STAGE_IDENTITY, '#cameraStage holds the coalesced button-zoom preview');
+
+  await settle(window, 250);
+  assert.equal(cameraWrites.count, 1, 'settled button-zoom burst commits #cameraLayer once');
+  assert.equal(stage.style.transform, STAGE_IDENTITY);
+  assert.equal(Number(document.querySelector('#cameraW').value), Math.round(1000 * 0.82 * 0.82 * 0.82));
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('applying a single edited camera field via Enter preserves an in-flight wheel zoom on unedited fields', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  const camera = document.querySelector('#cameraLayer');
+  const camX = document.querySelector('#cameraX');
+  const camW = document.querySelector('#cameraW');
+  setCanvasRect(svg);
+
+  // Focus #cameraX, enter a new X value, then wheel-zoom while #cameraX stays focused.
+  camX.focus();
+  camX.value = '225';
+  camX.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+  svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 250, clientY: 165, deltaY: -100 }));
+  await nextFrame(window);
+  // Pre-settle: #cameraW input still holds the pre-preview string '1000', while
+  // the active preview camera has width 880 and height 580.8.
+  assert.equal(camW.value, '1000');
+
+  // Press Enter inside #cameraX while the zoom preview is still in flight.
+  camX.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+  // X=225 is applied, while width/height/Y come from the in-flight 880x580.8 zoom
+  // rather than reverting to the stale 1000x660 strings in the untouched inputs.
+  assert.equal(camX.value, '225');
+  assert.equal(camW.value, '880', 'width stayed at the zoomed 880 instead of reverting to 1000');
+  const expectedCy = -165 - (165 - 0) / (660 / 580.8) + 580.8 / 2;
+  assertCameraRendersViewBox(camera, { x: 225 - 440, y: expectedCy - 580.8 / 2, w: 880, h: 580.8 });
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

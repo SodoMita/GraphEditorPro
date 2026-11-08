@@ -427,14 +427,25 @@
     $('#btnLayoutCircle').addEventListener('click', layoutCircle); $('#btnLayoutGrid').addEventListener('click', layoutGrid); $('#btnLayoutForce').addEventListener('click', () => layoutForce());
     $('#btnCenterSelection').addEventListener('click', centerOnSelection);
     // Camera position controls
-    $('#btnCameraSet').addEventListener('click', setCameraFromInputs);
+    $('#btnCameraSet').addEventListener('click', () => setCameraFromInputs());
     $('#btnCameraFit').addEventListener('click', fitView);
     $('#btnCameraReset').addEventListener('click', resetCamera);
     ['cameraX','cameraY','cameraW','cameraH'].forEach(id => {
-      const el = $('#'+id);
+      const el = $('#'+id) as any;
       if(el){
-        el.addEventListener('keydown', ev => { if(ev.key === 'Enter'){ ev.preventDefault(); setCameraFromInputs(); } });
-        el.addEventListener('change', setCameraFromInputs);
+        el.addEventListener('input', () => { el._userDirty = true; el._appliedViaEnter = undefined; });
+        el.addEventListener('keydown', ev => {
+          if(ev.key === 'Enter'){
+            ev.preventDefault();
+            setCameraFromInputs(el);
+            el._appliedViaEnter = el.value;
+          }
+        });
+        el.addEventListener('change', () => {
+          if(el._appliedViaEnter === el.value && !el._userDirty){ el._appliedViaEnter = undefined; return; }
+          setCameraFromInputs(el);
+        });
+        el.addEventListener('blur', () => { el._appliedViaEnter = undefined; if(!isCameraInputEdited(el)) syncCameraInputs(); });
       }
     });
     // Hotkey configuration
@@ -650,5 +661,8 @@
     window.addEventListener('visibilitychange', () => { if(document.hidden) flushAutosave(); });
     window.addEventListener('keyup', ev => { if(ev.key === 'Escape') resetInteractionState(); });
     // Clear pointer capture on pointercancel (fires when the OS cancels a pointer sequence)
-    canvasWrap.addEventListener('pointercancel', () => resetInteractionState());
+    canvasWrap.addEventListener('pointercancel', ev => {
+      if(!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId)) return;
+      resetInteractionState();
+    });
   }

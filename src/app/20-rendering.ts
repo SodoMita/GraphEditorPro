@@ -907,6 +907,7 @@
         g.id = 'edge-' + e.id; g.dataset.id = e.id; g.dataset.from = e.from; g.dataset.to = e.to;
         g.addEventListener('pointerdown', ev => {
           ev.stopPropagation();
+          flushZoomPreview();
           if(ev.button === 1 || ev.button === 2){ registerPointer(ev); pendingEdgeFrom = null; startPan(ev); return; }
           if(ev.button !== 0) return;
           if(polygonToolActive()){ registerPointer(ev); handlePolygonPointerDown(ev); return; }
@@ -916,7 +917,7 @@
           if(state.settings.hitTestMode === 'center'){
             const pa = nodeById(e.from), pb = nodeById(e.to);
             if(pa && pb){
-              const p = clientToWorld(ev.clientX, ev.clientY, state.viewBox);
+              const p = clientToWorld(ev.clientX, ev.clientY, currentCamera());
               const mx=(pa.x+pb.x)/2, my=(pa.y+pb.y)/2;
               const len = Math.hypot(pb.x-pa.x, pb.y-pa.y) || 1;
               if(Math.hypot(p.x-mx, p.y-my) > Math.max(10, len*0.18)){ deselect(); return; }
@@ -925,7 +926,7 @@
           const combine = effectiveSelectCombine(ev);
           setSelection([], [e.id], {type:'edge', id:e.id}, combine);
         });
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
+        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
       }
@@ -1148,7 +1149,7 @@
         g = document.createElementNS(NS,'g'); g.classList.add('node');
         g.id = 'node-' + n.id; g.dataset.id = n.id;
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
+        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
         nodesLayer.appendChild(g);
         nodeEls.set(n.id, g);
       }
