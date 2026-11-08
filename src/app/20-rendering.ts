@@ -327,6 +327,46 @@
   // parts exist only while the edge is selected.
   const SEL_EDGE_HALO = 7, SEL_EDGE_MIN = 9; // accent width: edge + halo, never hairline
   const SEL_TIP_SCALE = 1.75; // the tip accent is the tip triangle, this much bigger
+  // === Bulk-selection accent budget ===
+  // A selected edge carries two extra elements (a wide copy of its path and a
+  // bigger copy of its tip) so the edge's own colour stays visible inside the
+  // highlight. That is the look, and it is cheap when few edges are selected.
+  // A region select can select most of the graph's edges at once though: a rect
+  // over a 1,500-node/4,388-edge document selects ~2,500 edges, i.e. ~5,000 new
+  // elements created inside the release handler — a measured stall of ~25 ms.
+  // Past the budget the accents are not created and the selected edges are
+  // drawn in the accent colour instead: the highlight still covers exactly the
+  // same edges, the selected ids keep their `selected` class, and nothing in the
+  // hit-test, drag or panel path reads accents. Node rings are cheap by
+  // comparison (one element per node, ~3 ms for 800) and keep the full look
+  // unconditionally, so a large node selection still reads as selected.
+  const SEL_ACCENT_EDGE_BUDGET = 320;
+  function accentBudgetExceeded(_nNodes: number, nEdges: number){
+    return nEdges > SEL_ACCENT_EDGE_BUDGET;
+  }
+  // Set once per render pass (see renderCanvas); read by both layer passes.
+  let bulkAccents = false;
+  // The stroke a selected edge is drawn in when the accents are budgeted out.
+  const SEL_EDGE_COLOR = 'var(--accent)';
+  function syncEdgeAccent(g: any, e: any, v: any, d: any, selected: boolean, bulk: boolean){
+    if(bulk){
+      // Colour instead of outline: no accent element is created, and one left
+      // over from an earlier, smaller selection is dropped first so the two
+      // looks can never be mixed.
+      syncEdgeSelRing(g, e, v, d, false);
+      setAttr(g.__line, 'stroke', selected ? SEL_EDGE_COLOR : (v && v.color));
+      g.__bulkStroke = selected;
+      return null;
+    }
+    // Leaving a bulk selection: the highlight lived on the line itself, so
+    // there is no accent element to drop and the line has to be handed back to
+    // its own colour. The regular accent, if any, was removed already.
+    if(g.__bulkStroke){
+      g.__bulkStroke = false;
+      if(v) setAttr(g.__line, 'stroke', v.color);
+    }
+    return syncEdgeSelRing(g, e, v, d, selected);
+  }
   function syncEdgeSelRing(g: any, e: any, v: any, d: any, selected: boolean){
     let sel: any = g.__sel, ring: any = g.__selArrow;
     if(!selected){
@@ -339,14 +379,24 @@
     // a bare selection change it comes from the per-edge geometry cache, which
     // is the very data the visible line was drawn from.
     const geo = d || g.__geoData;
+    // The accent always carries the edge's own path — the very string the line
+    // was just given. Reading it back off the line is the cheapest source on a
+    // bare selection change (`line.getAttribute` hands out the cached string,
+    // whereas serialising `geo.path` again would allocate a copy per selected
+    // edge, per pass).
+    const accentPath = (geo && geo.path) || (line ? line.getAttribute('d') : '') || '';
     if(!sel){
       sel = document.createElementNS(NS,'path');
       sel.setAttribute('class','edge-sel');
       sel.setAttribute('fill','none');
+      // Seed the cache with the path the element is created with, so the
+      // setAttr below is a genuine no-op and costs no second attribute write.
+      attrBox(sel).d = accentPath;
+      sel.setAttribute('d', accentPath);
       g.insertBefore(sel, line || g.firstChild); // behind the line
       g.__sel = sel;
     }
-    setAttr(sel, 'd', (geo && geo.path) || (line ? line.getAttribute('d') : '') || '');
+    setAttr(sel, 'd', accentPath);
     setAttr(sel, 'stroke-width', Math.max(SEL_EDGE_MIN, (v && v.strokeSize ? v.strokeSize : 0) + SEL_EDGE_HALO));
     if(hasEdgeTip(e, geo)){
       if(!ring){
@@ -469,7 +519,17 @@
     const etl = $('#edgeTypeListEdit'); if(etl) etl.innerHTML = existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('');
   }
 
-  function queueRender(includeMatrix=false, includeSidebar=false){
+  // A caller of queueRender is a caller that changed something a pass renders
+  // from. Document mutations are already visible through graphRev (every
+  // structural or in-place edit bumps it) and selection is compared per
+  // element; what a revision cannot see is a setting edited directly in place,
+  // which is exactly the style/default surface. Every repaint request therefore
+  // advances the style revision. `paintOnly` is for the handful of callers that
+  // genuinely changed no visual input (a viewport resize, a camera commit): the
+  // pass may then take its cheap path, which only re-confirms selection and
+  // re-syncs the layers' bookkeeping.
+  function queueRender(includeMatrix=false, includeSidebar=false, paintOnly=false){
+    if(!paintOnly){ invalidateStyleCache(); documentDirty = true; }
     if(includeMatrix){ clearTimeout(matrixTimer); matrixTimer = setTimeout(renderMatrixAndList, 60); }
     if(renderQueued) return;
     renderQueued = true;
@@ -495,19 +555,115 @@
       renderSidebar();
     });
   }
+  // Bumped whenever anything a pass renders from has changed: document
+  // mutations bump graphRev, but style settings, defaults, presets and the
+  // label policy are written straight into `state.settings` without touching
+  // the document. A style revision lets a pass know that a settings-driven
+  // repaint is real work, even though no graph revision moved.
+  let styleRev = 0;
+  let paintedStyleRev = -1;
+  function invalidateStyleCache(){ styleRev++; }
+  // Whether the document may have changed since the last pass. A repaint
+  // request is a declaration that *something* changed, and the document is the
+  // common case (edits are written straight into node/edge objects, which no
+  // revision counter can observe). Only a repaint that explicitly changed no
+  // visual input may leave this false, and only then can a pass skip elements:
+  // its element-level checks (geometry signature, label text, selection) would
+  // otherwise be the only thing keeping the DOM honest.
+  let documentDirty = true;
+  // Which *kind* of style work that revision implies. A node colour edit must
+  // repaint nodes, but edges keep their own colours and widths: repainting them
+  // too would write nothing and still cost a walk of every edge. These two
+  // fingerprints narrow a settings change to the layer it actually reaches.
+  //
+  // They are computed from the containers the renderers read — the defaults,
+  // the per-type style maps and the graph-level label/weight options — rather
+  // than from `state.settings` as a whole, because everything else in settings
+  // (grid, snapping, matrix limits, visible range) does not style an element.
+  // Serialising those containers costs a few microseconds per pass and catches
+  // every mutation of them, including ones added later.
+  let paintedNodeStyle = '', paintedEdgeStyle = '';
+  // The settings are mutated in place, so comparing container identity is not
+  // enough: a colour picker writes `nodeDefaults.color` directly. Each
+  // fingerprint therefore reads the fields the renderers read, in the order
+  // they read them, and joins them into one comparable string. It is a few
+  // microseconds per pass and it never misses a field that matters.
+  const NODE_STYLE_DEFAULT_KEYS = ['shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelPosition','labelSize','labelFont'];
+  const EDGE_STYLE_DEFAULT_KEYS = ['color','strokeSize','strokeStyle','labelColor','labelFont','labelSize'];
+  function styleFingerprint(kind){
+    const settings = state.settings || {};
+    const gd = settings.graphDefaults || {};
+    const defaults = (kind === 'node' ? settings.nodeDefaults : settings.edgeDefaults) || {};
+    const types = (kind === 'node' ? settings.nodeTypeStyles : settings.edgeTypeStyles) || {};
+    const keys = kind === 'node' ? NODE_STYLE_DEFAULT_KEYS : EDGE_STYLE_DEFAULT_KEYS;
+    let out = gd.labelsPolicy || 'auto';
+    out += '|' + (gd.labelOutline || 'outline') + '|' + (gd.labelOutlineColor || '#020617') + '|' + (gd.labelOutlineWidth ?? 4);
+    out += '|' + (defaults.type || '');
+    for(const key of keys) out += '|' + (defaults[key] ?? '');
+    if(kind === 'edge') out += '|' + (gd.edgeWeightMode || 'number') + '|' + (gd.edgeWeightMin ?? 1) + '|' + (gd.edgeWeightMax ?? 10)
+      + '|' + (gd.edgeWeightCorr || 'linear') + '|' + (gd.edgeWidthMin ?? 1) + '|' + (gd.edgeWidthMax ?? 8)
+      + '|' + (gd.edgeWeightColorLow || '#22d3ee') + '|' + (gd.edgeWeightColorHigh || '#f59e0b');
+    // Type styles are keyed by user-provided names: walk them in insertion
+    // order and include every field a type can set.
+    for(const name in types){
+      const style = types[name] || {};
+      out += '|' + name + ':' + NODE_STYLE_DEFAULT_KEYS.concat(EDGE_STYLE_DEFAULT_KEYS).map(key => style[key] ?? '').join(',');
+    }
+    return out;
+  }
   function renderCanvas(){
     beginRenderPass();
+    // One decision per pass: is this selection too large to decorate item by
+    // item? Both layer passes read it, so the look can never be half outline
+    // and half colour within one frame.
+    bulkAccents = accentBudgetExceeded(selectedNodeIds().size, selectedEdgeIds().size);
     applyCamera();
     const paths = state.nodes.length;
     $('#canvasWrap').classList.toggle('empty', paths === 0);
     setText($('#statsPill'), I18N.t('n_nodes_m_edges', {n: state.nodes.length, m: state.edges.length}));
     setText($('#statusPill'), statusText());
+    // A pass with nothing new to paint: same document revision, same style
+    // revision, and a selection the layer passes already know about. This is
+    // what a viewport resize, an orientation toggle or a deferred confirmation
+    // render costs — the camera, the pills and the gizmo, but no per-element
+    // walk of either layer. (`queueRender` only allows this when its caller
+    // declared it changed no visual input.)
+    if(lastPaintedGen >= 0 && !documentDirty && paintedStyleRev === styleRev && selectionIsPainted()){
+      renderGizmo();
+      updateUndoRedo();
+      endRenderPass();
+      return;
+    }
+    // A new generation: from here on, every element the passes touch is stamped
+    // with this number, and anything still carrying an older one is out of date.
+    renderGen++;
     renderEdges();
     renderNodes();
+    // Both layers now match this revision; a pass before the next mutation can
+    // trust geometry, label visibility and selection as they are.
+    paintedRev = graphRev;
+    paintedStyleRev = styleRev;
+    paintedNodeStyle = styleFingerprint('node');
+    paintedEdgeStyle = styleFingerprint('edge');
+    documentDirty = false;
+    lastPaintedGen = renderGen;
+    paintedSelection = selectionSignature();
     renderGizmo();
     updateUndoRedo();
     resetSelectionMirror();
     endRenderPass();
+  }
+  // The selection the layers were last painted with, as an order-independent
+  // signature: two passes that agree on it cannot need a selection write.
+  let paintedSelection = '\u0000';
+  function selectionSignature(){
+    const sel = state.selection;
+    const nodes = (sel && sel.nodes) || [], edges = (sel && sel.edges) || [];
+    if(!nodes.length && !edges.length) return '';
+    return [...nodes].sort().join('\u0001') + '\u0002' + [...edges].sort().join('\u0001');
+  }
+  function selectionIsPainted(){
+    return paintedSelection === selectionSignature();
   }
   // Internal selection-tool ids are not user copy: the status pill used to show
   // "Режим выбора rect" / "Выделение polygon…" for every non-default tool.
@@ -713,6 +869,9 @@
     // current geometry; the cached signature was taken before the nodes moved
     // and must not certify the older data (the selection accent reads it).
     g.__geoData = d; g.__geoSig = null;
+    // This element was rewritten outside a pass; the next pass must not treat
+    // it as already painted.
+    if(g.__ent) g.__ent.gen = -1;
     const line = g.__line || el.querySelector('.edge-line'); if(line) setAttr(line, 'd', d.path);
     const hit = g.__hit || el.querySelector('.edge-hit'); if(hit) setAttr(hit, 'd', d.path);
     const label = g.__label || null;
@@ -779,19 +938,98 @@
       if(drag) drag.fastFrame = false;
     });
   }
+  // Retires whatever the last pass left in a layer that this pass did not
+  // paint, and compacts the spine. `existing` is rebuilt from the live entries
+  // only, so the registry the hot paths use never keeps a removed element.
+  function sweepLayer(spine, existing, live, registry){
+    const arr = spine.arr;
+    let k = 0;
+    for(let i = 0; i < arr.length; i++){
+      const ent = arr[i];
+      if(!ent.alive || !live.has(ent.id)){ ent.el.remove(); existing.delete(ent.id); registry.delete(ent.id); continue; }
+      arr[k++] = ent;
+    }
+    arr.length = k;
+    existing.clear();
+    for(let i = 0; i < k; i++) existing.set(arr[i].id, arr[i]);
+  }
+
+  // === Render bookkeeping: generation, revision, element spines ===
+  //
+  // A render pass is asked to make the DOM match the document. Most of the
+  // time it is asked after *something* changed, but it has no idea what: a
+  // style edit touches settings, a selection change touches selection, a drag
+  // has already written geometry in place, and a plain repaint changes nothing
+  // at all. The three counters below are how a pass tells those apart before it
+  // spends any work on an element.
+  //
+  //   renderGen — bumped by every pass; elements remember the generation in
+  //               which they were last painted. A pass that finds an element
+  //               stamped with the current generation knows nothing has
+  //               written to it since (in-place drag writers advance the
+  //               generation too), so its DOM already matches the document.
+  //   graphRev  — from the core module: bumped by every structural or in-place
+  //               document mutation. Geometry (endpoint positions, radii,
+  //               parallel lanes) and label visibility are functions of the
+  //               document alone, so they can only change with this counter.
+  //   paintedRev — the revision the scene was last painted from. A pass over an
+  //               unchanged revision can skip geometry and label work entirely.
+  //
+  // Element spines: one array per layer, in document order. Walking an array is
+  // far cheaper than walking the SVG child list (no wrappers, no id parsing),
+  // and appending is just a push. An entry is retired by clearing `alive`; the
+  // stale sweep at the end of a pass removes its element and compacts the
+  // array, so survivors keep their order and no per-pass Map of the layer is
+  // needed.
+  let renderGen = 0;
+  // The generation the most recent pass painted in. An element stamped with it
+  // is known to match the document *as of that pass*; nothing has touched it
+  // since (in-place writers reset the stamp).
+  let lastPaintedGen = -1;
+  let paintedRev = -1;
+  function newSpine(){ return { arr: [] as any[], dirty: false } as any; }
+  const edgeSpine = newSpine(), nodeSpine = newSpine();
+  function spineFor(layer){ return layer === edgesLayer ? edgeSpine : nodeSpine; }
+  // `gen` is the pass generation the element was last fully written in; -1
+  // means "never", which also covers elements created outside a pass.
+  function spineEntry(id, el){
+    const ent: any = { id, el, alive: true, gen: -1, geometry: false, sel: false };
+    el.__ent = ent; // in-place writers reset the stamp through this link
+    return ent;
+  }
+  function retireSpine(spine){
+    const arr = spine.arr;
+    for(let i = 0; i < arr.length; i++) arr[i].alive = false;
+  }
+  // Removes the retired elements and compacts the array. Entries that survive
+  // are still in document order, because the pass appended their replacements
+  // in order — an element that was retired and re-created is simply the newest
+  // entry for that id.
+  function sweepSpine(spine){
+    const arr = spine.arr;
+    let k = 0;
+    for(let i = 0; i < arr.length; i++){
+      const ent = arr[i];
+      if(ent.alive){ arr[k++] = ent; continue; }
+      ent.el.remove();
+    }
+    arr.length = k;
+  }
+
   function renderEdges(){
     buildEdgeOffsetCache();
     const showLabels = shouldShowLabels();
     const selectedEdges = selectedEdgeIds();
-    const existing = new Map();
-    // Linked-list traversal of the layer (the reflected id attribute is
-    // "edge-<edgeId>"); avoids both collection-proxy indexing and dataset
-    // proxy access per child. Collects everything up front, so later appends
-    // of new elements during this pass cannot affect the traversal.
-    for(let el = edgesLayer.firstElementChild; el; el = el.nextElementSibling){
-      const eid = el.id;
-      if(eid.startsWith('edge-')) existing.set(eid.slice(5), el);
-    }
+    // The spine is this pass's working list: entries collected here are the
+    // ones still in the scene, and whatever the pass appends is the new tail.
+    const spine = edgeSpine;
+    // This pass's view of the layer: the entries the previous pass left behind,
+    // marked alive again as they are painted. Survivors keep their order and
+    // their element; a retired entry is simply not re-marked.
+    retireSpine(spine);
+    const existing = new Map<string, any>();
+    for(let i = 0; i < spine.arr.length; i++) existing.set(spine.arr[i].id, spine.arr[i]);
+    const live = new Set();
     const seen = new Set();
     // Pre-compute visible node IDs once per render — edges touching non-visible nodes are skipped entirely
     const vr = state.settings.visibleRange || {start:-1, end:-1};
@@ -800,19 +1038,43 @@
     const gd = state.settings.graphDefaults || {};
     const weightMode = gd.edgeWeightMode || 'number';
     const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
+    // A pass whose document revision matches the last painted one has nothing
+    // geometric or label-related to recompute; `genAtStart` lets an element
+    // whose stamp is already current skip its frame entirely.
+    const stylePass = paintedEdgeStyle !== styleFingerprint('edge');
+    const gen = renderGen;
     for(const e of state.edges){
       const a = nodeById(e.from), b = nodeById(e.to);
-      if(!a || !b){
-        // Edge has dangling endpoint — remove from DOM if present
-        if(existing.has(e.id)) existing.get(e.id).remove();
-        continue;
-      }
+      if(!a || !b) continue; // dangling endpoints are dropped by the sweep
       // Skip edges touching non-visible nodes entirely — real performance gain, not just dimming
       if(rangeActive && (!visIds.has(e.from) || !visIds.has(e.to))) continue;
       seen.add(e.id);
       const selected = selectedEdges.has(e.id);
-      const v = edgeRenderStyleC(e);
-      let g: any = existing.get(e.id);
+      const ent = existing.get(e.id);
+      // `alive` was cleared on the whole spine at the top of this pass, so it
+      // says nothing here: presence in `existing` is what marks an element as
+      // the one this id had before the pass started.
+      if(ent && !documentDirty && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected){
+        // Painted this generation, from this revision, with this selection:
+        // the element's DOM is already exactly what this pass would write.
+        ent.alive = true;
+        live.add(e.id);
+        continue;
+      }
+      // The merged style of an edge is a pure function of the edge and the
+      // style settings, so it is cached on the element and recomputed only when
+      // either could have changed: a style pass, or the edge's own style
+      // fields. Rebuilding it every time an *unrelated* style edit repaints a
+      // 2,500-edge layer was pure overhead — and the result would be identical.
+      const edgeStyleKey = e.type + '\u0001' + e.color + '\u0001' + e.strokeSize + '\u0001' + e.strokeStyle
+        + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
+        + '\u0001' + e.weight + '\u0001' + e.directed;
+      let v = (!stylePass && ent && ent.el.__styleKey === edgeStyleKey) ? ent.el.__style : null;
+      if(!v){
+        v = edgeRenderStyleC(e);
+        if(ent){ ent.el.__styleKey = edgeStyleKey; ent.el.__style = v; }
+      }
+      let g: any = ent ? ent.el : null;
       if(!g){
         g = document.createElementNS(NS,'g'); g.classList.add('edge');
         g.id = 'edge-' + e.id; g.dataset.id = e.id; g.dataset.from = e.from; g.dataset.to = e.to;
@@ -839,6 +1101,10 @@
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
+        const fresh = spineEntry(e.id, g);
+        spine.arr.push(fresh);
+        existing.set(e.id, fresh);
+        g.__styleKey = edgeStyleKey; g.__style = v;
       }
       setAttr(g, 'data-from', e.from);
       setAttr(g, 'data-to', e.to);
@@ -859,19 +1125,31 @@
       // Update or create hit path (child refs are stashed on the group to
       // avoid per-edge selector queries)
       let hit = g.__hit;
-      if(!hit){ hit = document.createElementNS(NS,'path'); hit.setAttribute('class','edge-hit'); g.appendChild(hit); g.__hit = hit; }
+      if(!hit){
+        // A brand-new element gets its attributes once, through the cache.
+        hit = document.createElementNS(NS,'path'); hit.setAttribute('class','edge-hit');
+        g.append(hit); g.__hit = hit;
+        setAttr(hit, 'd', d.path);
+      }
       setAttr(hit, 'd', d.path);
       // Update or create line path
       let line = g.__line;
-      if(!line){ line = document.createElementNS(NS,'path'); line.setAttribute('class','edge-line'); g.insertBefore(line, g.firstChild); g.__line = line; }
+      if(!line){
+        line = document.createElementNS(NS,'path'); line.setAttribute('class','edge-line');
+        g.insertBefore(line, g.firstChild); g.__line = line;
+        setAttr(line, 'd', d.path);
+      }
       setAttr(line, 'd', d.path);
-      setAttr(line, 'stroke', v.color); setAttr(line, 'stroke-width', v.strokeSize);
+      // A bulk-selected edge is highlighted by its own stroke colour: the
+      // render pass is the other writer of that colour (see syncEdgeAccent).
+      const lineStroke = bulkAccents && selected ? SEL_EDGE_COLOR : v.color;
+      setAttr(line, 'stroke', lineStroke); setAttr(line, 'stroke-width', v.strokeSize);
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
       if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
       else removeAttr(line, 'stroke-dasharray');
       // Selection accent: a wide line behind the path and a bigger copy of the
       // tip behind the arrowhead. Neither repaints the edge itself.
-      syncEdgeSelRing(g, e, v, d, selected);
+      syncEdgeAccent(g, e, v, d, selected, bulkAccents);
       // Update or create arrow — the tip always keeps the edge's own colour
       let arrow = g.__arrow || null;
       if(hasEdgeTip(e, d)){
@@ -939,9 +1217,12 @@
         weight.remove(); g.__weight = null; weight = null;
         removeLabelPlate(g, '__weight');
       }
+      // This element now matches the document at this generation.
+      const painted = existing.get(e.id);
+      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
+      live.add(e.id);
     }
-    // Remove stale edges
-    for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); edgeEls.delete(id); } }
+    sweepLayer(spine, existing, live, edgeEls);
   }
   function edgeGroupKey(e){ return e.from <= e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`; }
   // Lane offsets depend only on edge ids/endpoints and their order in the
@@ -1031,29 +1312,37 @@
   function renderNodes(){
     const showLabels = shouldShowLabels();
     const selectedNodes = selectedNodeIds();
-    const existing = new Map();
-    // Linked-list traversal of the layer (the reflected id attribute is
-    // "node-<nodeId>"); avoids both collection-proxy indexing and dataset
-    // proxy access per child. Collects everything up front, so later appends
-    // of new elements during this pass cannot affect the traversal.
-    for(let el = nodesLayer.firstElementChild; el; el = el.nextElementSibling){
-      const nid = el.id;
-      if(nid.startsWith('node-')) existing.set(nid.slice(5), el);
-    }
+    const spine = nodeSpine;
+    retireSpine(spine);
+    const existing = new Map<string, any>();
+    for(let i = 0; i < spine.arr.length; i++) existing.set(spine.arr[i].id, spine.arr[i]);
+    const live = new Set();
     const seen = new Set();
     // Pre-compute visible node IDs once per render — avoids per-node Set lookup
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
     const draggingId = drag?.nodeId;
+    const stylePass = paintedNodeStyle !== styleFingerprint('node');
+    const gen = renderGen;
     for(const n of state.nodes){
       // Skip non-visible nodes entirely — they are removed from DOM, not dimmed.
       // This gives real performance: fewer SVG elements, fewer attribute patches, less paint.
       if(rangeActive && !visIds.has(n.id)) continue;
       seen.add(n.id);
       const selected = selectedNodes.has(n.id);
+      const ent = existing.get(n.id);
+      const dragging = draggingId === n.id;
+      if(ent && !documentDirty && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && !dragging){
+        // Same reasoning as the edge pass: the element was painted in the
+        // previous generation from this revision, with this selection, and no
+        // in-place writer has touched it since.
+        ent.alive = true;
+        live.add(n.id);
+        continue;
+      }
       const v = nodeVisualC(n);
-      let g: any = existing.get(n.id);
+      let g: any = ent ? ent.el : null;
       if(!g){
         // Create new node group
         g = document.createElementNS(NS,'g'); g.classList.add('node');
@@ -1062,6 +1351,9 @@
         g.addEventListener('dblclick', ev => { ev.stopPropagation(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
         nodesLayer.appendChild(g);
         nodeEls.set(n.id, g);
+        const fresh = spineEntry(n.id, g);
+        spine.arr.push(fresh);
+        existing.set(n.id, fresh);
       }
       // Update transform (always — this is the hot path during drag)
       setAttr(g, 'transform',`translate(${n.x},${n.y})`);
@@ -1134,9 +1426,11 @@
         label.remove(); g.__text = null; label = null;
         removeLabelPlate(g, '__label');
       }
+      const painted = existing.get(n.id);
+      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
+      live.add(n.id);
     }
-    // Remove stale elements
-    for(const [id, el] of existing){ if(!seen.has(id)){ el.remove(); nodeEls.delete(id); } }
+    sweepLayer(spine, existing, live, nodeEls);
   }
 
   function renderSidebar(){
@@ -1518,18 +1812,21 @@
   }
   function adjacencyMatrixData(nodes=state.nodes, includeEdgeIds=true){
     const index = new Map(nodes.map((node,i) => [node.id,i]));
-    const values = Array.from({length:nodes.length}, () => Array.from({length:nodes.length}, () => []));
-    const edgeIds = includeEdgeIds
-      ? Array.from({length:nodes.length}, () => Array.from({length:nodes.length}, () => []))
-      : null;
+    const n = nodes.length;
+    // Cells are created lazily: an adjacency matrix is almost always sparse, so
+    // filling n² empty arrays up front allocates (and later collects) two
+    // arrays per cell for nothing. A missing cell simply holds no edge.
+    const values: any[][] = new Array(n);
+    const edgeIds = includeEdgeIds ? new Array(n) : null;
+    const cellAt = (row: any[], i: number) => (row[i] || (row[i] = []));
     for(const edge of state.edges){
       const from=index.get(edge.from), to=index.get(edge.to); if(from == null || to == null) continue;
       const weight = (edge.weight != null && edge.weight !== '') ? edge.weight : '';
-      values[from][to].push(weight);
-      if(edgeIds) edgeIds[from][to].push(edge.id);
+      cellAt(values[from] || (values[from] = []), to).push(weight);
+      if(edgeIds) cellAt(edgeIds[from] || (edgeIds[from] = []), to).push(edge.id);
       if(!edge.directed && from !== to){
-        values[to][from].push(weight);
-        if(edgeIds) edgeIds[to][from].push(edge.id);
+        cellAt(values[to] || (values[to] = []), from).push(weight);
+        if(edgeIds) cellAt(edgeIds[to] || (edgeIds[to] = []), from).push(edge.id);
       }
     }
     return {values, edgeIds};
@@ -1540,6 +1837,7 @@
       .filter(e => (e.from === from && e.to === to) || (!e.directed && e.from === to && e.to === from))
       .map(e => e.id);
   }
+  const emptyCell: any[] = [];
   function adjacencyMatrixHtml(nodes=matrixNodes()){
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
@@ -1561,12 +1859,14 @@
       const upDisabled = pos === 0 ? ' disabled' : '';
       const downDisabled = pos === allSorted.length - 1 ? ' disabled' : '';
       parts.push(`<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input${isNodeSelected(row.id)?' matrix-selected':''}" data-node-label="${esc(row.id)}" value="${esc(row.label || row.id)}" readonly aria-label="${esc(I18N.t('label'))}: ${esc(row.id)}" title="${esc(I18N.t('matrix_node_hint'))}"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="-1" title="${esc(I18N.t('move_up'))}" aria-label="${esc(I18N.t('move_up'))}: ${esc(row.id)}"${upDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="${esc(row.id)}" data-dir="1" title="${esc(I18N.t('move_down'))}" aria-label="${esc(I18N.t('move_down'))}: ${esc(row.id)}"${downDisabled}><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>`);
-      const rowVals = values[i];
-      const rowEdgeIds = edgeIds[i];
-      for(let j=0;j<rowVals.length;j++){
-        const cell = rowVals[j];
+      // Rows are sparse (see adjacencyMatrixData): cells without an edge are
+      // rendered from the same empty shape on demand, in column order.
+      const rowVals = values[i] || [];
+      const rowEdgeIds = edgeIds[i] || [];
+      for(let j=0;j<nodes.length;j++){
+        const cell = rowVals[j] || emptyCell;
         const to = nodes[j].id;
-        const ids = rowEdgeIds[j];
+        const ids = rowEdgeIds[j] || emptyCell;
         const selected = ids.some(id => edgeSel.has(id));
         parts.push(`<td><input class="matrix-input${selected?' matrix-selected':''}" data-cell-from="${esc(row.id)}" data-cell-to="${esc(to)}" data-cell-edges="${esc(ids.join(','))}" value="${esc(cell.join(';') || '')}" placeholder="0" readonly aria-label="${esc(I18N.t('col_from'))} ${esc(row.id)}, ${esc(I18N.t('col_to'))} ${esc(to)}" title="${esc(I18N.t('matrix_cell_hint'))}"></td>`);
       }
