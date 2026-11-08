@@ -125,7 +125,7 @@
     return nodes;
   }
   function gizmoWorldPerPixel(){
-    const r = pointerRect || svg.getBoundingClientRect();
+    const r = canvasViewportRect(pointerRect);
     const s = (r && r.width) ? Math.min(r.width / state.viewBox.w, r.height / state.viewBox.h) : 0;
     return s > 0 ? 1 / s : state.viewBox.w / 1000;
   }
@@ -149,13 +149,119 @@
     if(attrs) for(const k in attrs) el.setAttribute(k, attrs[k]);
     return el;
   }
+  // Persistent per-tool SVG subtrees so zoom commits and gizmo drags update
+  // coordinates/sizes in place instead of reconstructing SVG elements.
+  const gizmoTrees: Partial<Record<GizmoTool, any>> = {};
+  function getGizmoTree(tool: GizmoTool){
+    let tree = gizmoTrees[tool];
+    if(tree) return tree;
+    const root = gizmoEl('g', null, 'gizmo-root');
+    const handles: Array<{ kind: string; g: any }> = [];
+    const makeHandle = (kind: string) => {
+      const g = gizmoEl('g', {'data-gizmo': kind}, 'gizmo-handle');
+      root.appendChild(g);
+      handles.push({ kind, g });
+      return g;
+    };
+    tree = { tool, root, handles };
+    if(tool === 'rect'){
+      tree.rectBox = gizmoEl('rect', null, 'gizmo-rectbox');
+      root.appendChild(tree.rectBox);
+      tree.edges = ['rect-n', 'rect-e', 'rect-s', 'rect-w'].map(kind => {
+        const g = makeHandle(kind);
+        const hitLine = gizmoEl('line', null, 'gizmo-hit-stroke');
+        const hitRect = gizmoEl('rect', null, 'gizmo-hit');
+        const visRect = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+        g.appendChild(hitLine); g.appendChild(hitRect); g.appendChild(visRect);
+        return { kind, g, hitLine, hitRect, visRect };
+      });
+      tree.corners = ['rect-nw', 'rect-ne', 'rect-se', 'rect-sw'].map(kind => {
+        const g = makeHandle(kind);
+        const hitRect = gizmoEl('rect', null, 'gizmo-hit');
+        const visRect = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+        g.appendChild(hitRect); g.appendChild(visRect);
+        return { kind, g, hitRect, visRect };
+      });
+      const centre = makeHandle('rect-move');
+      tree.centreHit = gizmoEl('circle', null, 'gizmo-hit');
+      tree.centreBox = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+      centre.appendChild(tree.centreHit); centre.appendChild(tree.centreBox);
+    } else if(tool === 'rotate'){
+      const ring = makeHandle('rotate');
+      tree.ringHit = gizmoEl('circle', null, 'gizmo-hit-stroke');
+      tree.ringVis = gizmoEl('circle', null, 'gizmo-ring gizmo-vis');
+      tree.spoke = gizmoEl('line', null, 'gizmo-spoke gizmo-vis');
+      tree.knob = gizmoEl('circle', null, 'gizmo-handle-box gizmo-box-amber gizmo-vis');
+      ring.appendChild(tree.ringHit); ring.appendChild(tree.ringVis);
+      ring.appendChild(tree.spoke); ring.appendChild(tree.knob);
+    } else {
+      tree.bounds = gizmoEl('rect', null, 'gizmo-bounds');
+      root.appendChild(tree.bounds);
+      const buildAxis = (kind: string, dx: number, dy: number, axisCls: string, boxCls: string, label: string) => {
+        const g = makeHandle(kind);
+        const hitLine = gizmoEl('line', null, 'gizmo-hit-stroke');
+        const axisLine = gizmoEl('line', null, 'gizmo-axis ' + axisCls + ' gizmo-vis');
+        g.appendChild(hitLine); g.appendChild(axisLine);
+        if(tool === 'move'){
+          const hitCircle = gizmoEl('circle', null, 'gizmo-hit');
+          const arrow = gizmoEl('polygon', null, 'gizmo-arrow-' + (dx ? 'x' : 'y') + ' gizmo-vis');
+          const text = gizmoEl('text', {fill: dx ? '#fb7185' : '#4ade80'}, 'gizmo-axis-label');
+          text.textContent = label;
+          g.appendChild(hitCircle); g.appendChild(arrow); g.appendChild(text);
+          return { dx, dy, hitLine, axisLine, hitCircle, arrow, text };
+        }
+        const hitRect = gizmoEl('rect', null, 'gizmo-hit');
+        const visRect = gizmoEl('rect', null, 'gizmo-handle-box ' + boxCls + ' gizmo-vis');
+        g.appendChild(hitRect); g.appendChild(visRect);
+        return { dx, dy, hitLine, axisLine, hitRect, visRect };
+      };
+      tree.axisX = buildAxis(tool === 'move' ? 'move-x' : 'scale-x', 1, 0, 'gizmo-axis-x', 'gizmo-box-x', 'x');
+      tree.axisY = buildAxis(tool === 'move' ? 'move-y' : 'scale-y', 0, 1, 'gizmo-axis-y', 'gizmo-box-y', 'y');
+      const centre = makeHandle(tool === 'move' ? 'move-free' : 'scale-uniform');
+      tree.centreHit = gizmoEl('circle', null, 'gizmo-hit');
+      centre.appendChild(tree.centreHit);
+      if(tool === 'move'){
+        tree.centreVis = gizmoEl('circle', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+      } else {
+        tree.centreVis = gizmoEl('rect', null, 'gizmo-handle-box gizmo-box-accent gizmo-vis');
+      }
+      centre.appendChild(tree.centreVis);
+    }
+    if(tool === 'rotate' || tool === 'scale' || tool === 'rect'){
+      const pv = makeHandle('pivot');
+      tree.pivotTitle = gizmoEl('title');
+      tree.pivotHit = gizmoEl('circle', null, 'gizmo-hit');
+      tree.pivotRing = gizmoEl('circle', null, 'gizmo-pivot-ring gizmo-vis');
+      tree.pivotDot = gizmoEl('circle', null, 'gizmo-pivot-dot gizmo-vis');
+      pv.appendChild(tree.pivotTitle); pv.appendChild(tree.pivotHit);
+      pv.appendChild(tree.pivotRing); pv.appendChild(tree.pivotDot);
+    } else {
+      tree.pivotRing = gizmoEl('circle', null, 'gizmo-pivot-ring gizmo-vis');
+      root.appendChild(tree.pivotRing);
+    }
+    tree.readout = gizmoEl('text', null, 'gizmo-readout');
+    tree.readout.style.display = 'none';
+    root.appendChild(tree.readout);
+    gizmoTrees[tool] = tree;
+    return tree;
+  }
+  function setRectAttrs(el: any, x: number, y: number, w: number, h: number){
+    setAttr(el, 'x', x); setAttr(el, 'y', y); setAttr(el, 'width', w); setAttr(el, 'height', h);
+  }
+  function setCircleAttrs(el: any, cx: number, cy: number, r: number){
+    setAttr(el, 'cx', cx); setAttr(el, 'cy', cy); setAttr(el, 'r', r);
+  }
+  function setLineAttrs(el: any, x1: number, y1: number, x2: number, y2: number){
+    setAttr(el, 'x1', x1); setAttr(el, 'y1', y1); setAttr(el, 'x2', x2); setAttr(el, 'y2', y2);
+  }
   function renderGizmo(){
     const wrap = $('#canvasWrap');
-    const show = state.mode === 'select' && gizmoEnabled && !selectDraft && !edgeDraft && !pinch && !pan;
+    const show = state.mode === 'select' && gizmoEnabled && !selectDraft && !edgeDraft;
     const nodes = show ? gizmoTargetNodes() : [];
     syncGizmoControls(nodes.length);
     if(!nodes.length){
-      if(gizmoSig){ gizmoLayer.textContent = ''; gizmoSig = ''; gizmoRootEl = null; gizmoAnchor = null; }
+      if(gizmoRootEl && gizmoRootEl.parentNode) gizmoRootEl.remove();
+      gizmoSig = ''; gizmoRootEl = null; gizmoAnchor = null;
       wrap.classList.toggle('gizmo-active', false);
       return;
     }
@@ -167,119 +273,125 @@
     const tool: GizmoTool = gizmoTool;
     const active = gizmoDrag?.handle || '';
     const pointer = gizmoDrag?.pointer;
+    const readoutText = gizmoDrag?.readout || '';
+    const pivotLabel = I18N.t('gizmo_pivot');
     const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(4), active,
-      gizmoDrag?.readout || '', pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
+      readoutText, pivotLabel, pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
     wrap.classList.toggle('gizmo-active', true);
-    if(sig === gizmoSig) return;
+    const tree = getGizmoTree(tool);
+    if(gizmoRootEl !== tree.root){
+      if(gizmoRootEl && gizmoRootEl.parentNode) gizmoRootEl.remove();
+      gizmoLayer.appendChild(tree.root);
+      gizmoRootEl = tree.root;
+      gizmoSig = '';
+    }
+    if(sig === gizmoSig){
+      // Clear any plain-drag translation if renderGizmo was called after a node drag commit
+      setAttr(tree.root, 'transform', null);
+      gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
+      return;
+    }
     gizmoSig = sig;
     gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
-    gizmoLayer.textContent = '';
-    const root = gizmoEl('g', null, 'gizmo-root');
-    gizmoRootEl = root;
-    gizmoLayer.appendChild(root);
-    const handle = (kind: string) => {
-      const g = gizmoEl('g', {'data-gizmo': kind}, 'gizmo-handle' + (active === kind ? ' active' : ''));
-      root.appendChild(g);
-      return g;
-    };
+    setAttr(tree.root, 'transform', null);
+    for(const h of tree.handles) toggleClass(h.g, 'active', active === h.kind);
+
     const armLen = 52 * u, armStart = 11 * u;
     let topY = b.minY;
 
     if(tool === 'rect'){
-      root.appendChild(gizmoEl('rect', {x:b.minX, y:b.minY, width:b.w, height:b.h}, 'gizmo-rectbox'));
+      setRectAttrs(tree.rectBox, b.minX, b.minY, b.w, b.h);
       const hit = 7 * u, box = 11 * u, boxHit = 21 * u;
-      const edges: Array<[string, number, number, number, number, number, number]> = [
-        ['rect-n', b.minX, b.minY, b.maxX, b.minY, b.cx, b.minY],
-        ['rect-e', b.maxX, b.minY, b.maxX, b.maxY, b.maxX, b.cy],
-        ['rect-s', b.minX, b.maxY, b.maxX, b.maxY, b.cx, b.maxY],
-        ['rect-w', b.minX, b.minY, b.minX, b.maxY, b.minX, b.cy],
+      const edgeCoords: Array<[number, number, number, number, number, number]> = [
+        [b.minX, b.minY, b.maxX, b.minY, b.cx, b.minY],
+        [b.maxX, b.minY, b.maxX, b.maxY, b.maxX, b.cy],
+        [b.minX, b.maxY, b.maxX, b.maxY, b.cx, b.maxY],
+        [b.minX, b.minY, b.minX, b.maxY, b.minX, b.cy],
       ];
-      for(const [kind, x1, y1, x2, y2, hx, hy] of edges){
-        const g = handle(kind);
-        g.appendChild(gizmoEl('line', {x1, y1, x2, y2, 'stroke-width': 2 * hit}, 'gizmo-hit-stroke'));
-        g.appendChild(gizmoEl('rect', {x:hx - boxHit/2, y:hy - boxHit/2, width:boxHit, height:boxHit}, 'gizmo-hit'));
-        g.appendChild(gizmoEl('rect', {x:hx - box/2, y:hy - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+      for(let i = 0; i < 4; i++){
+        const e = tree.edges[i];
+        const [x1, y1, x2, y2, hx, hy] = edgeCoords[i];
+        setLineAttrs(e.hitLine, x1, y1, x2, y2);
+        setAttr(e.hitLine, 'stroke-width', 2 * hit);
+        setRectAttrs(e.hitRect, hx - boxHit/2, hy - boxHit/2, boxHit, boxHit);
+        setRectAttrs(e.visRect, hx - box/2, hy - box/2, box, box);
       }
-      const corners: Array<[string, number, number]> = [
-        ['rect-nw', b.minX, b.minY], ['rect-ne', b.maxX, b.minY],
-        ['rect-se', b.maxX, b.maxY], ['rect-sw', b.minX, b.maxY],
+      const cornerCoords: Array<[number, number]> = [
+        [b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY],
       ];
-      for(const [kind, hx, hy] of corners){
-        const g = handle(kind);
-        g.appendChild(gizmoEl('rect', {x:hx - boxHit/2, y:hy - boxHit/2, width:boxHit, height:boxHit}, 'gizmo-hit'));
-        g.appendChild(gizmoEl('rect', {x:hx - box/2, y:hy - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+      for(let i = 0; i < 4; i++){
+        const c = tree.corners[i];
+        const [hx, hy] = cornerCoords[i];
+        setRectAttrs(c.hitRect, hx - boxHit/2, hy - boxHit/2, boxHit, boxHit);
+        setRectAttrs(c.visRect, hx - box/2, hy - box/2, box, box);
       }
-      const centre = handle('rect-move');
-      centre.appendChild(gizmoEl('circle', {cx:b.cx, cy:b.cy, r:13 * u}, 'gizmo-hit'));
-      centre.appendChild(gizmoEl('rect', {x:b.cx - box/2, y:b.cy - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+      setCircleAttrs(tree.centreHit, b.cx, b.cy, 13 * u);
+      setRectAttrs(tree.centreBox, b.cx - box/2, b.cy - box/2, box, box);
     } else if(tool === 'rotate'){
-      // Fixed on-screen ring around the pivot (not a ring enclosing the
-      // whole selection): the drag is angular, so the ring size does not
-      // affect the math, and a constant-size ring never leaves the canvas
-      // for large selections.
       const Rr = 72 * u;
-      topY = P.y - Rr; // readout rides the ring, not the (rotating) bounds
-      const ring = handle('rotate');
-      ring.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:Rr, 'stroke-width': 18 * u}, 'gizmo-hit-stroke'));
-      ring.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:Rr}, 'gizmo-ring gizmo-vis'));
+      topY = P.y - Rr;
+      setCircleAttrs(tree.ringHit, P.x, P.y, Rr);
+      setAttr(tree.ringHit, 'stroke-width', 18 * u);
+      setCircleAttrs(tree.ringVis, P.x, P.y, Rr);
       const a = (gizmoDrag?.tool === 'rotate' && pointer) ? Math.atan2(pointer.y - P.y, pointer.x - P.x) : -Math.PI / 2;
       const hx = P.x + Math.cos(a) * Rr, hy = P.y + Math.sin(a) * Rr;
-      if(gizmoDrag?.tool === 'rotate') ring.appendChild(gizmoEl('line', {x1:P.x, y1:P.y, x2:hx, y2:hy}, 'gizmo-spoke gizmo-vis'));
-      ring.appendChild(gizmoEl('circle', {cx:hx, cy:hy, r:6.5 * u}, 'gizmo-handle-box gizmo-box-amber gizmo-vis'));
+      if(gizmoDrag?.tool === 'rotate'){
+        setLineAttrs(tree.spoke, P.x, P.y, hx, hy);
+        setStyleIfChanged(tree.spoke.style, 'display', '');
+      } else {
+        setStyleIfChanged(tree.spoke.style, 'display', 'none');
+      }
+      setCircleAttrs(tree.knob, hx, hy, 6.5 * u);
     } else {
-      // move & scale share the axis arms; they differ in the end handles.
-      root.appendChild(gizmoEl('rect', {x:b.minX, y:b.minY, width:b.w, height:b.h}, 'gizmo-bounds'));
-      const axisHandle = (kind: string, dx: number, dy: number, axisCls: string, boxCls: string, label: string) => {
-        const g = handle(kind);
+      setRectAttrs(tree.bounds, b.minX, b.minY, b.w, b.h);
+      const updateAxis = (ax: any) => {
+        const { dx, dy } = ax;
         const ex = P.x + dx * armLen, ey = P.y + dy * armLen;
-        g.appendChild(gizmoEl('line', {x1:P.x + dx * armStart, y1:P.y + dy * armStart, x2:ex, y2:ey, 'stroke-width': 16 * u}, 'gizmo-hit-stroke'));
-        g.appendChild(gizmoEl('line', {x1:P.x + dx * armStart, y1:P.y + dy * armStart, x2:ex, y2:ey}, 'gizmo-axis ' + axisCls + ' gizmo-vis'));
+        setLineAttrs(ax.hitLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
+        setAttr(ax.hitLine, 'stroke-width', 16 * u);
+        setLineAttrs(ax.axisLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
         if(tool === 'move'){
           const al = 12 * u, aw = 5 * u;
           const tipX = P.x + dx * (armLen + al), tipY = P.y + dy * (armLen + al);
           const pts = `${tipX},${tipY} ${ex - dy * aw},${ey + dx * aw} ${ex + dy * aw},${ey - dx * aw}`;
-          g.appendChild(gizmoEl('circle', {cx:ex + dx * al / 2, cy:ey + dy * al / 2, r: 11 * u}, 'gizmo-hit'));
-          g.appendChild(gizmoEl('polygon', {points: pts}, 'gizmo-arrow-' + (dx ? 'x' : 'y') + ' gizmo-vis'));
-          const t = gizmoEl('text', {x: tipX + dx * 9 * u - (dy ? 3 * u : 0), y: tipY + dy * 12 * u + (dx ? 4 * u : 0), 'font-size': 11 * u, fill: dx ? '#fb7185' : '#4ade80'}, 'gizmo-axis-label');
-          t.textContent = label;
-          g.appendChild(t);
+          setCircleAttrs(ax.hitCircle, ex + dx * al / 2, ey + dy * al / 2, 11 * u);
+          setAttr(ax.arrow, 'points', pts);
+          setAttr(ax.text, 'x', tipX + dx * 9 * u - (dy ? 3 * u : 0));
+          setAttr(ax.text, 'y', tipY + dy * 12 * u + (dx ? 4 * u : 0));
+          setAttr(ax.text, 'font-size', 11 * u);
         } else {
           const box = 13 * u;
-          g.appendChild(gizmoEl('rect', {x:ex - 11 * u, y:ey - 11 * u, width:22 * u, height:22 * u}, 'gizmo-hit'));
-          g.appendChild(gizmoEl('rect', {x:ex - box/2, y:ey - box/2, width:box, height:box}, 'gizmo-handle-box ' + boxCls + ' gizmo-vis'));
+          setRectAttrs(ax.hitRect, ex - 11 * u, ey - 11 * u, 22 * u, 22 * u);
+          setRectAttrs(ax.visRect, ex - box/2, ey - box/2, box, box);
         }
-        return g;
       };
-      axisHandle(tool === 'move' ? 'move-x' : 'scale-x', 1, 0, 'gizmo-axis-x', 'gizmo-box-x', 'x');
-      axisHandle(tool === 'move' ? 'move-y' : 'scale-y', 0, 1, 'gizmo-axis-y', 'gizmo-box-y', 'y');
-      const centre = handle(tool === 'move' ? 'move-free' : 'scale-uniform');
-      centre.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:13 * u}, 'gizmo-hit'));
+      updateAxis(tree.axisX);
+      updateAxis(tree.axisY);
+      setCircleAttrs(tree.centreHit, P.x, P.y, 13 * u);
       if(tool === 'move'){
-        centre.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:7.5 * u}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+        setCircleAttrs(tree.centreVis, P.x, P.y, 7.5 * u);
       } else {
         const box = 14 * u;
-        centre.appendChild(gizmoEl('rect', {x:P.x - box/2, y:P.y - box/2, width:box, height:box}, 'gizmo-handle-box gizmo-box-accent gizmo-vis'));
+        setRectAttrs(tree.centreVis, P.x - box/2, P.y - box/2, box, box);
       }
     }
 
-    // Pivot: marker for every tool; directly draggable in rotate/scale/rect
-    // (in move/rect the centre handle already owns that spot, so the small
-    // dot on top of it is the pivot grab). Double-click resets to centre.
     if(tool === 'rotate' || tool === 'scale' || tool === 'rect'){
-      const pv = handle('pivot');
-      const title = gizmoEl('title'); title.textContent = I18N.t('gizmo_pivot'); pv.appendChild(title);
-      // In scale/rect the pivot sits inside the centre handle: keep its hit
-      // area to the dot itself so the centre handle stays grabbable around it.
-      pv.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:(tool === 'rotate' ? 11 : 7) * u}, 'gizmo-hit'));
-      pv.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:6 * u}, 'gizmo-pivot-ring gizmo-vis'));
-      pv.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:2 * u}, 'gizmo-pivot-dot gizmo-vis'));
+      setText(tree.pivotTitle, pivotLabel);
+      setCircleAttrs(tree.pivotHit, P.x, P.y, (tool === 'rotate' ? 11 : 7) * u);
+      setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
+      setCircleAttrs(tree.pivotDot, P.x, P.y, 2 * u);
     } else {
-      root.appendChild(gizmoEl('circle', {cx:P.x, cy:P.y, r:6 * u}, 'gizmo-pivot-ring gizmo-vis'));
+      setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
     }
-    if(gizmoDrag?.readout){
-      const t = gizmoEl('text', {x: tool === 'rect' ? b.cx : P.x, y: topY - 10 * u, 'font-size': 12.5 * u}, 'gizmo-readout');
-      t.textContent = gizmoDrag.readout;
-      root.appendChild(t);
+    if(readoutText){
+      setAttr(tree.readout, 'x', tool === 'rect' ? b.cx : P.x);
+      setAttr(tree.readout, 'y', topY - 10 * u);
+      setAttr(tree.readout, 'font-size', 12.5 * u);
+      setText(tree.readout, readoutText);
+      setStyleIfChanged(tree.readout.style, 'display', '');
+    } else {
+      setStyleIfChanged(tree.readout.style, 'display', 'none');
     }
   }
   // Integration hook for moveDragFast: a plain node/group drag translates

@@ -150,6 +150,20 @@
       position:absolute; inset:0; pointer-events:none;
       background-color:#020617;
     }
+    /* #cameraStage is the ONLY compositor-promoted layer on the canvas path.
+       Scaling an <svg:g> (#cameraLayer) forces Blink's SVG layout engine to
+       run ScreenScaleFactorChanged + Paint + vector tile rasterization across
+       every node, edge and label on each zoom frame (~50 ms/frame at 1500
+       nodes). Transforming an HTML box ABOVE <svg> with will-change:transform
+       locks the compositor raster scale during active pan/wheel/pinch gestures
+       (0 SVG layouts, 0 tile rasterizations, 0 SVG DOM writes), and commits
+       back to #cameraLayer + identity stage in one atomic sync-tree swap when
+       the gesture settles. #cameraLayer must NOT carry will-change:transform,
+       otherwise Chromium re-rasterizes its nested layer when the stage scales. */
+    .camera-stage{
+      position:absolute; inset:0; transform-origin:0 0;
+      will-change:transform; transform:matrix(1, 0, 0, 1, 0, 0);
+    }
     #graphCanvas{
       position:relative; width:100%; height:100%; display:block; background:transparent;
       touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
@@ -157,18 +171,6 @@
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     #gridRect{pointer-events:none}
-    /* The camera group is the ONLY promoted layer, and navigation only ever
-       changes its transform: gesture previews and committed cameras are the
-       same composited write, so the transform moves the already-rasterized
-       scene at ~0.1 ms per frame instead of re-laying-out thousands of vector
-       elements. The scene group and the world-locked grid pattern ride inside
-       that same layer, so grid and graph always paint together. The root viewBox
-       stays a fixed world reference frame: rewriting it would re-run style and
-       layout for the whole scene on every camera update. There is deliberately
-       no second promoted layer (the old CSS-background grid div): two layers
-       update on two clocks, and the slower one showed the previous camera for a
-       frame at pan/zoom begin and end. */
-    #cameraLayer{will-change:transform}
     .canvas-hud{position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; max-width:60%}
     .canvas-hud > *{pointer-events:auto}
     .status-pill{

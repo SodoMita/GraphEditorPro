@@ -81,6 +81,7 @@
     }
   }
   function setCameraFromInputs(){
+    flushZoomPreview();
     const cx = finite($('#cameraX').value, state.viewBox.x + state.viewBox.w/2);
     const cy = finite($('#cameraY').value, state.viewBox.y + state.viewBox.h/2);
     const w = clamp(finite($('#cameraW').value, state.viewBox.w), 100, 20000);
@@ -92,12 +93,14 @@
     toast(I18N.t('camera_updated'));
   }
   function resetCamera(){
+    cancelZoomPreview();
     state.viewBox = {x:-500, y:-330, w:1000, h:660};
     applyCamera(); saveSoon(); syncCameraInputs();
     toast(I18N.t('camera_reset'));
   }
   function centerOnNode(n){
     if(!n) return;
+    flushZoomPreview();
     state.viewBox.x = n.x - state.viewBox.w/2;
     state.viewBox.y = n.y - state.viewBox.h/2;
     applyCamera(); saveSoon(); syncCameraInputs();
@@ -117,6 +120,7 @@
   function centerOnFurthestNodeOfEdge(edge){
     const a = nodeById(edge.from), b = nodeById(edge.to);
     if(!a || !b) return;
+    flushZoomPreview();
     const cx = state.viewBox.x + state.viewBox.w/2;
     const cy = state.viewBox.y + state.viewBox.h/2;
     const da = Math.hypot(a.x - cx, a.y - cy);

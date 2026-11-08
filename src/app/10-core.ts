@@ -169,12 +169,13 @@
   }
 
   const svg = $('#graphCanvas');
+  const cameraStage = $('#cameraStage');
   const gridLayer = $('#gridLayer');
   const gridRect = $('#gridRect');
-  // Navigation moves only the camera group, which carries the composed camera
-  // matrix for previews and commits alike and is the single compositor-promoted
-  // layer on the canvas path. The scene group is an ordinary child holding the
-  // grid and the graph; nothing applies a transform to it.
+  // Active pan/zoom/pinch previews transform #cameraStage (HTML compositor
+  // layer above <svg>) so scaling never triggers SVG layout or vector tile
+  // re-rasterization; committed cameras rest as a vector matrix on #cameraLayer
+  // above a fixed reference viewBox.
   const cameraLayer = $('#cameraLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');

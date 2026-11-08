@@ -73,39 +73,61 @@ function dispatchPointer(window, target, type, options) {
 const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30));
 
 // === Camera contract ===
-// The root viewBox is a fixed world reference frame written once; the camera
-// lives in a single matrix on #cameraLayer (which holds the grid and the graph)
-// for gesture previews AND for the committed camera. These helpers re-derive
-// that mapping independently of the implementation.
+// The root viewBox is a fixed world reference frame written once; active
+// pan/pinch/wheel gestures drive the GPU-composited HTML #cameraStage wrapper
+// while leaving #cameraLayer untouched, then commit atomically onto #cameraLayer
+// (resetting #cameraStage to identity) when the gesture settles. These helpers
+// compose #cameraStage + #cameraLayer independently of the implementation.
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
+const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
 
-function cameraScale(camera) {
-  const match = camera.getAttribute('transform')?.match(/^matrix\(([^)]+)\)$/);
-  assert.ok(match, `expected a camera matrix on #${camera.id}`);
-  return match[1].trim().split(/[ ,]+/).map(Number)[0];
+function parseMatrix2d(raw, label) {
+  const match = raw?.match(/^matrix\(([^)]+)\)$/);
+  assert.ok(match, `expected a 2D matrix on ${label}, got ${JSON.stringify(raw)}`);
+  const [scale, skewX, skewY, scaleY, tx, ty] = match[1].trim().split(/[ ,]+/).map(Number);
+  assert.equal(skewX, 0, `${label} matrix has no rotation`);
+  assert.equal(skewY, 0, `${label} matrix has no rotation`);
+  assert.ok(Math.abs(scale - scaleY) < 1e-9, `${label} matrix scales uniformly`);
+  return { scale, tx, ty };
 }
 
-function assertCameraRendersViewBox(camera, viewBox, viewport = VIEWPORT) {
-  const match = camera.getAttribute('transform')?.match(/^matrix\(([^)]+)\)$/);
-  assert.ok(match, `expected a camera matrix on #${camera.id}`);
-  const [scale, skewX, skewY, , tx, ty] = match[1].trim().split(/[ ,]+/).map(Number);
-  assert.equal(skewX, 0, 'the camera matrix has no rotation');
-  assert.equal(skewY, 0, 'the camera matrix has no rotation');
+function stageFor(camera) {
+  return camera.ownerDocument.querySelector('#cameraStage');
+}
+
+function stageTransformOf(camera) {
+  const stage = stageFor(camera);
+  const inline = stage?.style?.transform;
+  return inline ? parseMatrix2d(inline, '#cameraStage') : { scale: 1, tx: 0, ty: 0 };
+}
+
+function cameraScale(camera) {
+  const layer = parseMatrix2d(camera.getAttribute('transform'), `#${camera.id}`);
+  const stage = stageTransformOf(camera);
+  return layer.scale * stage.scale;
+}
+
+function projectWorldPoint(camera, x, y, viewport = VIEWPORT) {
+  const layer = parseMatrix2d(camera.getAttribute('transform'), `#${camera.id}`);
+  const stage = stageTransformOf(camera);
   const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
   const baseOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
   const baseOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
-  // user space -> screen space is the fixed reference frame mapped with
-  // preserveAspectRatio="xMidYMid meet": subtract the reference origin first.
-  const toClient = (x, y) => ({
-    x: (scale * x + tx - REFERENCE_VIEWBOX.x) * basePixels + baseOffsetX,
-    y: (scale * y + ty - REFERENCE_VIEWBOX.y) * basePixels + baseOffsetY,
-  });
+  const svgX = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * basePixels + baseOffsetX;
+  const svgY = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * basePixels + baseOffsetY;
+  return {
+    x: stage.scale * svgX + stage.tx,
+    y: stage.scale * svgY + stage.ty,
+  };
+}
+
+function assertCameraRendersViewBox(camera, viewBox, viewport = VIEWPORT) {
   const cameraPixels = Math.min(viewport.width / viewBox.w, viewport.height / viewBox.h);
   const offsetX = (viewport.width - viewBox.w * cameraPixels) / 2;
   const offsetY = (viewport.height - viewBox.h * cameraPixels) / 2;
-  const topLeft = toClient(viewBox.x, viewBox.y);
-  const bottomRight = toClient(viewBox.x + viewBox.w, viewBox.y + viewBox.h);
+  const topLeft = projectWorldPoint(camera, viewBox.x, viewBox.y, viewport);
+  const bottomRight = projectWorldPoint(camera, viewBox.x + viewBox.w, viewBox.y + viewBox.h, viewport);
   const near = (a, b) => Math.abs(a - b) < 1e-6;
   assert.ok(near(topLeft.x, offsetX) && near(topLeft.y, offsetY),
     `camera top-left (${topLeft.x}, ${topLeft.y}) must land on the letterboxed corner (${offsetX}, ${offsetY})`);
@@ -301,11 +323,13 @@ test('pan moves only the composited camera and never rewrites the root viewBox',
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const stage = dom.window.document.querySelector('#cameraStage');
   const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
   const grid = dom.window.document.querySelector('#gridLayer');
   setCanvasRect(svg);
   const viewBoxWrites = trackViewBoxWrites(svg);
+  const baseCameraMatrix = camera.getAttribute('transform');
   dom.window.document.querySelector('#modeMove').click();
 
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
@@ -313,35 +337,42 @@ test('pan moves only the composited camera and never rewrites the root viewBox',
   await nextFrame(dom.window);
 
   // Dragged 80 px right and 40 px down at 1:1 — the camera moves left and up by
-  // the same world distance.
+  // the same world distance on the promoted #cameraStage while #cameraLayer stays untouched.
   assert.equal(viewBoxWrites.count, 0, 'the root viewBox is a reference frame, not a camera write');
+  assert.equal(camera.getAttribute('transform'), baseCameraMatrix, 'SVG #cameraLayer is untouched during an active pan preview');
+  assert.notEqual(stage.style.transform, STAGE_IDENTITY, '#cameraStage carries the live preview delta');
   assertCameraRendersViewBox(camera, { x: -580, y: -370, w: 1000, h: 660 });
   assert.equal(scene.getAttribute('transform'), null, 'the scene group is never transformed');
   assert.equal(grid.style.transform, '', 'the grid never uses a temporary compositor transform');
   const pattern = dom.window.document.querySelector('#gridPattern');
   const patternWidthBefore = pattern.getAttribute('width');
   assert.ok(patternWidthBefore, 'the world-locked grid pattern is initialized');
-  const previewMatrix = camera.getAttribute('transform');
+  const previewOrigin = projectWorldPoint(camera, 0, 0);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
-  assert.equal(viewBoxWrites.count, 0, 'releasing the pan writes no viewBox: there is no commit boundary to cross');
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'release keeps every pixel where the preview put it');
+  assert.equal(viewBoxWrites.count, 0, 'releasing the pan writes no viewBox');
+  assert.equal(stage.style.transform, STAGE_IDENTITY, 'release resets #cameraStage to identity atomically');
+  const committedOrigin = projectWorldPoint(camera, 0, 0);
+  assert.ok(Math.abs(committedOrigin.x - previewOrigin.x) < 1e-6 && Math.abs(committedOrigin.y - previewOrigin.y) < 1e-6,
+    'release keeps every pixel where the preview put it');
   assertCameraRendersViewBox(camera, { x: -580, y: -370, w: 1000, h: 660 });
-  assert.equal(scene.getAttribute('transform'), null, 'still no compensation: nothing was handed off');
+  assert.equal(scene.getAttribute('transform'), null, 'still no compensation on #sceneLayer');
   assert.equal(svg.getAttribute('viewBox'), `-500 -330 1000 660`, 'the reference frame is untouched');
   assert.equal(pattern.getAttribute('width'), patternWidthBefore, 'panning never rebuilds the world-locked grid pattern');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('pinch preview and commit are the same composited camera write', async () => {
+test('pinch preview and commit compose to the exact same camera without mid-gesture SVG writes', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
+  const stage = dom.window.document.querySelector('#cameraStage');
   const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
   const viewBoxWrites = trackViewBoxWrites(svg);
+  const baseCameraMatrix = camera.getAttribute('transform');
 
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100 });
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 300, clientY: 100 });
@@ -349,14 +380,19 @@ test('pinch preview and commit are the same composited camera write', async () =
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites.count, 0, 'the root viewBox stays the reference frame during a pinch');
+  assert.equal(camera.getAttribute('transform'), baseCameraMatrix, '#cameraLayer is untouched while pinching');
+  assert.notEqual(stage.style.transform, STAGE_IDENTITY, '#cameraStage scales the promoted stage during pinch');
   const previewScale = cameraScale(camera);
   assert.ok(previewScale > 1, 'pinching apart zooms in');
-  const previewMatrix = camera.getAttribute('transform');
+  const previewAnchor = projectWorldPoint(camera, 120, -80);
   const committedWidthBefore = dom.window.document.querySelector('#cameraW').value;
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   assert.equal(viewBoxWrites.count, 0, 'committing the pinch writes no viewBox either');
-  assert.equal(camera.getAttribute('transform'), previewMatrix, 'the commit paints exactly what the preview painted');
+  assert.equal(stage.style.transform, STAGE_IDENTITY, 'commit resets #cameraStage to identity');
+  const committedAnchor = projectWorldPoint(camera, 120, -80);
+  assert.ok(Math.abs(committedAnchor.x - previewAnchor.x) < 1e-6 && Math.abs(committedAnchor.y - previewAnchor.y) < 1e-6,
+    'the commit paints every world point at the exact same screen pixel as the preview');
   assert.equal(scene.getAttribute('transform'), null, 'no compensation transform is needed');
   // The logical camera the sidebar now reports must be the camera that was on
   // screen: the composited matrix scale and the committed viewBox width agree.

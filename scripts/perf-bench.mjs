@@ -132,19 +132,24 @@ async function openBuild(browser, build, graph) {
 async function startRecording(page) {
   await page.evaluate(() => {
     const svg = document.querySelector('#graphCanvas');
+    const stage = document.querySelector('#cameraStage');
     const camera = document.querySelector('#cameraLayer');
     const scene = document.querySelector('#sceneLayer');
     const grid = document.querySelector('#gridLayer');
-    const counts = { viewBox: 0, cameraTransform: 0, sceneTransform: 0, gridStyle: 0 };
+    const counts = { viewBox: 0, stageStyle: 0, cameraTransform: 0, sceneTransform: 0, gridStyle: 0, svgDom: 0 };
     const observer = new MutationObserver(records => {
       for (const record of records) {
+        if (record.type === 'childList') { counts.svgDom += record.addedNodes.length + record.removedNodes.length; continue; }
         if (record.target === svg && record.attributeName === 'viewBox') counts.viewBox++;
+        if (stage && record.target === stage && record.attributeName === 'style') counts.stageStyle++;
         if (record.target === camera && record.attributeName === 'transform') counts.cameraTransform++;
         if (record.target === scene && record.attributeName === 'transform') counts.sceneTransform++;
         if (record.target === grid && record.attributeName === 'style') counts.gridStyle++;
       }
     });
     observer.observe(svg, { attributes: true, attributeFilter: ['viewBox'] });
+    observer.observe(svg, { childList: true, subtree: true });
+    if (stage) observer.observe(stage, { attributes: true, attributeFilter: ['style'] });
     observer.observe(camera, { attributes: true, attributeFilter: ['transform'] });
     observer.observe(scene, { attributes: true, attributeFilter: ['transform'] });
     if (grid) observer.observe(grid, { attributes: true, attributeFilter: ['style'] });
@@ -227,25 +232,32 @@ async function wheelGesture(page, cdp, steps, stepMs) {
 const runGesture = (page, cdp, kind, steps, stepMs) =>
   (kind === 'pan' ? panGesture : wheelGesture)(page, cdp, steps, stepMs);
 
-// The probe isolates ONE camera update: dispatch one pointermove, then force
-// style+layout once. It is the per-update cost, independent of input pacing.
-async function probeCameraUpdate(page, samples) {
-  return page.evaluate(async count => {
+// The probe isolates ONE camera update (pan or wheel): dispatch one step, then
+// force style+layout once. It is the per-update cost, independent of input pacing.
+async function probeCameraUpdate(page, kind, samples) {
+  return page.evaluate(async ({ mode, count }) => {
     const svg = document.querySelector('#graphCanvas');
+    const grid = document.querySelector('#gridLayer');
     const scene = document.querySelector('#sceneLayer');
-    const rect = svg.getBoundingClientRect();
+    const rect = (grid && grid.getBoundingClientRect().width ? grid : svg).getBoundingClientRect();
     const centerX = rect.left + rect.width / 2, centerY = rect.top + rect.height / 2;
-    const makeEvent = (type, x) => new PointerEvent(type, {
+    const makePointer = (type, x) => new PointerEvent(type, {
       bubbles: true, cancelable: true, pointerId: 99, pointerType: 'mouse', isPrimary: true,
       button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: centerY,
     });
     const handler = [], flush = [], frame = [];
-    svg.dispatchEvent(makeEvent('pointerdown', centerX));
+    if (mode === 'pan') svg.dispatchEvent(makePointer('pointerdown', centerX));
     let x = centerX;
     for (let i = 0; i < count; i++) {
       x += 2.5;
       const started = performance.now();
-      svg.dispatchEvent(makeEvent('pointermove', x));
+      if (mode === 'pan') {
+        svg.dispatchEvent(makePointer('pointermove', x));
+      } else {
+        svg.dispatchEvent(new WheelEvent('wheel', {
+          bubbles: true, cancelable: true, clientX: centerX, clientY: centerY, deltaY: i % 2 ? 100 : -100,
+        }));
+      }
       const handled = performance.now();
       await new Promise(resolve => requestAnimationFrame(() => {
         const layoutStarted = performance.now();
@@ -256,9 +268,9 @@ async function probeCameraUpdate(page, samples) {
         requestAnimationFrame(() => { frame.push(performance.now() - started); resolve(); });
       }));
     }
-    svg.dispatchEvent(makeEvent('pointerup', x));
+    if (mode === 'pan') svg.dispatchEvent(makePointer('pointerup', x));
     return { handler: handler.slice(3), flush: flush.slice(3), frame: frame.slice(3) };
-  }, samples);
+  }, { mode: kind, count: samples });
 }
 
 async function measureGesture(browser, build, graph, kind, size) {
@@ -268,7 +280,8 @@ async function measureGesture(browser, build, graph, kind, size) {
   await page.click('#modeMove').catch(() => {});
   await page.waitForTimeout(50);
 
-  const probe = await probeCameraUpdate(page, 25);
+  const probe = await probeCameraUpdate(page, kind, 25);
+  await page.waitForTimeout(350); // let any wheel probe debounce settle before warm-up
 
   await startRecording(page); // warm-up gesture, discarded
   await runGesture(page, cdp, kind, Math.min(steps, 15), stepMs);
@@ -321,7 +334,7 @@ try {
           `| per update: style+layout=${pad(probe.styleAndLayout.median, 6)}ms frame=${pad(probe.frame.median, 6)}ms ` +
           `| frames=${pad(frames.frames, 3)} p95=${pad(frames.p95Ms, 6)}ms max=${pad(frames.maxMs, 7)}ms dropped=${pad(frames.droppedFrames, 4)} ` +
           `| commit task=${pad(median.commitMetrics.TaskDuration.toFixed(0), 4)}ms style=${pad(median.commitMetrics.RecalcStyleDuration.toFixed(0), 4)}ms ` +
-          `| writes vb=${median.writes.viewBox} cam=${median.writes.cameraTransform} scene=${median.writes.sceneTransform} grid=${median.writes.gridStyle}`,
+          `| writes vb=${median.writes.viewBox} stage=${median.writes.stageStyle} cam=${median.writes.cameraTransform} scene=${median.writes.sceneTransform} grid=${median.writes.gridStyle} dom=${median.writes.svgDom}`,
         );
       }
     }

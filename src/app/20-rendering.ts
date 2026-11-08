@@ -529,37 +529,59 @@
     return state.selectTool === 'single' ? I18N.t('select_mode') : I18N.t('select_tool_mode', {tool: selectionToolLabel(state.selectTool)});
   }
   function applyCamera(){
-    // Adopt any in-flight zoom preview before the camera changes underneath it
-    // (fit view, camera inputs, undo, import, ...).
-    flushZoomPreview();
-    applyCameraTransform(state.viewBox);
-    updateGridBackground(state.viewBox);
+    // Cancel any pending wheel-zoom debounce: state.viewBox is already the
+    // camera being committed (pointer adoption flushes zoomPreview beforehand).
+    cancelZoomPreview();
+    const viewport = applyCameraTransform(state.viewBox);
+    updateGridBackground(state.viewBox, viewport);
     syncCameraInputs();
     // Gizmo handles are sized in screen pixels, so a committed zoom change
-    // re-sizes them (signature-guarded: a no-op when nothing changed).
+    // re-sizes them in place (signature-guarded: a no-op when nothing changed).
     renderGizmo();
   }
 
   // === Camera ===
-  // The root viewBox is a fixed world reference frame, written once. The logical
-  // camera (state.viewBox) is applied as a matrix on the promoted #cameraLayer,
-  // which holds the grid and the whole graph scene. Gesture previews and
-  // committed cameras therefore share ONE mechanism: the composited property
-  // simply moves, and a commit is the same write with the final value (a no-op
-  // when the preview already reached it), so there is no mechanism handoff — and
-  // no handoff boundary — anywhere in navigation.
-  //
-  // Never drive the camera through the root viewBox: rewriting it re-resolves
-  // style and re-runs layout for every node, edge, label and grid cell in the
-  // scene on each camera update (measured ~13 ms of style+layout per update at
-  // 100 nodes and ~19 ms at 1200 nodes on a software-raster Chromium, i.e. the
-  // main thread saturated for the whole gesture), while a promoted transform
-  // update measured ~0.1 ms at every size.
+  // Two-tier camera that avoids reconstructing or re-rasterizing the SVG
+  // during scaling:
+  //   1. At rest, the root viewBox is a fixed world reference frame (written
+  //      once) and #cameraLayer carries the crisp vector camera matrix.
+  //   2. During active pan / wheel-zoom / pinch gestures, #cameraStage (the
+  //      single will-change:transform HTML container above <svg>) transforms
+  //      the already-rasterized bitmap relative to stageBaseCamera. Scaling an
+  //      <svg:g> inside <svg> forces Blink's SVG layout engine to re-layout
+  //      and re-rasterize every node, edge and label on each zoom frame; the
+  //      stage CSS matrix above <svg> keeps SVG layout, vector rasterization
+  //      and SVG DOM mutations at zero for the entire gesture.
+  //   3. When the gesture settles (or a pointer gesture adopts it),
+  //      #cameraStage resets to identity in the same commit that writes the
+  //      final matrix to #cameraLayer, so Chromium's pending->active sync-tree
+  //      swap lands both atomically with no intermediate flash.
   const REFERENCE_VIEWBOX = {x:-500, y:-330, w:1000, h:660};
+  const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
   let referenceViewBoxInstalled = false;
+  let stageBaseCamera: ViewBox | null = null;
+  let stageBaseViewport: { width: number; height: number } | null = null;
+  let stageTransformActive = false;
+  function canvasViewportRect(cachedRect: any = null){
+    if(cachedRect && cachedRect.width && cachedRect.height) return cachedRect;
+    // While #cameraStage carries a non-identity CSS transform, svg's own
+    // getBoundingClientRect() reflects that scaled/translated box in real
+    // browsers; #gridLayer shares exact inset:0 bounds inside #canvasWrap and
+    // is never transformed. Fall back to svg when layout sizes are 0 (jsdom).
+    if(stageTransformActive && gridLayer){
+      const gr = gridLayer.getBoundingClientRect();
+      if(gr.width && gr.height) return gr;
+    }
+    return svg.getBoundingClientRect();
+  }
   function cameraMatrixText(matrix){
     const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
     return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
+  }
+  function stageMatrixText(matrix){
+    const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
+    const s = clean(matrix.scale);
+    return `matrix(${s}, 0, 0, ${s}, ${clean(matrix.tx)}, ${clean(matrix.ty)})`;
   }
   function cameraDeltaMatrix(camera, base, viewport){
     // Compose the two SVG preserveAspectRatio="xMidYMid meet" mappings (the
@@ -579,23 +601,55 @@
       ty:base.y + (cameraOffsetY - baseOffsetY) / basePixels - scale * camera.y
     };
   }
-  function applyCameraTransform(camera=state.viewBox, rect=null){
-    // The reference frame does not depend on the viewport, so it is installed
-    // even when the canvas has no size yet (hidden tab, pre-layout render).
+  function cameraStageMatrix(preview, base, viewport){
+    // Screen-pixel delta mapping the base camera raster (already painted in
+    // #cameraLayer) to the preview camera, with transform-origin: 0 0 on
+    // #cameraStage. Exact across letterboxing and simultaneous pan+zoom.
+    const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
+    const previewPixels = Math.min(viewport.width / preview.w, viewport.height / preview.h);
+    const scale = previewPixels / basePixels;
+    const baseOriginX = (viewport.width - base.w * basePixels) / 2 - base.x * basePixels;
+    const baseOriginY = (viewport.height - base.h * basePixels) / 2 - base.y * basePixels;
+    const previewOriginX = (viewport.width - preview.w * previewPixels) / 2 - preview.x * previewPixels;
+    const previewOriginY = (viewport.height - preview.h * previewPixels) / 2 - preview.y * previewPixels;
+    return {
+      scale,
+      tx:previewOriginX - scale * baseOriginX,
+      ty:previewOriginY - scale * baseOriginY
+    };
+  }
+  function ensureReferenceViewBox(){
     if(!referenceViewBoxInstalled){
       referenceViewBoxInstalled = true;
       setAttr(svg, 'viewBox', `${REFERENCE_VIEWBOX.x} ${REFERENCE_VIEWBOX.y} ${REFERENCE_VIEWBOX.w} ${REFERENCE_VIEWBOX.h}`);
     }
-    const viewport = rect || svg.getBoundingClientRect();
-    if(!viewport.width || !viewport.height) return null;
+  }
+  function applyCameraTransform(camera=state.viewBox, rect=null){
+    // The reference frame does not depend on the viewport, so it is installed
+    // even when the canvas has no size yet (hidden tab, pre-layout render).
+    ensureReferenceViewBox();
+    const viewport = canvasViewportRect(rect);
+    if(cameraStage) setStyleIfChanged(cameraStage.style, 'transform', STAGE_IDENTITY);
+    stageTransformActive = false;
+    const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
     // Always derived from the fixed reference frame, never composed with the
     // previous frame's matrix, so no drift can accumulate across gestures.
-    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, viewport)));
-    return viewport;
+    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, projViewport)));
+    stageBaseCamera = {x:camera.x, y:camera.y, w:camera.w, h:camera.h};
+    stageBaseViewport = {width:projViewport.width, height:projViewport.height};
+    return (viewport.width && viewport.height) ? viewport : null;
   }
   function applyPreviewCamera(preview, rect=null){
-    const viewport = applyCameraTransform(preview, rect);
-    if(viewport) updateGridBackground(preview, viewport);
+    ensureReferenceViewBox();
+    const viewport = canvasViewportRect(rect);
+    if(!viewport.width || !viewport.height) return;
+    if(!stageBaseCamera || !stageBaseViewport || stageBaseViewport.width !== viewport.width || stageBaseViewport.height !== viewport.height){
+      applyCameraTransform(state.viewBox, viewport);
+    }
+    if(!cameraStage || !stageBaseCamera) return;
+    const m = cameraStageMatrix(preview, stageBaseCamera, viewport);
+    setStyleIfChanged(cameraStage.style, 'transform', stageMatrixText(m));
+    stageTransformActive = Math.abs(m.scale - 1) >= 1e-12 || Math.abs(m.tx) >= 1e-12 || Math.abs(m.ty) >= 1e-12;
   }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
@@ -607,10 +661,32 @@
     if(style[property] !== value) style[property] = value;
   }
   let gridSig = '';
+  let gridPaths: any[] | null = null;
   function invalidateGridCache(){ gridSig = ''; }
+  function ensureGridPaths(){
+    if(gridPaths && gridPaths.length === 3 && gridPaths[0].parentNode === gridPattern) return gridPaths;
+    const existing: any[] = [];
+    for(let c: any = gridPattern.firstElementChild; c; c = c.nextElementSibling){
+      if(c.tagName === 'path' || c.localName === 'path') existing.push(c);
+    }
+    while(existing.length < 3){
+      const p: any = document.createElementNS(NS, 'path');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('vector-effect', 'non-scaling-stroke');
+      gridPattern.appendChild(p);
+      existing.push(p);
+    }
+    while(existing.length > 3) existing.pop().remove();
+    for(const p of existing){
+      setAttr(p, 'fill', 'none');
+      setAttr(p, 'vector-effect', 'non-scaling-stroke');
+    }
+    gridPaths = existing;
+    return gridPaths;
+  }
   function updateGridBackground(vb=state.viewBox, cachedRect=null){
     const settings = state.settings;
-    const rect = cachedRect || svg.getBoundingClientRect();
+    const rect = canvasViewportRect(cachedRect);
     if(!rect.width || !rect.height) return;
     setStyleIfChanged(gridLayer.style, 'backgroundColor', settings.canvasBgColor || '#020617');
     const gx = settings.gridSizeX || settings.gridSize || 40;
@@ -620,59 +696,42 @@
     const scale = Math.min(rect.width / vb.w, rect.height / vb.h);
     // The grid renders as a world-anchored SVG pattern (#gridRect inside the
     // camera scene), so the grid rides the camera matrix and is painted by the
-    // same raster as the graph. A viewport-sized CSS-background grid on a layer
-    // of its own was a second paint system whose updates could land a frame off
-    // the graph's; the div now only carries the static background color.
+    // same raster as the graph.
     //
     // Zoom-adaptive grid: when a cell would shrink below the readable minimum
     // in screen pixels, the grid decimates to every k-th cell. Integer
     // multiples keep the lines locked to world coordinates, so the grid never
-    // drifts or shifts diagonally relative to the nodes at low zoom (the old
-    // hard 4px clamp rescaled the pattern independently of the scene, which
-    // desynchronized it as soon as it kicked in). Major lines stay on every
-    // 5th world cell — or the nearest achievable multiple of the decimated
-    // step, always at least 2× the minor spacing.
+    // drifts or shifts diagonally relative to the nodes at low zoom.
     const GRID_MIN_PX = 8;
     const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / (gx * scale)));
     const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / (gy * scale)));
-    // Major sizes are world units (pattern space); the SVG raster maps them
-    // to screen pixels with the same camera transform as the graph.
     const majorXSize = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
     const majorYSize = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
     const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
     const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-    // One pattern tile spans a full major period and holds every minor line
-    // inside it; majors sit on the tile edges. patternUnits=userSpaceOnUse
-    // anchors the tile to the world origin, so no per-frame offset math is
-    // needed: panning never rebuilds the pattern, and zooming rebuilds it only
-    // when the decimated step actually changes.
     const sig = `${stepX},${stepY},${majorXSize.toFixed(6)},${majorYSize.toFixed(6)},${minorColor},${majorColor}`;
     if(sig === gridSig) return;
     gridSig = sig;
-    gridPattern.setAttribute('width', String(majorXSize));
-    gridPattern.setAttribute('height', String(majorYSize));
-    gridPattern.setAttribute('data-minor-x', String(stepX));
-    gridPattern.setAttribute('data-minor-y', String(stepY));
-    // vector-effect keeps strokes at a constant screen width at every zoom
-    // (the old CSS grid was always 1px), so line width needs no per-frame
-    // scale compensation.
-    while(gridPattern.firstChild) gridPattern.removeChild(gridPattern.firstChild);
-    const line = (d, color, width) => {
-      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      p.setAttribute('d', d);
-      p.setAttribute('fill', 'none');
-      p.setAttribute('stroke', color);
-      p.setAttribute('stroke-width', String(width));
-      p.setAttribute('vector-effect', 'non-scaling-stroke');
-      gridPattern.appendChild(p);
-    };
-    // Minor lines at every interior step (the tile edges carry the majors).
+    setAttr(gridPattern, 'width', String(majorXSize));
+    setAttr(gridPattern, 'height', String(majorYSize));
+    setAttr(gridPattern, 'data-minor-x', String(stepX));
+    setAttr(gridPattern, 'data-minor-y', String(stepY));
+    // Update the three persistent <path> elements in place instead of tearing
+    // down and recreating child nodes when zoom crosses a decimation step.
+    const [minorPath, majorVPath, majorHPath] = ensureGridPaths();
     let minors = '';
     for(let x = stepX; x < majorXSize - 1e-9; x += stepX) minors += `M ${x} 0 V ${majorYSize} `;
     for(let y = stepY; y < majorYSize - 1e-9; y += stepY) minors += `M 0 ${y} H ${majorXSize} `;
-    if(minors) line(minors.trim(), minorColor, 1);
-    line(`M 0 0 V ${majorYSize}`, majorColor, 1.3);
-    line(`M 0 0 H ${majorXSize}`, majorColor, 1.3);
+    const minorD = minors.trim();
+    setAttr(minorPath, 'd', minorD);
+    setAttr(minorPath, 'stroke', minorColor);
+    setAttr(minorPath, 'stroke-width', minorD ? '1' : '0');
+    setAttr(majorVPath, 'd', `M 0 0 V ${majorYSize}`);
+    setAttr(majorVPath, 'stroke', majorColor);
+    setAttr(majorVPath, 'stroke-width', '1.3');
+    setAttr(majorHPath, 'd', `M 0 0 H ${majorXSize}`);
+    setAttr(majorHPath, 'stroke', majorColor);
+    setAttr(majorHPath, 'stroke-width', '1.3');
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by
