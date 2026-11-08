@@ -132,7 +132,7 @@ async function openBuild(browser, build, graph) {
 async function startRecording(page) {
   await page.evaluate(() => {
     const svg = document.querySelector('#graphCanvas');
-    const camera = document.querySelector('#cameraLayer');
+    const surface = document.querySelector('#cameraLayer');
     const scene = document.querySelector('#sceneLayer');
     const grid = document.querySelector('#gridLayer');
     // `surfaceStyle` counts gesture preview writes on the ONE canvas surface; it
@@ -143,8 +143,8 @@ async function startRecording(page) {
       for (const record of records) {
         if (record.type === 'childList') { counts.svgDom += record.addedNodes.length + record.removedNodes.length; continue; }
         if (record.target === svg && record.attributeName === 'viewBox') counts.viewBox++;
-        if (record.target === svg && record.attributeName === 'style') counts.surfaceStyle++;
-        if (record.target === camera && record.attributeName === 'transform') counts.cameraTransform++;
+    
+        if (record.target === surface && record.attributeName === 'style') counts.cameraTransform++;
         if (record.target === scene && record.attributeName === 'transform') counts.sceneTransform++;
         if (record.target === grid && record.attributeName === 'style') counts.gridStyle++;
       }
@@ -152,7 +152,7 @@ async function startRecording(page) {
     observer.observe(svg, { attributes: true, attributeFilter: ['viewBox'] });
     observer.observe(svg, { childList: true, subtree: true });
     observer.observe(svg, { attributes: true, attributeFilter: ['style'] });
-    observer.observe(camera, { attributes: true, attributeFilter: ['transform'] });
+    observer.observe(surface, { attributes: true, attributeFilter: ['style'] });
     observer.observe(scene, { attributes: true, attributeFilter: ['transform'] });
     if (grid) observer.observe(grid, { attributes: true, attributeFilter: ['style'] });
     window.__perf = { frames: [], counts, observer, recording: true };
@@ -301,7 +301,7 @@ async function measureGesture(browser, build, graph, kind, size) {
   const { frames, writes } = await stopRecording(page);
   const cameraState = await page.evaluate(() => ({
     viewBox: document.querySelector('#graphCanvas').getAttribute('viewBox'),
-    cameraTransform: document.querySelector('#cameraLayer').getAttribute('transform'),
+    cameraTransform: document.querySelector('#cameraLayer').style.transform,
     sceneTransform: document.querySelector('#sceneLayer').getAttribute('transform'),
   }));
   await context.close();

@@ -171,20 +171,18 @@
   const canvasWrap = $('#canvasWrap');
   const svg = $('#graphCanvas');
   const gridLayer = $('#gridLayer');
-  const gridRect = $('#gridRect');
   function isCanvasOverlayControl(target: any){
     return Boolean(target?.closest?.('.canvas-hud, .zoom-controls, .mode-fab, .edge-tools, .sel-tools, .gizmo-tools'));
   }
-  // #cameraLayer carries ONE matrix for both gesture previews and the
-  // committed camera, above a fixed reference viewBox on the <svg> — a camera
-  // change is a single attribute write, never a second paint system.
+  // #cameraLayer is the one camera surface: a plain <div> holding both the grid
+  // and the SVG, moved by a single composited transform. Previews and commits
+  // write this same element, so there is no second surface and no handoff.
   const cameraLayer = $('#cameraLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');
   const selectionOverlayLayer = $('#selectionOverlayLayer');
   const gizmoLayer = $('#gizmoLayer');
-  const gridPattern = $('#gridPattern');
 
   const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
   const STROKE_STYLES = ['solid','dashed','dotted'];
