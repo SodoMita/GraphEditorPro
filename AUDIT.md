@@ -37,14 +37,16 @@ These are README claims I checked and can confirm:
 - **Escaping.** I pushed `<img onerror>`, `<svg onload>`, `<textarea onfocus>` and `<option onfocus>` payloads through node labels, types, edge labels, edge weights and custom-attribute IDs, then forced the canvas, selection panel, matrix, edge list and all five tabs to render: **no element injection, no script execution** (`window.__xss` stayed 0). All interpolations I reviewed go through `esc()` or `textContent`.
 - **Camera performance.** `scripts/perf-bench.mjs` (headless Chromium, 2 runs):
 
-  | Graph | Gesture | Dropped frames | Per-update style+layout | `viewBox` writes | Camera writes |
+  | Graph | Gesture | Dropped frames | Per-update style+layout | `viewBox` writes | Camera matrix writes |
   | --- | --- | --- | --- | --- | --- |
-  | 100 n | pan | 0 / 208 | 0.2 ms | 0 | 60 |
-  | 100 n | wheel | 5 / 328 | 0.2 ms | 0 | 60 |
-  | 1200 n | pan | 1 / 136 | 0.2 ms | 0 | 20 |
-  | 1200 n | wheel | 20 / 174 | 0.2 ms | 0 | 20 |
+  | 100 n | pan | 0 / 210 | 0.2 ms | 0 | 60 |
+  | 100 n | wheel | 1 / 326 | 0.5 ms | 0 | 60 |
+  | 500 n | pan | 0 / 170 | 0.2 ms | 0 | 40 |
+  | 500 n | wheel | 2 / 264 | 1.4 ms | 0 | 40 |
+  | 1200 n | pan | 3 / 136 | 0.2 ms | 0 | 20 |
+  | 1200 n | wheel | 6 / 202 | 2.8 ms | 0 | 20 |
 
-  The "one composited matrix, never rewrite the root `viewBox`" claim is true, and the per-update cost is flat with graph size.
+  The camera is one absolute `transform` on the SVG `g#cameraLayer`; the root `viewBox` is a fixed reference frame and is never used as a camera. The `will-change:transform` hint on that group keeps a camera change to one attribute write, so per-update style+layout stays in the low milliseconds even at 1200 nodes. Compare `node scripts/perf-bench.mjs --build name=directory` against the pre-PR30 build to reproduce the A/B.
 - **Sanitizer.** Size caps (3000 nodes / 8000 edges), ID normalisation, dangling-edge dropping, colour/shape/range validation and prototype-free style maps are all present and covered by tests.
 - **Real-browser sanity.** Add node, drag, undo, language switch, matrix edit and a tour of all five tabs produced **no console errors or exceptions**.
 

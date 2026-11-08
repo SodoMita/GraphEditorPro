@@ -553,8 +553,8 @@
     if(zoomPreview) flushZoomPreview();
     if(pinch){ updatePinch(); return; }
     if(pan){
-      // Pan only moves the logical camera and re-applies the composited stage
-      // matrix: the SVG scene and #cameraLayer stay untouched while moving.
+      // Pan only moves the logical camera: the single matrix on #cameraLayer
+      // (an SVG group) is re-applied, with no second surface to hand off.
       const rect = canvasViewportRect(pan.rect);
       const start = pan.startViewBox;
       const scale = Math.min(rect.width / start.w, rect.height / start.h);

@@ -684,185 +684,87 @@
   // === Camera ===
   // ONE paint system: the logical camera (`state.viewBox`, the value every hit
   // test, the grid, the sidebar readout and the saved document use) is written
-  // as a single matrix on #cameraLayer, for gesture previews AND for the
-  // committed camera. The root <svg> keeps a fixed viewBox, so a camera change
-  // is exactly one attribute write and never re-runs SVG layout over the scene.
+  // as a single matrix on #cameraLayer, an SVG <g> INSIDE the canvas. The root
+  // <svg> keeps a fixed world reference viewBox, written once. A gesture
+  // preview and a commit are the SAME attribute write on the SAME element, so
+  // there is no second surface, no CSS/SVG handoff and no frame that mixes two
+  // cameras.
   //
-  // There is deliberately no second mechanism (a CSS-transformed wrapper, a
-  // separate grid layer, an overscan apron): two systems that update on two
-  // clocks — even two writes in the same task — can display a frame that mixes
-  // a new scene camera with a stale second layer, which reads as the view
-  // jumping for one frame and then returning. That bug has been fixed three
-  // times in this project's history (af90851 "flashing one frame of zoomed
-  // content at pan end", aa081b7 "one-frame pan/zoom overshoot", 12df425
-  // "camera handoff overshoot frames"). Do not introduce another; if a preview
-  // path needs to be faster, make THIS write cheaper, not a second surface.
-  // The SVG keeps a fixed world reference frame; the camera is applied to the
-  // #cameraLayer DIV wrapper. World unit u maps to CSS pixel
-  //   rect.width/2 + (u - camera.x) * cameraPixels - camera.w*cameraPixels/2
-  // which is exactly the "xMidYMid meet" mapping the root viewBox used to give
-  // us, so pointer math, the grid and the graph all still describe one system.
+  // The matrix must live inside the SVG, never on an HTML wrapper around it.
+  // An outermost <svg> clips its children to the root viewBox: transforming a
+  // wrapper <div> can only move that already-clipped viewport, so nodes and
+  // edges outside the reference frame are never painted at all, and a
+  // viewport-sized CSS grid inside the wrapper shows its hard edge during a pan
+  // or zoom. That was the PR #33 regression (f18fb68). The grid is therefore
+  // drawn as world-space SVG paths in this same scene: no pattern decal limit,
+  // no separate layer, no crop, and it is always locked to the graph.
   const REFERENCE_VIEWBOX = {x:-500, y:-330, w:1000, h:660};
   let referenceViewBoxInstalled = false;
-  // The last committed camera. A preview is expressed as the delta from it, so
-  // previews compose onto exactly what is on screen instead of recomputing.
-  let committedCamera: any = null;
-  let cameraPixels = 1;
-  // The grid div is painted exactly viewport-sized and re-centred on every
-  // commit. Overscan was the obvious guess and it was the wrong trade: a bigger
-  // composited layer only adds raster work, and because a gesture moves the grid
-  // together with the graph, any overscan > 1 is pure cost. Measured over one pan
-  // at 1200 nodes: 8x = 10-12 dropped frames and a 116-216ms worst frame,
-  // 2x = 7 dropped, 1x = 0 dropped and a 16.8ms worst frame.
-  const GRID_OVERSCAN = 1;
   function canvasViewportRect(cachedRect: any = null){
     if(cachedRect && cachedRect.width && cachedRect.height) return cachedRect;
-    // #cameraLayer is the un-transformed viewport box for measurement purposes
-    // only when it is at identity; #canvasWrap never has a transform, so it is
-    // the honest source. Fall back to the svg in jsdom (0x0 layout).
-    if(canvasWrap){
-      const wr = canvasWrap.getBoundingClientRect();
-      if(wr.width && wr.height) return wr;
-    }
+    // The SVG is never transformed now, so its own box is the exact viewport
+    // the root viewBox maps with preserveAspectRatio="xMidYMid meet". Using
+    // #canvasWrap instead would include its (up to 1px) border and shift the
+    // camera and hit tests by that much. The stationary backdrop is the
+    // fallback for jsdom, which lays nothing out.
+    const sr = svg.getBoundingClientRect();
+    if(sr.width && sr.height) return sr;
     if(gridLayer){
       const gr = gridLayer.getBoundingClientRect();
       if(gr.width && gr.height) return gr;
     }
-    return svg.getBoundingClientRect();
+    if(canvasWrap) return canvasWrap.getBoundingClientRect();
+    return sr;
   }
   function cameraMatrixText(matrix){
     const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
-    // CSS `matrix()` requires COMMA separators. The space-separated form is
-    // valid on an SVG attribute, but as a CSS value it is rejected outright and
-    // the element silently keeps its old transform — which looks exactly like a
-    // camera that never applies.
-    return `matrix(${clean(matrix.scale)}, 0, 0, ${clean(matrix.scale)}, ${clean(matrix.tx)}, ${clean(matrix.ty)})`;
+    // SVG transform attribute, in SVG user units (the root viewBox supplies
+    // the user -> screen scale afterwards). Space separators are intentional.
+    return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
   }
   function cameraDeltaMatrix(camera, base, viewport){
-    // Screen-space delta from `base` to `camera`, in CSS pixels. A world point u
-    // lands at letterboxOffset(cam) + (u - cam.x) * pitch(cam); requiring that to
-    // equal scale * (letterboxOffset(base) + (u - base.x) * pitch(base)) + t for
-    // every u gives the two terms below. The letterbox difference is its own
-    // term: it is zero only when both cameras share an aspect ratio, which is
-    // not true of a zoom that changes w and h together but not always by the
-    // same ratio as the viewport.
+    // Compose the two preserveAspectRatio="xMidYMid meet" mappings (the fixed
+    // reference frame and the logical camera). Exact for arbitrary viewport
+    // / camera aspect ratios, fitView and the numeric camera controls.
     const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
-    const cameraPixelsNow = Math.min(viewport.width / camera.w, viewport.height / camera.h);
-    const scale = cameraPixelsNow / basePixels;
-    const baseOffsetX = viewport.width / 2 - basePixels * base.w / 2;
-    const baseOffsetY = viewport.height / 2 - basePixels * base.h / 2;
-    const cameraOffsetX = viewport.width / 2 - cameraPixelsNow * camera.w / 2;
-    const cameraOffsetY = viewport.height / 2 - cameraPixelsNow * camera.h / 2;
+    const cameraPixels = Math.min(viewport.width / camera.w, viewport.height / camera.h);
+    const scale = cameraPixels / basePixels;
+    const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
+    const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
+    const cameraOffsetX = (viewport.width - camera.w * cameraPixels) / 2;
+    const cameraOffsetY = (viewport.height - camera.h * cameraPixels) / 2;
     return {
       scale,
-      tx: cameraOffsetX - scale * baseOffsetX + (base.x - camera.x) * cameraPixelsNow,
-      ty: cameraOffsetY - scale * baseOffsetY + (base.y - camera.y) * cameraPixelsNow
+      tx:base.x + (cameraOffsetX - baseOffsetX) / basePixels - scale * camera.x,
+      ty:base.y + (cameraOffsetY - baseOffsetY) / basePixels - scale * camera.y
     };
   }
   function ensureReferenceViewBox(){
     if(!referenceViewBoxInstalled){
       referenceViewBoxInstalled = true;
       setAttr(svg, 'viewBox', `${REFERENCE_VIEWBOX.x} ${REFERENCE_VIEWBOX.y} ${REFERENCE_VIEWBOX.w} ${REFERENCE_VIEWBOX.h}`);
-      // `meet`, not `slice`: `slice` would crop the reference frame to fill the
-      // viewport whenever the aspect ratios differ, which shows up as a graph
-      // shifted off-centre. The reference frame is paint-only — the camera
-      // matrix on #cameraLayer supplies all the geometry — so letterboxing it
-      // costs nothing and keeps the world origin dead centre.
       setAttr(svg, 'preserveAspectRatio', 'xMidYMid meet');
     }
   }
-  // One camera change == one style write on #cameraLayer. No second surface, no
-  // second clock: previews and commits run the very same code path, so there is
-  // no handoff frame to get wrong.
   function applyCameraTransform(camera=state.viewBox, rect=null){
+    // The reference frame does not depend on the viewport, so install it even
+    // when the canvas has no size yet (hidden tab, pre-layout render).
     ensureReferenceViewBox();
     const viewport = canvasViewportRect(rect);
     const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
-    cameraPixels = Math.min(projViewport.width / camera.w, projViewport.height / camera.h);
-    setStyleIfChanged(cameraLayer.style, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, projViewport)));
-    committedCamera = {x:camera.x, y:camera.y, w:camera.w, h:camera.h};
-    sizeGridLayer(camera, projViewport);
+    // Always derived from the fixed reference frame, never composed with the
+    // previous frame's matrix, so no drift can accumulate across gestures.
+    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, projViewport)));
+    updateGridBackground(camera, projViewport);
     return (viewport.width && viewport.height) ? viewport : null;
   }
-  // A preview is the same single write, with the camera that the gesture is
-  // currently showing. It is not a separate surface and needs no handoff.
   function applyPreviewCamera(preview, rect=null){
-    ensureReferenceViewBox();
-    const viewport = canvasViewportRect(rect);
-    if(!viewport || !viewport.width || !viewport.height) return;
-    if(!committedCamera){ applyCameraTransform(preview, viewport); return; }
-    // ONLY the camera transform. Re-pitching the grid gradient here would
-    // rewrite a screen-sized div every frame and force a full repaint: measured
-    // at 1200 nodes it turned a 0-dropped pan into 21 grid writes per gesture
-    // and a zoom into 41. The grid lives INSIDE #cameraLayer, so it already
-    // scales with the camera — the lines stay locked to world coordinates and
-    // simply get a little thicker while zooming. It is re-pitched once, at
-    // commit, which is the only moment the pitch can change without a repaint
-    // we would see as a jolt.
-    setStyleIfChanged(cameraLayer.style, 'transform',
-      cameraMatrixText(cameraDeltaMatrix(preview, committedCamera, viewport)));
-    // The grid keeps the counter-transform of the COMMITTED camera for the whole
-    // gesture. Recomputing it per frame would repaint a viewport-sized div on
-    // every frame of the pan; holding it still means the grid is simply carried
-    // along by #cameraLayer like everything else.
-  }
-  // The grid div covers the viewport plus a generous apron, centred on the
-  // camera, so it can never show an edge however far a gesture travels before
-  // the commit re-centres it. Resizing only happens when it actually matters.
-  let gridMetrics = '';
-  // The transform currently on #cameraLayer, as {scale,tx,ty}.
-  function camMatrix(viewport){
-    if(!committedCamera) return { scale: 1, tx: 0, ty: 0 };
-    return cameraDeltaMatrix(committedCamera, REFERENCE_VIEWBOX, viewport);
-  }
-  function sizeGridLayer(camera, viewport){
-    const gx = state.settings.gridSizeX || state.settings.gridSize || 40;
-    const gy = state.settings.gridSizeY || state.settings.gridSize || 40;
-    const scale = Math.min(viewport.width / camera.w, viewport.height / camera.h);
-    const minorX = gx * scale, minorY = gy * scale;
-    // Decimate exactly like the old SVG pattern did, so lines stay legible and
-    // locked to world coordinates instead of turning into a grey wash.
-    const GRID_MIN_PX = 8;
-    const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(minorX, 1e-6)));
-    const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(minorY, 1e-6)));
-    const majorX = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
-    const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
-    const pxX = stepX * scale, pxY = stepY * scale, majX = majorX * scale, majY = majorY * scale;
-    const minorColor = hexToRgba(state.settings.gridMinorColor, state.settings.gridMinorAlpha ?? 0.105);
-    const majorColor = hexToRgba(state.settings.gridMajorColor, state.settings.gridMajorAlpha ?? 0.16);
-    const width = Math.max(1, Math.round(viewport.width));
-    const height = Math.max(1, Math.round(viewport.height));
-    const camNow = camMatrix({width, height});
-    const sig = [pxX, pxY, majX, majY, minorColor, majorColor, width, height, camNow.scale, camNow.tx, camNow.ty].join('|');
-    if(sig === gridMetrics) return;
-    gridMetrics = sig;
-    const st = gridLayer.style;
-    // Two gradients per axis: the fine step and the coarser major step. Both
-    // are painted once at these pixel pitches; a camera change only moves the
-    // already-painted div, it never re-runs this.
-    st.backgroundImage =
-      `repeating-linear-gradient(0deg, ${minorColor} 0 1px, transparent 1px ${pxY}px),` +
-      `repeating-linear-gradient(90deg, ${minorColor} 0 1px, transparent 1px ${pxX}px),` +
-      `repeating-linear-gradient(0deg, ${majorColor} 0 1.3px, transparent 1.3px ${majY}px),` +
-      `repeating-linear-gradient(90deg, ${majorColor} 0 1.3px, transparent 1.3px ${majX}px)`;
-    st.width = width + 'px';
-    st.height = height + 'px';
-    // The grid is a child of #cameraLayer, so the camera scales it too. Left
-    // alone it would shrink to the zoomed camera box and leave most of the
-    // canvas blank on zoom-out. Counter-scale it by 1/cameraScale and shift it
-    // by -translate/cameraScale, which puts it back exactly over the viewport at
-    // every zoom; the gradient pitch below is still expressed in screen pixels,
-    // so the lines stay world-locked while the div always fills the canvas.
-    const cam = camNow;
-    st.transform = `translate(${-cam.tx / cam.scale}px, ${-cam.ty / cam.scale}px) scale(${1 / cam.scale})`;
-    st.transformOrigin = '0 0';
-    // Report the decimated steps in WORLD units, where the grid is defined. The
-    // on-screen pitch above is a screen quantity and changes with zoom; these
-    // two are what make the grid "world-locked" and are what tests read.
-    gridLayer.setAttribute('data-minor-x', String(stepX));
-    gridLayer.setAttribute('data-minor-y', String(stepY));
-    gridLayer.setAttribute('data-major-x', String(majorX));
-    gridLayer.setAttribute('data-major-y', String(majorY));
+    // One camera, one write. The preview IS the camera: committing only records
+    // the value in state.viewBox, so no pixel can move at the handoff. Writing
+    // a *delta* from the last committed camera here (as PR #33 did) replaced
+    // the absolute matrix with a relative one, which flashed the graph in the
+    // wrong place for the whole preview.
+    applyCameraTransform(preview, rect);
   }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
@@ -871,22 +773,77 @@
     return `rgba(${r},${g},${b},${alpha})`;
   }
   function setStyleIfChanged(style, property, value){
-    if(style[property] === value) return;
-    style[property] = value;
-    // A property can be rejected outright when the element has no stylesheet
-    // declaration for it yet — the write is then silently dropped, leaving the
-    // camera unapplied. Assert the result once and fall back to cssText, which
-    // always lands.
-    if(style[property] !== value) style.cssText = `${style.cssText ? style.cssText.replace(/;?\s*$/, '') + ';' : ''}${property}:${value}`;
+    if(style[property] !== value) style[property] = value;
   }
-  // The grid is now a CSS-gradient div, so there is no cached SVG pattern to
-  // invalidate; keep the entry point so settings changes still force a repaint.
-  function invalidateGridCache(){ gridMetrics = ''; }
+  let gridSig = '';
+  function invalidateGridCache(){ gridSig = ''; }
   function updateGridBackground(vb=state.viewBox, cachedRect=null){
     const rect = canvasViewportRect(cachedRect);
     if(!rect.width || !rect.height) return;
     setStyleIfChanged(gridLayer.style, 'backgroundColor', state.settings.canvasBgColor || '#020617');
-    sizeGridLayer(vb, rect);
+    const settings = state.settings;
+    const gx = settings.gridSizeX || settings.gridSize || 40;
+    const gy = settings.gridSizeY || settings.gridSize || 40;
+    // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
+    const pitch = Math.min(rect.width / vb.w, rect.height / vb.h);
+    // Zoom-adaptive decimation: when a cell would shrink below the readable
+    // minimum on screen, draw every k-th cell. Integer multiples keep the lines
+    // locked to world coordinates instead of drifting relative to the nodes.
+    const GRID_MIN_PX = 8;
+    const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(gx * pitch, 1e-6)));
+    const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(gy * pitch, 1e-6)));
+    const majorX = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
+    const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
+    const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
+    const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
+    // Draw the visible world range plus several viewports of apron, quantised
+    // to a coarse cell bucket. A live gesture moves the camera inside that
+    // apron, so the paths do not need a per-frame rewrite; a commit that leaves
+    // the bucket recentres them. Because the lines are in WORLD coordinates and
+    // inside #cameraLayer, they ride the camera matrix with the graph and can
+    // never show a hard edge or a stale frame.
+    const offX = (rect.width - vb.w * pitch) / 2;
+    const offY = (rect.height - vb.h * pitch) / 2;
+    const visX0 = vb.x - offX / pitch, visX1 = vb.x + vb.w + offX / pitch;
+    const visY0 = vb.y - offY / pitch, visY1 = vb.y + vb.h + offY / pitch;
+    const apronX = (visX1 - visX0) * 2, apronY = (visY1 - visY0) * 2;
+    const bucketX = stepX * 64, bucketY = stepY * 64;
+    const kx0 = Math.floor((visX0 - apronX) / bucketX) - 1;
+    const kx1 = Math.ceil((visX1 + apronX) / bucketX) + 1;
+    const ky0 = Math.floor((visY0 - apronY) / bucketY) - 1;
+    const ky1 = Math.ceil((visY1 + apronY) / bucketY) + 1;
+    const x0 = kx0 * bucketX, x1 = kx1 * bucketX;
+    const y0 = ky0 * bucketY, y1 = ky1 * bucketY;
+    const sig = [stepX, stepY, majorX, majorY, minorColor, majorColor, x0, x1, y0, y1].join('|');
+    if(sig === gridSig) return;
+    gridSig = sig;
+    const majorEveryX = Math.max(1, Math.round(majorX / stepX));
+    const majorEveryY = Math.max(1, Math.round(majorY / stepY));
+    let minorD = '', majorD = '';
+    const firstX = Math.ceil(x0 / stepX), lastX = Math.floor(x1 / stepX);
+    const firstY = Math.ceil(y0 / stepY), lastY = Math.floor(y1 / stepY);
+    for(let k = firstX; k <= lastX; k++){
+      const x = k * stepX;
+      if(k % majorEveryX === 0) majorD += `M ${x} ${y0} V ${y1} `;
+      else minorD += `M ${x} ${y0} V ${y1} `;
+    }
+    for(let k = firstY; k <= lastY; k++){
+      const y = k * stepY;
+      if(k % majorEveryY === 0) majorD += `M ${x0} ${y} H ${x1} `;
+      else minorD += `M ${x0} ${y} H ${x1} `;
+    }
+    setAttr(gridMinorLines, 'd', minorD.trim());
+    setAttr(gridMajorLines, 'd', majorD.trim());
+    setAttr(gridMinorLines, 'stroke', minorColor);
+    setAttr(gridMajorLines, 'stroke', majorColor);
+    // Report the decimated steps in WORLD units, where the grid is defined.
+    for(const el of [gridLayer, gridLines]){
+      if(!el) continue;
+      setAttr(el, 'data-minor-x', String(stepX));
+      setAttr(el, 'data-minor-y', String(stepY));
+      setAttr(el, 'data-major-x', String(majorX));
+      setAttr(el, 'data-major-y', String(majorY));
+    }
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by

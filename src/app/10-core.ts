@@ -171,12 +171,15 @@
   const canvasWrap = $('#canvasWrap');
   const svg = $('#graphCanvas');
   const gridLayer = $('#gridLayer');
+  const gridLines = $('#gridLines');
+  const gridMinorLines = $('#gridMinorLines');
+  const gridMajorLines = $('#gridMajorLines');
   function isCanvasOverlayControl(target: any){
     return Boolean(target?.closest?.('.canvas-hud, .zoom-controls, .mode-fab, .edge-tools, .sel-tools, .gizmo-tools'));
   }
-  // #cameraLayer is the one camera surface: a plain <div> holding both the grid
-  // and the SVG, moved by a single composited transform. Previews and commits
-  // write this same element, so there is no second surface and no handoff.
+  // #cameraLayer is the ONE camera surface: an SVG <g> inside the canvas. Both
+  // gesture previews and committed cameras write the same matrix here, so there
+  // is no second surface, no compositor handoff and no clipped world content.
   const cameraLayer = $('#cameraLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
