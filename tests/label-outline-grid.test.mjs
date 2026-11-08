@@ -200,21 +200,23 @@ test('grid decimates instead of clamping at low zoom, staying world-locked', asy
   const doc = dom.window.document;
   const svg = doc.querySelector('#graphCanvas');
   setCanvasRect(svg);
-  const gridRect = doc.getElementById('gridRect');
-  assert.equal(gridRect.parentNode.getAttribute('id'), 'sceneLayer', 'the grid rides the camera scene, so grid and graph are painted by one pass');
+  // The grid is a CSS-gradient div next to the SVG, both inside #cameraLayer, so
+  // the camera moves grid and graph together and they cannot desync.
+  const gridLayer = doc.getElementById('gridLayer');
+  assert.equal(gridLayer.parentNode.getAttribute('id'), 'cameraLayer', 'the grid rides the camera surface together with the graph');
+  assert.equal(doc.getElementById('cameraLayer').contains(doc.getElementById('graphCanvas')), true, 'the graph is inside the same camera surface');
 
   const zoomTo = async width => {
     const camW = doc.getElementById('cameraW');
     camW.value = String(width);
     camW.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await nextFrame(dom.window);
-    const pattern = doc.getElementById('gridPattern');
-    // Pattern geometry is in world units: tile = major period, minor step is
-    // exposed via data attributes.
+    // The CSS grid reports its decimated steps in world units, which is where
+    // the grid is anchored (its screen pitch changes with zoom; these do not).
     return {
-      minor: parseFloat(pattern.getAttribute('data-minor-x')),
-      major: parseFloat(pattern.getAttribute('width')),
-      paths: pattern.querySelectorAll('path').length,
+      minor: parseFloat(gridLayer.getAttribute('data-minor-x')),
+      major: parseFloat(gridLayer.getAttribute('data-major-x')),
+      paths: gridLayer.style.backgroundImage.split('repeating-linear-gradient').length - 1,
     };
   };
 
@@ -242,8 +244,8 @@ test('grid decimates instead of clamping at low zoom, staying world-locked', asy
   // drift diagonally relative to the nodes).
   assert.equal(at12000.minor / 40, 3, '12000 zoom decimates to every 3rd grid cell');
   assert.equal(at20000.minor / 40, 4, '20000 zoom decimates to every 4th grid cell');
-  // One tile: minor interior lines (one combined path), plus two major paths.
-  assert.equal(at1000.paths, 3, 'the pattern holds the minor lines plus the two major axes');
+  // Two gradients per axis: one at the minor step, one at the major step.
+  assert.equal(at1000.paths, 4, 'the grid paints a minor and a major gradient on each axis');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

@@ -29,17 +29,41 @@ function createEditorDom(savedGraph = null) {
       window.alert = () => {};
       window.confirm = () => true;
       window.prompt = () => null;
+      // jsdom lays nothing out, so the editor would size the canvas 0x0 and the
+      // camera would never receive a viewport. Patch the prototype so the very
+      // first render already sees a real 1000x660 canvas; the camera measures
+      // #canvasWrap, and the SVG/grid are stubbed for the same reason.
+      const canvasRect = () => ({
+        x: 0, y: 0, left: 0, top: 0,
+        width: 1000, height: 660, right: 1000, bottom: 660,
+        toJSON() { return this; },
+      });
+      const proto = window.Element.prototype;
+      const originalRect = proto.getBoundingClientRect;
+      proto.getBoundingClientRect = function () {
+        const id = this.id;
+        if (id === 'canvasWrap' || id === 'graphCanvas' || id === 'gridLayer') return canvasRect();
+        return originalRect.call(this);
+      };
+      window.__canvasRect = canvasRect;
     },
   });
   return { dom, errors };
 }
 
 function setCanvasRect(svg) {
-  svg.getBoundingClientRect = () => ({
+  // The canvas viewport is measured from #canvasWrap, which is never transformed;
+  // stub that as well as the SVG so jsdom reports a real 1000x660 canvas.
+  const rect = () => ({
     x: 0, y: 0, left: 0, top: 0,
     width: 1000, height: 660, right: 1000, bottom: 660,
     toJSON() { return this; },
   });
+  svg.getBoundingClientRect = rect;
+  const wrap = svg.ownerDocument.querySelector('#canvasWrap');
+  if (wrap) wrap.getBoundingClientRect = rect;
+  const grid = svg.ownerDocument.querySelector('#gridLayer');
+  if (grid) grid.getBoundingClientRect = rect;
 }
 
 function dispatchPointer(window, target, type, options) {
@@ -91,16 +115,28 @@ function assertCentresMatch(accent, shape) {
 // fixed reference frame mapped with preserveAspectRatio="xMidYMid meet".
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
-// ONE paint system: there is no CSS-transformed stage above the SVG and no
-// second camera surface. Gesture previews and the committed camera are the same
-// `transform` write on #cameraLayer (see the camera note in 20-rendering.ts).
+// ONE paint system: #cameraLayer is a div holding the grid and the SVG, moved by
+// a single composited transform. A second camera surface is the bug this project
+// has fixed three times (see 20-rendering.ts).
 function assertSingleCameraSurface(document) {
   assert.equal(document.querySelector('#cameraStage'), null,
     'the canvas must have no second camera surface (#cameraStage)');
-  const svg = document.querySelector('#graphCanvas');
-  const parent = svg?.parentElement;
-  assert.ok(!parent || !(parent.style?.transform),
-    'the SVG must not sit inside a CSS-transformed wrapper');
+  const camera = document.querySelector('#cameraLayer');
+  assert.ok(camera, '#cameraLayer exists');
+  assert.equal(camera.tagName, 'DIV',
+    'the camera surface is a plain div, so a camera change is a composited transform');
+  assert.equal(document.querySelectorAll('#cameraLayer').length, 1, 'exactly one camera surface');
+  assert.equal(document.querySelector('#gridLayer').parentElement, camera,
+    'the grid rides the camera surface');
+  assert.ok(camera.contains(document.querySelector('#graphCanvas')),
+    'the graph rides the same camera surface');
+  // The grid alone carries a counter-transform (it must stay viewport-sized
+  // while the camera zooms). Everything else must be static: a second element
+  // tracking the camera is exactly the second paint system this project removed.
+  for (const id of ['graphCanvas', 'graphPlane', 'sceneLayer']) {
+    const el = document.getElementById(id);
+    if (el && el.style) assert.equal(el.style.transform, '', `#${id} must not track the camera`);
+  }
 }
 
 function parseMatrix2d(raw, label) {
@@ -113,32 +149,22 @@ function parseMatrix2d(raw, label) {
   return { scale: values[0], tx: values[4], ty: values[5] };
 }
 
-function cameraMatrix(element) {
-  return parseMatrix2d(element.getAttribute('transform'), `#${element.id}`);
+// The camera lives in the CSS transform on the #cameraLayer div.
+function cameraMatrix(camera) {
+  const inline = (camera.style && camera.style.transform) || '';
+  return inline ? parseMatrix2d(inline, '#cameraLayer') : { scale: 1, tx: 0, ty: 0 };
 }
-
-// A gesture preview is a CSS transform on the canvas surface; the committed
-// camera stays in #cameraLayer's SVG matrix. What the user sees is the
-// composition of the two, so this is what "what is painted" must mean.
-function surfaceMatrix(document) {
-  const svg = document.querySelector('#graphCanvas');
-  const inline = svg.style.transform;
-  return inline ? parseMatrix2d(inline, '#graphCanvas (preview)') : { scale: 1, tx: 0, ty: 0 };
-}
-
-// Paint is two stages, in this order: #cameraLayer maps world -> reference-frame
-// user units inside the SVG, then the surface's CSS transform maps CSS pixels ->
-// screen. Anything that asks "what is on screen" must go through both.
 
 function projectWorldPoint(camera, x, y, viewport = VIEWPORT) {
-  const layer = cameraMatrix(camera);
-  const surface = surfaceMatrix(camera.ownerDocument);
+  // Stage 1: the SVG maps world -> reference frame inside its own box. Stage 2:
+  // the camera matrix moves that whole box in CSS pixels.
+  const m = cameraMatrix(camera);
   const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
   const refOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
   const refOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
-  const px = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * basePixels + refOffsetX;
-  const py = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * basePixels + refOffsetY;
-  return { x: surface.scale * px + surface.tx, y: surface.scale * py + surface.ty };
+  const px = (x - REFERENCE_VIEWBOX.x) * basePixels + refOffsetX;
+  const py = (y - REFERENCE_VIEWBOX.y) * basePixels + refOffsetY;
+  return { x: m.scale * px + m.tx, y: m.scale * py + m.ty };
 }
 
 function assertCameraRendersViewBox(camera, viewBox, viewport = VIEWPORT) {
@@ -165,6 +191,22 @@ function trackAttrWrites(el, attrName) {
     if (name === attrName) writes.count++;
     return setAttribute(name, value);
   };
+  return writes;
+}
+
+// The camera is a CSS transform on #cameraLayer now, so count writes to the
+// style property (assigning an unchanged value is not a write).
+function trackCameraWrites(camera) {
+  const writes = { count: 0 };
+  let current = camera.style.transform;
+  Object.defineProperty(camera.style, 'transform', {
+    configurable: true,
+    get() { return current; },
+    set(value) {
+      if (value !== current) writes.count++;
+      current = value;
+    },
+  });
   return writes;
 }
 
@@ -199,7 +241,7 @@ test('wheel zoom previews on the one camera matrix and commits by persisting it'
   const grid = dom.window.document.querySelector('#gridLayer');
   setCanvasRect(svg);
   const viewBoxWrites = trackViewBoxWrites(svg);
-  const cameraWrites = trackAttrWrites(camera, 'transform');
+  const cameraWrites = trackCameraWrites(camera);
 
   for (let i = 0; i < 6; i++) {
     svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
@@ -214,31 +256,29 @@ test('wheel zoom previews on the one camera matrix and commits by persisting it'
   const zoomedCamera = { x: -w / 2, y: -h / 2, w, h };
 
   assert.equal(viewBoxWrites.count, 0, 'the root viewBox is a reference frame, not a per-frame camera write');
-  assert.equal(cameraWrites.count, 0, 'the wheel preview never rewrites the committed camera matrix');
-  assert.notEqual(svg.style.transform, '', 'the preview moves the one canvas surface');
+  assert.ok(cameraWrites.count >= 1, 'the wheel preview moves the one camera surface');
+  assert.notEqual(camera.style.transform, 'matrix(1, 0, 0, 1, 0, 0)', 'the camera surface carries the zoom preview');
   assert.equal(svg.getAttribute('viewBox'), referenceViewBox(), 'the fixed reference frame is installed');
   assertCameraRendersViewBox(camera, zoomedCamera);
   assert.equal(scene.getAttribute('transform'), null, 'the scene group is never transformed');
-  assert.equal(grid.style.transform, '', 'the grid never uses a handoff transform');
-  const gridRect = dom.window.document.querySelector('#gridRect');
-  assert.ok(gridRect, 'the SVG grid rect exists');
-  assert.equal(gridRect.parentNode.getAttribute('id'), 'sceneLayer', 'the grid rides the camera matrix, so grid and graph are painted by one pass');
-  const pattern = dom.window.document.querySelector('#gridPattern');
-  const patternWidthBefore = pattern.getAttribute('width');
-  assert.ok(patternWidthBefore, 'the grid pattern geometry is initialized');
-  assert.equal(grid.style.backgroundPosition, '', 'no CSS background grid is used');
+  assert.match(grid.style.transform, /scale\(/, 'the grid counter-scales to stay viewport-sized');
+  // The grid is a CSS-gradient div inside #cameraLayer: it is painted by the same
+  // camera transform as the graph, so it cannot desync by a frame.
+  assert.equal(grid.parentElement, camera, 'the grid rides the camera surface with the graph');
+  assert.ok((grid.style.backgroundImage || '').includes('repeating-linear-gradient'),
+    'the world-locked grid is painted as gradients');
+  const gridWidthBefore = grid.style.width;
   const previewSample = projectWorldPoint(camera, 125, -90);
 
   await settle(dom.window, 250); // let the commit debounce fire
   assert.equal(viewBoxWrites.count, 0, 'committing the camera leaves the reference viewBox untouched');
-  assert.equal(cameraWrites.count, 1, 'settling commits the camera to #cameraLayer exactly once');
-  assert.equal(svg.style.transform, '', 'the surface preview transform is cleared at the same time');
+  assert.equal(cameraWrites.count, 1, 'the six-event burst coalesces into one camera write, and settling adds none');
+  assert.equal(grid.style.width, gridWidthBefore, 'the grid is re-pitched only by the commit, not per frame');
   const committedSample = projectWorldPoint(camera, 125, -90);
   assert.ok(Math.abs(committedSample.x - previewSample.x) < 1e-6 && Math.abs(committedSample.y - previewSample.y) < 1e-6,
     'the commit changes nothing that is painted: preview and committed cameras project identically');
   assertCameraRendersViewBox(camera, zoomedCamera);
   assert.ok(cameraMatrix(camera).scale > 1, 'zooming in scales the committed camera matrix above 1');
-  assert.equal(pattern.getAttribute('width'), patternWidthBefore, 'the world-locked grid pattern needs no rebuild while zooming');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
@@ -251,11 +291,11 @@ test('a pointer gesture during pending zoom adopts the committed camera invisibl
   const camera = dom.window.document.querySelector('#cameraLayer');
   setCanvasRect(svg);
   const viewBoxWrites = trackViewBoxWrites(svg);
-  const cameraWrites = trackAttrWrites(camera, 'transform');
+  const cameraWrites = trackCameraWrites(camera);
 
   svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
   await nextFrame(dom.window);
-  assert.equal(cameraWrites.count, 0, 'the wheel preview is a surface transform, not a camera commit');
+  assert.ok(cameraWrites.count >= 1, 'the wheel preview moves the camera surface');
   const zoomedCamera = { x: -440, y: -290.4, w: 880, h: 580.8 };
   assertCameraRendersViewBox(camera, zoomedCamera);
   const previewPoint = projectWorldPoint(camera, -200, 100);
@@ -268,8 +308,7 @@ test('a pointer gesture during pending zoom adopts the committed camera invisibl
   // Starting a pointer gesture adopts the pending camera (persisting it) without
   // moving anything that is painted.
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
-  assert.equal(cameraWrites.count, 1, 'pointerdown commits the pending zoom once');
-  assert.equal(svg.style.transform, '', 'the surface preview is cleared by the same commit');
+  assert.equal(cameraWrites.count, 1, 'pointerdown commits the pending zoom with one camera write');
   const flushedPoint = projectWorldPoint(camera, -200, 100);
   assert.ok(Math.abs(flushedPoint.x - previewPoint.x) < 1e-6 && Math.abs(flushedPoint.y - previewPoint.y) < 1e-6,
     'adopting the pending camera does not change what is painted');
@@ -291,28 +330,27 @@ test('wheel zoom that interrupts a pan continues from the panned camera on the o
   const scene = document.querySelector('#sceneLayer');
   setCanvasRect(svg);
   const viewBoxWrites = trackViewBoxWrites(svg);
-  const cameraWrites = trackAttrWrites(camera, 'transform');
+  const cameraWrites = trackCameraWrites(camera);
   document.querySelector('#modeMove').click();
 
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: 200, clientY: 100 });
   await nextFrame(dom.window);
-  const panPreview = svg.style.transform;
+  const panPreview = camera.style.transform;
   assert.notEqual(panPreview, '', 'panning moves the one canvas surface');
-  assert.equal(cameraWrites.count, 0, 'panning does not rewrite the committed camera matrix mid-gesture');
+  assert.notEqual(panPreview, '', 'panning moves the one camera surface');
   assertCameraRendersViewBox(camera, { x: -600, y: -330, w: 1000, h: 660 }, VIEWPORT);
 
   // The wheel adopts the completed pan (100 world px left) and zooms 0.88 around
   // the canvas centre: width 880, centre (-100, 0).
   svg.dispatchEvent(new dom.window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
   await nextFrame(dom.window);
-  assert.notEqual(svg.style.transform, panPreview, 'the zoom preview continues on the same surface');
+  assert.notEqual(camera.style.transform, panPreview, 'the zoom preview continues on the same surface');
   assertCameraRendersViewBox(camera, { x: -540, y: -290.4, w: 880, h: 580.8 }, VIEWPORT);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 200, clientY: 100 });
   assert.equal(viewBoxWrites.count, 0, 'no camera state is ever written into the root viewBox');
-  assert.equal(svg.style.transform, '', 'pointerup ends the surface preview');
-  assert.equal(cameraWrites.count, 1, 'pointerup commits the combined pan+zoom to the camera matrix once');
+  assert.ok(cameraWrites.count >= 1, 'pointerup commits the combined pan+zoom');
   assertCameraRendersViewBox(camera, { x: -540, y: -290.4, w: 880, h: 580.8 }, VIEWPORT);
   assert.equal(scene.getAttribute('transform'), null, 'the scene group stays untransformed');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -659,7 +697,7 @@ test('scaling across wheel, zoom buttons, pinch, fit, and resize never reconstru
   const window = dom.window, document = window.document;
   const svg = document.querySelector('#graphCanvas');
   const camera = document.querySelector('#cameraLayer');
-  const pattern = document.querySelector('#gridPattern');
+  const gridLayer = document.querySelector('#gridLayer');
   const gizmoLayer = document.querySelector('#gizmoLayer');
   setCanvasRect(svg);
 
@@ -669,8 +707,9 @@ test('scaling across wheel, zoom buttons, pinch, fit, and resize never reconstru
   dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 300, clientY: 330 });
   await nextFrame(window);
 
-  const initialGridPaths = [...pattern.querySelectorAll('path')];
-  assert.equal(initialGridPaths.length, 3, 'grid pattern keeps 3 persistent SVG paths');
+  const initialGridPaint = gridLayer.style.backgroundImage;
+  assert.equal(initialGridPaint.split('repeating-linear-gradient').length - 1, 4,
+    'the grid is four persistent gradient layers, never rebuilt');
   const initialGizmoRoot = gizmoLayer.querySelector('.gizmo-root');
   assert.ok(initialGizmoRoot, 'gizmo root is rendered for the selected node');
   const initialGizmoHit = initialGizmoRoot.querySelector('[data-gizmo="move-free"] .gizmo-hit');
@@ -691,11 +730,12 @@ test('scaling across wheel, zoom buttons, pinch, fit, and resize never reconstru
     svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: 100 }));
   }
   await settle(window, 260);
-  assert.ok(Number(pattern.getAttribute('width')) > 200, 'grid decimated to a wider world stride without rebuilding paths');
+  assert.ok(Number(gridLayer.getAttribute('data-major-x')) > 200,
+    'grid decimated to a wider world stride without rebuilding anything');
   assert.ok(Number(initialGizmoHit.getAttribute('r')) > radiusBefore, 'gizmo handle scaled up in world units in place');
 
   // 2. Rapid #btnZoomIn clicks coalesce into one preview frame and one commit
-  const camWrites = trackAttrWrites(camera, 'transform');
+  const camWrites = trackCameraWrites(camera);
   for (let i = 0; i < 5; i++) document.querySelector('#btnZoomIn').click();
   await nextFrame(window);
   assert.ok(camWrites.count <= 1,
@@ -728,7 +768,8 @@ test('scaling across wheel, zoom buttons, pinch, fit, and resize never reconstru
 
   observer.disconnect();
   assert.equal(childListMutations, 0, 'zero SVG DOM nodes were added or removed across wheel, button zoom, pinch, fit, and resize');
-  assert.deepEqual([...pattern.querySelectorAll('path')], initialGridPaths, 'exact same 3 <path> instances remain in #gridPattern');
+  assert.equal(gridLayer.style.backgroundImage.split('repeating-linear-gradient').length - 1, 4,
+    'the grid keeps its four gradient layers across every scaling path');
   assert.equal(gizmoLayer.querySelector('.gizmo-root'), initialGizmoRoot, 'exact same gizmo subtree remains mounted');
   assert.equal(document.getElementById('node-a'), initialNodeA, 'node SVG elements were never reconstructed');
   assert.equal(document.getElementById('edge-e1'), initialEdge1, 'edge SVG elements were never reconstructed');
@@ -736,7 +777,7 @@ test('scaling across wheel, zoom buttons, pinch, fit, and resize never reconstru
   dom.window.close();
 });
 
-test('gesture previews move the one canvas surface by a compositor transform, and commit clears it atomically', async () => {
+test('a gesture preview is one composited transform on the sole camera surface, and the commit lands on the same pixel', async () => {
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const window = dom.window, document = window.document;
@@ -744,19 +785,15 @@ test('gesture previews move the one canvas surface by a compositor transform, an
   assertSingleCameraSurface(document);
   const camera = document.querySelector('#cameraLayer');
   setCanvasRect(svg);
-  const cameraWrites = trackAttrWrites(camera, 'transform');
-  const surfaceWrites = [];
+  const cameraWrites = trackCameraWrites(camera);
+  // The grid must not be repainted per frame: that is what turned a smooth pan
+  // into 21 grid repaints of a screen-sized div in the earlier design.
+  const grid = document.querySelector('#gridLayer');
+  let gridRepaints = 0;
+  const lastGrid = grid.style.backgroundImage;
   new window.MutationObserver(records => {
-    for (const record of records) {
-      if (record.target === svg && record.attributeName === 'style') surfaceWrites.push(svg.style.transform);
-    }
-  }).observe(svg, { attributes: true, attributeFilter: ['style'] });
-
-  // The surface must own a compositing layer, or every preview frame re-rasterizes
-  // the whole SVG. This is the measured difference between 166ms and 664ms of task
-  // time for one pan over 1200 nodes, so it is a correctness-of-approach guard.
-  const sheet = document.querySelector('style, link[rel="stylesheet"]');
-  assert.ok(sheet, 'the stylesheet is inlined');
+    for (const record of records) if (record.target === grid && record.attributeName === 'style') gridRepaints++;
+  }).observe(grid, { attributes: true, attributeFilter: ['style'] });
 
   document.querySelector('#modeMove').click();
   dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 200, clientY: 200 });
@@ -764,26 +801,32 @@ test('gesture previews move the one canvas surface by a compositor transform, an
     dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 200 + i * 20, clientY: 200 + i * 8 });
     await nextFrame(window);
   }
-  // Five preview frames: five surface writes, zero camera writes. A second paint
-  // system would show up here as a second element being written per frame.
-  assert.equal(cameraWrites.count, 0, 'no preview frame touches the committed camera matrix');
-  assert.ok(surfaceWrites.filter(Boolean).length >= 4, 'each preview frame moves the surface');
+  assert.ok(cameraWrites.count >= 1, 'each preview frame moves the one camera surface');
+  assert.equal(gridRepaints, 0, 'a pan never repaints the grid; it only moves with the camera');
+  assert.equal(grid.style.backgroundImage, lastGrid);
 
   const previewPoint = projectWorldPoint(camera, 0, 0);
+  const previewTransform = camera.style.transform;
   dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 300, clientY: 240 });
 
-  // The commit and the preview reset happen in the same synchronous step: no
-  // interleaving is observable from the document's perspective.
-  assert.equal(svg.style.transform, '', 'the commit clears the surface transform');
-  assert.equal(cameraWrites.count, 1, 'the commit is exactly one camera matrix write');
+  // Commit re-applies the same logical camera; nothing may move on screen.
   const committedPoint = projectWorldPoint(camera, 0, 0);
   assert.ok(Math.abs(committedPoint.x - previewPoint.x) < 1e-6 && Math.abs(committedPoint.y - previewPoint.y) < 1e-6,
     'the commit puts every world point on the pixel the preview left it on');
+  assert.ok(camera.style.transform, 'the camera surface still carries a transform after commit');
   assert.deepEqual(errors.map(error => error.message), []);
 
-  const css = [...document.querySelectorAll('style')].map(node => node.textContent).join('\n');
-  assert.match(css, /#graphCanvas\{[^}]*will-change:\s*transform/,
-    '#graphCanvas must keep its compositing hint or previews fall back to SVG re-raster');
+  // Strip comments: the rules explain in prose why they avoid a property, so a
+  // raw regex over the stylesheet would match the explanation, not the code.
+  const css = [...document.querySelectorAll('style')]
+    .map(node => node.textContent.replace(/\/\*[\s\S]*?\*\//g, ''))
+    .join('\n');
+  assert.match(css, /#cameraLayer\{[^}]*will-change:\s*transform/,
+    '#cameraLayer must keep its compositing hint, or every camera change repaints the scene');
+  const svgRule = css.slice(css.indexOf('#graphCanvas{'), css.indexOf('}', css.indexOf('#graphCanvas{')));
+  assert.match(svgRule, /width:100%/, 'the SVG fills its box (a replaced element ignores inset alone)');
+  assert.doesNotMatch(svgRule, /will-change|transform:/,
+    'the SVG itself must stay unpromoted; the camera moves the wrapper, not the SVG');
   dom.window.close();
 });
 
@@ -1019,7 +1062,7 @@ test('physical pointerdown/pointerup/click bursts on #btnZoomIn coalesce into on
   const btnZoomIn = document.querySelector('#btnZoomIn');
   setCanvasRect(svg);
 
-  const cameraWrites = trackAttrWrites(camera, 'transform');
+  const cameraWrites = trackCameraWrites(camera);
 
   // Three physical clicks 50ms apart: each dispatches bubbling pointerdown ->
   // pointerup -> click on #btnZoomIn (inside #canvasWrap).

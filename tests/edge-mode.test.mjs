@@ -203,7 +203,7 @@ for (const pointerType of ['mouse', 'touch']) {
     const { window, document, drag } = await setup(t, graph);
     document.querySelector('#nodeLabel').value = 'New';
     const before = exported(document);
-    drag(document.querySelector('#gridRect'), 'pointerup', pointerType, 713, 427);
+    drag(document.querySelector('#gridLayer'), 'pointerup', pointerType, 713, 427);
     await settle(window, 90);
     const after = exported(document);
     assert.equal(after.nodes.length, 4);
