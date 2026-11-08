@@ -73,16 +73,13 @@ function dispatchPointer(window, target, type, options) {
 const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30));
 
 // === Camera contract ===
-// The root viewBox is a fixed world reference frame written once; active
-// pan/pinch/wheel gestures drive the GPU-composited HTML #cameraStage wrapper
-// while leaving #cameraLayer untouched, then commit atomically onto #cameraLayer
-// (resetting #cameraStage to identity) when the gesture settles. These helpers
-// compose #cameraStage + #cameraLayer independently of the implementation.
+// There is exactly ONE paint system: the root viewBox is a fixed world reference
+// frame written once, and both gesture previews and the committed camera are a
+// single `transform` matrix on #cameraLayer. These helpers read that one matrix
+// — there is no second surface to compose, and a test that needs one has found
+// a regression rather than a convenience to add.
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
-const STAGE_OVERSCAN = 0.5;
-const STAGE_SPAN = 1 + 2 * STAGE_OVERSCAN;
-const STAGE_IDENTITY = 'matrix(1, 0, 0, 1, 0, 0)';
 
 function parseMatrix2d(raw, label) {
   const match = raw?.match(/^matrix\(([^)]+)\)$/);
@@ -94,35 +91,43 @@ function parseMatrix2d(raw, label) {
   return { scale, tx, ty };
 }
 
-function stageFor(camera) {
-  return camera.ownerDocument.querySelector('#cameraStage');
-}
-
-function stageTransformOf(camera) {
-  const stage = stageFor(camera);
-  const inline = stage?.style?.transform;
-  return inline ? parseMatrix2d(inline, '#cameraStage') : { scale: 1, tx: 0, ty: 0 };
+// No CSS-transformed wrapper may exist above the canvas SVG: a second camera
+// surface is the bug this project has fixed three times (see 20-rendering.ts).
+function assertSingleCameraSurface(document) {
+  assert.equal(document.querySelector('#cameraStage'), null,
+    'the canvas must have no second camera surface (#cameraStage)');
+  const wrappers = [...document.querySelectorAll('#graphCanvas')]
+    .map(svg => svg.parentElement)
+    .filter(parent => parent && typeof parent.style?.transform === 'string' && parent.style.transform !== '');
+  assert.deepEqual(wrappers.map(el => el.id || el.className), [],
+    'the SVG must not sit inside a CSS-transformed wrapper');
 }
 
 function cameraScale(camera) {
-  const layer = parseMatrix2d(camera.getAttribute('transform'), `#${camera.id}`);
-  const stage = stageTransformOf(camera);
-  return layer.scale * STAGE_SPAN * stage.scale;
+  return parseMatrix2d(camera.getAttribute('transform'), `#${camera.id}`).scale;
+}
+
+// Total on-screen scale of a world unit: committed camera times surface preview.
+function paintedScale(camera) {
+  return cameraScale(camera) * surfaceMatrix(camera.ownerDocument).scale;
+}
+
+// What is on screen is #cameraLayer's world->user-unit matrix composed with the
+// canvas surface's CSS preview transform, in that order.
+function surfaceMatrix(document) {
+  const inline = document.querySelector('#graphCanvas').style.transform;
+  return inline ? parseMatrix2d(inline, '#graphCanvas (preview)') : { scale: 1, tx: 0, ty: 0 };
 }
 
 function projectWorldPoint(camera, x, y, viewport = VIEWPORT) {
   const layer = parseMatrix2d(camera.getAttribute('transform'), `#${camera.id}`);
-  const stage = stageTransformOf(camera);
+  const surface = surfaceMatrix(camera.ownerDocument);
   const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
-  const refPixels = STAGE_SPAN * basePixels;
-  const refOffsetX = STAGE_SPAN * ((viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2);
-  const refOffsetY = STAGE_SPAN * ((viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2);
-  const svgX = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * refPixels + refOffsetX;
-  const svgY = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * refPixels + refOffsetY;
-  return {
-    x: -STAGE_OVERSCAN * viewport.width + stage.scale * svgX + stage.tx,
-    y: -STAGE_OVERSCAN * viewport.height + stage.scale * svgY + stage.ty,
-  };
+  const refOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
+  const refOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
+  const px = (layer.scale * x + layer.tx - REFERENCE_VIEWBOX.x) * basePixels + refOffsetX;
+  const py = (layer.scale * y + layer.ty - REFERENCE_VIEWBOX.y) * basePixels + refOffsetY;
+  return { x: surface.scale * px + surface.tx, y: surface.scale * py + surface.ty };
 }
 
 function assertCameraRendersViewBox(camera, viewBox, viewport = VIEWPORT) {
@@ -322,11 +327,11 @@ test('large edge lists render in bounded pages', async () => {
   dom.window.close();
 });
 
-test('pan moves only the composited camera and never rewrites the root viewBox', async () => {
+test('pan previews and commits through the one camera matrix, never the root viewBox', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
-  const stage = dom.window.document.querySelector('#cameraStage');
+  assertSingleCameraSurface(dom.window.document);
   const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
   const grid = dom.window.document.querySelector('#gridLayer');
@@ -339,11 +344,12 @@ test('pan moves only the composited camera and never rewrites the root viewBox',
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: 180, clientY: 140 });
   await nextFrame(dom.window);
 
-  // Dragged 80 px right and 40 px down at 1:1 — the camera moves left and up by
-  // the same world distance on the promoted #cameraStage while #cameraLayer stays untouched.
+  // Dragged 80 px right and 40 px down at 1:1 — the surface moves right and down
+  // by exactly that, and the committed camera matrix is left alone until release.
   assert.equal(viewBoxWrites.count, 0, 'the root viewBox is a reference frame, not a camera write');
-  assert.equal(camera.getAttribute('transform'), baseCameraMatrix, 'SVG #cameraLayer is untouched during an active pan preview');
-  assert.notEqual(stage.style.transform, STAGE_IDENTITY, '#cameraStage carries the live preview delta');
+  assert.equal(camera.getAttribute('transform'), baseCameraMatrix,
+    'the pan preview does not rewrite the committed camera matrix');
+  assert.notEqual(svg.style.transform, '', 'the pan preview moves the one canvas surface');
   assertCameraRendersViewBox(camera, { x: -580, y: -370, w: 1000, h: 660 });
   assert.equal(scene.getAttribute('transform'), null, 'the scene group is never transformed');
   assert.equal(grid.style.transform, '', 'the grid never uses a temporary compositor transform');
@@ -354,7 +360,8 @@ test('pan moves only the composited camera and never rewrites the root viewBox',
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
   assert.equal(viewBoxWrites.count, 0, 'releasing the pan writes no viewBox');
-  assert.equal(stage.style.transform, STAGE_IDENTITY, 'release resets #cameraStage to identity atomically');
+  assert.equal(svg.style.transform, '', 'release clears the surface preview');
+  assert.notEqual(camera.getAttribute('transform'), baseCameraMatrix, 'release commits the pan as one matrix write');
   const committedOrigin = projectWorldPoint(camera, 0, 0);
   assert.ok(Math.abs(committedOrigin.x - previewOrigin.x) < 1e-6 && Math.abs(committedOrigin.y - previewOrigin.y) < 1e-6,
     'release keeps every pixel where the preview put it');
@@ -366,11 +373,11 @@ test('pan moves only the composited camera and never rewrites the root viewBox',
   dom.window.close();
 });
 
-test('pinch preview and commit compose to the exact same camera without mid-gesture SVG writes', async () => {
+test('pinch preview and commit are the same camera matrix, with no mid-gesture viewBox writes', async () => {
   const { dom, errors } = createEditorDom();
   await nextFrame(dom.window);
   const svg = dom.window.document.querySelector('#graphCanvas');
-  const stage = dom.window.document.querySelector('#cameraStage');
+  assertSingleCameraSurface(dom.window.document);
   const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
   setCanvasRect(svg);
@@ -383,16 +390,19 @@ test('pinch preview and commit compose to the exact same camera without mid-gest
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites.count, 0, 'the root viewBox stays the reference frame during a pinch');
-  assert.equal(camera.getAttribute('transform'), baseCameraMatrix, '#cameraLayer is untouched while pinching');
-  assert.notEqual(stage.style.transform, STAGE_IDENTITY, '#cameraStage scales the promoted stage during pinch');
-  const previewScale = cameraScale(camera);
+  assert.equal(camera.getAttribute('transform'), baseCameraMatrix,
+    'the pinch preview does not rewrite the committed camera matrix');
+  assert.notEqual(svg.style.transform, '', 'the pinch preview moves the one canvas surface');
+  const previewScale = paintedScale(camera);
   assert.ok(previewScale > 1, 'pinching apart zooms in');
   const previewAnchor = projectWorldPoint(camera, 120, -80);
   const committedWidthBefore = dom.window.document.querySelector('#cameraW').value;
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 100 });
   assert.equal(viewBoxWrites.count, 0, 'committing the pinch writes no viewBox either');
-  assert.equal(stage.style.transform, STAGE_IDENTITY, 'commit resets #cameraStage to identity');
+  assert.equal(svg.style.transform, '', 'the commit clears the surface preview');
+  assert.notEqual(camera.getAttribute('transform'), baseCameraMatrix,
+    'the commit writes the pinch onto the committed camera matrix');
   const committedAnchor = projectWorldPoint(camera, 120, -80);
   assert.ok(Math.abs(committedAnchor.x - previewAnchor.x) < 1e-6 && Math.abs(committedAnchor.y - previewAnchor.y) < 1e-6,
     'the commit paints every world point at the exact same screen pixel as the preview');

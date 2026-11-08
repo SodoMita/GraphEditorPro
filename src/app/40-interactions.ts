@@ -70,8 +70,8 @@
       syncSelectionDom();
     }
     if(pan){
-      // Keep stageBaseCamera on #cameraLayer intact so pan -> pinch continues
-      // smoothly on the promoted #cameraStage without a mid-gesture SVG commit.
+      // The camera matrix already shows the pinch's preview; adopting it keeps
+      // a following wheel or pan continuous without an intermediate commit.
       state.viewBox = {...pan.previewViewBox};
       pan = null;
     }
@@ -483,8 +483,8 @@
     setStatusOnly();
   }
   // Attach canvas pointer/wheel listeners to the stable, viewport-sized
-  // #canvasWrap rather than the transformed #cameraStage/<svg>, so input over
-  // every pixel of the canvas viewport is always received during zoom-out/pan.
+  // #canvasWrap rather than the <svg> it contains, so input over every pixel of
+  // the canvas viewport is always received.
   canvasWrap.addEventListener('pointerdown', ev => {
     if(isCanvasOverlayControl(ev.target)) return;
     svg.focus();
@@ -606,8 +606,8 @@
   function finishPointer(ev, cancel=false){
     // Ignore bubbling pointerup/pointercancel from floating HUD, mode, or zoom
     // buttons (and pointers that never started a canvas gesture) so physical
-    // clicks on #btnZoomIn/#btnZoomOut coalesce on #cameraStage instead of
-    // flushing the preview on every button release.
+    // clicks on #btnZoomIn/#btnZoomOut do not flush the pending zoom on every
+    // button release.
     if(!hasActiveCanvasGesture() && !activePointers.has(ev.pointerId)) return;
     if(zoomPreview) flushZoomPreview(); // hit-testing must see committed geometry
     if(singleSweep && ev.pointerId === singleSweep.pointerId){
@@ -758,19 +758,17 @@
     zoomAt(ev.deltaY < 0 ? 0.88 : 1.14, ev.clientX, ev.clientY);
   }, {passive:false});
   // === Wheel / button zoom ===
-  // Wheel events and rapid zoom-button clicks drive the GPU-composited HTML
-  // #cameraStage wrapper relative to the base SVG camera, so active scaling
-  // never triggers Blink SVG layout or tile re-rasterization per frame. Once
-  // zooming settles, commitZoomPreview() atomically resets #cameraStage to
-  // identity and writes the settled matrix to #cameraLayer.
+  // Wheel events and rapid zoom-button clicks paint the pending camera through
+  // applyPreviewCamera(), which is the same single matrix write on #cameraLayer
+  // a commit uses — the preview IS the camera, so there is no handoff frame to
+  // get wrong. Committing only persists the value and refreshes the sidebar.
   let zoomPreview = null; // {preview, rect, frame, timer}
   // Debounce the commit: a rapid scroll burst should settle (persist the camera,
   // refresh the numeric camera fields) once the wheel goes idle, not per pause.
   const ZOOM_COMMIT_DELAY = 220;
   function zoomAt(factor, clientX, clientY){
-    // A wheel arriving mid pan/pinch adopts the in-flight camera without an
-    // intermediate SVG commit so #cameraStage keeps compositing against
-    // stageBaseCamera seamlessly.
+    // A wheel arriving mid pan/pinch adopts the in-flight camera so the next
+    // preview continues from where the gesture already is.
     if(pan){
       state.viewBox = {...pan.previewViewBox};
       pan = null;

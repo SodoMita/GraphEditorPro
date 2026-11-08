@@ -132,16 +132,18 @@ async function openBuild(browser, build, graph) {
 async function startRecording(page) {
   await page.evaluate(() => {
     const svg = document.querySelector('#graphCanvas');
-    const stage = document.querySelector('#cameraStage');
     const camera = document.querySelector('#cameraLayer');
     const scene = document.querySelector('#sceneLayer');
     const grid = document.querySelector('#gridLayer');
-    const counts = { viewBox: 0, stageStyle: 0, cameraTransform: 0, sceneTransform: 0, gridStyle: 0, svgDom: 0 };
+    // `surfaceStyle` counts gesture preview writes on the ONE canvas surface; it
+    // is not a second camera, and there must never be another surface to count.
+    const counts = { viewBox: 0, surfaceStyle: 0, cameraTransform: 0, sceneTransform: 0, gridStyle: 0, svgDom: 0 };
+    if (document.querySelector('#cameraStage')) throw new Error('second camera surface found: #cameraStage');
     const observer = new MutationObserver(records => {
       for (const record of records) {
         if (record.type === 'childList') { counts.svgDom += record.addedNodes.length + record.removedNodes.length; continue; }
         if (record.target === svg && record.attributeName === 'viewBox') counts.viewBox++;
-        if (stage && record.target === stage && record.attributeName === 'style') counts.stageStyle++;
+        if (record.target === svg && record.attributeName === 'style') counts.surfaceStyle++;
         if (record.target === camera && record.attributeName === 'transform') counts.cameraTransform++;
         if (record.target === scene && record.attributeName === 'transform') counts.sceneTransform++;
         if (record.target === grid && record.attributeName === 'style') counts.gridStyle++;
@@ -149,7 +151,7 @@ async function startRecording(page) {
     });
     observer.observe(svg, { attributes: true, attributeFilter: ['viewBox'] });
     observer.observe(svg, { childList: true, subtree: true });
-    if (stage) observer.observe(stage, { attributes: true, attributeFilter: ['style'] });
+    observer.observe(svg, { attributes: true, attributeFilter: ['style'] });
     observer.observe(camera, { attributes: true, attributeFilter: ['transform'] });
     observer.observe(scene, { attributes: true, attributeFilter: ['transform'] });
     if (grid) observer.observe(grid, { attributes: true, attributeFilter: ['style'] });
@@ -336,7 +338,7 @@ try {
           `| per update: style+layout=${pad(probe.styleAndLayout.median, 6)}ms frame=${pad(probe.frame.median, 6)}ms ` +
           `| frames=${pad(frames.frames, 3)} p95=${pad(frames.p95Ms, 6)}ms max=${pad(frames.maxMs, 7)}ms dropped=${pad(frames.droppedFrames, 4)} ` +
           `| commit task=${pad(median.commitMetrics.TaskDuration.toFixed(0), 4)}ms style=${pad(median.commitMetrics.RecalcStyleDuration.toFixed(0), 4)}ms ` +
-          `| writes vb=${median.writes.viewBox} stage=${median.writes.stageStyle} cam=${median.writes.cameraTransform} scene=${median.writes.sceneTransform} grid=${median.writes.gridStyle} dom=${median.writes.svgDom}`,
+          `| writes vb=${median.writes.viewBox} surf=${median.writes.surfaceStyle} cam=${median.writes.cameraTransform} scene=${median.writes.sceneTransform} grid=${median.writes.gridStyle} dom=${median.writes.svgDom}`,
         );
       }
     }

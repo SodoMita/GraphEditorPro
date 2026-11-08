@@ -690,13 +690,11 @@
       <main class="main v-canvas">
         <section id="canvasWrap" class="panel canvas-wrap empty">
           <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
-          <!-- #cameraStage is the single compositor-promoted HTML layer above
-               the SVG. Active pan/zoom/pinch gestures move/scale its already-
-               rasterized bitmap with zero SVG layout, zero tile re-rasterization
-               and zero SVG DOM writes; when a gesture settles, #cameraStage
-               returns to identity in the same frame #cameraLayer commits the
-               crisp vector camera. -->
-          <div id="cameraStage" class="camera-stage">
+          <!-- ONE paint system on the canvas path: gesture previews and the
+               committed camera are the same single matrix write on
+               #cameraLayer, so no frame can mix two cameras. Do not add a
+               transformed wrapper or a second camera layer around this SVG
+               (see the camera note in 20-rendering.ts). -->
             <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor canvas" data-i18n-aria-label="graph_canvas">
               <defs>
                 <pattern id="gridPattern" width="200" height="200" patternUnits="userSpaceOnUse">
@@ -713,9 +711,9 @@
                   <path d="M 1 1 L 11 6 L 1 11 z" fill="#22d3ee"></path>
                 </marker>
               </defs>
-              <!-- #cameraLayer carries the committed vector camera matrix above a
-                   fixed reference viewBox; #cameraStage above <svg> carries live
-                   gesture previews so scaling never re-runs SVG layout or raster. -->
+              <!-- #cameraLayer carries the camera matrix for gesture previews
+                   AND for the committed camera, above a fixed reference
+                   viewBox on the <svg>. One write is one frame of camera. -->
               <g id="cameraLayer">
                 <g id="sceneLayer">
                   <!-- The grid is a world-anchored pattern INSIDE the camera
@@ -734,7 +732,6 @@
                 </g>
               </g>
             </svg>
-          </div>
 
           <div class="canvas-hud">
             <div id="statusPill" class="status-pill" data-i18n="ready">Ready</div>
