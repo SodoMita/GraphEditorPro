@@ -197,6 +197,20 @@
     const plate = g[plateKey];
     if(plate){ plate.remove(); g[plateKey] = null; }
   }
+  function clearEdgeText(g, kind){
+    const key = kind === 'label' ? '__label' : '__weight';
+    const el = g[key];
+    if(el){ el.remove(); g[key] = null; }
+    removeLabelPlate(g, key);
+  }
+  function setEdgeTextHidden(g, hidden){
+    for(const key of ['__label','__weight']){
+      const el = g[key];
+      if(el){ if(hidden) setAttr(el, 'display', 'none'); else removeAttr(el, 'display'); }
+      const plate = g[key + 'Plate'];
+      if(plate){ if(hidden) setAttr(plate, 'display', 'none'); else removeAttr(plate, 'display'); }
+    }
+  }
   // === DOM write de-duplication ===
   // Every write to rendered graph elements goes through these helpers, which
   // skip the DOM entirely when the value equals the last write: unchanged
@@ -790,6 +804,7 @@
     // when the canvas has no size yet (hidden tab, pre-layout render).
     ensureReferenceViewBox();
     const viewport = canvasViewportRect(rect);
+    updateCameraViewportAspect(viewport);
     const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
     // Always derived from the fixed reference frame, never composed with the
     // previous frame's matrix, so no drift can accumulate across gestures.
@@ -859,6 +874,7 @@
     syncRenderOriginRepaint();
     const rect = canvasViewportRect(cachedRect);
     if(!rect.width || !rect.height) return;
+    updateCameraViewportAspect(rect);
     setStyleIfChanged(gridLayer.style, 'backgroundColor', state.settings.canvasBgColor || '#020617');
     const settings = state.settings;
     const gx = settings.gridSizeX || settings.gridSize || 40;
@@ -911,7 +927,7 @@
     // an absolute index past 2^53. The phase keeps every line at an integer
     // multiple of the world cell size; bucket quantisation keeps the bounds
     // stable while a preview stays inside the apron.
-    // Cap the apron so a 20,000,000-unit Fit cannot push path coordinates past
+    // Cap the apron so a full safe-square Fit cannot push path coordinates past
     // Skia's ~2^25 SVG limit. Bucket quantisation still keeps grid bounds stable
     // while a preview stays inside the apron.
     const apronX = Math.min(spanX * 3, L / 4), apronY = Math.min(spanY * 3, L / 4);
@@ -1015,6 +1031,15 @@
     if(g.__ent) g.__ent.gen = -1;
     const line = g.__line || el.querySelector('.edge-line'); if(line) setAttr(line, 'd', d.path);
     const hit = g.__hit || el.querySelector('.edge-hit'); if(hit) setAttr(hit, 'd', d.path);
+    if(!d.path){
+      // A fully clipped edge has no line to label. Hide the existing text and
+      // plates in place (no DOM churn during a drag) and drop the arrow/accent.
+      setEdgeTextHidden(g, true);
+      if(g.__arrow){ g.__arrow.remove(); g.__arrow = null; }
+      syncEdgeSelRing(g, e, null, d, false);
+      return;
+    }
+    setEdgeTextHidden(g, false);
     const label = g.__label || null;
     const weight = g.__weight || null;
     const hasBoth = label && weight;
@@ -1267,6 +1292,7 @@
         g.__geoSig = geoSig;
         g.__geoData = d;
       }
+      const edgeVisible = Boolean(d.path);
       toggleClass(g, 'selected', selected);
       // Update or create hit path (child refs are stashed on the group to
       // avoid per-edge selector queries)
@@ -1295,7 +1321,7 @@
       else removeAttr(line, 'stroke-dasharray');
       // Selection accent: a wide line behind the path and a bigger copy of the
       // tip behind the arrowhead. Neither repaints the edge itself.
-      syncEdgeAccent(g, e, v, d, selected, bulkAccents);
+      syncEdgeAccent(g, e, v, d, selected && edgeVisible, bulkAccents);
       // Update or create arrow — the tip always keeps the edge's own colour
       let arrow = g.__arrow || null;
       if(hasEdgeTip(e, d)){
@@ -1308,7 +1334,7 @@
       // Compute label and weight text separately so both can be shown at once.
       // Weight is drawn ON the line midpoint; label is drawn ABOVE it (offset).
       let labelText = '', weightText = '';
-      if(showLabels){
+      if(showLabels && edgeVisible){
         if(e.label) labelText = e.label;
         if(e.weight !== '' && e.weight != null){
           const w = edgeWeightNumber(e);
@@ -1341,8 +1367,7 @@
         setAttr(label, 'font-family', v.labelFont);
         applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, labelText, v.labelSize, v.labelFont, 'middle', 'middle');
       } else if(label){
-        label.remove(); g.__label = null; label = null;
-        removeLabelPlate(g, '__label');
+        clearEdgeText(g, 'label'); label = null;
       }
       // Update or create weight text (drawn on the line midpoint)
       let weight = g.__weight || null;
@@ -1360,8 +1385,7 @@
         setAttr(weight, 'font-family', v.labelFont);
         applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weightText, v.labelSize, v.labelFont, 'middle', 'middle');
       } else if(weight){
-        weight.remove(); g.__weight = null; weight = null;
-        removeLabelPlate(g, '__weight');
+        clearEdgeText(g, 'weight'); weight = null;
       }
       // This element now matches the document at this generation.
       const painted = existing.get(e.id);
@@ -1500,14 +1524,32 @@
   let lastNodeHitPixelsPerWorld = 0;
   function nodeHitPixelsPerWorld(){
     const rect = canvasViewportRect();
+    updateCameraViewportAspect(rect);
     const cam = boundedCamera(currentCamera());
     const p = (rect.width && rect.height) ? Math.min(rect.width / cam.w, rect.height / cam.h) : 0;
     return p > 0 ? p : 0.001;
   }
-  function nodeHitRadius(v){
-    const minWorld = 7 / nodeHitPixelsPerWorld();
-    return Math.min(RENDER_COORD_LIMIT / 2,
-      Math.max(25, v.width / 2, v.height / 2, minWorld));
+  // Normal nodes are hit-tested by their visible shape, not by a large circle:
+  // a 300x10 rectangle must not select from 80px outside its 10-unit body.
+  // Only when the whole shape is sub-pixel do we paint a visible ~7px dot and
+  // enlarge the hit target to exactly that dot.
+  function nodeHitGeometry(v){
+    const p = nodeHitPixelsPerWorld();
+    const halfMin = Math.min(v.width, v.height) / 2;
+    const shapeRadiusPx = Math.max(v.width, v.height) / 2 * p;
+    const enlarged = shapeRadiusPx < 3;
+    const dotRadius = Math.min(RENDER_COORD_LIMIT / 2, 7 / p);
+    return {
+      enlarged,
+      radius: enlarged ? dotRadius : Math.max(1, halfMin),
+      centreRadius: Math.max(8, Math.min(v.width, v.height) * 0.25, enlarged ? dotRadius : 0)
+    };
+  }
+  function nodeHitRadius(v){ return nodeHitGeometry(v).radius; }
+  function nodeCentreHitRadius(n){ return nodeHitGeometry(nodeVisualC(n)).centreRadius; }
+  function nodeSelectionRadius(n){
+    const geo = nodeHitGeometry(nodeVisualC(n));
+    return Math.max(nodeRadius(n), geo.enlarged ? geo.radius : 0);
   }
   function syncNodeHitTarget(g, v){
     let hit = g.__hit;
@@ -1518,15 +1560,14 @@
       hit.setAttribute('stroke','none');
       g.__hit = hit;
     }
-    const p = nodeHitPixelsPerWorld();
-    const shapeRadiusPx = Math.max(v.width, v.height) / 2 * p;
+    const geo = nodeHitGeometry(v);
     // At extreme zoom-outs the actual shape is sub-pixel: paint a minimum-size
-    // dot with the node colour so Fit really displays the graph, not just a
-    // transparent hit target.
-    const visible = shapeRadiusPx < 3;
-    setAttr(hit, 'fill', visible ? v.color : 'transparent');
-    setAttr(hit, 'fill-opacity', visible ? '0.9' : '0');
-    setAttr(hit, 'r', nodeHitRadius(v));
+    // dot with the node colour. At ordinary zoom the target is a small, inert
+    // circle inside the visible shape; the shape itself handles pointer events.
+    setAttr(hit, 'fill', geo.enlarged ? v.color : 'transparent');
+    setAttr(hit, 'fill-opacity', geo.enlarged ? '0.9' : '0');
+    setStyleIfChanged(hit.style, 'pointerEvents', geo.enlarged ? 'all' : 'none');
+    setAttr(hit, 'r', geo.radius);
     // Appending an already-last child is a remove+add mutation: during a zoom
     // burst that would reconstruct node DOM for no reason. Only move it when
     // a newly added label/plate has been inserted above it.

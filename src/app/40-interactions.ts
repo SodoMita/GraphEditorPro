@@ -103,8 +103,8 @@
     if(!pinch || pts.length < 2) return;
     const a = pts[0], b = pts[1], c = centerClient(a,b), r = canvasViewportRect(pinch.rect);
     const scale = clamp(pinch.startDistance / distClient(a,b), 0.05, 20);
-    const nw = clamp(pinch.startViewBox.w * scale, 120, MAX_CAMERA_SIZE);
-    const nh = clamp(pinch.startViewBox.h * scale, 90, MAX_CAMERA_SIZE);
+    const nw = clamp(pinch.startViewBox.w * scale, 120, maxCameraWidth());
+    const nh = clamp(pinch.startViewBox.h * scale, 90, maxCameraHeight());
     const previewScale = Math.min(r.width / nw, r.height / nh);
     const offsetX = (r.width - nw * previewScale) / 2;
     const offsetY = (r.height - nh * previewScale) / 2;
@@ -325,7 +325,7 @@
     const lineThresh = Math.max(22, state.viewBox.w / 220);
 
     for(const n of state.nodes){
-      const r = nodeRadius(n);
+      const r = nodeSelectionRadius(n);
       // Centre-point test always counts (and is the only test in 'center' mode).
       if(test(n)){ nodes.push(n.id); continue; }
       if(hitMode !== 'any') continue;
@@ -456,9 +456,10 @@
     // its centre, not anywhere on its body. Otherwise treat as a background
     // click (deselect, no drag).
     if(n && state.settings.hitTestMode === 'center'){
-      const hv = nodeVisualC(n);
-      const hw = hv.width, hh = hv.height;
-      const centerR = Math.max(8, Math.min(hw, hh) * 0.25);
+      // At extreme zoom-outs the visible/hit dot is much larger in WORLD units
+      // than the original node body. Use the same effective radius, or a click
+      // on that dot is routed to background by the old world-sized centre test.
+      const centerR = nodeCentreHitRadius(n);
       if(Math.hypot(p.x - n.x, p.y - n.y) > centerR){ deselect(); return; }
     }
 
@@ -809,7 +810,7 @@
     const cur = currentCamera();
     const r = zoomPreview ? zoomPreview.rect : canvasViewportRect();
     const anchor = clientToWorld(clientX, clientY, cur, r);
-    const nw = clamp(cur.w * factor, 120, MAX_CAMERA_SIZE), nh = clamp(cur.h * factor, 90, MAX_CAMERA_SIZE);
+    const nw = clamp(cur.w * factor, 120, maxCameraWidth()), nh = clamp(cur.h * factor, 90, maxCameraHeight());
     // Preserve the exact world point under the cursor, including the centered
     // letterbox offsets introduced by SVG's xMidYMid meet aspect-ratio mode.
     const nextPixels = Math.min(r.width / nw, r.height / nh);
@@ -866,8 +867,9 @@
     }
     // Fit the WHOLE span with at least ~16 screen pixels of padding, so
     // minimum-size node dots at extreme zoom-outs are fully inside the canvas.
-    // boundedCamera() only caps an extreme width/height at 2e7 while keeping
-    // the exact centre; a 2,000,000-unit graph is never truncated to 1e6.
+    // boundedCamera() only caps an extreme width/height at the aspect-aware
+    // ±3e7 render square while keeping the exact centre; a 50,000,000-unit
+    // graph is never truncated to 2e7.
     const rawW = maxX - minX, rawH = maxY - minY;
     let w = Math.max(260, rawW + 240), h = Math.max(220, rawH + 240);
     const rect = canvasViewportRect();

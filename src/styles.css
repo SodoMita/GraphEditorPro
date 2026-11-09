@@ -525,10 +525,11 @@
        stylesheet rules would otherwise override the per-label presentation
        attributes. */
     .node text{font-weight:800; paint-order:stroke; stroke-linejoin:round; pointer-events:none}
-    /* Transparent, camera-sized hit target: at very low zoom a 50-unit node is
-       sub-pixel and Chromium cannot hit-test it. The radius is written in world
-       units from the active camera scale so every node keeps a ~7px target. */
-    .node-hit{pointer-events:all}
+    /* Camera-sized hit target: at very low zoom a 50-unit node is sub-pixel
+       and Chromium cannot hit-test it. The element is enabled only when it is
+       painted as a visible ~7px dot; otherwise the visible node shape is the
+       hit target and no invisible circle can capture far-away clicks. */
+    .node-hit{pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
     .canvas-wrap.move-mode,.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}

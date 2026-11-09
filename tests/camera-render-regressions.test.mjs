@@ -910,3 +910,156 @@ test('fitView fits a 2,000,000-unit graph with visible, hit-testable nodes', asy
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a wide rectangular node has no oversized invisible hit circle', async () => {
+  const graph = {
+    title: 'wide-node-hit',
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0, shape: 'square', width: 300, height: 10 }],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+    settings: { hitTestMode: 'any', graphDefaults: { labelsPolicy: 'off' } },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  setCanvasRect(svg);
+
+  const hit = document.querySelector('#node-a .node-hit');
+  const shape = document.querySelector('#node-a .node-shape');
+  assert.ok(hit && shape);
+  assert.equal(Number(hit.getAttribute('r')), 5,
+    'the hit circle stays inside the 10-unit-tall body instead of using half the 300-unit width');
+  assert.equal(hit.style.pointerEvents, 'none', 'normal nodes are hit-tested by their visible shape');
+  assert.equal(hit.getAttribute('fill'), 'transparent', 'the inert target is invisible');
+
+  // The real shape is still selectable, while a point 80px above it is empty canvas.
+  dispatchPointer(window, shape, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 500, clientY: 330 });
+  assert.equal(document.getElementById('node-a').classList.contains('selected'), true,
+    'clicking the visible rectangle still selects it');
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 2, clientX: 500, clientY: 250 });
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 2, clientX: 500, clientY: 250 });
+  assert.equal(document.getElementById('node-a').classList.contains('selected'), false,
+    'clicking 80px outside the 10-unit body no longer selects through an invisible circle');
+  assertSvgCoordinatesSafe(document, 'wide rectangular node');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a fully clipped remote edge leaves no ghost label, weight, plate or arrow at the origin', async () => {
+  const graph = {
+    title: 'remote-edge',
+    nodes: [
+      { id: 'a', label: 'A', x: 100000000, y: 0 },
+      { id: 'b', label: 'B', x: 100000100, y: 0 },
+    ],
+    edges: [{ id: 'e', from: 'a', to: 'b', label: 'REMOTE', weight: '42', directed: true }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+    settings: {
+      graphDefaults: { labelsPolicy: 'on', edgeWeightMode: 'number', labelOutline: 'plate' },
+    },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  setCanvasRect(svg);
+
+  const group = document.getElementById('edge-e');
+  assert.ok(group, 'the edge group is retained in the DOM');
+  assert.equal(group.querySelector('.edge-line')?.getAttribute('d'), '', 'the remote edge has no visible path');
+  assert.equal(group.querySelector('.edge-hit')?.getAttribute('d'), '', 'the hit path is empty too');
+  assert.equal(group.querySelector('.edge-label'), null, 'the REMOTE label is not painted at (0,0)');
+  assert.equal(group.querySelector('.edge-weight'), null, 'the 42 weight is not painted at (0,0)');
+  assert.equal(group.querySelector('.label-plate'), null, 'no label plate is left behind');
+  assert.equal(group.querySelector('.edge-arrow'), null, 'no arrowhead is painted for a clipped target');
+  assert.equal(group.querySelector('.edge-sel'), null, 'no selection accent is painted for an empty path');
+  assertSvgCoordinatesSafe(document, 'fully clipped remote edge');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('centre-hit mode selects an enlarged Fit dot four pixels from its centre', async () => {
+  const graph = {
+    title: 'center-fit-dot',
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0 }, { id: 'b', label: 'B', x: 2000000, y: 0 }],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+    settings: { hitTestMode: 'center', graphDefaults: { labelsPolicy: 'off' } },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  document.getElementById('btnCameraFit').click();
+  await nextFrame(window);
+  const hit = document.querySelector('#node-a .node-hit');
+  assert.ok(hit, 'the sub-pixel node has a camera-sized dot');
+  assert.equal(hit.style.pointerEvents, 'all', 'the visible dot is hit-testable');
+  assert.notEqual(hit.getAttribute('fill'), 'transparent', 'the enlarged target is visible');
+  const m = cameraMatrix(camera);
+  const r = Number(hit.getAttribute('r'));
+  assert.ok(r * m.scale >= 6.9, `the dot radius ${r} projects to at least ~7 screen pixels`);
+  assert.ok(4 / m.scale < r, 'a four-pixel offset is inside the dot');
+
+  const centre = projectWorldPoint(camera, nodeRenderX(document, 'a').x, 0);
+  dispatchPointer(window, hit, 'pointerdown', { pointerId: 3, clientX: centre.x + 4, clientY: centre.y });
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 3, clientX: centre.x + 4, clientY: centre.y });
+  assert.equal(document.getElementById('node-a').classList.contains('selected'), true,
+    'centre-hit mode uses the enlarged dot radius, not the original world-sized node');
+  assertSvgCoordinatesSafe(document, 'centre-hit Fit dot');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('fitView fits a 50,000,000-unit graph at a centre-based origin', async () => {
+  const graph = {
+    title: 'fit-50m',
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0 }, { id: 'b', label: 'B', x: 50000000, y: 0 }],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+    settings: { graphDefaults: { labelsPolicy: 'off' } },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  document.getElementById('btnCameraFit').click();
+  await nextFrame(window);
+  const w = Number(document.getElementById('cameraW').value);
+  const cx = Number(document.getElementById('cameraX').value);
+  assert.ok(w > 50000000, `fit width ${w} covers the whole 50,000,000-unit span`);
+  assert.ok(Math.abs(cx - 25000000) < 1, `fit centre ${cx} stays at 25,000,000`);
+  assert.equal(renderOrigin(document)[0], 25000000,
+    'the floating origin snaps to the camera centre, not the truncated left edge');
+
+  const a = nodeRenderX(document, 'a'), b = nodeRenderX(document, 'b');
+  assert.ok(Math.abs(a.x) <= RENDER_COORD_LIMIT && Math.abs(b.x) <= RENDER_COORD_LIMIT,
+    'both endpoints rebase into the ±3e7 safe square');
+  const ax = screenX(document, camera, a.x), bx = screenX(document, camera, b.x);
+  assert.ok(ax > 0 && ax < VIEWPORT.width, `node a is on screen at ${ax}`);
+  assert.ok(bx > 0 && bx < VIEWPORT.width, `node b is on screen at ${bx}`);
+  for (const id of ['a', 'b']) {
+    const hit = document.querySelector(`#node-${id} .node-hit`);
+    assert.ok(hit, `node ${id} has a visible dot`);
+    assert.equal(hit.style.pointerEvents, 'all', `node ${id} is hit-testable`);
+    assert.notEqual(hit.getAttribute('fill'), 'transparent', `node ${id} is painted`);
+  }
+  const bCentre = projectWorldPoint(camera, b.x, 0);
+  dispatchPointer(window, document.querySelector('#node-b .node-hit'), 'pointerdown',
+    { pointerId: 4, clientX: bCentre.x, clientY: bCentre.y });
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 4, clientX: bCentre.x, clientY: bCentre.y });
+  assert.equal(document.getElementById('node-b').classList.contains('selected'), true,
+    'the far node is selectable after Fit');
+  assertGridCoversViewport(document, camera, '50,000,000-unit fit grid');
+  assertSvgCoordinatesSafe(document, '50,000,000-unit fit');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

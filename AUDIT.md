@@ -31,7 +31,7 @@ A genuinely well-engineered single-file app: the build is reproducible, the sani
 These are README claims I checked and can confirm:
 
 - **Reproducible build.** `node scripts/clean.mjs && tsc && node scripts/build.mjs && node scripts/check-static.mjs` regenerates `index.html` (628,140 bytes) with **no diff** against the committed artifact.
-- **Type-check + tests.** `npm run check`: 62/62 tests pass at the audited revision, no type errors; the current branch passes 133/133 (§6.1–6.2).
+- **Type-check + tests.** `npm run check`: 62/62 tests pass at the audited revision, no type errors; the current branch passes 137/137 (§6.1–6.3).
 - **Supply chain.** 60 packages, all `devDependencies`, `npm audit` reports 0 vulnerabilities; the shipped HTML has no runtime dependencies.
 - **Offline guarantees.** The static check passes and I confirmed the output has exactly one inline `<script>`, one `<style>`, no `fetch`/`XMLHttpRequest`/`WebSocket`/`EventSource`/`eval`/`new Function`/`document.write`, and no external URLs.
 - **Escaping.** I pushed `<img onerror>`, `<svg onload>`, `<textarea onfocus>` and `<option onfocus>` payloads through node labels, types, edge labels, edge weights and custom-attribute IDs, then forced the canvas, selection panel, matrix, edge list and all five tabs to render: **no element injection, no script execution** (`window.__xss` stayed 0). All interpolations I reviewed go through `esc()` or `textContent`.
@@ -295,20 +295,31 @@ Verification after this second round: `npm run check` passes with **84 tests** (
 
 ---
 
-## 6.1 PR #34 re-verification, the two P2 follow-ups and the updated-audit findings
+## 6.1 PR #34 re-verification, the two P2 follow-ups and the successive audit findings
 
-- `npm run check` on this branch: typecheck clean, **133/133 tests pass**, rebuilt `index.html` is **712,314 bytes** and the static-output gate passes. The regression suite covers the original camera/grid findings, a saved `viewBox.x: 1e20`, a `1e20` camera input, grid-colour changes during pending wheel/pan/pinch previews, the first and second updated-audit cases, floating-origin boundary rebasing, world-locked grid phase with a 7-unit grid, long-edge clipping, and a 2,000,000-unit Fit.
+- `npm run check` on this branch: typecheck clean, **137/137 tests pass**, rebuilt `index.html` is **716,463 bytes** and the static-output gate passes. The regression suite covers the original camera/grid findings, a saved `viewBox.x: 1e20`, a `1e20` camera input, grid-colour changes during pending wheel/pan/pinch previews, three successive updated-audit cases, floating-origin boundary rebasing, world-locked grid phase with a 7-unit grid, long-edge clipping, 2,000,000- and 50,000,000-unit Fit, oversized hit targets, ghost edge labels, and centre-hit selection of enlarged dots.
 - Real Chromium 149: the final build loads the `1e20` camera in ~77 ms with a finite `matrix(1 0 0 1 -500 -330)` and a full-viewport grid; the pre-fix PR #34 build times out after 10 s. The PR #33 base writes a CSS `style.transform` in ~80 ms but paints no SVG grid. After 30 zoom-out wheel steps, a grid-colour `input` contracts the old grid to a central rectangle; the final build keeps the grid filling the viewport with the preview matrix unchanged. Pan and pinch style changes also retain viewport coverage and the active camera.
 - First updated audit, A/B against the prior PR #34 build: nodes at X=1,000,000,100/200 project 100 px apart and both hit-test (previously both collapsed and hit nothing); editing the title autosaves the exact coordinates. Fit uses the whole span with screen padding centred at X=50,000, putting both X=0/100,000 nodes on screen and hit-testable (previously `w=20000` centred at X=9,880). A node at X=50,000,000 renders and hit-tests with `matrix(1 0 0 1 0 0)` (previously blank with `matrix(1 0 0 1 -50000000 0)`).
-- Root cause and invariants: Chromium clamps SVG attribute numbers above ~2^25 to float32. State keeps exact finite world coordinates at ingestion, in inputs, gestures and autosave; a floating render origin snapped to 1e6 rebases every SVG coordinate onto the camera without changing the data. `boundedCamera()` keeps sizes finite (maximum 2e7) without decentring a fit. Nodes >3e7 render units away are skipped in the DOM only; long edges are clipped to that safe square instead of discarded. Grid paths are capped to ±3e7 and use a bounded local index with a 4,000-segment cap and an index-magnitude guard instead of an absolute `k++`; a BigInt remainder preserves the world-cell phase across origin snaps. `currentCamera()` covers wheel zoom, pan and pinch previews, and both style handlers and `applyCamera()` use that active camera.
+- Root cause and invariants: Chromium clamps SVG attribute numbers above ~2^25 to float32. State keeps exact finite world coordinates at ingestion, in inputs, gestures and autosave; a floating render origin snapped to the camera centre in 1e6 steps rebases every SVG coordinate onto the camera without changing the data. `boundedCamera()` keeps sizes finite with an aspect-aware cap derived from the ±3e7 safe render square (up to 58,000,000 units wide) without decentring a fit. Nodes >3e7 render units away are skipped in the DOM only; long edges are clipped to that safe square instead of discarded, and fully clipped edges suppress all label/weight/plate/arrow/accent geometry. Grid paths are capped to ±3e7 and use a bounded local index with a 4,000-segment cap and an index-magnitude guard instead of an absolute `k++`; a BigInt remainder preserves the world-cell phase across origin snaps. `currentCamera()` covers wheel zoom, pan and pinch previews, and both style handlers and `applyCamera()` use that active camera.
 - The base's ~0.2 ms style/layout figure is preserved above as a qualified trade-off, not as evidence that the base was equally correct.
 
 ## 6.2 Second updated PR #34 audit
 
 - **Same-task origin rebase.** `syncRenderOriginRepaint()` no longer queues a rAF. When a pan crosses a 1e6 snap boundary it either relies on the already-running `renderCanvas()` pass or runs a geometry-only pass immediately, so the camera matrix and node/edge/grid/overlay attributes change in one task. Chromium frame recording across the boundary is monotonic (1441 → 481 px); the previous deferred build spiked to 801,712 px for one frame.
 - **Long-edge clipping.** Edge endpoints beyond the safe render square no longer remove the whole edge. Liang–Barsky clipping preserves the visible segment: X=0→11,000,000 draws `M 27 0 L 10999957 0`, and X=0→50,000,000 clips at `L 30000000 0` with the off-screen arrowhead suppressed. All path coordinates stay below 3e7.
-- **Fit beyond 1e6.** The camera cap is 2e7 with centre preservation, grid apron/coordinates are capped, Fit adds ~16 screen pixels of padding, and sub-pixel nodes get a visible minimum-size dot plus a ~7px hit target. A 2,000,000-unit graph now Fits to `w=2050719`, centre X=1,000,000, with both nodes fully inside the viewport and hit-testable.
+- **Fit beyond 1e6.** The camera cap now follows the aspect-aware safe square with centre preservation, grid apron/coordinates are capped, Fit adds ~16 screen pixels of padding, and sub-pixel nodes get a visible minimum-size dot plus a ~7px hit target. A 2,000,000-unit graph Fits to `w=2050719`, centre X=1,000,000, with both nodes fully inside the viewport and hit-testable; §6.3 extends this to 50,000,000 units.
 - **Prior resolutions retained:** exact >1e9 autosave coordinates, 100,000-unit Fit, `1e20` no-hang load, and grid-colour coverage during zoom/pan/pinch all still pass.
+
+
+---
+
+## 6.3 Third updated PR #34 audit
+
+- **Oversized invisible hit circles.** A 300×10 rectangular node previously got a circular target with `r=150` world units; clicking 80 screen pixels above the 8px-tall shape selected it. The normal-zoom target is now inert (`pointer-events:none`) with a radius of half the *smaller* dimension (`r=5`), so the visible shape alone is hit-tested. Chromium now reports the outside point as `svg` and leaves the node unselected; a centre click still selects it.
+- **Ghost labels on fully clipped edges.** A remote X=100,000,000→100,000,100 edge with `REMOTE`/`42` previously had an empty path but painted its label and weight at (0,0). An empty path now suppresses label text, weight text, plates, arrowheads and selection accents in both full render and live-drag writers; no `REMOTE` or `42` text remains in the DOM.
+- **Centre-hit mode on enlarged dots.** After a 2,000,000-unit Fit, `nodeCentreHitRadius()` uses the camera-sized ~7px dot radius instead of the original 50-unit body. A click four pixels from the dot centre now hits `.node-hit` and selects the node; region selection uses the same effective radius.
+- **Fit beyond the old 2e7 cap.** The floating origin snaps to the camera centre, and `boundedCamera()` uses an aspect-aware cap with one 1e6 snap step of headroom (58,000,000 units wide on a 1280×820 canvas). X=0/50,000,000 now Fits to `w=51267835`, centre X=25,000,000, origin `25000000,0`, with both 14px dots fully inside the viewport and hit-testable; grid coordinates remain within ±3e7. A square camera at the cap clamps to `w=58000000,h=24303586` and still paints a viewport-covering grid.
+- **Prior resolutions retained:** same-task origin rebase (recorded frames 1441→640 with no 801,712 px spike), `M 27 0 L 10999957 0` crossing edge, 2,000,000-unit Fit, exact X=1,000,000,100/200 autosave, `1e20` camera load in ~146 ms, and full grid coverage during a zoom-preview style change all pass targeted Chromium 149 checks.
 
 
 ---
@@ -317,7 +328,7 @@ Verification after this second round: `npm run check` passes with **84 tests** (
 
 ```bash
 npm ci
-npm run check                    # typecheck + build + 133 tests (~60 s)
+npm run check                    # typecheck + build + 137 tests (~60 s)
 git diff --exit-code index.html  # rebuild is byte-identical
 
 # headless browser (note: script needs ROOT exported as committed)

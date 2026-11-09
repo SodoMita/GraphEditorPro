@@ -54,9 +54,25 @@
   // Keep every number written into SVG comfortably below Skia's ~2^25 clamp.
   // 3e7 still leaves room for grid aprons, long-edge clipping and gizmo arms.
   const RENDER_COORD_LIMIT = 3e7;
-  const MAX_CAMERA_SIZE = 2e7; // a 2,000,000-unit Fit no longer truncates
-  const MIN_CAMERA_W = 100, MIN_CAMERA_H = 90;
   const RENDER_ORIGIN_SNAP = 1e6;
+  // A single affine SVG camera can show at most the safe render square centred
+  // on the floating origin. Leave one snap step of headroom for a centre that
+  // falls between 1e6 boundaries and for Fit's screen padding. The per-axis
+  // cap follows the canvas aspect ratio, so the letterboxed axis never pushes
+  // grid coordinates past ±3e7 either. Fit uses that whole safe square, so a
+  // 50,000,000-unit graph is not truncated to an arbitrary 2e7/6e7 cap.
+  const SAFE_CAMERA_HALF_SPAN = RENDER_COORD_LIMIT - RENDER_ORIGIN_SNAP;
+  let cameraViewportAspect = 1;
+  function updateCameraViewportAspect(rect: any = null){
+    const r = (rect && rect.width && rect.height) ? rect
+      : (svg && typeof svg.getBoundingClientRect === 'function' ? svg.getBoundingClientRect() : null);
+    if(!r || !(r.width > 0) || !(r.height > 0)) return;
+    const aspect = r.width / r.height;
+    if(Number.isFinite(aspect) && aspect > 0) cameraViewportAspect = aspect;
+  }
+  function maxCameraWidth(){ return 2 * SAFE_CAMERA_HALF_SPAN * Math.min(1, cameraViewportAspect); }
+  function maxCameraHeight(){ return 2 * SAFE_CAMERA_HALF_SPAN * Math.min(1, 1 / cameraViewportAspect); }
+  const MIN_CAMERA_W = 100, MIN_CAMERA_H = 90;
   let renderOriginX = 0, renderOriginY = 0;
   // Set when the origin moves during a preview-only camera update. Geometry
   // must be rebased in the SAME task as the camera matrix write; a queued rAF
@@ -72,28 +88,31 @@
   // node in the DOM, but keep it untouched in state/export/autosave; edges are
   // clipped instead of discarded, since a long edge can cross the viewport.
   function isRenderablePoint(x: unknown, y: unknown): boolean {
-    return Math.abs(rawRenderX(x)) < RENDER_COORD_LIMIT && Math.abs(rawRenderY(y)) < RENDER_COORD_LIMIT;
+    return Math.abs(rawRenderX(x)) <= RENDER_COORD_LIMIT && Math.abs(rawRenderY(y)) <= RENDER_COORD_LIMIT;
   }
   // Keep a camera finite and its viewport size bounded, but PRESERVE its
   // centre when a size must be clamped (the old 20000/1e6 caps truncated
-  // fitView without recentring). The cap is large enough for a 2,000,000-unit
-  // graph while still keeping render-space grid/geometry coordinates below the
-  // Chromium SVG coordinate limit. Coordinates are not magnitude-clamped:
-  // the floating origin keeps the SVG numbers small instead.
+  // fitView without recentring). The aspect-aware cap is the full ±3e7 render
+  // square with snap/padding headroom, so a 50,000,000-unit graph fits while
+  // every render-space grid/geometry number stays below Chromium's SVG
+  // coordinate limit. Coordinates are not magnitude-clamped: the floating
+  // origin keeps the SVG numbers small instead.
   function boundedCamera(camera: any): ViewBox {
     const x = finite(camera?.x, 0), y = finite(camera?.y, 0);
     const ow = finite(camera?.w, 1000), oh = finite(camera?.h, 660);
-    const w = clamp(ow, MIN_CAMERA_W, MAX_CAMERA_SIZE);
-    const h = clamp(oh, MIN_CAMERA_H, MAX_CAMERA_SIZE);
+    const w = clamp(ow, MIN_CAMERA_W, maxCameraWidth());
+    const h = clamp(oh, MIN_CAMERA_H, maxCameraHeight());
     return { x: x + ow / 2 - w / 2, y: y + oh / 2 - h / 2, w, h };
   }
   // One floating origin for every surface inside g#cameraLayer. It changes only
-  // when the camera moves past a 1e6 snap boundary, so ordinary pans/zooms are
-  // still a single matrix write; crossing one forces a geometry repaint.
+  // when the camera centre moves past a 1e6 snap boundary, so ordinary
+  // pans/zooms are still a single matrix write; crossing one forces a geometry
+  // repaint. Snapping to the CENTRE (not the left edge) keeps both ends of a
+  // 50,000,000-unit Fit inside the ±3e7 safe square.
   function ensureRenderOrigin(camera: any){
     const cam = boundedCamera(camera);
-    const ox = Math.round(cam.x / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
-    const oy = Math.round(cam.y / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
+    const ox = Math.round((cam.x + cam.w / 2) / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
+    const oy = Math.round((cam.y + cam.h / 2) / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
     if(ox !== renderOriginX || oy !== renderOriginY){
       renderOriginX = ox; renderOriginY = oy;
       setAttr(svg, 'data-render-origin', `${ox},${oy}`);
@@ -238,6 +257,13 @@
   const gridLines = $('#gridLines');
   const gridMinorLines = $('#gridMinorLines');
   const gridMajorLines = $('#gridMajorLines');
+  updateCameraViewportAspect();
+  if(typeof window !== 'undefined' && typeof window.addEventListener === 'function'){
+    window.addEventListener('resize', () => updateCameraViewportAspect(), { passive: true });
+  }
+  if(typeof ResizeObserver !== 'undefined' && svg && typeof svg.getBoundingClientRect === 'function'){
+    try { new ResizeObserver(() => updateCameraViewportAspect()).observe(svg); } catch { /* non-DOM test context */ }
+  }
   function isCanvasOverlayControl(target: any){
     return Boolean(target?.closest?.('.canvas-hud, .zoom-controls, .mode-fab, .edge-tools, .sel-tools, .gizmo-tools'));
   }
