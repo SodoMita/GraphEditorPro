@@ -253,13 +253,13 @@
     if(d.tool === 'rect'){
       el = document.createElementNS(NS,'rect');
       const x = Math.min(d.start.x,d.end.x), y = Math.min(d.start.y,d.end.y), w = Math.abs(d.end.x-d.start.x), h = Math.abs(d.end.y-d.start.y);
-      el.setAttribute('x', renderX(x)); el.setAttribute('y', renderY(y)); el.setAttribute('width', w); el.setAttribute('height', h);
+      el.setAttribute('x', renderX(x)); el.setAttribute('y', renderY(y)); el.setAttribute('width', renderSize(w)); el.setAttribute('height', renderSize(h));
     } else if(d.tool === 'line'){
       el = document.createElementNS(NS,'line');
       el.setAttribute('x1', renderX(d.start.x)); el.setAttribute('y1', renderY(d.start.y)); el.setAttribute('x2', renderX(d.end.x)); el.setAttribute('y2', renderY(d.end.y));
     } else if(d.tool === 'brush'){
       el = document.createElementNS(NS,'circle');
-      el.setAttribute('cx', renderX(d.end.x)); el.setAttribute('cy', renderY(d.end.y)); el.setAttribute('r', (state.settings.brushDiameter || 80) / 2);
+      el.setAttribute('cx', renderX(d.end.x)); el.setAttribute('cy', renderY(d.end.y)); el.setAttribute('r', renderSize((state.settings.brushDiameter || 80) / 2));
     } else if(d.tool === 'polygon'){
       const pathEl = document.createElementNS(NS,'path');
       const previewPts = [...pts];
@@ -270,7 +270,7 @@
       selectionOverlayLayer.appendChild(pathEl);
       if(pts.length){
         const start = document.createElementNS(NS,'circle');
-        start.setAttribute('cx', String(renderX(pts[0].x))); start.setAttribute('cy', String(renderY(pts[0].y))); start.setAttribute('r', String(Math.max(5, state.viewBox.w / 220)));
+        start.setAttribute('cx', String(renderX(pts[0].x))); start.setAttribute('cy', String(renderY(pts[0].y))); start.setAttribute('r', String(renderSize(Math.max(5, state.viewBox.w / 220))));
         start.setAttribute('class','selection-draft');
         selectionOverlayLayer.appendChild(start);
       }
@@ -867,12 +867,13 @@
     }
     // Fit the WHOLE span with at least ~16 screen pixels of padding, so
     // minimum-size node dots at extreme zoom-outs are fully inside the canvas.
-    // boundedCamera() only caps an extreme width/height at the aspect-aware
-    // ±3e7 render square while keeping the exact centre; a 50,000,000-unit
-    // graph is never truncated to 2e7.
+    // No camera cap truncates the span: boundedCamera() selects a safe
+    // render-space scale that keeps every SVG number below Skia's limit while
+    // state.viewBox keeps the exact world viewport.
     const rawW = maxX - minX, rawH = maxY - minY;
     let w = Math.max(260, rawW + 240), h = Math.max(220, rawH + 240);
     const rect = canvasViewportRect();
+    updateCameraViewportAspect(rect);
     const pitch = (rect.width && rect.height) ? Math.min(rect.width / w, rect.height / h) : 0;
     const pad = pitch > 0 ? Math.max(120, 16 / pitch) : 120;
     w = Math.max(260, rawW + 2 * pad);

@@ -93,11 +93,11 @@ function createEditorDom(savedGraph = null) {
   return { dom, errors };
 }
 
-function setCanvasRect(svg) {
+function setCanvasRect(svg, width = VIEWPORT.width, height = VIEWPORT.height) {
   const rect = () => ({
     x: 0, y: 0, left: 0, top: 0,
-    width: VIEWPORT.width, height: VIEWPORT.height,
-    right: VIEWPORT.width, bottom: VIEWPORT.height,
+    width, height,
+    right: width, bottom: height,
     toJSON() { return this; },
   });
   svg.getBoundingClientRect = rect;
@@ -148,6 +148,21 @@ function projectWorldPoint(camera, x, y) {
   };
 }
 
+// Node/edge attributes are written in SCALED render units; the inverse scene
+// transform restores world units before the camera matrix is applied.
+function projectScenePoint(document, camera, x, y, viewport = VIEWPORT) {
+  const scale = Number(document.getElementById('graphCanvas').getAttribute('data-render-scale') || 1);
+  const inverse = 1 / scale;
+  const m = cameraMatrix(camera);
+  const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
+  const offsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
+  const offsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
+  return {
+    x: (m.scale * (x * inverse) + m.tx - REFERENCE_VIEWBOX.x) * basePixels + offsetX,
+    y: (m.scale * (y * inverse) + m.ty - REFERENCE_VIEWBOX.y) * basePixels + offsetY,
+  };
+}
+
 function smallGraph() {
   return {
     title: 'render-regressions',
@@ -192,10 +207,11 @@ function gridRange(document) {
 
 function assertGridCoversViewport(document, camera, label) {
   const m = cameraMatrix(camera);
-  const visibleX0 = (REFERENCE_VIEWBOX.x - m.tx) / m.scale;
-  const visibleX1 = (REFERENCE_VIEWBOX.x + REFERENCE_VIEWBOX.w - m.tx) / m.scale;
-  const visibleY0 = (REFERENCE_VIEWBOX.y - m.ty) / m.scale;
-  const visibleY1 = (REFERENCE_VIEWBOX.y + REFERENCE_VIEWBOX.h - m.ty) / m.scale;
+  const scale = Number(document.getElementById('graphCanvas').getAttribute('data-render-scale') || 1);
+  const visibleX0 = (REFERENCE_VIEWBOX.x - m.tx) / m.scale * scale;
+  const visibleX1 = (REFERENCE_VIEWBOX.x + REFERENCE_VIEWBOX.w - m.tx) / m.scale * scale;
+  const visibleY0 = (REFERENCE_VIEWBOX.y - m.ty) / m.scale * scale;
+  const visibleY1 = (REFERENCE_VIEWBOX.y + REFERENCE_VIEWBOX.h - m.ty) / m.scale * scale;
   const range = gridRange(document);
   assert.ok(range.x0 <= visibleX0 && range.x1 >= visibleX1,
     `${label}: grid x range [${range.x0}, ${range.x1}] must cover the visible world [${visibleX0}, ${visibleX1}]`);
@@ -1060,6 +1076,180 @@ test('fitView fits a 50,000,000-unit graph at a centre-based origin', async () =
     'the far node is selectable after Fit');
   assertGridCoversViewport(document, camera, '50,000,000-unit fit grid');
   assertSvgCoordinatesSafe(document, '50,000,000-unit fit');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a safe render-space scale fits a 30,000,000-unit vertical span on a 1422x588 canvas', async () => {
+  const graph = {
+    title: 'vertical-30m', mode: 'select',
+    nodes: [
+      { id: 'a', label: 'A', x: 0, y: 0 },
+      { id: 'b', label: 'B', x: 0, y: 30000000 },
+    ],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg, 1422, 588);
+  window.dispatchEvent(new window.Event('resize'));
+  await nextFrame(window);
+  document.getElementById('btnCameraFit').click();
+  await nextFrame(window);
+
+  const h = Number(document.getElementById('cameraH').value);
+  assert.ok(h > 30000000, `fit height ${h} covers the whole vertical span, not 23,983,122`);
+  const scale = Number(svg.getAttribute('data-render-scale'));
+  assert.ok(scale > 0 && scale < 1, `render scale ${scale} shrinks SVG numbers instead of clamping the camera`);
+  const scene = document.getElementById('sceneLayer').getAttribute('transform') || '';
+  assert.match(scene, /^scale\(/, 'the inverse scene scale is a product of small SVG scale()s');
+  for (const num of scene.match(/[\d.]+/g) || []) {
+    assert.ok(Number(num) < SVG_COORD_LIMIT, `scene scale factor ${num} stays below Skia's limit`);
+  }
+  const a = nodeRenderX(document, 'a'), b = nodeRenderX(document, 'b');
+  assert.ok(Math.abs(a.y) <= RENDER_COORD_LIMIT && Math.abs(b.y) <= RENDER_COORD_LIMIT,
+    'both endpoints rebase into safe SVG coordinates');
+  assert.ok(Math.abs(Math.abs(a.y - b.y) - 30000000 * scale) < 1000,
+    'node separation follows the exact world span times the render scale');
+  const vp = { width: 1422, height: 588 };
+  const pa = projectScenePoint(document, camera, a.x, a.y, vp);
+  const pb = projectScenePoint(document, camera, b.x, b.y, vp);
+  assert.ok(pa.y > 0 && pa.y < vp.height, `node a is on screen at y=${pa.y}`);
+  assert.ok(pb.y > 0 && pb.y < vp.height, `node b is on screen at y=${pb.y}`);
+  for (const id of ['a', 'b']) {
+    const hit = document.querySelector(`#node-${id} .node-hit`);
+    assert.ok(hit, `node ${id} has a visible dot`);
+    assert.equal(hit.style.pointerEvents, 'all', `node ${id} is hit-testable`);
+  }
+  const saved = JSON.parse(window.localStorage.getItem('graph-editor-pro-v2'));
+  assert.deepEqual(saved.nodes.map(n => n.y), [0, 30000000], 'world coordinates stay exact in the snapshot');
+  assertGridCoversViewport(document, camera, '30,000,000-unit vertical fit grid');
+  assertSvgCoordinatesSafe(document, '30,000,000-unit vertical fit');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a safe render-space scale fits a 60,000,000-unit horizontal span', async () => {
+  const graph = {
+    title: 'horizontal-60m', mode: 'select',
+    nodes: [
+      { id: 'a', label: 'A', x: 0, y: 0 },
+      { id: 'b', label: 'B', x: 60000000, y: 0 },
+    ],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg, 1422, 588);
+  window.dispatchEvent(new window.Event('resize'));
+  await nextFrame(window);
+  document.getElementById('btnCameraFit').click();
+  await nextFrame(window);
+
+  const w = Number(document.getElementById('cameraW').value);
+  assert.ok(w > 60000000, `fit width ${w} covers the whole horizontal span, not 58,000,000`);
+  const scale = Number(svg.getAttribute('data-render-scale'));
+  assert.ok(scale > 0 && scale < 1, `render scale ${scale} keeps both endpoints safe`);
+  const a = nodeRenderX(document, 'a'), b = nodeRenderX(document, 'b');
+  assert.ok(Math.abs(a.x) <= RENDER_COORD_LIMIT && Math.abs(b.x) <= RENDER_COORD_LIMIT,
+    'both endpoints rebase into safe SVG coordinates');
+  assert.ok(Math.abs(Math.abs(a.x - b.x) - 60000000 * scale) < 1000,
+    'node separation follows the exact world span times the render scale');
+  const vp = { width: 1422, height: 588 };
+  const pa = projectScenePoint(document, camera, a.x, a.y, vp);
+  const pb = projectScenePoint(document, camera, b.x, b.y, vp);
+  assert.ok(pa.x > 0 && pa.x < vp.width, `node a is on screen at x=${pa.x}`);
+  assert.ok(pb.x > 0 && pb.x < vp.width, `node b is on screen at x=${pb.x}`);
+  for (const id of ['a', 'b']) {
+    const hit = document.querySelector(`#node-${id} .node-hit`);
+    assert.ok(hit, `node ${id} has a visible dot`);
+    assert.equal(hit.style.pointerEvents, 'all', `node ${id} is hit-testable`);
+  }
+  const saved = JSON.parse(window.localStorage.getItem('graph-editor-pro-v2'));
+  assert.deepEqual(saved.nodes.map(n => n.x), [0, 60000000], 'world coordinates stay exact in the snapshot');
+  assertGridCoversViewport(document, camera, '60,000,000-unit horizontal fit grid');
+  assertSvgCoordinatesSafe(document, '60,000,000-unit horizontal fit');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a partially clipped edge suppresses label and weight when the original midpoint is off-screen', async () => {
+  const graph = {
+    title: 'clipped-midpoint', mode: 'select',
+    nodes: [
+      { id: 'a', label: 'A', x: -100000000, y: 0 },
+      { id: 'b', label: 'B', x: 30000000, y: 0 },
+    ],
+    edges: [{ id: 'e1', from: 'a', to: 'b', label: 'REMOTE', weight: '42' }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  setCanvasRect(svg);
+  await nextFrame(window);
+  const g = document.getElementById('edge-e1');
+  assert.ok(g, 'the crossing edge is retained');
+  const path = g.querySelector('.edge-line').getAttribute('d') || '';
+  assert.match(path, /^M .* L /, 'the visible clipped segment is drawn');
+  const labels = [...g.querySelectorAll('.edge-label, .edge-weight')];
+  const visible = labels.filter(el => el.getAttribute('display') !== 'none');
+  assert.deepEqual(visible.map(el => el.textContent), [],
+    'no label or weight appears near the clipped segment / canvas centre');
+  assert.equal(g.querySelectorAll('.label-plate').length, 0, 'no background plate appears either');
+  const geo = g.__geoData;
+  assert.ok(geo && Math.abs(geo.labelX) > 20000000,
+    `geometry uses the original midpoint, safely clamped away from 0 (${geo && geo.labelX})`);
+  assertSvgCoordinatesSafe(document, 'off-screen original midpoint');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a clipped edge shows its label at the ORIGINAL midpoint when that midpoint is visible', async () => {
+  const graph = {
+    title: 'clipped-midpoint-visible', mode: 'select',
+    nodes: [
+      { id: 'a', label: 'A', x: -100000000, y: 0 },
+      { id: 'b', label: 'B', x: 30000000, y: 0 },
+    ],
+    edges: [{ id: 'e1', from: 'a', to: 'b', label: 'REMOTE', weight: '42' }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  setCanvasRect(svg);
+  const setCamera = (id, value) => {
+    const el = document.getElementById(id);
+    el.value = String(value);
+    el.dispatchEvent(new window.Event('input', { bubbles: true }));
+    el.dispatchEvent(new window.Event('change', { bubbles: true }));
+  };
+  setCamera('cameraX', -35000000);
+  setCamera('cameraY', 0);
+  setCamera('cameraW', 100000);
+  setCamera('cameraH', 66000);
+  await nextFrame(window);
+  const g = document.getElementById('edge-e1');
+  const label = g.querySelector('.edge-label'), weight = g.querySelector('.edge-weight');
+  assert.ok(label && weight, 'label and weight return when the true midpoint is on screen');
+  assert.equal(renderOrigin(document)[0], -35000000, 'the floating origin follows the true midpoint');
+  assert.ok(Math.abs(Number(label.getAttribute('x'))) < 1,
+    'label is at the original midpoint -35,000,000, not the clipped segment centre');
+  assert.ok(Math.abs(Number(weight.getAttribute('x'))) < 1,
+    'weight is at the original midpoint too');
+  assert.match(g.querySelector('.edge-line').getAttribute('d'), /^M .* L /, 'the edge remains clipped');
+  assertSvgCoordinatesSafe(document, 'visible original midpoint');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

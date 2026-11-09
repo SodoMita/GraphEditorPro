@@ -102,12 +102,14 @@
   const dashCache = new Map();
   function strokeDashArray(style, size){
     if(style !== 'dashed' && style !== 'dotted') return 'none';
-    const key = style + size;
+    const key = style + size + '|' + renderScale;
     let dash = dashCache.get(key);
     if(dash === undefined){
+      const s = renderSize(size);
+      const unit = renderScale;
       dash = style === 'dashed'
-        ? `${Math.max(4, size*2)} ${Math.max(3, size*1.5)}`
-        : `${Math.max(1, size*0.8)} ${Math.max(3, size*1.8)}`;
+        ? `${Math.max(4 * unit, s*2)} ${Math.max(3 * unit, s*1.5)}`
+        : `${Math.max(1 * unit, s*0.8)} ${Math.max(3 * unit, s*1.8)}`;
       if(dashCache.size > 128) dashCache.clear();
       dashCache.set(key, dash);
     }
@@ -141,7 +143,7 @@
   // when measurement is unavailable (e.g. jsdom) fall back to a per-glyph
   // estimate that is close enough for a background plate.
   function measuredTextWidth(el, text, size, font){
-    const sig = text + '|' + size + '|' + font;
+    const sig = text + '|' + size + '|' + font + '|' + renderScale;
     if(el.__twSig !== sig){
       let w = 0;
       try { if(typeof el.getComputedTextLength === 'function') w = el.getComputedTextLength(); } catch(err){ w = 0; }
@@ -157,9 +159,10 @@
   function applyLabelOutline(g, textEl, key, x, y, text, size, font, anchor, baseline){
     const conf = labelOutlineConf();
     if(!textEl) return null;
+    const s = renderSize(size);
     if(conf.mode === 'outline' && conf.width > 0){
       setAttr(textEl, 'stroke', conf.color);
-      setAttr(textEl, 'stroke-width', round2(labelOutlineThickness(conf, size)));
+      setAttr(textEl, 'stroke-width', renderSize(labelOutlineThickness(conf, size)));
     } else {
       setAttr(textEl, 'stroke', 'none');
       setAttr(textEl, 'stroke-width', '0');
@@ -175,17 +178,19 @@
       } else if(plate.nextSibling !== textEl){
         g.insertBefore(plate, textEl); // stays directly behind its text
       }
+      // The text's font-size is already scaled, so its measured width is in
+      // scaled SVG units. Only size-derived padding/height need scaling.
       const tw = measuredTextWidth(textEl, text, size, font);
-      const pad = Math.max(2, labelOutlineThickness(conf, size) * 0.8);
-      const h = size * 1.12 + pad;
+      const pad = Math.max(renderSize(2), renderSize(labelOutlineThickness(conf, size) * 0.8));
+      const h = s * 1.12 + pad;
       let rx = x - tw / 2 - pad, ry = y - h / 2;
       if(anchor === 'start') rx = x - pad;
       else if(anchor === 'end') rx = x - tw - pad;
-      if(baseline === 'auto') ry = y - size * 0.36 - h / 2;
-      else if(baseline === 'hanging') ry = y + size * 0.36 - h / 2;
-      setAttr(plate, 'x', round2(rx)); setAttr(plate, 'y', round2(ry));
-      setAttr(plate, 'width', round2(tw + pad * 2)); setAttr(plate, 'height', round2(h));
-      setAttr(plate, 'rx', round2(Math.min(4, size * 0.25)));
+      if(baseline === 'auto') ry = y - s * 0.36 - h / 2;
+      else if(baseline === 'hanging') ry = y + s * 0.36 - h / 2;
+      setAttr(plate, 'x', rx); setAttr(plate, 'y', ry);
+      setAttr(plate, 'width', tw + pad * 2); setAttr(plate, 'height', h);
+      setAttr(plate, 'rx', Math.min(renderSize(4), s * 0.25));
       setAttr(plate, 'fill', conf.color);
     } else if(plate){
       plate.remove(); g[plateKey] = null; plate = null;
@@ -275,20 +280,21 @@
   const SEL_RING_SCALE = 1.35;
   function selRingFor(shape, w, h){
     const S = SEL_RING_SCALE;
+    const rw = renderSize(w), rh = renderSize(h), two = renderSize(2);
     let el;
     if(shape === 'square'){
-      el = document.createElementNS(NS,'rect'); el.setAttribute('x',-w/2*S); el.setAttribute('y',-h/2*S); el.setAttribute('width',w*S); el.setAttribute('height',h*S);
+      el = document.createElementNS(NS,'rect'); el.setAttribute('x',-rw/2*S); el.setAttribute('y',-rh/2*S); el.setAttribute('width',rw*S); el.setAttribute('height',rh*S);
     } else if(shape === 'diamond'){
-      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-h/2*S-2} ${w/2*S+2},0 0,${h/2*S+2} ${-w/2*S-2},0`);
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-rh/2*S-two} ${rw/2*S+two},0 0,${rh/2*S+two} ${-rw/2*S-two},0`);
     } else if(shape === 'triangleUp'){
-      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-h/2*S} ${w/2*S},${h/2*S} ${-w/2*S},${h/2*S}`);
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-rh/2*S} ${rw/2*S},${rh/2*S} ${-rw/2*S},${rh/2*S}`);
     } else if(shape === 'triangleDown'){
-      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${h/2*S} ${w/2*S},${-h/2*S} ${-w/2*S},${-h/2*S}`);
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${rh/2*S} ${rw/2*S},${-rh/2*S} ${-rw/2*S},${-rh/2*S}`);
     } else if(shape === 'hexagon'){
-      const hx = w/2*S, hy = h/2*S, mx = w/4*S;
+      const hx = rw/2*S, hy = rh/2*S, mx = rw/4*S;
       el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`${-hx+mx},${-hy} ${hx-mx},${-hy} ${hx},0 ${hx-mx},${hy} ${-hx+mx},${hy} ${-hx},0`);
     } else {
-      el = document.createElementNS(NS,'ellipse'); el.setAttribute('rx',w/2*S); el.setAttribute('ry',h/2*S);
+      el = document.createElementNS(NS,'ellipse'); el.setAttribute('rx',rw/2*S); el.setAttribute('ry',rh/2*S);
     }
     el.setAttribute('class','node-sel');
     return el;
@@ -297,7 +303,7 @@
   // element (or null). Safe to call from render passes and the fast
   // selection-sync path alike.
   function syncNodeSelRing(g: any, _n: any, shape: string, w: number, h: number, selected: boolean){
-    const selSig = shape + '|' + w + '|' + h;
+    const selSig = shape + '|' + w + '|' + h + '|' + renderScale;
     let sel = g.__sel;
     if(selected){
       if(!sel || g.__selSig !== selSig){
@@ -317,7 +323,7 @@
   // centroid), which keeps the accent band even around the tip instead of only
   // pushing the apex forward.
   function edgeArrowPoints(d, scale = 1){
-    const aw = ARROW_HW, ang = d.arrowAngle;
+    const aw = renderSize(ARROW_HW), ang = d.arrowAngle;
     const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
     const lx = d.tx + px, ly = d.ty + py;
     const rx = d.tx - px, ry = d.ty - py;
@@ -411,7 +417,7 @@
       g.__sel = sel;
     }
     setAttr(sel, 'd', accentPath);
-    setAttr(sel, 'stroke-width', Math.max(SEL_EDGE_MIN, (v && v.strokeSize ? v.strokeSize : 0) + SEL_EDGE_HALO));
+    setAttr(sel, 'stroke-width', renderSize(Math.max(SEL_EDGE_MIN, (v && v.strokeSize ? v.strokeSize : 0) + SEL_EDGE_HALO)));
     if(hasEdgeTip(e, geo)){
       if(!ring){
         ring = document.createElementNS(NS,'polygon');
@@ -553,6 +559,9 @@
   // Otherwise run a geometry-only pass right here.
   let renderCanvasActive = false;
   function syncRenderOriginRepaint(){
+    // A render-scale change is a geometry change too: write the inverse scene
+    // transform in the SAME task as the camera matrix, before any repaint.
+    syncRenderScaleDom();
     if(!renderOriginMoved) return;
     renderOriginMoved = false;
     rebaseInteractionOverlays();
@@ -895,7 +904,7 @@
     const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
     const phaseX = worldGridPhase(renderOriginX, majorX);
     const phaseY = worldGridPhase(renderOriginY, majorY);
-    const tileSig = [stepX, stepY, majorX, majorY, phaseX, phaseY, minorColor, majorColor].join('|');
+    const tileSig = [stepX, stepY, majorX, majorY, phaseX, phaseY, minorColor, majorColor, renderScale].join('|');
     // Report the decimated steps in WORLD units, where the grid is defined.
     for(const el of [gridLayer, gridLines]){
       if(!el) continue;
@@ -909,7 +918,9 @@
     const visX0 = cam.x - offX / pitch, visX1 = cam.x + cam.w + offX / pitch;
     const visY0 = cam.y - offY / pitch, visY1 = cam.y + cam.h + offY / pitch;
     const spanX = Math.max(1, visX1 - visX0), spanY = Math.max(1, visY1 - visY0);
-    const L = RENDER_COORD_LIMIT;
+    // L is in WORLD units: renderScale maps it back below RENDER_COORD_LIMIT
+    // when the SVG path is written.
+    const L = renderCoordLimit();
     if(![visX0, visX1, visY0, visY1].every(Number.isFinite) ||
        visX0 < -L || visX1 > L || visY0 < -L || visY1 > L ||
        Math.max(Math.abs(visX0), Math.abs(visX1)) / stepX > GRID_INDEX_LIMIT ||
@@ -958,10 +969,10 @@
     [firstY, lastY] = cappedRange(firstY, lastY, (visY0 + phaseY) / stepY, (visY1 + phaseY) / stepY);
     firstX = Math.max(firstX, minFirstX); lastX = Math.min(lastX, maxLastX);
     firstY = Math.max(firstY, minFirstY); lastY = Math.min(lastY, maxLastY);
-    const drawnX0 = clampRenderCoord(firstX * stepX - phaseX);
-    const drawnX1 = clampRenderCoord(lastX * stepX - phaseX);
-    const drawnY0 = clampRenderCoord(firstY * stepY - phaseY);
-    const drawnY1 = clampRenderCoord(lastY * stepY - phaseY);
+    const rawX0 = rawRenderCoord(firstX * stepX - phaseX), rawX1 = rawRenderCoord(lastX * stepX - phaseX);
+    const rawY0 = rawRenderCoord(firstY * stepY - phaseY), rawY1 = rawRenderCoord(lastY * stepY - phaseY);
+    const drawnX0 = clampRenderCoord(rawX0), drawnX1 = clampRenderCoord(rawX1);
+    const drawnY0 = clampRenderCoord(rawY0), drawnY1 = clampRenderCoord(rawY1);
     const majorEveryX = Math.max(1, Math.round(majorX / stepX));
     const majorEveryY = Math.max(1, Math.round(majorY / stepY));
     let minorD = '', majorD = '';
@@ -980,7 +991,9 @@
     setAttr(gridMajorLines, 'd', majorD.trim());
     setAttr(gridMinorLines, 'stroke', minorColor);
     setAttr(gridMajorLines, 'stroke', majorColor);
-    gridBounds = {tileSig, x0:drawnX0, x1:drawnX1, y0:drawnY0, y1:drawnY1};
+    // Cache comparisons are in raw world units; only the path strings are
+    // scaled into safe SVG coordinates.
+    gridBounds = {tileSig, x0:rawX0, x1:rawX1, y0:rawY0, y1:rawY1};
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by
@@ -1039,13 +1052,14 @@
       syncEdgeSelRing(g, e, null, d, false);
       return;
     }
-    setEdgeTextHidden(g, false);
+    const labelVisible = edgeLabelVisible(a, b);
+    setEdgeTextHidden(g, !labelVisible);
     const label = g.__label || null;
     const weight = g.__weight || null;
     const hasBoth = label && weight;
-    if(label || weight){
+    if(labelVisible && (label || weight)){
       const v = edgeVisualC(e, vc);
-      const labelOffsetY = hasBoth ? -((v.labelSize || 12) * 0.75 + 2) : 0;
+      const labelOffsetY = hasBoth ? -renderSize((v.labelSize || 12) * 0.75 + 2) : 0;
       if(label){
         setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
         // Keep the background plate (if any) glued to the moving label
@@ -1285,7 +1299,7 @@
       // Include the floating origin: absolute world endpoints unchanged by a
       // camera move still produce different SVG numbers after a rebase, so the
       // geometry cache must not hand back a path from the previous origin.
-      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}|${renderOriginX},${renderOriginY}`;
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}|${renderOriginX},${renderOriginY}|${renderScale}`;
       let d = g.__geoSig === geoSig ? g.__geoData : null;
       if(!d){
         d = edgePath(a,b,e, passVisuals);
@@ -1315,7 +1329,7 @@
       // A bulk-selected edge is highlighted by its own stroke colour: the
       // render pass is the other writer of that colour (see syncEdgeAccent).
       const lineStroke = bulkAccents && selected ? SEL_EDGE_COLOR : v.color;
-      setAttr(line, 'stroke', lineStroke); setAttr(line, 'stroke-width', v.strokeSize);
+      setAttr(line, 'stroke', lineStroke); setAttr(line, 'stroke-width', renderSize(v.strokeSize));
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
       if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
       else removeAttr(line, 'stroke-dasharray');
@@ -1334,7 +1348,8 @@
       // Compute label and weight text separately so both can be shown at once.
       // Weight is drawn ON the line midpoint; label is drawn ABOVE it (offset).
       let labelText = '', weightText = '';
-      if(showLabels && edgeVisible){
+      const labelVisible = edgeVisible && edgeLabelVisible(a, b);
+      if(showLabels && labelVisible){
         if(e.label) labelText = e.label;
         if(e.weight !== '' && e.weight != null){
           const w = edgeWeightNumber(e);
@@ -1350,7 +1365,7 @@
         }
       }
       const hasBoth = labelText && weightText;
-      const labelOffsetY = hasBoth ? -(v.labelSize * 0.75 + 2) : 0;
+      const labelOffsetY = hasBoth ? -renderSize(v.labelSize * 0.75 + 2) : 0;
       // Update or create label (drawn above weight when both present)
       let label = g.__label || null;
       if(labelText){
@@ -1363,7 +1378,7 @@
         if(label.textContent !== labelText) label.textContent = labelText;
         setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
         setAttr(label, 'fill', v.labelColor);
-        setAttr(label, 'font-size', v.labelSize);
+        setAttr(label, 'font-size', renderSize(v.labelSize));
         setAttr(label, 'font-family', v.labelFont);
         applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, labelText, v.labelSize, v.labelFont, 'middle', 'middle');
       } else if(label){
@@ -1381,7 +1396,7 @@
         if(weight.textContent !== weightText) weight.textContent = weightText;
         setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
         setAttr(weight, 'fill', v.labelColor);
-        setAttr(weight, 'font-size', v.labelSize);
+        setAttr(weight, 'font-size', renderSize(v.labelSize));
         setAttr(weight, 'font-family', v.labelFont);
         applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weightText, v.labelSize, v.labelFont, 'middle', 'middle');
       } else if(weight){
@@ -1435,9 +1450,10 @@
   // Liang–Barsky clip of the straight centre line to the safe render-space
   // square. A long edge may have both endpoints off-screen yet cross the
   // viewport; clipping its geometry keeps that visible segment instead of
-  // discarding the edge. All returned coordinates are below RENDER_COORD_LIMIT.
+  // discarding the edge. Coordinates are raw world units relative to the
+  // floating origin; the clamp helper scales them into safe SVG numbers.
   function clipEdgeSegment(x0, y0, x1, y1){
-    const L = RENDER_COORD_LIMIT;
+    const L = renderCoordLimit();
     const dx = x1 - x0, dy = y1 - y0;
     let t0 = 0, t1 = 1;
     const slab = (p, q) => {
@@ -1460,68 +1476,100 @@
       startClipped: t0 > 0, endClipped: t1 < 1
     };
   }
+  // Label visibility is decided from the ORIGINAL world midpoint, never from
+  // the clipped segment. A partially visible edge whose true midpoint is
+  // off-screen must not show a label or weight near the canvas centre. Viewport
+  // bounds are cached per camera/scale so a large render pass computes them
+  // once rather than per edge.
+  let labelViewportCache = { sig: '', bounds: null as any };
+  function edgeLabelViewport(){
+    const cam = boundedCamera(currentCamera());
+    const rect = canvasViewportRect();
+    const sig = `${cam.x},${cam.y},${cam.w},${cam.h},${rect.width},${rect.height},${renderScale}`;
+    if(sig !== labelViewportCache.sig){
+      const pitch = (rect.width && rect.height) ? Math.min(rect.width / cam.w, rect.height / cam.h) : 0;
+      const offX = (rect.width - cam.w * pitch) / 2, offY = (rect.height - cam.h * pitch) / 2;
+      labelViewportCache = pitch > 0 ? { sig, bounds: {
+        x0: cam.x - offX / pitch, x1: cam.x + cam.w + offX / pitch,
+        y0: cam.y - offY / pitch, y1: cam.y + cam.h + offY / pitch
+      }} : { sig, bounds: null };
+    }
+    return labelViewportCache.bounds;
+  }
+  function edgeLabelVisible(a, b){
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if(!isRenderablePoint(mx, my)) return false;
+    const bounds = edgeLabelViewport();
+    return Boolean(bounds) && mx >= bounds.x0 && mx <= bounds.x1 && my >= bounds.y0 && my <= bounds.y1;
+  }
   function edgePath(a,b,e,vc=null){
     const ra = nodeRadiusC(a, vc), rb = nodeRadiusC(b, vc);
     const rc = clampRenderCoord;
     const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
     const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
-    const arrowGap = e.directed ? ARROW_LEN : 2;
+    const arrowGap = e.directed ? ARROW_LEN : 2; // world units
     const empty = () => ({ path:'', labelX:0, labelY:0, tx:0, ty:0, tipX:null, tipY:null, arrowAngle:null });
     // A self-loop lives entirely around one node: if that node is outside the
     // safe render window the loop cannot have a visible segment.
     if(a.id === b.id){
       if(!isRenderablePoint(a.x, a.y)) return empty();
-      const ax = rc(rawAx), ay = rc(rawAy);
       const lane = edgeSiblingOffset(e);
       const step = lane / 30;
       const angle = -Math.PI / 2 + step * 0.62;
       const spread = 0.72;
       const loop = 78 + Math.abs(step) * 10;
-      const sx = rc(ax + Math.cos(angle - spread) * (ra + 2));
-      const sy = rc(ay + Math.sin(angle - spread) * (ra + 2));
-      const tx = rc(ax + Math.cos(angle + spread) * (ra + arrowGap));
-      const ty = rc(ay + Math.sin(angle + spread) * (ra + arrowGap));
-      const c1x = rc(ax + Math.cos(angle - spread * 0.45) * (ra + loop));
-      const c1y = rc(ay + Math.sin(angle - spread * 0.45) * (ra + loop));
-      const c2x = rc(ax + Math.cos(angle + spread * 0.45) * (ra + loop));
-      const c2y = rc(ay + Math.sin(angle + spread * 0.45) * (ra + loop));
-      const labelX = rc(ax + Math.cos(angle) * (ra + loop * 0.78));
-      const labelY = rc(ay + Math.sin(angle) * (ra + loop * 0.78));
+      // All geometry stays in raw world units until the final rc() writes.
+      const sxRaw = rawAx + Math.cos(angle - spread) * (ra + 2);
+      const syRaw = rawAy + Math.sin(angle - spread) * (ra + 2);
+      const txRaw = rawAx + Math.cos(angle + spread) * (ra + arrowGap);
+      const tyRaw = rawAy + Math.sin(angle + spread) * (ra + arrowGap);
+      const c1xRaw = rawAx + Math.cos(angle - spread * 0.45) * (ra + loop);
+      const c1yRaw = rawAy + Math.sin(angle - spread * 0.45) * (ra + loop);
+      const c2xRaw = rawAx + Math.cos(angle + spread * 0.45) * (ra + loop);
+      const c2yRaw = rawAy + Math.sin(angle + spread * 0.45) * (ra + loop);
+      const labelRawX = rawAx + Math.cos(angle) * (ra + loop * 0.78);
+      const labelRawY = rawAy + Math.sin(angle) * (ra + loop * 0.78);
+      const sx = rc(sxRaw), sy = rc(syRaw), tx = rc(txRaw), ty = rc(tyRaw);
+      const c1x = rc(c1xRaw), c1y = rc(c1yRaw), c2x = rc(c2xRaw), c2y = rc(c2yRaw);
+      const labelX = rc(labelRawX), labelY = rc(labelRawY);
       const arrowAngle = Math.atan2(ty - c2y, tx - c2x);
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = rc(tx + ac * arrowGap), tipY = rc(ty + as * arrowGap);
+      const tipX = rc(txRaw + ac * arrowGap), tipY = rc(tyRaw + as * arrowGap);
       return { path:`M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle };
     }
     const clip = clipEdgeSegment(rawAx, rawAy, rawBx, rawBy);
     if(!clip) return empty();
-    const ax = rc(clip.x0), ay = rc(clip.y0), bx = rc(clip.x1), by = rc(clip.y1);
     const dx = rawBx - rawAx, dy = rawBy - rawAy;
     const len = Math.hypot(dx,dy) || 1, ux = dx/len, uy = dy/len;
     const offset = edgeSiblingOffset(e);
+    // ORIGINAL midpoint (raw world units), independent of the clipped segment.
+    const midRawX = (rawAx + rawBx) / 2, midRawY = (rawAy + rawBy) / 2;
     // A clipped endpoint is an intersection with the safe window, not a node
     // boundary: do not reserve a radius or arrow gap there.
-    const sx = rc(clip.startClipped ? ax : ax + ux*(ra+2));
-    const sy = rc(clip.startClipped ? ay : ay + uy*(ra+2));
-    const tx = rc(clip.endClipped ? bx : bx - ux*(rb+arrowGap));
-    const ty = rc(clip.endClipped ? by : by - uy*(rb+arrowGap));
+    const sxRaw = clip.startClipped ? clip.x0 : clip.x0 + ux * (ra + 2);
+    const syRaw = clip.startClipped ? clip.y0 : clip.y0 + uy * (ra + 2);
+    const txRaw = clip.endClipped ? clip.x1 : clip.x1 - ux * (rb + arrowGap);
+    const tyRaw = clip.endClipped ? clip.y1 : clip.y1 - uy * (rb + arrowGap);
+    const sx = rc(sxRaw), sy = rc(syRaw), tx = rc(txRaw), ty = rc(tyRaw);
     if(Math.abs(offset) > 1){
-      const mx = rc((sx+tx)/2 - uy*offset), my = rc((sy+ty)/2 + ux*offset);
-      const arrowAngle = Math.atan2(ty - my, tx - mx);
+      const mxRaw = midRawX - uy * offset, myRaw = midRawY + ux * offset;
+      const mx = rc(mxRaw), my = rc(myRaw);
+      const arrowAngle = Math.atan2(tyRaw - myRaw, txRaw - mxRaw);
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = clip.endClipped ? null : rc(tx + ac * arrowGap);
-      const tipY = clip.endClipped ? null : rc(ty + as * arrowGap);
+      const tipX = clip.endClipped ? null : rc(txRaw + ac * arrowGap);
+      const tipY = clip.endClipped ? null : rc(tyRaw + as * arrowGap);
       return { path:`M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX:mx, labelY:my, tx, ty, tipX, tipY, arrowAngle };
     }
     const arrowAngle = Math.atan2(uy, ux);
-    const tipX = clip.endClipped ? null : rc(bx - ux*rb);
-    const tipY = clip.endClipped ? null : rc(by - uy*rb);
-    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:rc((sx+tx)/2), labelY:rc((sy+ty)/2), tx, ty, tipX, tipY, arrowAngle };
+    const tipX = clip.endClipped ? null : rc(clip.x1 - ux * rb);
+    const tipY = clip.endClipped ? null : rc(clip.y1 - uy * rb);
+    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:rc(midRawX), labelY:rc(midRawY), tx, ty, tipX, tipY, arrowAngle };
   }
   // A 50-unit node becomes sub-pixel when Fit spans millions of units, so
   // Chromium cannot hit-test the visible shape. Keep a transparent circular
   // target at least ~7 screen pixels across, expressed in world units and
   // refreshed whenever the camera scale changes.
-  let lastNodeHitPixelsPerWorld = 0;
+  let lastNodeHitPixelsPerWorld: any = '';
   function nodeHitPixelsPerWorld(){
     const rect = canvasViewportRect();
     updateCameraViewportAspect(rect);
@@ -1567,7 +1615,7 @@
     setAttr(hit, 'fill', geo.enlarged ? v.color : 'transparent');
     setAttr(hit, 'fill-opacity', geo.enlarged ? '0.9' : '0');
     setStyleIfChanged(hit.style, 'pointerEvents', geo.enlarged ? 'all' : 'none');
-    setAttr(hit, 'r', geo.radius);
+    setAttr(hit, 'r', renderSize(geo.radius));
     // Appending an already-last child is a remove+add mutation: during a zoom
     // burst that would reconstruct node DOM for no reason. Only move it when
     // a newly added label/plate has been inserted above it.
@@ -1575,8 +1623,9 @@
   }
   function syncNodeHitTargets(){
     const p = nodeHitPixelsPerWorld();
-    if(p === lastNodeHitPixelsPerWorld) return;
-    lastNodeHitPixelsPerWorld = p;
+    const sig = `${p}|${renderScale}`;
+    if(sig === lastNodeHitPixelsPerWorld) return;
+    lastNodeHitPixelsPerWorld = sig;
     for(const [id, g] of nodeEls){
       const n = nodeById(id);
       if(n) syncNodeHitTarget(g, nodeVisual(n));
@@ -1642,23 +1691,24 @@
       const sel = syncNodeSelRing(g, n, v.shape, w, h, selected);
       // Update or create shape (element ref stashed on the group)
       let shape = g.__shape;
-      const shapeSig = v.shape + '|' + w + '|' + h;
+      const shapeSig = v.shape + '|' + w + '|' + h + '|' + renderScale;
       const needRebuild = !shape || g.__shapeSig !== shapeSig;
       if(needRebuild){
         if(shape) shape.remove();
+        const rw = renderSize(w), rh = renderSize(h), two = renderSize(2);
         if(v.shape === 'square'){
-          shape = document.createElementNS(NS,'rect'); shape.setAttribute('x',-w/2); shape.setAttribute('y',-h/2); shape.setAttribute('width',w); shape.setAttribute('height',h);
+          shape = document.createElementNS(NS,'rect'); shape.setAttribute('x',-rw/2); shape.setAttribute('y',-rh/2); shape.setAttribute('width',rw); shape.setAttribute('height',rh);
         } else if(v.shape === 'diamond'){
-          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-h/2-2} ${w/2+2},0 0,${h/2+2} ${-w/2-2},0`);
+          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-rh/2-two} ${rw/2+two},0 0,${rh/2+two} ${-rw/2-two},0`);
         } else if(v.shape === 'triangleUp'){
-          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-h/2} ${w/2},${h/2} ${-w/2},${h/2}`);
+          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-rh/2} ${rw/2},${rh/2} ${-rw/2},${rh/2}`);
         } else if(v.shape === 'triangleDown'){
-          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${h/2} ${w/2},${-h/2} ${-w/2},${-h/2}`);
+          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${rh/2} ${rw/2},${-rh/2} ${-rw/2},${-rh/2}`);
         } else if(v.shape === 'hexagon'){
-          const hx = w/2, hy = h/2, mx = w/4;
+          const hx = rw/2, hy = rh/2, mx = rw/4;
           shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`${-hx+mx},${-hy} ${hx-mx},${-hy} ${hx},0 ${hx-mx},${hy} ${-hx+mx},${hy} ${-hx},0`);
         } else {
-          shape = document.createElementNS(NS,'ellipse'); shape.setAttribute('rx',w/2); shape.setAttribute('ry',h/2);
+          shape = document.createElementNS(NS,'ellipse'); shape.setAttribute('rx',rw/2); shape.setAttribute('ry',rh/2);
         }
         shape.setAttribute('class','node-shape');
         g.__shapeSig = shapeSig;
@@ -1670,7 +1720,7 @@
       // Update shape style attributes — de-duplicated, so untouched nodes
       // write nothing
       setAttr(shape, 'fill', v.color);
-      setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', v.strokeSize);
+      setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', renderSize(v.strokeSize));
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
       if(dash !== 'none') setAttr(shape, 'stroke-dasharray', dash);
       else removeAttr(shape, 'stroke-dasharray');
@@ -1694,10 +1744,10 @@
         setAttr(label, 'text-anchor', anchor);
         setAttr(label, 'dominant-baseline', baseline);
         setAttr(label, 'fill', v.labelColor);
-        setAttr(label, 'font-size', v.labelSize);
+        setAttr(label, 'font-size', renderSize(v.labelSize));
         setAttr(label, 'font-family', v.labelFont);
-        setAttr(label, 'x', lx); setAttr(label, 'y', ly);
-        applyLabelOutline(g, label, '__label', lx, ly, n.label, v.labelSize, v.labelFont, anchor, baseline);
+        setAttr(label, 'x', renderSize(lx)); setAttr(label, 'y', renderSize(ly));
+        applyLabelOutline(g, label, '__label', renderSize(lx), renderSize(ly), n.label, v.labelSize, v.labelFont, anchor, baseline);
       } else if(label){
         label.remove(); g.__text = null; label = null;
         removeLabelPlate(g, '__label');

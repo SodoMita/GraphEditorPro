@@ -272,16 +272,18 @@
     const P = gizmoPivot || {x:b.cx, y:b.cy};
     // SVG attribute numbers must be rebased onto the floating render origin;
     // signature/logic stay in exact world coordinates.
-    const rb = { minX:renderX(b.minX), minY:renderY(b.minY), maxX:renderX(b.maxX), maxY:renderY(b.maxY), cx:renderX(b.cx), cy:renderY(b.cy), w:b.w, h:b.h };
+    const rb = { minX:renderX(b.minX), minY:renderY(b.minY), maxX:renderX(b.maxX), maxY:renderY(b.maxY), cx:renderX(b.cx), cy:renderY(b.cy), w:renderSize(b.w), h:renderSize(b.h) };
     const px = renderX(P.x), py = renderY(P.y);
-    const u = gizmoWorldPerPixel(); // world units per screen pixel
+    // SVG attribute units = world units * renderScale. The inverse scene
+    // transform and the camera matrix cancel it back to constant screen pixels.
+    const u = gizmoWorldPerPixel() * renderScale;
     const tool: GizmoTool = gizmoTool;
     const active = gizmoDrag?.handle || '';
     const pointer = gizmoDrag?.pointer;
     const readoutText = gizmoDrag?.readout || '';
     const pivotLabel = I18N.t('gizmo_pivot');
-    const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(4), active,
-      renderOriginX, renderOriginY, readoutText, pivotLabel,
+    const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(8), active,
+      renderOriginX, renderOriginY, renderScale, readoutText, pivotLabel,
       pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
     wrap.classList.toggle('gizmo-active', true);
     const tree = getGizmoTree(tool);
@@ -407,7 +409,7 @@
   function followGizmoForPlainDrag(src: any){
     if(!gizmoRootEl || !gizmoAnchor || src === gizmoDrag) return;
     const anchorNode = nodeById(gizmoAnchor.id);
-    if(anchorNode) setAttr(gizmoRootEl, 'transform', `translate(${anchorNode.x - gizmoAnchor.x},${anchorNode.y - gizmoAnchor.y})`);
+    if(anchorNode) setAttr(gizmoRootEl, 'transform', `translate(${renderSize(anchorNode.x - gizmoAnchor.x)},${renderSize(anchorNode.y - gizmoAnchor.y)})`);
   }
 
   // === Gizmo gestures ===

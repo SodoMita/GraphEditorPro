@@ -50,18 +50,21 @@
   // absolute SVG coordinates both collapse to the same pixel. State keeps the
   // exact finite WORLD coordinates (never rewrite user data); only the numbers
   // written into SVG are rebased onto a floating render origin near the camera.
-  const SVG_COORD_LIMIT = 33554432;
   // Keep every number written into SVG comfortably below Skia's ~2^25 clamp.
   // 3e7 still leaves room for grid aprons, long-edge clipping and gizmo arms.
   const RENDER_COORD_LIMIT = 3e7;
   const RENDER_ORIGIN_SNAP = 1e6;
-  // A single affine SVG camera can show at most the safe render square centred
-  // on the floating origin. Leave one snap step of headroom for a centre that
-  // falls between 1e6 boundaries and for Fit's screen padding. The per-axis
-  // cap follows the canvas aspect ratio, so the letterboxed axis never pushes
-  // grid coordinates past ±3e7 either. Fit uses that whole safe square, so a
-  // 50,000,000-unit graph is not truncated to an arbitrary 2e7/6e7 cap.
-  const SAFE_CAMERA_HALF_SPAN = RENDER_COORD_LIMIT - RENDER_ORIGIN_SNAP;
+  // Instead of capping the world camera to a fixed safe square, choose a
+  // POWER-OF-TWO render-space scale for the whole scene. Every SVG number is
+  // multiplied by this scale; the inverse scale is written as a product of
+  // small SVG scale()s on the scene group, and the camera matrix stays in true
+  // world units. A 1422x588 Fit of a 30,000,000-unit vertical span and a
+  // 60,000,000-unit horizontal Fit therefore both keep their full size while
+  // every path/transform number remains below Skia's coordinate limit. This is
+  // not another camera clamp: camera.w/h, state, autosave and export keep the
+  // exact world viewport.
+  let renderScale = 1;
+  let renderScaleDirty = true;
   let cameraViewportAspect = 1;
   function updateCameraViewportAspect(rect: any = null){
     const r = (rect && rect.width && rect.height) ? rect
@@ -70,45 +73,115 @@
     const aspect = r.width / r.height;
     if(Number.isFinite(aspect) && aspect > 0) cameraViewportAspect = aspect;
   }
-  function maxCameraWidth(){ return 2 * SAFE_CAMERA_HALF_SPAN * Math.min(1, cameraViewportAspect); }
-  function maxCameraHeight(){ return 2 * SAFE_CAMERA_HALF_SPAN * Math.min(1, 1 / cameraViewportAspect); }
+  // The camera is not clamped to a display limit. Only sub-viewport minimums
+  // keep gestures usable; huge finite spans are handled by shrinking
+  // renderScale, never by rewriting the world camera or recentring it.
+  function maxCameraWidth(){ return Infinity; }
+  function maxCameraHeight(){ return Infinity; }
   const MIN_CAMERA_W = 100, MIN_CAMERA_H = 90;
+  // Largest WORLD distance from the floating origin that can be written into
+  // SVG after applying renderScale. Geometry is clamped in world units first,
+  // then scaled, so no attribute can exceed RENDER_COORD_LIMIT.
+  function renderCoordLimit(){ return RENDER_COORD_LIMIT / renderScale; }
+  function rawRenderCoord(value: unknown): number {
+    const L = renderCoordLimit();
+    return clamp(finite(value, 0), -L, L);
+  }
+  function renderCoord(value: unknown): number { return renderScale * rawRenderCoord(value); }
+  function renderSize(value: unknown): number { return finite(value, 0) * renderScale; }
+  // Visible half-span of the camera in world units, including letterboxing.
+  // Normalised to a viewport height of 1 so it works before layout and in the
+  // inert VM used by the state-safety tests.
+  function renderCameraHalfSpan(cam: ViewBox): number {
+    const aspect = cameraViewportAspect > 0 ? cameraViewportAspect : 1;
+    const w = Math.max(cam.w, MIN_CAMERA_W), h = Math.max(cam.h, MIN_CAMERA_H);
+    const pitch = Math.min(aspect / w, 1 / h);
+    const offX = (aspect - w * pitch) / 2, offY = (1 - h * pitch) / 2;
+    if(!(pitch > 0) || !Number.isFinite(pitch)) return Math.max(w, h) / 2;
+    return Math.max(w / 2 + offX / pitch, h / 2 + offY / pitch);
+  }
+  // Pick 2^-n <= limit/halfSpan. Powers of two make the inverse transform
+  // exact and avoid float drift between the geometry, grid and camera.
+  function safeRenderScale(cam: ViewBox): number {
+    const halfSpan = renderCameraHalfSpan(cam) + RENDER_ORIGIN_SNAP;
+    const ratio = RENDER_COORD_LIMIT / Math.max(1, halfSpan);
+    if(!(ratio > 0) || !Number.isFinite(ratio) || ratio >= 1) return 1;
+    const exponent = Math.max(-900, Math.floor(Math.log2(ratio)));
+    return 2 ** exponent;
+  }
   let renderOriginX = 0, renderOriginY = 0;
-  // Set when the origin moves during a preview-only camera update. Geometry
-  // must be rebased in the SAME task as the camera matrix write; a queued rAF
-  // lets Chromium paint one frame with the new matrix and old node positions.
+  // Set when the origin OR the render-space scale moves during a preview-only
+  // camera update. Geometry must be rebased in the SAME task as the camera
+  // matrix write; a queued rAF lets Chromium paint one frame with the new
+  // matrix and old node positions.
   let renderOriginMoved = false;
   function rawRenderX(x: unknown): number { return finite(x, 0) - renderOriginX; }
   function rawRenderY(y: unknown): number { return finite(y, 0) - renderOriginY; }
-  function renderX(x: unknown): number { return clamp(rawRenderX(x), -RENDER_COORD_LIMIT, RENDER_COORD_LIMIT); }
-  function renderY(y: unknown): number { return clamp(rawRenderY(y), -RENDER_COORD_LIMIT, RENDER_COORD_LIMIT); }
-  function clampRenderCoord(value: unknown): number { return clamp(finite(value, 0), -RENDER_COORD_LIMIT, RENDER_COORD_LIMIT); }
-  // Coordinates farther than this from the floating origin are off-screen and
+  function renderX(x: unknown): number { return renderCoord(rawRenderX(x)); }
+  function renderY(y: unknown): number { return renderCoord(rawRenderY(y)); }
+  function clampRenderCoord(value: unknown): number { return renderCoord(value); }
+  // Coordinates farther than the scaled safe window from the floating origin
   // would exceed Skia's coordinate limit if written into SVG at all. Skip the
   // node in the DOM, but keep it untouched in state/export/autosave; edges are
   // clipped instead of discarded, since a long edge can cross the viewport.
   function isRenderablePoint(x: unknown, y: unknown): boolean {
-    return Math.abs(rawRenderX(x)) <= RENDER_COORD_LIMIT && Math.abs(rawRenderY(y)) <= RENDER_COORD_LIMIT;
+    const L = renderCoordLimit();
+    return Math.abs(rawRenderX(x)) <= L && Math.abs(rawRenderY(y)) <= L;
   }
-  // Keep a camera finite and its viewport size bounded, but PRESERVE its
-  // centre when a size must be clamped (the old 20000/1e6 caps truncated
-  // fitView without recentring). The aspect-aware cap is the full ±3e7 render
-  // square with snap/padding headroom, so a 50,000,000-unit graph fits while
-  // every render-space grid/geometry number stays below Chromium's SVG
-  // coordinate limit. Coordinates are not magnitude-clamped: the floating
-  // origin keeps the SVG numbers small instead.
+  function syncRenderScaleForCamera(cam: ViewBox){
+    const next = safeRenderScale(cam);
+    if(next !== renderScale){
+      renderScale = next;
+      renderScaleDirty = true;
+      renderOriginMoved = true; // force same-task geometry repaint
+      invalidateGridCache();
+    }
+  }
+  // The inverse of renderScale is a power of two. Express it as a product of
+  // small scale() operations (each <= 2^20) so even a 1e20-unit camera never
+  // writes an SVG transform number above Skia's ~2^25 limit.
+  function renderScaleInverseText(): string | null {
+    if(renderScale >= 1) return null;
+    let exponent = Math.round(-Math.log2(renderScale));
+    const parts: string[] = [];
+    while(exponent > 20){ parts.push('scale(1048576)'); exponent -= 20; }
+    if(exponent > 0 || !parts.length) parts.push(`scale(${2 ** exponent})`);
+    return parts.join(' ');
+  }
+  function syncRenderScaleDom(){
+    if(!renderScaleDirty) return;
+    renderScaleDirty = false;
+    const text = renderScaleInverseText();
+    if(sceneLayer){
+      if(text === null){
+        if(sceneLayer.hasAttribute('transform')) sceneLayer.removeAttribute('transform');
+      } else if(sceneLayer.getAttribute('transform') !== text){
+        sceneLayer.setAttribute('transform', text);
+      }
+      try { sceneLayer.style.setProperty('--render-scale', String(renderScale)); } catch { /* inert VM */ }
+    }
+    if(svg){
+      const marker = String(renderScale);
+      if(svg.getAttribute('data-render-scale') !== marker) svg.setAttribute('data-render-scale', marker);
+    }
+  }
+  // Keep a camera finite and preserve its centre. There is NO upper display
+  // clamp: the render-space scale adapts to the full world viewport instead of
+  // truncating fitView or a loaded camera.
   function boundedCamera(camera: any): ViewBox {
     const x = finite(camera?.x, 0), y = finite(camera?.y, 0);
     const ow = finite(camera?.w, 1000), oh = finite(camera?.h, 660);
     const w = clamp(ow, MIN_CAMERA_W, maxCameraWidth());
     const h = clamp(oh, MIN_CAMERA_H, maxCameraHeight());
-    return { x: x + ow / 2 - w / 2, y: y + oh / 2 - h / 2, w, h };
+    const cam = { x: x + (ow - w) / 2, y: y + (oh - h) / 2, w, h };
+    syncRenderScaleForCamera(cam);
+    return cam;
   }
-  // One floating origin for every surface inside g#cameraLayer. It changes only
+  // One floating origin for every surface inside the scene. It changes only
   // when the camera centre moves past a 1e6 snap boundary, so ordinary
   // pans/zooms are still a single matrix write; crossing one forces a geometry
-  // repaint. Snapping to the CENTRE (not the left edge) keeps both ends of a
-  // 50,000,000-unit Fit inside the ±3e7 safe square.
+  // repaint. Snapping to the CENTRE keeps both ends of a huge Fit centred in
+  // the scaled safe window.
   function ensureRenderOrigin(camera: any){
     const cam = boundedCamera(camera);
     const ox = Math.round((cam.x + cam.w / 2) / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
@@ -271,6 +344,7 @@
   // gesture previews and committed cameras write the same matrix here, so there
   // is no second surface, no compositor handoff and no clipped world content.
   const cameraLayer = $('#cameraLayer');
+  const sceneLayer = $('#sceneLayer');
   const edgesLayer = $('#edgesLayer');
   const nodesLayer = $('#nodesLayer');
   const dragLine = $('#dragLine');
