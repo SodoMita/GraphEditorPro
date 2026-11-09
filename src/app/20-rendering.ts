@@ -216,6 +216,79 @@
       if(plate){ if(hidden) setAttr(plate, 'display', 'none'); else removeAttr(plate, 'display'); }
     }
   }
+
+  // Label/weight content is independent of camera visibility. Keeping the text
+  // elements (hidden, not removed) for a visible-but-off-centre midpoint lets a
+  // plain pan re-show them without a full render pass; only an EMPTY path
+  // removes them, preserving the fully-clipped ghost-label fix.
+  function edgeLabelWeightText(e, showLabels = shouldShowLabels()){
+    let labelText = '', weightText = '';
+    if(!showLabels) return {labelText, weightText};
+    const gd = state.settings.graphDefaults || {};
+    const weightMode = gd.edgeWeightMode || 'number';
+    const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
+    if(e.label) labelText = e.label;
+    if(e.weight !== '' && e.weight != null){
+      const w = edgeWeightNumber(e);
+      if(w != null){
+        if(weightMode === 'number') weightText = e.weight;
+        else if((weightMode === 'color' || weightMode === 'width') && !isWeightInRange(w, wMin, wMax)) weightText = e.weight;
+      }
+    }
+    return {labelText, weightText};
+  }
+  function paintEdgeText(g, d, v, labelText, weightText, visible){
+    if(!d.path || (!labelText && !weightText)){
+      clearEdgeText(g, 'label'); clearEdgeText(g, 'weight');
+      return;
+    }
+    const hasBoth = Boolean(labelText && weightText);
+    const labelOffsetY = hasBoth ? -renderSize((v.labelSize || 12) * 0.75 + 2) : 0;
+    let label = g.__label || null;
+    if(labelText){
+      if(!label){
+        label = document.createElementNS(NS,'text');
+        label.setAttribute('class','edge-label');
+        label.setAttribute('text-anchor','middle'); label.setAttribute('dominant-baseline','middle');
+        g.appendChild(label); g.__label = label;
+      }
+      if(label.textContent !== labelText) label.textContent = labelText;
+      setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
+      setAttr(label, 'fill', v.labelColor);
+      setAttr(label, 'font-size', renderSize(v.labelSize));
+      setAttr(label, 'font-family', v.labelFont);
+      applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, labelText, v.labelSize, v.labelFont, 'middle', 'middle');
+    } else if(label){ clearEdgeText(g, 'label'); label = null; }
+    let weight = g.__weight || null;
+    if(weightText){
+      if(!weight){
+        weight = document.createElementNS(NS,'text');
+        weight.setAttribute('class','edge-weight');
+        weight.setAttribute('text-anchor','middle'); weight.setAttribute('dominant-baseline','middle');
+        g.appendChild(weight); g.__weight = weight;
+      }
+      if(weight.textContent !== weightText) weight.textContent = weightText;
+      setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
+      setAttr(weight, 'fill', v.labelColor);
+      setAttr(weight, 'font-size', renderSize(v.labelSize));
+      setAttr(weight, 'font-family', v.labelFont);
+      applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weightText, v.labelSize, v.labelFont, 'middle', 'middle');
+    } else if(weight){ clearEdgeText(g, 'weight'); weight = null; }
+    setEdgeTextHidden(g, !visible);
+  }
+  // A pan/wheel/pinch changes only the camera matrix. Re-evaluate midpoint
+  // visibility in that same task so hidden labels reappear without waiting for
+  // a document render that may never be scheduled.
+  function syncEdgeLabelVisibility(){
+    const showLabels = shouldShowLabels();
+    for(const [id, g] of edgeEls){
+      const e = edgeById(id); if(!e) continue;
+      const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) continue;
+      const d = g.__geoData;
+      const visible = showLabels && Boolean(d && d.path) && edgeLabelVisible(a, b);
+      setEdgeTextHidden(g, !visible);
+    }
+  }
   // === DOM write de-duplication ===
   // Every write to rendered graph elements goes through these helpers, which
   // skip the DOM entirely when the value equals the last write: unchanged
@@ -779,7 +852,14 @@
     return sr;
   }
   function cameraMatrixText(matrix){
-    const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
+    // toFixed(12) destroyed small non-zero scales: a 1e15-unit Fit rounded to
+    // 1e-12 and a 2e15-unit Fit wrote scale 0. Keep 15 SIGNIFICANT digits
+    // (shortest round-trip precision) so tiny scales survive serialization.
+    const clean = value => {
+      const v = Number(value);
+      if(!Number.isFinite(v) || v === 0) return 0;
+      return Number(v.toPrecision(15));
+    };
     // SVG transform attribute, in SVG user units (the root viewBox supplies
     // the user -> screen scale afterwards). Space separators are intentional.
     return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
@@ -824,6 +904,7 @@
     syncRenderOriginRepaint();
     setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(cam, REFERENCE_VIEWBOX, projViewport)));
     updateGridBackground(cam, projViewport);
+    syncEdgeLabelVisibility();
     return (viewport.width && viewport.height) ? viewport : null;
   }
   function applyPreviewCamera(preview, rect=null){
@@ -892,12 +973,33 @@
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const pitch = Math.min(rect.width / cam.w, rect.height / cam.h);
     if(!(pitch > 0) || !Number.isFinite(pitch)){ clearGridPaths(); gridBounds = null; return; }
+    // Visible world rectangle (including letterboxing) is needed by the
+    // decimation budget below.
+    const offX = (rect.width - cam.w * pitch) / 2;
+    const offY = (rect.height - cam.h * pitch) / 2;
+    const visX0 = cam.x - offX / pitch, visX1 = cam.x + cam.w + offX / pitch;
+    const visY0 = cam.y - offY / pitch, visY1 = cam.y + cam.h + offY / pitch;
+    const spanX = Math.max(1, visX1 - visX0), spanY = Math.max(1, visY1 - visY0);
     // Zoom-adaptive decimation: when a cell would shrink below the readable
     // minimum on screen, draw every k-th cell. Integer multiples keep the lines
     // locked to world coordinates instead of drifting relative to the nodes.
     const GRID_MIN_PX = 8;
-    const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(gx * pitch, 1e-6)));
-    const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(gy * pitch, 1e-6)));
+    // Do NOT floor the pitch at 1e-6: at a 1e13-unit Fit that limited the
+    // decimation to 3.2e8 world units, so the 4,000-segment cap retained only
+    // a ~178px-wide central strip. Also bound the step by the segment budget
+    // (visible range + apron + bucket padding), so the cap never crops the
+    // viewport even when the 8px readability rule alone is not enough.
+    const GRID_BUCKET = 256;
+    const segmentBudget = Math.max(1, MAX_GRID_LINES - 2 * GRID_BUCKET);
+    const decimationFactor = (base, span) => {
+      const product = base * pitch;
+      const readable = product > 0 && Number.isFinite(GRID_MIN_PX / product)
+        ? Math.ceil(GRID_MIN_PX / product) : 1;
+      const budget = Math.ceil((7 * Math.max(1, span)) / (base * segmentBudget));
+      return Math.max(1, readable, budget);
+    };
+    const stepX = gx * decimationFactor(gx, spanX);
+    const stepY = gy * decimationFactor(gy, spanY);
     const majorX = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
     const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
     const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
@@ -913,11 +1015,6 @@
       setAttr(el, 'data-major-x', String(majorX));
       setAttr(el, 'data-major-y', String(majorY));
     }
-    const offX = (rect.width - cam.w * pitch) / 2;
-    const offY = (rect.height - cam.h * pitch) / 2;
-    const visX0 = cam.x - offX / pitch, visX1 = cam.x + cam.w + offX / pitch;
-    const visY0 = cam.y - offY / pitch, visY1 = cam.y + cam.h + offY / pitch;
-    const spanX = Math.max(1, visX1 - visX0), spanY = Math.max(1, visY1 - visY0);
     // L is in WORLD units: renderScale maps it back below RENDER_COORD_LIMIT
     // when the SVG path is written.
     const L = renderCoordLimit();
@@ -944,7 +1041,7 @@
     const apronX = Math.min(spanX * 3, L / 4), apronY = Math.min(spanY * 3, L / 4);
     const drawX0 = Math.max(-L, visX0 - apronX), drawX1 = Math.min(L, visX1 + apronX);
     const drawY0 = Math.max(-L, visY0 - apronY), drawY1 = Math.min(L, visY1 + apronY);
-    const bucket = 256;
+    const bucket = GRID_BUCKET;
     let firstX = Math.floor((drawX0 + phaseX) / stepX) - 1;
     let lastX = Math.ceil((drawX1 + phaseX) / stepX) + 1;
     let firstY = Math.floor((drawY0 + phaseY) / stepY) - 1;
@@ -1045,31 +1142,18 @@
     const line = g.__line || el.querySelector('.edge-line'); if(line) setAttr(line, 'd', d.path);
     const hit = g.__hit || el.querySelector('.edge-hit'); if(hit) setAttr(hit, 'd', d.path);
     if(!d.path){
-      // A fully clipped edge has no line to label. Hide the existing text and
-      // plates in place (no DOM churn during a drag) and drop the arrow/accent.
-      setEdgeTextHidden(g, true);
+      // A fully clipped edge has no line to label: remove text/plates so no
+      // ghost can reappear on a later camera-only update.
+      paintEdgeText(g, d, null, '', '', false);
       if(g.__arrow){ g.__arrow.remove(); g.__arrow = null; }
       syncEdgeSelRing(g, e, null, d, false);
       return;
     }
+    // The fast writer must CREATE text elements too: dragging an endpoint into
+    // view can turn an empty/edge-hidden midpoint into a visible one.
     const labelVisible = edgeLabelVisible(a, b);
-    setEdgeTextHidden(g, !labelVisible);
-    const label = g.__label || null;
-    const weight = g.__weight || null;
-    const hasBoth = label && weight;
-    if(labelVisible && (label || weight)){
-      const v = edgeVisualC(e, vc);
-      const labelOffsetY = hasBoth ? -renderSize((v.labelSize || 12) * 0.75 + 2) : 0;
-      if(label){
-        setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
-        // Keep the background plate (if any) glued to the moving label
-        applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, label.textContent || '', v.labelSize, v.labelFont, 'middle', 'middle');
-      }
-      if(weight){
-        setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
-        applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weight.textContent || '', v.labelSize, v.labelFont, 'middle', 'middle');
-      }
-    }
+    const texts = edgeLabelWeightText(e);
+    paintEdgeText(g, d, edgeVisualC(e, vc), texts.labelText, texts.weightText, labelVisible);
     // Update arrow tip position/angle during drag
     const arrow = g.__arrow || null;
     if(arrow && hasEdgeTip(e, d)) setAttr(arrow, 'points', edgeArrowPoints(d));
@@ -1216,9 +1300,6 @@
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
-    const gd = state.settings.graphDefaults || {};
-    const weightMode = gd.edgeWeightMode || 'number';
-    const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
     // A pass whose document revision matches the last painted one has nothing
     // geometric or label-related to recompute; `genAtStart` lets an element
     // whose stamp is already current skip its frame entirely.
@@ -1345,63 +1426,12 @@
       } else if(arrow){
         arrow.remove(); g.__arrow = null; arrow = null;
       }
-      // Compute label and weight text separately so both can be shown at once.
-      // Weight is drawn ON the line midpoint; label is drawn ABOVE it (offset).
-      let labelText = '', weightText = '';
+      // Labels/weights are created whenever the edge has a visible path, then
+      // hidden (not removed) when the ORIGINAL midpoint is off-screen. A camera
+      // pan can therefore re-show them without a full render pass.
       const labelVisible = edgeVisible && edgeLabelVisible(a, b);
-      if(showLabels && labelVisible){
-        if(e.label) labelText = e.label;
-        if(e.weight !== '' && e.weight != null){
-          const w = edgeWeightNumber(e);
-          if(w != null){
-            if(weightMode === 'number'){
-              weightText = e.weight;
-            } else if(weightMode === 'color' || weightMode === 'width'){
-              // Show number only when weight is outside the configured range
-              if(!isWeightInRange(w, wMin, wMax)) weightText = e.weight;
-            }
-            // 'none' mode: never show weight as text
-          }
-        }
-      }
-      const hasBoth = labelText && weightText;
-      const labelOffsetY = hasBoth ? -renderSize(v.labelSize * 0.75 + 2) : 0;
-      // Update or create label (drawn above weight when both present)
-      let label = g.__label || null;
-      if(labelText){
-        if(!label){
-          label = document.createElementNS(NS,'text');
-          label.setAttribute('class','edge-label');
-          label.setAttribute('text-anchor','middle'); label.setAttribute('dominant-baseline','middle');
-          g.appendChild(label); g.__label = label;
-        }
-        if(label.textContent !== labelText) label.textContent = labelText;
-        setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
-        setAttr(label, 'fill', v.labelColor);
-        setAttr(label, 'font-size', renderSize(v.labelSize));
-        setAttr(label, 'font-family', v.labelFont);
-        applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, labelText, v.labelSize, v.labelFont, 'middle', 'middle');
-      } else if(label){
-        clearEdgeText(g, 'label'); label = null;
-      }
-      // Update or create weight text (drawn on the line midpoint)
-      let weight = g.__weight || null;
-      if(weightText){
-        if(!weight){
-          weight = document.createElementNS(NS,'text');
-          weight.setAttribute('class','edge-weight');
-          weight.setAttribute('text-anchor','middle'); weight.setAttribute('dominant-baseline','middle');
-          g.appendChild(weight); g.__weight = weight;
-        }
-        if(weight.textContent !== weightText) weight.textContent = weightText;
-        setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
-        setAttr(weight, 'fill', v.labelColor);
-        setAttr(weight, 'font-size', renderSize(v.labelSize));
-        setAttr(weight, 'font-family', v.labelFont);
-        applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weightText, v.labelSize, v.labelFont, 'middle', 'middle');
-      } else if(weight){
-        clearEdgeText(g, 'weight'); weight = null;
-      }
+      const texts = edgeLabelWeightText(e, showLabels);
+      paintEdgeText(g, d, v, texts.labelText, texts.weightText, labelVisible && showLabels);
       // This element now matches the document at this generation.
       const painted = existing.get(e.id);
       if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
@@ -1586,7 +1616,10 @@
     const halfMin = Math.min(v.width, v.height) / 2;
     const shapeRadiusPx = Math.max(v.width, v.height) / 2 * p;
     const enlarged = shapeRadiusPx < 3;
-    const dotRadius = Math.min(RENDER_COORD_LIMIT / 2, 7 / p);
+    // The cap is on the SCALED SVG number, so in world units it is the
+    // scaled render window / renderScale. A 1e12-unit Fit needs ~5e9 world
+    // units for a 7px dot; the old fixed 1.5e7 cap made it 0.042px wide.
+    const dotRadius = Math.min(renderCoordLimit() / 2, 7 / p);
     return {
       enlarged,
       radius: enlarged ? dotRadius : Math.max(1, halfMin),
