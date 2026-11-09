@@ -104,12 +104,12 @@
     const useField = (el: any) => Boolean(el && (el === sourceEl || isCameraInputEdited(el)));
     const baseCx = base.x + base.w/2;
     const baseCy = base.y + base.h/2;
-    const cx = useField(xEl) ? finite(xEl.value, baseCx) : baseCx;
-    const cy = useField(yEl) ? finite(yEl.value, baseCy) : baseCy;
+    const cx = safeWorldCoord(useField(xEl) ? finite(xEl.value, baseCx) : baseCx, 0);
+    const cy = safeWorldCoord(useField(yEl) ? finite(yEl.value, baseCy) : baseCy, 0);
     const w = clamp(useField(wEl) ? finite(wEl.value, base.w) : base.w, 100, 20000);
     const h = clamp(useField(hEl) ? finite(hEl.value, base.h) : base.h, 90, 20000);
     cancelZoomPreview();
-    state.viewBox = { x: cx - w/2, y: cy - h/2, w, h };
+    state.viewBox = { x: safeWorldCoord(cx - w/2, 0), y: safeWorldCoord(cy - h/2, 0), w, h };
     applyCamera();
     saveSoon();
     syncCameraInputs(true);
@@ -124,8 +124,8 @@
   function centerOnNode(n){
     if(!n) return;
     flushZoomPreview();
-    state.viewBox.x = n.x - state.viewBox.w/2;
-    state.viewBox.y = n.y - state.viewBox.h/2;
+    state.viewBox.x = safeWorldCoord(n.x - state.viewBox.w/2, 0);
+    state.viewBox.y = safeWorldCoord(n.y - state.viewBox.h/2, 0);
     applyCamera(); saveSoon(); syncCameraInputs();
   }
   function centerOnSelection(){

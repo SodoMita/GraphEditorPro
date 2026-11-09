@@ -361,3 +361,181 @@ test('grid lines stay locked to world coordinates and never re-phase on a commit
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a saved camera with astronomically large finite coordinates loads without hanging', async () => {
+  const graph = {
+    ...smallGraph(),
+    viewBox: { x: 1e20, y: -1e20, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  // The old world-cell loops incremented an absolute k past 2^53, where k++
+  // is a no-op: this test would never return on that code path.
+  const m = cameraMatrix(camera);
+  for (const value of [m.scale, m.tx, m.ty]) {
+    assert.ok(Number.isFinite(value), `camera matrix value ${value} is finite`);
+    assert.ok(Math.abs(value) <= 1e12, `camera matrix value ${value} is bounded`);
+  }
+  const minorD = document.getElementById('gridMinorLines').getAttribute('d') || '';
+  const majorD = document.getElementById('gridMajorLines').getAttribute('d') || '';
+  assert.ok(minorD.length + majorD.length < 500000, 'grid paths stay bounded');
+  for (const raw of (minorD + majorD).match(/-?\d+(?:\.\d+)?/g) || []) {
+    assert.ok(Number.isFinite(Number(raw)), `grid coordinate ${raw} is finite`);
+  }
+  // Navigation from that camera must also stay responsive.
+  svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 500, clientY: 330, deltaY: -100 }));
+  await nextFrame(window);
+  assert.ok(camera.getAttribute('transform'), 'the camera still has a matrix after a wheel event');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('camera inputs reject unbounded coordinates', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  const input = document.getElementById('cameraX');
+  input.value = '1e20';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  const m = cameraMatrix(camera);
+  assert.ok(Number.isFinite(m.tx) && Math.abs(m.tx) <= 1e12, `camera translation ${m.tx} is bounded`);
+  assert.ok(Number(input.value) <= 1e9, 'the sidebar reports the clamped camera, not 1e20');
+  assert.ok((document.getElementById('gridMinorLines').getAttribute('d') || '').length < 500000,
+    'grid paths stay bounded after the camera input');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('grid style changes during a pending zoom preview keep covering the previewed camera', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  // Zoom OUT around an off-centre cursor: the preview shows a much wider
+  // world range than the still-committed state.viewBox.
+  for (let i = 0; i < 6; i++) {
+    svg.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 300, clientY: 200, deltaY: 100 }));
+  }
+  await nextFrame(window);
+  const previewTransform = camera.getAttribute('transform');
+  assert.ok(previewTransform && previewTransform !== 'matrix(1 0 0 1 0 0)', 'a zoom-out preview is active');
+  assert.equal(Number(document.getElementById('cameraW').value), 1000,
+    'the sidebar still shows the committed camera while the preview is pending');
+  const before = assertGridCoversViewport(document, camera, 'zoom-out preview');
+
+  // A grid colour input calls updateGridBackground() with NO camera argument.
+  // It must use the active preview, not the committed camera, or the grid
+  // contracts to a small central rectangle until the debounce commits.
+  const color = document.getElementById('gridMinorColor');
+  color.value = '#ff0000';
+  color.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(camera.getAttribute('transform'), previewTransform,
+    'a style change never repaints the camera');
+  assert.match(document.getElementById('gridMinorLines').getAttribute('stroke'), /255,\s*0,\s*0/,
+    'the style handler actually repainted the grid');
+  const during = assertGridCoversViewport(document, camera, 'style change during preview');
+  assert.equal(during.range.x0, before.range.x0, 'grid x0 does not contract');
+  assert.equal(during.range.x1, before.range.x1, 'grid x1 does not contract');
+  assert.equal(during.range.y0, before.range.y0, 'grid y0 does not contract');
+  assert.equal(during.range.y1, before.range.y1, 'grid y1 does not contract');
+
+  await settle(window, 260);
+  assertGridCoversViewport(document, camera, 'after the preview commits');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('grid style changes during a pending pan preview keep covering the previewed camera', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  document.getElementById('modeMove').click();
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 200, clientY: 200 });
+  // Pan far beyond the committed camera's grid apron. A style handler that
+  // falls back to state.viewBox would visibly crop the grid here.
+  dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 30000, clientY: 200 });
+  await nextFrame(window);
+  const previewTransform = camera.getAttribute('transform');
+  assert.notEqual(previewTransform, 'matrix(1 0 0 1 0 0)', 'a pan preview is active');
+  const before = assertGridCoversViewport(document, camera, 'pan preview');
+
+  const color = document.getElementById('gridMajorColor');
+  color.value = '#00ff00';
+  color.dispatchEvent(new window.Event('input', { bubbles: true }));
+  // change -> pushHistory() may queue an unrelated render; that render must
+  // adopt the preview instead of snapping #cameraLayer back to the committed
+  // camera.
+  color.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(camera.getAttribute('transform'), previewTransform, 'the pan preview is untouched');
+  assert.match(document.getElementById('gridMajorLines').getAttribute('stroke'), /0,\s*255,\s*0/,
+    'the major grid was repainted');
+  const during = assertGridCoversViewport(document, camera, 'style change during pan');
+  assert.equal(during.range.x0, before.range.x0, 'grid x0 does not jump back to the committed camera');
+  assert.equal(during.range.x1, before.range.x1, 'grid x1 does not jump back');
+  assert.equal(during.stepX, before.stepX, 'grid decimation does not jump back');
+
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 30000, clientY: 200 });
+  assertGridCoversViewport(document, camera, 'after the pan commits');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('grid style changes during a pending pinch preview keep the previewed camera', async () => {
+  const { dom, errors } = createEditorDom(smallGraph());
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  // Two touch pointers: an extreme zoom-out preview changes both the visible
+  // world range and the grid decimation from the committed camera.
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 330 });
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 800, clientY: 330 });
+  // Pinch IN (fingers together) zooms out the logical camera.
+  dispatchPointer(window, svg, 'pointermove', { pointerId: 1, pointerType: 'touch', clientX: 485, clientY: 330 });
+  dispatchPointer(window, svg, 'pointermove', { pointerId: 2, pointerType: 'touch', clientX: 515, clientY: 330 });
+  await nextFrame(window);
+  const previewTransform = camera.getAttribute('transform');
+  const before = assertGridCoversViewport(document, camera, 'pinch preview');
+  assert.ok(before.stepX > 40, `pinch preview decimates the grid (got ${before.stepX})`);
+
+  const color = document.getElementById('gridMinorColor');
+  color.value = '#ff0000';
+  color.dispatchEvent(new window.Event('input', { bubbles: true }));
+  color.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(camera.getAttribute('transform'), previewTransform, 'the pinch preview is untouched');
+  assert.match(document.getElementById('gridMinorLines').getAttribute('stroke'), /255,\s*0,\s*0/,
+    'the minor grid was repainted');
+  const during = assertGridCoversViewport(document, camera, 'style change during pinch');
+  assert.equal(during.stepX, before.stepX, 'grid decimation still matches the pinch preview');
+  assert.equal(during.range.x0, before.range.x0, 'grid x0 does not jump back');
+  assert.equal(during.range.x1, before.range.x1, 'grid x1 does not jump back');
+
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, pointerType: 'touch', clientX: 485, clientY: 330 });
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 515, clientY: 330 });
+  assertGridCoversViewport(document, camera, 'after the pinch commits');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

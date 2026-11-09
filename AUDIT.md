@@ -31,7 +31,7 @@ A genuinely well-engineered single-file app: the build is reproducible, the sani
 These are README claims I checked and can confirm:
 
 - **Reproducible build.** `node scripts/clean.mjs && tsc && node scripts/build.mjs && node scripts/check-static.mjs` regenerates `index.html` (628,140 bytes) with **no diff** against the committed artifact.
-- **Type-check + tests.** `npm run check`: 62/62 tests pass, no type errors.
+- **Type-check + tests.** `npm run check`: 62/62 tests pass at the audited revision, no type errors; the current branch passes 124/124 (§6.1).
 - **Supply chain.** 60 packages, all `devDependencies`, `npm audit` reports 0 vulnerabilities; the shipped HTML has no runtime dependencies.
 - **Offline guarantees.** The static check passes and I confirmed the output has exactly one inline `<script>`, one `<style>`, no `fetch`/`XMLHttpRequest`/`WebSocket`/`EventSource`/`eval`/`new Function`/`document.write`, and no external URLs.
 - **Escaping.** I pushed `<img onerror>`, `<svg onload>`, `<textarea onfocus>` and `<option onfocus>` payloads through node labels, types, edge labels, edge weights and custom-attribute IDs, then forced the canvas, selection panel, matrix, edge list and all five tabs to render: **no element injection, no script execution** (`window.__xss` stayed 0). All interpolations I reviewed go through `esc()` or `textContent`.
@@ -47,6 +47,8 @@ These are README claims I checked and can confirm:
   | 1200 n | wheel | 6 / 202 | 2.8 ms | 0 | 20 |
 
   The camera is one absolute `transform` on the SVG `g#cameraLayer`; the root `viewBox` is a fixed reference frame and is never used as a camera. The `will-change:transform` hint on that group keeps a camera change to one attribute write, so per-update style+layout stays in the low milliseconds even at 1200 nodes. Compare `node scripts/perf-bench.mjs --build name=directory` against the pre-PR30 build to reproduce the A/B.
+
+  **Trade-off, not equivalence.** A separate two-run 1,200-node measurement against the PR #33 base (the branch point of PR #34) reported ~3.1 ms/update of wheel style/layout here against ~0.2 ms there; a rerun of the committed harness measured 2.1–2.5 ms against 0.1 ms. That base's CSS-gradient grid and wrapper-`DIV` camera avoid SVG style/layout but also have the known clipping, blank-grid and wrong-preview defects. The two builds are therefore **not** equivalently correct, and the 0.2 ms figure must not be read as a regression against a working renderer. Against the pre-PR30 in-SVG baseline the harness reports comparable style/layout (2.5 ms vs 2.3 ms) and fewer dropped wheel frames (14 vs 23). Wheel zoom can regenerate the world-space grid paths when integer decimation changes; pan/wheel previews that stay inside the apron write only the camera matrix.
 - **Sanitizer.** Size caps (3000 nodes / 8000 edges), ID normalisation, dangling-edge dropping, colour/shape/range validation and prototype-free style maps are all present and covered by tests.
 - **Real-browser sanity.** Add node, drag, undo, language switch, matrix edit and a tour of all five tabs produced **no console errors or exceptions**.
 
@@ -219,7 +221,7 @@ The rest is better than typical: roving `tabindex` + arrow keys on the tablist, 
 
 ## 4. Test and tooling gaps
 
-- **No parser tests at all.** The 62 tests cover camera mechanics, gizmos, selection, styles, caching, sanitizer and static-output invariants, but not one exercises `parseDot` / `parseGraphml` / `import*Csv`. That is why P1-1, P1-2 and P1-3 shipped green.
+- **No parser tests at all.** The suite covers camera mechanics, gizmos, selection, styles, caching, sanitizer and static-output invariants, but not one exercises `parseDot` / `parseGraphml` / `import*Csv`. That is why P1-1, P1-2 and P1-3 shipped green.
 - **No round-trip tests.** A single "export each format → import → deep-equal the graph" test per format would have caught P1-1 and most of P1-2.
 - **App coverage is unmeasurable.** Tests run the compiled bundle inside jsdom (a separate V8 context), so `node --experimental-test-coverage` reports 99.8 % on the *test files* and nothing on `src/app`. Instrument `index.html` at build time (or run the suite against the compiled JS) to get real numbers.
 - **No real-browser test in the suite.** Playwright is a dependency, but only the perf script uses it; `tests/browser-smoke.test.mjs` is jsdom. Given the compositor/camera design, at least one Chromium smoke test would be worth its runtime.
@@ -293,11 +295,21 @@ Verification after this second round: `npm run check` passes with **84 tests** (
 
 ---
 
+## 6.1 PR #34 re-verification and the two P2 follow-ups
+
+- `npm run check` on this branch: typecheck clean, **124/124 tests pass**, rebuilt `index.html` is **698,530 bytes** and the static-output gate passes. The added regressions cover a saved `viewBox.x: 1e20`, a `1e20` camera input, and grid-colour changes during pending wheel, pan and pinch previews.
+- Real Chromium 149: the final build and the PR #33 base both load the `1e20` camera in ~125 ms; the pre-fix PR #34 build times out after 10 s in the same harness. After 30 zoom-out wheel steps, a grid-colour `input` contracts the old grid to a central rectangle; the final build keeps the grid filling the viewport with the preview matrix unchanged.
+- Safety invariants: camera/node coordinates are clamped to ±1e9 at ingestion and at every camera-producing path; grid enumeration uses a bounded local index with a 4,000-segment cap and an index-magnitude guard instead of an absolute `k++`. `currentCamera()` covers wheel zoom, pan and pinch previews, and both style handlers and `applyCamera()` use that active camera.
+- The base's ~0.2 ms style/layout figure is preserved above as a qualified trade-off, not as evidence that the base was equally correct.
+
+
+---
+
 ## 7. Appendix — how to reproduce
 
 ```bash
 npm ci
-npm run check                    # typecheck + build + 84 tests (~50 s)
+npm run check                    # typecheck + build + 124 tests (~75 s)
 git diff --exit-code index.html  # rebuild is byte-identical
 
 # headless browser (note: script needs ROOT exported as committed)

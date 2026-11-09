@@ -668,13 +668,18 @@
     // editing labels during the 220ms zoom debounce) never snap back to the
     // pre-zoom camera. Explicit camera-replacement callers (fitView,
     // resetCamera, setCameraFromInputs, undo/redo, import) cancel first.
-    if(zoomPreview){
-      state.viewBox = {...zoomPreview.preview};
-      cancelZoomPreview();
-      saveSoon();
+    if(zoomPreview || pan || pinch){
+      // Adopt the clamped ACTIVE camera (wheel zoom, pan or pinch) before
+      // rendering so an unrelated re-render during a gesture cannot snap back
+      // to the pre-gesture camera. A style change may also queue a render via
+      // pushHistory; that path must see the preview too, not state.viewBox.
+      state.viewBox = {...currentCamera()};
+      if(zoomPreview){ cancelZoomPreview(); saveSoon(); }
     }
-    const viewport = applyCameraTransform(state.viewBox);
-    updateGridBackground(state.viewBox, viewport);
+    // applyCameraTransform() owns the grid update; it uses the same camera as
+    // the matrix, so a style handler that fires during a preview cannot see a
+    // different (committed) camera here.
+    applyCameraTransform(currentCamera());
     syncCameraInputs();
     // Gizmo handles are sized in screen pixels, so a committed zoom change
     // re-sizes them in place (signature-guarded: a no-op when nothing changed).
@@ -754,8 +759,9 @@
     const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
     // Always derived from the fixed reference frame, never composed with the
     // previous frame's matrix, so no drift can accumulate across gestures.
-    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, projViewport)));
-    updateGridBackground(camera, projViewport);
+    const cam = safeCamera(camera);
+    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(cam, REFERENCE_VIEWBOX, projViewport)));
+    updateGridBackground(cam, projViewport);
     return (viewport.width && viewport.height) ? viewport : null;
   }
   function applyPreviewCamera(preview, rect=null){
@@ -775,17 +781,48 @@
   function setStyleIfChanged(style, property, value){
     if(style[property] !== value) style[property] = value;
   }
-  let gridSig = '';
-  function invalidateGridCache(){ gridSig = ''; }
-  function updateGridBackground(vb=state.viewBox, cachedRect=null){
+  // === World-space grid ===
+  // A camera/graph coordinate beyond this magnitude cannot be enumerated by
+  // integer world-cell indices (past 2^53 `k++` stops changing) and has no
+  // usable pixel precision anyway. Clamp every camera that reaches the grid
+  // here as well as at ingestion, so a saved document with viewBox.x = 1e20
+  // can never hang the editor in a world-cell loop.
+  const GRID_INDEX_LIMIT = 1e12;
+  const MAX_GRID_LINES = 4000;
+  function safeCamera(camera){
+    const vb = camera || state.viewBox;
+    return {
+      x: safeWorldCoord(vb.x, 0),
+      y: safeWorldCoord(vb.y, 0),
+      w: clamp(finite(vb.w, REFERENCE_VIEWBOX.w), 1, 20000),
+      h: clamp(finite(vb.h, REFERENCE_VIEWBOX.h), 1, 20000)
+    };
+  }
+  function clearGridPaths(){
+    setAttr(gridMinorLines, 'd', '');
+    setAttr(gridMajorLines, 'd', '');
+  }
+  // Last drawn world-space extent. The paths are rebuilt only when the grid's
+  // decimation/colours change or the view leaves their apron: a pan or wheel
+  // preview normally writes NOTHING but the one camera matrix, which keeps the
+  // per-update style+layout cost flat regardless of graph size.
+  let gridBounds = null; // {tileSig,x0,x1,y0,y1}
+  function invalidateGridCache(){ gridBounds = null; }
+  // Default to the ACTIVE camera (a pending zoom/pan preview), not the last
+  // committed state.viewBox. Style handlers call this with no argument; using
+  // the committed camera there recomputed the grid for the wrong view and
+  // contracted it to a small central rectangle until the preview committed.
+  function updateGridBackground(vb=currentCamera(), cachedRect=null){
     const rect = canvasViewportRect(cachedRect);
     if(!rect.width || !rect.height) return;
     setStyleIfChanged(gridLayer.style, 'backgroundColor', state.settings.canvasBgColor || '#020617');
     const settings = state.settings;
     const gx = settings.gridSizeX || settings.gridSize || 40;
     const gy = settings.gridSizeY || settings.gridSize || 40;
+    const cam = safeCamera(vb);
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
-    const pitch = Math.min(rect.width / vb.w, rect.height / vb.h);
+    const pitch = Math.min(rect.width / cam.w, rect.height / cam.h);
+    if(!(pitch > 0) || !Number.isFinite(pitch)){ clearGridPaths(); gridBounds = null; return; }
     // Zoom-adaptive decimation: when a cell would shrink below the readable
     // minimum on screen, draw every k-th cell. Integer multiples keep the lines
     // locked to world coordinates instead of drifting relative to the nodes.
@@ -796,46 +833,7 @@
     const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
     const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
     const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-    // Draw the visible world range plus several viewports of apron, quantised
-    // to a coarse cell bucket. A live gesture moves the camera inside that
-    // apron, so the paths do not need a per-frame rewrite; a commit that leaves
-    // the bucket recentres them. Because the lines are in WORLD coordinates and
-    // inside #cameraLayer, they ride the camera matrix with the graph and can
-    // never show a hard edge or a stale frame.
-    const offX = (rect.width - vb.w * pitch) / 2;
-    const offY = (rect.height - vb.h * pitch) / 2;
-    const visX0 = vb.x - offX / pitch, visX1 = vb.x + vb.w + offX / pitch;
-    const visY0 = vb.y - offY / pitch, visY1 = vb.y + vb.h + offY / pitch;
-    const apronX = (visX1 - visX0) * 2, apronY = (visY1 - visY0) * 2;
-    const bucketX = stepX * 64, bucketY = stepY * 64;
-    const kx0 = Math.floor((visX0 - apronX) / bucketX) - 1;
-    const kx1 = Math.ceil((visX1 + apronX) / bucketX) + 1;
-    const ky0 = Math.floor((visY0 - apronY) / bucketY) - 1;
-    const ky1 = Math.ceil((visY1 + apronY) / bucketY) + 1;
-    const x0 = kx0 * bucketX, x1 = kx1 * bucketX;
-    const y0 = ky0 * bucketY, y1 = ky1 * bucketY;
-    const sig = [stepX, stepY, majorX, majorY, minorColor, majorColor, x0, x1, y0, y1].join('|');
-    if(sig === gridSig) return;
-    gridSig = sig;
-    const majorEveryX = Math.max(1, Math.round(majorX / stepX));
-    const majorEveryY = Math.max(1, Math.round(majorY / stepY));
-    let minorD = '', majorD = '';
-    const firstX = Math.ceil(x0 / stepX), lastX = Math.floor(x1 / stepX);
-    const firstY = Math.ceil(y0 / stepY), lastY = Math.floor(y1 / stepY);
-    for(let k = firstX; k <= lastX; k++){
-      const x = k * stepX;
-      if(k % majorEveryX === 0) majorD += `M ${x} ${y0} V ${y1} `;
-      else minorD += `M ${x} ${y0} V ${y1} `;
-    }
-    for(let k = firstY; k <= lastY; k++){
-      const y = k * stepY;
-      if(k % majorEveryY === 0) majorD += `M ${x0} ${y} H ${x1} `;
-      else minorD += `M ${x0} ${y} H ${x1} `;
-    }
-    setAttr(gridMinorLines, 'd', minorD.trim());
-    setAttr(gridMajorLines, 'd', majorD.trim());
-    setAttr(gridMinorLines, 'stroke', minorColor);
-    setAttr(gridMajorLines, 'stroke', majorColor);
+    const tileSig = [stepX, stepY, majorX, majorY, minorColor, majorColor].join('|');
     // Report the decimated steps in WORLD units, where the grid is defined.
     for(const el of [gridLayer, gridLines]){
       if(!el) continue;
@@ -844,6 +842,65 @@
       setAttr(el, 'data-major-x', String(majorX));
       setAttr(el, 'data-major-y', String(majorY));
     }
+    const offX = (rect.width - cam.w * pitch) / 2;
+    const offY = (rect.height - cam.h * pitch) / 2;
+    const visX0 = cam.x - offX / pitch, visX1 = cam.x + cam.w + offX / pitch;
+    const visY0 = cam.y - offY / pitch, visY1 = cam.y + cam.h + offY / pitch;
+    const spanX = Math.max(1, visX1 - visX0), spanY = Math.max(1, visY1 - visY0);
+    if(![visX0, visX1, visY0, visY1].every(Number.isFinite) ||
+       Math.max(Math.abs(visX0), Math.abs(visX1)) / stepX > GRID_INDEX_LIMIT ||
+       Math.max(Math.abs(visY0), Math.abs(visY1)) / stepY > GRID_INDEX_LIMIT){
+      clearGridPaths(); gridBounds = null; return;
+    }
+    // Keep the existing paths while the camera stays inside their apron.
+    const marginX = spanX * 0.75, marginY = spanY * 0.75;
+    if(gridBounds && gridBounds.tileSig === tileSig &&
+       gridBounds.x0 <= visX0 - marginX && gridBounds.x1 >= visX1 + marginX &&
+       gridBounds.y0 <= visY0 - marginY && gridBounds.y1 >= visY1 + marginY) return;
+    // Draw the visible world range plus several viewports of apron, quantised
+    // to a coarse cell bucket. Because the lines are in WORLD coordinates and
+    // inside #cameraLayer, they ride the camera matrix with the graph and can
+    // never show a hard edge or a stale frame.
+    const apronX = spanX * 3, apronY = spanY * 3;
+    const bucketX = stepX * 256, bucketY = stepY * 256;
+    const kx0 = Math.floor((visX0 - apronX) / bucketX) - 1;
+    const kx1 = Math.ceil((visX1 + apronX) / bucketX) + 1;
+    const ky0 = Math.floor((visY0 - apronY) / bucketY) - 1;
+    const ky1 = Math.ceil((visY1 + apronY) / bucketY) + 1;
+    let firstX = Math.ceil(kx0 * bucketX / stepX), lastX = Math.floor(kx1 * bucketX / stepX);
+    let firstY = Math.ceil(ky0 * bucketY / stepY), lastY = Math.floor(ky1 * bucketY / stepY);
+    // Hard cap on segments, centred on the visible range. Loops use a local
+    // index with a finite bound, never an absolute k++ whose increment can
+    // vanish at 2^53 (the freeze a 1e20 camera used to cause).
+    const cappedRange = (first, last, visFirst, visLast) => {
+      if(last - first + 1 <= MAX_GRID_LINES) return [first, last];
+      const center = Math.round((Math.ceil(visFirst) + Math.floor(visLast)) / 2);
+      const f = center - Math.floor(MAX_GRID_LINES / 2);
+      return [f, f + MAX_GRID_LINES - 1];
+    };
+    [firstX, lastX] = cappedRange(firstX, lastX, visX0 / stepX, visX1 / stepX);
+    [firstY, lastY] = cappedRange(firstY, lastY, visY0 / stepY, visY1 / stepY);
+    const drawnX0 = firstX * stepX, drawnX1 = lastX * stepX;
+    const drawnY0 = firstY * stepY, drawnY1 = lastY * stepY;
+    const majorEveryX = Math.max(1, Math.round(majorX / stepX));
+    const majorEveryY = Math.max(1, Math.round(majorY / stepY));
+    let minorD = '', majorD = '';
+    const nX = Math.max(0, lastX - firstX + 1), nY = Math.max(0, lastY - firstY + 1);
+    for(let i = 0; i < nX; i++){
+      const k = firstX + i, x = k * stepX;
+      if(k % majorEveryX === 0) majorD += `M ${x} ${drawnY0} V ${drawnY1} `;
+      else minorD += `M ${x} ${drawnY0} V ${drawnY1} `;
+    }
+    for(let i = 0; i < nY; i++){
+      const k = firstY + i, y = k * stepY;
+      if(k % majorEveryY === 0) majorD += `M ${drawnX0} ${y} H ${drawnX1} `;
+      else minorD += `M ${drawnX0} ${y} H ${drawnX1} `;
+    }
+    setAttr(gridMinorLines, 'd', minorD.trim());
+    setAttr(gridMajorLines, 'd', majorD.trim());
+    setAttr(gridMinorLines, 'stroke', minorColor);
+    setAttr(gridMajorLines, 'stroke', majorColor);
+    gridBounds = {tileSig, x0:drawnX0, x1:drawnX1, y0:drawnY0, y1:drawnY1};
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by

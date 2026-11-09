@@ -32,7 +32,18 @@
   function distClient(a,b){ return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
   function centerClient(a,b){ return {clientX:(a.clientX + b.clientX) / 2, clientY:(a.clientY + b.clientY) / 2}; }
   function currentCamera(): ViewBox {
-    return zoomPreview ? zoomPreview.preview : state.viewBox;
+    // The SVG displays the newest in-flight gesture, so ALL previews — wheel
+    // zoom, pan and pinch — are the active camera for hit tests, exports, the
+    // camera inputs and grid repaints. Using only state.viewBox here let a
+    // style change during a preview recompute the grid for the stale,
+    // committed camera. safeCamera() is one central bound that also prevents
+    // a finite but astronomically large coordinate from reaching a world-cell
+    // index loop.
+    const active = zoomPreview ? zoomPreview.preview
+      : pinch ? pinch.previewViewBox
+      : pan ? pan.previewViewBox
+      : state.viewBox;
+    return safeCamera(active);
   }
   function hasActiveCanvasGesture(){
     return Boolean(singleSweep || pinch || selectDraft || pendingNodeTap || edgeDraft || gizmoDrag || drag || pan);
@@ -94,12 +105,12 @@
     const previewScale = Math.min(r.width / nw, r.height / nh);
     const offsetX = (r.width - nw * previewScale) / 2;
     const offsetY = (r.height - nh * previewScale) / 2;
-    pinch.previewViewBox = {
+    pinch.previewViewBox = safeCamera({
       x: pinch.startWorld.x - (c.clientX - r.left - offsetX) / previewScale,
       y: pinch.startWorld.y - (c.clientY - r.top - offsetY) / previewScale,
       w:nw,
       h:nh
-    };
+    });
     if(!pinch.frame){
       pinch.frame = true;
       requestAnimationFrame(() => { if(pinch){ pinch.frame = false; applyPreviewCamera(pinch.previewViewBox, pinch.rect); } });
@@ -560,7 +571,7 @@
       const scale = Math.min(rect.width / start.w, rect.height / start.h);
       const dx = (ev.clientX - pan.startClientX) / scale;
       const dy = (ev.clientY - pan.startClientY) / scale;
-      pan.previewViewBox = {...start, x:start.x - dx, y:start.y - dy};
+      pan.previewViewBox = safeCamera({...start, x:start.x - dx, y:start.y - dy});
       if(!pan.frame){
         pan.frame = true;
         requestAnimationFrame(() => {
@@ -781,7 +792,7 @@
       $('#canvasWrap').classList.remove('panning');
       gestureActive = false;
     }
-    const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
+    const cur = currentCamera();
     const r = zoomPreview ? zoomPreview.rect : canvasViewportRect();
     const anchor = clientToWorld(clientX, clientY, cur, r);
     const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
@@ -790,12 +801,12 @@
     const nextPixels = Math.min(r.width / nw, r.height / nh);
     const nextOffsetX = (r.width - nw * nextPixels) / 2;
     const nextOffsetY = (r.height - nh * nextPixels) / 2;
-    const preview = {
+    const preview = safeCamera({
       x:anchor.x - (clientX - r.left - nextOffsetX) / nextPixels,
       y:anchor.y - (clientY - r.top - nextOffsetY) / nextPixels,
       w:nw,
       h:nh
-    };
+    });
     if(!zoomPreview){ zoomPreview = { preview, rect: r, frame: false, timer: null }; $('#canvasWrap').classList.add('fast-interaction'); }
     else zoomPreview.preview = preview;
     if(!zoomPreview.frame){
@@ -817,7 +828,7 @@
   }
   function commitZoomPreview(){
     if(!zoomPreview) return;
-    const preview = zoomPreview.preview;
+    const preview = safeCamera(zoomPreview.preview);
     cancelZoomPreview();
     state.viewBox = {...preview};
     applyCamera();
@@ -840,7 +851,11 @@
       if(n.y > maxY) maxY = n.y;
     }
     minX -= 120; maxX += 120; minY -= 120; maxY += 120;
-    state.viewBox = {x:minX, y:minY, w:Math.max(260,maxX-minX), h:Math.max(220,maxY-minY)};
+    state.viewBox = {
+      x:safeWorldCoord(minX, 0), y:safeWorldCoord(minY, 0),
+      w:clamp(Math.max(260,maxX-minX), 100, 20000),
+      h:clamp(Math.max(220,maxY-minY), 90, 20000)
+    };
     applyCamera();
     saveSoon();
   }

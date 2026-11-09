@@ -45,6 +45,14 @@
     return typeof check === 'function' ? Boolean(check.call(el)) : true;
   };
   const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+  // Beyond this magnitude, integer world-cell indices can no longer be
+  // enumerated with k++ (past 2^53 the increment vanishes) and world points
+  // have no usable pixel precision. Clamp camera and node coordinates at
+  // ingestion so a saved document with viewBox.x = 1e20 cannot hang the editor.
+  const MAX_WORLD_COORD = 1e9;
+  function safeWorldCoord(value: unknown, fallback = 0): number {
+    return clamp(finite(value, fallback), -MAX_WORLD_COORD, MAX_WORLD_COORD);
+  }
   const esc = (value: unknown): string => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
   // === In-app dialogs ===
   // Native prompt()/confirm()/alert() block the whole tab, cannot be themed,
@@ -426,7 +434,7 @@
       const node: GraphNode = {
         id,
         label: String(n.label ?? '').slice(0,80),
-        x: finite(n.x, i*35), y: finite(n.y, i*35),
+        x: safeWorldCoord(n.x, i*35), y: safeWorldCoord(n.y, i*35),
         shape: n.shape ? validShape(n.shape) : '',  // empty = unset
         color: validColor(n.color) || '',            // empty = unset
         type: String(n.type || '').slice(0,40),
@@ -680,7 +688,7 @@
       nextNode: maxN + 1,
       nextEdge: maxE + 1,
       nodes, edges, customAttributes, settings,
-      viewBox: { x:finite(vb.x,-500), y:finite(vb.y,-330), w:clamp(finite(vb.w,1000),100,20000), h:clamp(finite(vb.h,660),100,20000) }
+      viewBox: { x:safeWorldCoord(vb.x,-500), y:safeWorldCoord(vb.y,-330), w:clamp(finite(vb.w,1000),100,20000), h:clamp(finite(vb.h,660),100,20000) }
     };
   }
   function isRecord(value: unknown): value is AnyRecord {

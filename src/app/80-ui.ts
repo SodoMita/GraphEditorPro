@@ -643,9 +643,9 @@
         if(drag.moved) pushHistory('move node');
         drag = null; changed = true;
       }
-      if(zoomPreview){ state.viewBox = {...zoomPreview.preview}; cancelZoomPreview(); changed = true; navigationChanged = true; }
-      if(pan){ state.viewBox = {...pan.previewViewBox}; pan = null; changed = true; navigationChanged = true; }
-      if(pinch){ state.viewBox = {...pinch.previewViewBox}; pinch = null; changed = true; navigationChanged = true; }
+      if(zoomPreview){ state.viewBox = {...safeCamera(zoomPreview.preview)}; cancelZoomPreview(); changed = true; navigationChanged = true; }
+      if(pan){ state.viewBox = {...safeCamera(pan.previewViewBox)}; pan = null; changed = true; navigationChanged = true; }
+      if(pinch){ state.viewBox = {...safeCamera(pinch.previewViewBox)}; pinch = null; changed = true; navigationChanged = true; }
       if(edgeDraft){ edgeDraft = null; dragLine.style.display = 'none'; dragLine.setAttribute('d',''); changed = true; }
       if(pendingEdgeFrom){ pendingEdgeFrom = null; changed = true; }
       if(pendingNodeTap){ pendingNodeTap = null; changed = true; }
