@@ -14,7 +14,10 @@
 //                                                      camera update (the cost
 //                                                      that decides smoothness)
 //   frame pacing (median/p95/max, dropped frames)     — from rAF in the page
-//   camera DOM writes                                 — viewBox vs transform
+//   camera DOM writes                                 — root viewBox vs the
+//                                                      SVG `transform` on
+//                                                      g#cameraLayer (and a
+//                                                      guard for CSS writes)
 //
 // The browser comes from scripts/browser-setup.sh ($BROWSER_DIR, default
 // $HOME/.browser or /tmp/browser).
@@ -135,26 +138,31 @@ async function startRecording(page) {
     const surface = document.querySelector('#cameraLayer');
     const scene = document.querySelector('#sceneLayer');
     const grid = document.querySelector('#gridLayer');
-    // `surfaceStyle` counts gesture preview writes on the ONE canvas surface; it
-    // is not a second camera, and there must never be another surface to count.
-    const counts = { viewBox: 0, surfaceStyle: 0, cameraTransform: 0, sceneTransform: 0, gridStyle: 0, svgDom: 0 };
+    const gridPaths = ['gridMinorLines', 'gridMajorLines']
+      .map(id => document.getElementById(id)).filter(Boolean);
+    // The camera is ONE matrix on an SVG group: count `transform` attribute
+    // writes on it. CSS `style` writes are tracked separately as a guard — a
+    // nonzero `surfaceStyle` means a build regressed to an HTML-div camera.
+    const counts = { viewBox: 0, surfaceStyle: 0, cameraTransform: 0, sceneTransform: 0, gridStyle: 0, gridPath: 0, svgDom: 0 };
     if (document.querySelector('#cameraStage')) throw new Error('second camera surface found: #cameraStage');
     const observer = new MutationObserver(records => {
       for (const record of records) {
         if (record.type === 'childList') { counts.svgDom += record.addedNodes.length + record.removedNodes.length; continue; }
         if (record.target === svg && record.attributeName === 'viewBox') counts.viewBox++;
-    
-        if (record.target === surface && record.attributeName === 'style') counts.cameraTransform++;
+        if (record.target === surface && record.attributeName === 'transform') counts.cameraTransform++;
+        if (record.target === surface && record.attributeName === 'style') counts.surfaceStyle++;
         if (record.target === scene && record.attributeName === 'transform') counts.sceneTransform++;
         if (record.target === grid && record.attributeName === 'style') counts.gridStyle++;
+        if (gridPaths.includes(record.target) && record.attributeName === 'd') counts.gridPath++;
       }
     });
     observer.observe(svg, { attributes: true, attributeFilter: ['viewBox'] });
     observer.observe(svg, { childList: true, subtree: true });
     observer.observe(svg, { attributes: true, attributeFilter: ['style'] });
-    observer.observe(surface, { attributes: true, attributeFilter: ['style'] });
+    observer.observe(surface, { attributes: true, attributeFilter: ['style', 'transform'] });
     observer.observe(scene, { attributes: true, attributeFilter: ['transform'] });
     if (grid) observer.observe(grid, { attributes: true, attributeFilter: ['style'] });
+    for (const el of gridPaths) observer.observe(el, { attributes: true, attributeFilter: ['d'] });
     window.__perf = { frames: [], counts, observer, recording: true };
     const loop = time => { window.__perf.frames.push(time); if (window.__perf.recording) requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
@@ -299,11 +307,15 @@ async function measureGesture(browser, build, graph, kind, size) {
   await page.waitForTimeout(700); // let a deferred commit land, if the build has one
   const after = await readMetrics(cdp);
   const { frames, writes } = await stopRecording(page);
-  const cameraState = await page.evaluate(() => ({
-    viewBox: document.querySelector('#graphCanvas').getAttribute('viewBox'),
-    cameraTransform: document.querySelector('#cameraLayer').style.transform,
-    sceneTransform: document.querySelector('#sceneLayer').getAttribute('transform'),
-  }));
+  const cameraState = await page.evaluate(() => {
+    const camera = document.querySelector('#cameraLayer');
+    return {
+      viewBox: document.querySelector('#graphCanvas').getAttribute('viewBox'),
+      cameraKind: camera.tagName.toLowerCase(),
+      cameraTransform: camera.getAttribute('transform') || camera.style.transform || '',
+      sceneTransform: document.querySelector('#sceneLayer').getAttribute('transform'),
+    };
+  });
   await context.close();
   return {
     build: build.name, kind, size, steps, info, gestureWallMs,
@@ -338,7 +350,7 @@ try {
           `| per update: style+layout=${pad(probe.styleAndLayout.median, 6)}ms frame=${pad(probe.frame.median, 6)}ms ` +
           `| frames=${pad(frames.frames, 3)} p95=${pad(frames.p95Ms, 6)}ms max=${pad(frames.maxMs, 7)}ms dropped=${pad(frames.droppedFrames, 4)} ` +
           `| commit task=${pad(median.commitMetrics.TaskDuration.toFixed(0), 4)}ms style=${pad(median.commitMetrics.RecalcStyleDuration.toFixed(0), 4)}ms ` +
-          `| writes vb=${median.writes.viewBox} surf=${median.writes.surfaceStyle} cam=${median.writes.cameraTransform} scene=${median.writes.sceneTransform} grid=${median.writes.gridStyle} dom=${median.writes.svgDom}`,
+          `| writes vb=${median.writes.viewBox} css=${median.writes.surfaceStyle} cam=${median.writes.cameraTransform} scene=${median.writes.sceneTransform} grid=${median.writes.gridStyle} gpath=${median.writes.gridPath} dom=${median.writes.svgDom} [${median.cameraState.cameraKind}]`,
         );
       }
     }

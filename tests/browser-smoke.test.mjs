@@ -99,9 +99,11 @@ const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30
 // === Camera contract ===
 // There is exactly ONE paint system: the root viewBox is a fixed world reference
 // frame written once, and both gesture previews and the committed camera are a
-// single `transform` matrix on #cameraLayer. These helpers read that one matrix
-// — there is no second surface to compose, and a test that needs one has found
-// a regression rather than a convenience to add.
+// single `transform` matrix on #cameraLayer, an SVG <g> INSIDE the canvas.
+// Keeping the matrix inside the SVG is what lets every world point (including
+// ones far outside the reference frame) be painted; an HTML wrapper around the
+// <svg> can only move the already-clipped viewport. These helpers read that one
+// matrix — there is no second surface to compose.
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
 
@@ -115,38 +117,38 @@ function parseMatrix2d(raw, label) {
   return { scale, tx, ty };
 }
 
-// No CSS-transformed wrapper may exist above the canvas SVG: a second camera
-// The camera is ONE surface: #cameraLayer, a div that holds the grid and the
-// SVG together and is moved by a single composited transform. A second surface
-// is the bug this project has fixed three times (see 20-rendering.ts).
+// The camera is ONE surface: #cameraLayer, an SVG group carrying the graph and
+// the world-space grid paths. No CSS-transformed wrapper, no second layer.
 function assertSingleCameraSurface(document) {
   assert.equal(document.querySelector('#cameraStage'), null,
     'the canvas must have no second camera surface (#cameraStage)');
   const camera = document.querySelector('#cameraLayer');
   assert.ok(camera, '#cameraLayer exists');
-  assert.equal(camera.tagName, 'DIV',
-    'the camera surface must be a plain div so a camera change is a composited transform');
+  assert.equal(camera.tagName.toLowerCase(), 'g',
+    'the camera must live inside the SVG so the root viewBox cannot clip the world');
   assert.equal(document.querySelectorAll('#cameraLayer').length, 1,
     'there is exactly one camera surface');
-  // Grid and graph must travel inside that one surface.
-  assert.equal(document.querySelector('#gridLayer').parentElement, camera,
-    'the grid rides the camera surface');
-  assert.ok(camera.contains(document.querySelector('#graphCanvas')),
-    'the graph rides the same camera surface');
-  // The grid alone carries a counter-transform (it must stay viewport-sized
-  // while the camera zooms). Everything else must be static: a second element
-  // tracking the camera is exactly the second paint system this project removed.
-  for (const id of ['graphCanvas', 'graphPlane', 'sceneLayer']) {
+  const svg = document.querySelector('#graphCanvas');
+  assert.ok(svg.contains(camera), 'the camera group is inside the canvas SVG');
+  assert.equal(document.querySelector('#gridLines').parentElement.id, 'sceneLayer',
+    'the world-space grid lines ride the camera scene');
+  assert.ok(camera.contains(document.querySelector('#nodesLayer')) &&
+    camera.contains(document.querySelector('#edgesLayer')),
+    'nodes and edges ride the same camera surface');
+  // The static backdrop is deliberately outside the camera, so a gesture can
+  // never drag its edge into view. Nothing else may track the camera.
+  assert.equal(document.querySelector('#gridLayer').parentElement.id, 'canvasWrap',
+    'the static backdrop is untransformed');
+  for (const id of ['graphCanvas', 'cameraLayer', 'sceneLayer', 'gridLayer']) {
     const el = document.getElementById(id);
-    if (el && el.style) assert.equal(el.style.transform, '', `#${id} must not track the camera`);
+    if (el && el.style) assert.equal(el.style.transform, '', `#${id} must not carry a CSS camera transform`);
   }
 }
 
-// What is on screen: a world point -> viewport pixel, through the CSS matrix
-// that the camera currently has on #cameraLayer.
+// The camera is an SVG transform attribute, in SVG user units.
 function camMatrix(camera) {
-  const inline = (camera.style && camera.style.transform) || '';
-  return inline ? parseMatrix2d(inline, '#cameraLayer') : { scale: 1, tx: 0, ty: 0 };
+  const raw = camera.getAttribute('transform') || '';
+  return raw ? parseMatrix2d(raw, '#cameraLayer') : { scale: 1, tx: 0, ty: 0 };
 }
 
 function cameraScale(camera) {
@@ -154,16 +156,16 @@ function cameraScale(camera) {
 }
 
 function projectWorldPoint(camera, x, y, viewport = VIEWPORT) {
-  // Paint is two stages, in this order: the SVG maps the world onto the reference
-  // frame inside its own box (preserveAspectRatio="xMidYMid meet"), then the CSS
-  // matrix on #cameraLayer moves that box. Both stages matter.
+  // World -> user space is the camera matrix; user -> screen is the fixed
+  // reference frame mapped with preserveAspectRatio="xMidYMid meet".
   const m = camMatrix(camera);
   const basePixels = Math.min(viewport.width / REFERENCE_VIEWBOX.w, viewport.height / REFERENCE_VIEWBOX.h);
   const refOffsetX = (viewport.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
   const refOffsetY = (viewport.height - REFERENCE_VIEWBOX.h * basePixels) / 2;
-  const px = (x - REFERENCE_VIEWBOX.x) * basePixels + refOffsetX;
-  const py = (y - REFERENCE_VIEWBOX.y) * basePixels + refOffsetY;
-  return { x: m.scale * px + m.tx, y: m.scale * py + m.ty };
+  return {
+    x: (m.scale * x + m.tx - REFERENCE_VIEWBOX.x) * basePixels + refOffsetX,
+    y: (m.scale * y + m.ty - REFERENCE_VIEWBOX.y) * basePixels + refOffsetY,
+  };
 }
 
 function assertCameraRendersViewBox(camera, viewBox, viewport = VIEWPORT) {
@@ -370,28 +372,30 @@ test('pan previews and commits through the one camera matrix, never the root vie
   assertSingleCameraSurface(dom.window.document);
   const camera = dom.window.document.querySelector('#cameraLayer');
   const scene = dom.window.document.querySelector('#sceneLayer');
-  const grid = dom.window.document.querySelector('#gridLayer');
+  const gridMinor = dom.window.document.querySelector('#gridMinorLines');
+  const gridMajor = dom.window.document.querySelector('#gridMajorLines');
   setCanvasRect(svg);
   const viewBoxWrites = trackViewBoxWrites(svg);
-  const baseCameraMatrix = camera.style.transform;
+  const baseCameraMatrix = camera.getAttribute('transform');
   dom.window.document.querySelector('#modeMove').click();
 
   dispatchPointer(dom.window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
   dispatchPointer(dom.window, svg, 'pointermove', { pointerId: 1, clientX: 180, clientY: 140 });
   await nextFrame(dom.window);
 
-  // Dragged 80 px right and 40 px down at 1:1 — the surface moves right and down
-  // by exactly that, and the committed camera matrix is left alone until release.
+  // Dragged 80 px right and 40 px down at 1:1 — one matrix write shows the
+  // preview, and the root viewBox is never used as a camera.
   assert.equal(viewBoxWrites.count, 0, 'the root viewBox is a reference frame, not a camera write');
-  assert.notEqual(camera.style.transform, baseCameraMatrix,
+  assert.notEqual(camera.getAttribute('transform'), baseCameraMatrix,
     'the pan preview moves the one camera surface');
   assertCameraRendersViewBox(camera, { x: -580, y: -370, w: 1000, h: 660 });
   assert.equal(scene.getAttribute('transform'), null, 'the scene group is never transformed');
-  // The grid counter-scales so it always fills the canvas; that is not a camera.
-  assert.match(grid.style.transform, /^translate\(.*\) scale\(.*\)$/,
-    'the grid counter-transforms to stay viewport-sized');
-  const gridStyleBefore = grid.style.backgroundImage;
-  assert.ok(gridStyleBefore.includes('repeating-linear-gradient'), 'the world-locked grid is painted');
+  // The grid is world-space SVG geometry inside the camera scene: no CSS
+  // gradient layer, no counter-transform, no edge that can slide into view.
+  assert.ok(gridMinor.getAttribute('d')?.includes('M'), 'the world-locked minor grid is painted');
+  assert.ok(gridMajor.getAttribute('d')?.includes('M'), 'the world-locked major grid is painted');
+  assert.equal(gridMinor.parentElement.getAttribute('id'), 'gridLines');
+  const gridDBefore = gridMinor.getAttribute('d');
   const previewOrigin = projectWorldPoint(camera, 0, 0);
 
   dispatchPointer(dom.window, svg, 'pointerup', { pointerId: 1, clientX: 180, clientY: 140 });
@@ -402,8 +406,8 @@ test('pan previews and commits through the one camera matrix, never the root vie
   assertCameraRendersViewBox(camera, { x: -580, y: -370, w: 1000, h: 660 });
   assert.equal(scene.getAttribute('transform'), null, 'still no compensation on #sceneLayer');
   assert.equal(svg.getAttribute('viewBox'), `-500 -330 1000 660`, 'the reference frame is untouched');
-  assert.equal(grid.style.backgroundImage, gridStyleBefore,
-    'panning never repaints the grid; it only moves with the camera');
+  assert.equal(gridMinor.getAttribute('d'), gridDBefore,
+    'panning never redraws the grid; it only moves with the camera');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
@@ -425,7 +429,7 @@ test('pinch preview and commit are the same camera matrix, with no mid-gesture v
   await nextFrame(dom.window);
 
   assert.equal(viewBoxWrites.count, 0, 'the root viewBox stays the reference frame during a pinch');
-  assert.notEqual(camera.style.transform, baseCameraMatrix,
+  assert.notEqual(camera.getAttribute('transform'), baseCameraMatrix,
     'the pinch preview moves the one camera surface');
   const previewScale = cameraScale(camera);
   assert.ok(previewScale > 1, 'pinching apart zooms in');

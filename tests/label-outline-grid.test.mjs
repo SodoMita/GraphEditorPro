@@ -200,23 +200,33 @@ test('grid decimates instead of clamping at low zoom, staying world-locked', asy
   const doc = dom.window.document;
   const svg = doc.querySelector('#graphCanvas');
   setCanvasRect(svg);
-  // The grid is a CSS-gradient div next to the SVG, both inside #cameraLayer, so
-  // the camera moves grid and graph together and they cannot desync.
+  // The static backdrop fills the viewport; the grid LINES are world-space SVG
+  // paths inside #cameraLayer, so they ride the same camera matrix as the graph
+  // and cannot desync, crop at a viewport edge, or re-phase on a commit.
   const gridLayer = doc.getElementById('gridLayer');
-  assert.equal(gridLayer.parentNode.getAttribute('id'), 'cameraLayer', 'the grid rides the camera surface together with the graph');
-  assert.equal(doc.getElementById('cameraLayer').contains(doc.getElementById('graphCanvas')), true, 'the graph is inside the same camera surface');
+  const camera = doc.getElementById('cameraLayer');
+  assert.equal(gridLayer.parentNode.getAttribute('id'), 'canvasWrap', 'the backdrop is untransformed');
+  assert.equal(camera.tagName.toLowerCase(), 'g', 'the camera lives inside the SVG');
+  assert.equal(camera.contains(doc.getElementById('graphCanvas')), false,
+    'the SVG is the parent of the camera, not its child');
+  assert.equal(camera.contains(doc.getElementById('gridMinorLines')), true, 'minor grid lines ride the camera');
+  assert.equal(camera.contains(doc.getElementById('gridMajorLines')), true, 'major grid lines ride the camera');
 
   const zoomTo = async width => {
     const camW = doc.getElementById('cameraW');
     camW.value = String(width);
     camW.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await nextFrame(dom.window);
-    // The CSS grid reports its decimated steps in world units, which is where
-    // the grid is anchored (its screen pitch changes with zoom; these do not).
+    // The world grid reports its decimated steps in world units; its screen
+    // pitch changes with zoom, the world coordinates of the lines do not.
+    const count = (id, axis) => (doc.getElementById(id).getAttribute('d') || '').split(axis).length - 1;
     return {
       minor: parseFloat(gridLayer.getAttribute('data-minor-x')),
       major: parseFloat(gridLayer.getAttribute('data-major-x')),
-      paths: gridLayer.style.backgroundImage.split('repeating-linear-gradient').length - 1,
+      paths: {
+        minorV: count('gridMinorLines', 'V'), minorH: count('gridMinorLines', 'H'),
+        majorV: count('gridMajorLines', 'V'), majorH: count('gridMajorLines', 'H'),
+      },
     };
   };
 
@@ -244,8 +254,11 @@ test('grid decimates instead of clamping at low zoom, staying world-locked', asy
   // drift diagonally relative to the nodes).
   assert.equal(at12000.minor / 40, 3, '12000 zoom decimates to every 3rd grid cell');
   assert.equal(at20000.minor / 40, 4, '20000 zoom decimates to every 4th grid cell');
-  // Two gradients per axis: one at the minor step, one at the major step.
-  assert.equal(at1000.paths, 4, 'the grid paints a minor and a major gradient on each axis');
+  // Both paths paint both axes; no CSS gradient layer can crop or drift.
+  for (const [name, count] of Object.entries(at1000.paths)) {
+    assert.ok(count > 0, `the grid paints ${name} lines`);
+  }
+  assert.equal(gridLayer.style.backgroundImage, '', 'the grid is not a CSS gradient');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

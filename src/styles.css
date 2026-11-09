@@ -141,38 +141,22 @@
       overflow:hidden;
     }
     .canvas-wrap{grid-area:canvas; position:relative; overflow:hidden; min-height:0; border-radius:0; border-width:0; touch-action:none}
-    /* === THE CAMERA SURFACE (see the note in template.html) ===
-       One element is moved by a camera change, and it is a plain <div>, so the
-       move is a composited transform. A camera matrix on the <svg>, or a CSS
-       transform on the <svg> root, re-rasterizes the whole scene per frame:
-       measured over one pan at 500-1200 nodes, 18 dropped frames and a
-       400-1150ms worst frame, against 0 dropped and 16.7ms here. */
-    #cameraLayer{
-      position:absolute; inset:0; transform-origin:0 0;
-      /* The compositing layer IS the speed; without it every camera change
-         repaints this subtree instead of only moving it. */
-      will-change:transform; contain:layout style;
-    }
-    /* The grid travels inside #cameraLayer, in exact lockstep with the graph.
-       It is deliberately NOT an SVG <pattern>: a pattern fill is decaled by the
-       raster size limit and only tiles its own cell, so panning slid its
-       painted edge into view and left a hard crop. A CSS gradient div is
-       painted once, costs nothing to move, and never runs out. */
-    #gridLayer{
+    /* Static backdrop, never transformed: it always fills the canvas, so a
+       gesture can never expose an unpainted corner. */
+    .grid-layer{
       position:absolute; inset:0; pointer-events:none;
       background-color:#020617;
     }
-    #graphPlane{position:absolute; inset:0}
+    /* The camera is ONE matrix on the SVG cameraLayer group. Keeping it
+       inside the SVG is mandatory: an HTML wrapper transformed around the SVG
+       cannot reveal content that the root viewBox clipped, so nodes and edges
+       outside the fixed reference frame silently disappear at zoom/pan. */
+    #cameraLayer{will-change:transform}
+    #gridLines{pointer-events:none}
     #graphCanvas{
-      /* width/height are required: `inset:0` alone does NOT stretch a replaced
-         element, so the SVG would keep its intrinsic 1000x660 aspect ratio and
-         overflow the canvas. */
       position:absolute; inset:0; width:100%; height:100%; display:block; background:transparent;
       touch-action:none; outline:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
       overscroll-behavior:none;
-      /* No will-change and no transform here on purpose: the camera is applied
-         to #cameraLayer above. Promoting or transforming the SVG itself is
-         exactly what made every camera change re-rasterize the scene. */
     }
     #graphCanvas *{user-select:none; -webkit-user-select:none; -webkit-touch-callout:none}
     .canvas-hud{position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; max-width:60%}
@@ -541,11 +525,18 @@
        stylesheet rules would otherwise override the per-label presentation
        attributes. */
     .node text{font-weight:800; paint-order:stroke; stroke-linejoin:round; pointer-events:none}
+    /* Camera-sized hit target: at very low zoom a 50-unit node is sub-pixel
+       and Chromium cannot hit-test it. The element is enabled only when it is
+       painted as a visible ~7px dot; otherwise the visible node shape is the
+       hit target and no invisible circle can capture far-away clicks. */
+    .node-hit{pointer-events:none}
     .node{cursor:grab}
     .node.dragging{cursor:grabbing}
     .canvas-wrap.move-mode,.canvas-wrap.move-mode #graphCanvas,.canvas-wrap.move-mode .node{cursor:grab}
     .canvas-wrap.panning,.canvas-wrap.panning #graphCanvas{cursor:grabbing}
-    .edge-hit{stroke:transparent; stroke-width:14; fill:none; cursor:pointer}
+    /* Fixed CSS stroke widths are in SVG user units, so they follow the
+       render-space scale just like dynamically written geometry. */
+    .edge-hit{stroke:transparent; stroke-width:calc(14px * var(--render-scale, 1)); fill:none; cursor:pointer}
     .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
     .edge-arrow{pointer-events:none}
     /* Edge selection: a wide accent LINE that reuses the edge's own path (no
@@ -559,8 +550,8 @@
     .edge-weight{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     /* Background plate behind a label ("Background plate" outline mode) */
     .label-plate{pointer-events:none}
-    .drag-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:6 6; opacity:.82; pointer-events:none}
-    .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:2; stroke-dasharray:6 5; pointer-events:none}
+    .drag-line{stroke:var(--accent); stroke-width:calc(2px * var(--render-scale, 1)); stroke-dasharray:calc(6px * var(--render-scale, 1)) calc(6px * var(--render-scale, 1)); opacity:.82; pointer-events:none}
+    .selection-draft{fill:rgba(34,211,238,.12); stroke:#22d3ee; stroke-width:calc(2px * var(--render-scale, 1)); stroke-dasharray:calc(6px * var(--render-scale, 1)) calc(5px * var(--render-scale, 1)); pointer-events:none}
     .selection-draft.fill-soft{fill:rgba(34,211,238,.08)}
 
     /* ---------- Selection transform gizmo ----------

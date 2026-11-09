@@ -270,14 +270,21 @@
     const key = nodes.map(n => n.id).join(',');
     if(key !== gizmoPivotKey){ gizmoPivot = null; gizmoPivotKey = key; }
     const P = gizmoPivot || {x:b.cx, y:b.cy};
-    const u = gizmoWorldPerPixel(); // world units per screen pixel
+    // SVG attribute numbers must be rebased onto the floating render origin;
+    // signature/logic stay in exact world coordinates.
+    const rb = { minX:renderX(b.minX), minY:renderY(b.minY), maxX:renderX(b.maxX), maxY:renderY(b.maxY), cx:renderX(b.cx), cy:renderY(b.cy), w:renderSize(b.w), h:renderSize(b.h) };
+    const px = renderX(P.x), py = renderY(P.y);
+    // SVG attribute units = world units * renderScale. The inverse scene
+    // transform and the camera matrix cancel it back to constant screen pixels.
+    const u = gizmoWorldPerPixel() * renderScale;
     const tool: GizmoTool = gizmoTool;
     const active = gizmoDrag?.handle || '';
     const pointer = gizmoDrag?.pointer;
     const readoutText = gizmoDrag?.readout || '';
     const pivotLabel = I18N.t('gizmo_pivot');
-    const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(4), active,
-      readoutText, pivotLabel, pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
+    const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(8), active,
+      renderOriginX, renderOriginY, renderScale, readoutText, pivotLabel,
+      pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
     wrap.classList.toggle('gizmo-active', true);
     const tree = getGizmoTree(tool);
     if(gizmoRootEl !== tree.root){
@@ -298,16 +305,16 @@
     for(const h of tree.handles) toggleClass(h.g, 'active', active === h.kind);
 
     const armLen = 52 * u, armStart = 11 * u;
-    let topY = b.minY;
+    let topY = rb.minY;
 
     if(tool === 'rect'){
-      setRectAttrs(tree.rectBox, b.minX, b.minY, b.w, b.h);
+      setRectAttrs(tree.rectBox, rb.minX, rb.minY, rb.w, rb.h);
       const hit = 7 * u, box = 11 * u, boxHit = 21 * u;
       const edgeCoords: Array<[number, number, number, number, number, number]> = [
-        [b.minX, b.minY, b.maxX, b.minY, b.cx, b.minY],
-        [b.maxX, b.minY, b.maxX, b.maxY, b.maxX, b.cy],
-        [b.minX, b.maxY, b.maxX, b.maxY, b.cx, b.maxY],
-        [b.minX, b.minY, b.minX, b.maxY, b.minX, b.cy],
+        [rb.minX, rb.minY, rb.maxX, rb.minY, rb.cx, rb.minY],
+        [rb.maxX, rb.minY, rb.maxX, rb.maxY, rb.maxX, rb.cy],
+        [rb.minX, rb.maxY, rb.maxX, rb.maxY, rb.cx, rb.maxY],
+        [rb.minX, rb.minY, rb.minX, rb.maxY, rb.minX, rb.cy],
       ];
       for(let i = 0; i < 4; i++){
         const e = tree.edges[i];
@@ -318,7 +325,7 @@
         setRectAttrs(e.visRect, hx - box/2, hy - box/2, box, box);
       }
       const cornerCoords: Array<[number, number]> = [
-        [b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY],
+        [rb.minX, rb.minY], [rb.maxX, rb.minY], [rb.maxX, rb.maxY], [rb.minX, rb.maxY],
       ];
       for(let i = 0; i < 4; i++){
         const c = tree.corners[i];
@@ -326,34 +333,34 @@
         setRectAttrs(c.hitRect, hx - boxHit/2, hy - boxHit/2, boxHit, boxHit);
         setRectAttrs(c.visRect, hx - box/2, hy - box/2, box, box);
       }
-      setCircleAttrs(tree.centreHit, b.cx, b.cy, 13 * u);
-      setRectAttrs(tree.centreBox, b.cx - box/2, b.cy - box/2, box, box);
+      setCircleAttrs(tree.centreHit, rb.cx, rb.cy, 13 * u);
+      setRectAttrs(tree.centreBox, rb.cx - box/2, rb.cy - box/2, box, box);
     } else if(tool === 'rotate'){
       const Rr = 72 * u;
-      topY = P.y - Rr;
-      setCircleAttrs(tree.ringHit, P.x, P.y, Rr);
+      topY = py - Rr;
+      setCircleAttrs(tree.ringHit, px, py, Rr);
       setAttr(tree.ringHit, 'stroke-width', 18 * u);
-      setCircleAttrs(tree.ringVis, P.x, P.y, Rr);
+      setCircleAttrs(tree.ringVis, px, py, Rr);
       const a = (gizmoDrag?.tool === 'rotate' && pointer) ? Math.atan2(pointer.y - P.y, pointer.x - P.x) : -Math.PI / 2;
-      const hx = P.x + Math.cos(a) * Rr, hy = P.y + Math.sin(a) * Rr;
+      const hx = px + Math.cos(a) * Rr, hy = py + Math.sin(a) * Rr;
       if(gizmoDrag?.tool === 'rotate'){
-        setLineAttrs(tree.spoke, P.x, P.y, hx, hy);
+        setLineAttrs(tree.spoke, px, py, hx, hy);
         setStyleIfChanged(tree.spoke.style, 'display', '');
       } else {
         setStyleIfChanged(tree.spoke.style, 'display', 'none');
       }
       setCircleAttrs(tree.knob, hx, hy, 6.5 * u);
     } else {
-      setRectAttrs(tree.bounds, b.minX, b.minY, b.w, b.h);
+      setRectAttrs(tree.bounds, rb.minX, rb.minY, rb.w, rb.h);
       const updateAxis = (ax: any) => {
         const { dx, dy } = ax;
-        const ex = P.x + dx * armLen, ey = P.y + dy * armLen;
-        setLineAttrs(ax.hitLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
+        const ex = px + dx * armLen, ey = py + dy * armLen;
+        setLineAttrs(ax.hitLine, px + dx * armStart, py + dy * armStart, ex, ey);
         setAttr(ax.hitLine, 'stroke-width', 16 * u);
-        setLineAttrs(ax.axisLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
+        setLineAttrs(ax.axisLine, px + dx * armStart, py + dy * armStart, ex, ey);
         if(tool === 'move'){
           const al = 12 * u, aw = 5 * u;
-          const tipX = P.x + dx * (armLen + al), tipY = P.y + dy * (armLen + al);
+          const tipX = px + dx * (armLen + al), tipY = py + dy * (armLen + al);
           const pts = `${tipX},${tipY} ${ex - dy * aw},${ey + dx * aw} ${ex + dy * aw},${ey - dx * aw}`;
           setCircleAttrs(ax.hitCircle, ex + dx * al / 2, ey + dy * al / 2, 11 * u);
           setAttr(ax.arrow, 'points', pts);
@@ -368,25 +375,25 @@
       };
       updateAxis(tree.axisX);
       updateAxis(tree.axisY);
-      setCircleAttrs(tree.centreHit, P.x, P.y, 13 * u);
+      setCircleAttrs(tree.centreHit, px, py, 13 * u);
       if(tool === 'move'){
-        setCircleAttrs(tree.centreVis, P.x, P.y, 7.5 * u);
+        setCircleAttrs(tree.centreVis, px, py, 7.5 * u);
       } else {
         const box = 14 * u;
-        setRectAttrs(tree.centreVis, P.x - box/2, P.y - box/2, box, box);
+        setRectAttrs(tree.centreVis, px - box/2, py - box/2, box, box);
       }
     }
 
     if(tool === 'rotate' || tool === 'scale' || tool === 'rect'){
       setText(tree.pivotTitle, pivotLabel);
-      setCircleAttrs(tree.pivotHit, P.x, P.y, (tool === 'rotate' ? 11 : 7) * u);
-      setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
-      setCircleAttrs(tree.pivotDot, P.x, P.y, 2 * u);
+      setCircleAttrs(tree.pivotHit, px, py, (tool === 'rotate' ? 11 : 7) * u);
+      setCircleAttrs(tree.pivotRing, px, py, 6 * u);
+      setCircleAttrs(tree.pivotDot, px, py, 2 * u);
     } else {
-      setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
+      setCircleAttrs(tree.pivotRing, px, py, 6 * u);
     }
     if(readoutText){
-      setAttr(tree.readout, 'x', tool === 'rect' ? b.cx : P.x);
+      setAttr(tree.readout, 'x', tool === 'rect' ? rb.cx : px);
       setAttr(tree.readout, 'y', topY - 10 * u);
       setAttr(tree.readout, 'font-size', 12.5 * u);
       setText(tree.readout, readoutText);
@@ -402,7 +409,7 @@
   function followGizmoForPlainDrag(src: any){
     if(!gizmoRootEl || !gizmoAnchor || src === gizmoDrag) return;
     const anchorNode = nodeById(gizmoAnchor.id);
-    if(anchorNode) setAttr(gizmoRootEl, 'transform', `translate(${anchorNode.x - gizmoAnchor.x},${anchorNode.y - gizmoAnchor.y})`);
+    if(anchorNode) setAttr(gizmoRootEl, 'transform', `translate(${renderSize(anchorNode.x - gizmoAnchor.x)},${renderSize(anchorNode.y - gizmoAnchor.y)})`);
   }
 
   // === Gizmo gestures ===

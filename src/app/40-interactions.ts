@@ -32,7 +32,17 @@
   function distClient(a,b){ return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1; }
   function centerClient(a,b){ return {clientX:(a.clientX + b.clientX) / 2, clientY:(a.clientY + b.clientY) / 2}; }
   function currentCamera(): ViewBox {
-    return zoomPreview ? zoomPreview.preview : state.viewBox;
+    // The SVG displays the newest in-flight gesture, so ALL previews — wheel
+    // zoom, pan and pinch — are the active camera for hit tests, exports, the
+    // camera inputs and grid repaints. Using only state.viewBox here let a
+    // style change during a preview recompute the grid for the stale,
+    // committed camera. boundedCamera() keeps the viewport finite and its
+    // centre stable; the floating render origin keeps SVG numbers small.
+    const active = zoomPreview ? zoomPreview.preview
+      : pinch ? pinch.previewViewBox
+      : pan ? pan.previewViewBox
+      : state.viewBox;
+    return boundedCamera(active);
   }
   function hasActiveCanvasGesture(){
     return Boolean(singleSweep || pinch || selectDraft || pendingNodeTap || edgeDraft || gizmoDrag || drag || pan);
@@ -44,9 +54,13 @@
     const scale = Math.min(r.width / viewBox.w, r.height / viewBox.h);
     const offsetX = (r.width - viewBox.w * scale) / 2;
     const offsetY = (r.height - viewBox.h * scale) / 2;
+    // Rebase onto the floating origin so a world camera at 1e9 still keeps
+    // sub-pixel cursor precision (1e9 + 0.5 is exact; 1e20 + 0.5 is not).
+    const rcx = finite(viewBox.x, 0) - renderOriginX;
+    const rcy = finite(viewBox.y, 0) - renderOriginY;
     return {
-      x: viewBox.x + (clientX - r.left - offsetX) / scale,
-      y: viewBox.y + (clientY - r.top - offsetY) / scale
+      x: renderOriginX + rcx + (clientX - r.left - offsetX) / scale,
+      y: renderOriginY + rcy + (clientY - r.top - offsetY) / scale
     };
   }
   function worldAtClient(clientX, clientY, viewBox=currentCamera()){ return clientToWorld(clientX, clientY, viewBox); }
@@ -89,17 +103,17 @@
     if(!pinch || pts.length < 2) return;
     const a = pts[0], b = pts[1], c = centerClient(a,b), r = canvasViewportRect(pinch.rect);
     const scale = clamp(pinch.startDistance / distClient(a,b), 0.05, 20);
-    const nw = clamp(pinch.startViewBox.w * scale, 120, 20000);
-    const nh = clamp(pinch.startViewBox.h * scale, 90, 20000);
+    const nw = clamp(pinch.startViewBox.w * scale, 120, maxCameraWidth());
+    const nh = clamp(pinch.startViewBox.h * scale, 90, maxCameraHeight());
     const previewScale = Math.min(r.width / nw, r.height / nh);
     const offsetX = (r.width - nw * previewScale) / 2;
     const offsetY = (r.height - nh * previewScale) / 2;
-    pinch.previewViewBox = {
+    pinch.previewViewBox = boundedCamera({
       x: pinch.startWorld.x - (c.clientX - r.left - offsetX) / previewScale,
       y: pinch.startWorld.y - (c.clientY - r.top - offsetY) / previewScale,
       w:nw,
       h:nh
-    };
+    });
     if(!pinch.frame){
       pinch.frame = true;
       requestAnimationFrame(() => { if(pinch){ pinch.frame = false; applyPreviewCamera(pinch.previewViewBox, pinch.rect); } });
@@ -239,31 +253,31 @@
     if(d.tool === 'rect'){
       el = document.createElementNS(NS,'rect');
       const x = Math.min(d.start.x,d.end.x), y = Math.min(d.start.y,d.end.y), w = Math.abs(d.end.x-d.start.x), h = Math.abs(d.end.y-d.start.y);
-      el.setAttribute('x', x); el.setAttribute('y', y); el.setAttribute('width', w); el.setAttribute('height', h);
+      el.setAttribute('x', renderX(x)); el.setAttribute('y', renderY(y)); el.setAttribute('width', renderSize(w)); el.setAttribute('height', renderSize(h));
     } else if(d.tool === 'line'){
       el = document.createElementNS(NS,'line');
-      el.setAttribute('x1', d.start.x); el.setAttribute('y1', d.start.y); el.setAttribute('x2', d.end.x); el.setAttribute('y2', d.end.y);
+      el.setAttribute('x1', renderX(d.start.x)); el.setAttribute('y1', renderY(d.start.y)); el.setAttribute('x2', renderX(d.end.x)); el.setAttribute('y2', renderY(d.end.y));
     } else if(d.tool === 'brush'){
       el = document.createElementNS(NS,'circle');
-      el.setAttribute('cx', d.end.x); el.setAttribute('cy', d.end.y); el.setAttribute('r', (state.settings.brushDiameter || 80) / 2);
+      el.setAttribute('cx', renderX(d.end.x)); el.setAttribute('cy', renderY(d.end.y)); el.setAttribute('r', renderSize((state.settings.brushDiameter || 80) / 2));
     } else if(d.tool === 'polygon'){
       const pathEl = document.createElementNS(NS,'path');
       const previewPts = [...pts];
       if(d.end && pts.length) previewPts.push(d.end);
-      const path = previewPts.length ? 'M ' + previewPts.map(q => `${q.x} ${q.y}`).join(' L ') + (pts.length > 2 ? ` L ${pts[0].x} ${pts[0].y}` : '') : '';
+      const path = previewPts.length ? 'M ' + previewPts.map(q => `${renderX(q.x)} ${renderY(q.y)}`).join(' L ') + (pts.length > 2 ? ` L ${renderX(pts[0].x)} ${renderY(pts[0].y)}` : '') : '';
       pathEl.setAttribute('d', path);
       pathEl.setAttribute('class', 'selection-draft fill-soft');
       selectionOverlayLayer.appendChild(pathEl);
       if(pts.length){
         const start = document.createElementNS(NS,'circle');
-        start.setAttribute('cx', String(pts[0].x)); start.setAttribute('cy', String(pts[0].y)); start.setAttribute('r', String(Math.max(5, state.viewBox.w / 220)));
+        start.setAttribute('cx', String(renderX(pts[0].x))); start.setAttribute('cy', String(renderY(pts[0].y))); start.setAttribute('r', String(renderSize(Math.max(5, state.viewBox.w / 220))));
         start.setAttribute('class','selection-draft');
         selectionOverlayLayer.appendChild(start);
       }
       return;
     } else {
       el = document.createElementNS(NS,'path');
-      const path = pts.length ? 'M ' + pts.map(q => `${q.x} ${q.y}`).join(' L ') + (d.tool === 'lasso' && pts.length > 2 ? ' Z' : '') : '';
+      const path = pts.length ? 'M ' + pts.map(q => `${renderX(q.x)} ${renderY(q.y)}`).join(' L ') + (d.tool === 'lasso' && pts.length > 2 ? ' Z' : '') : '';
       el.setAttribute('d', path);
       el.classList.add('fill-soft');
     }
@@ -311,7 +325,7 @@
     const lineThresh = Math.max(22, state.viewBox.w / 220);
 
     for(const n of state.nodes){
-      const r = nodeRadius(n);
+      const r = nodeSelectionRadius(n);
       // Centre-point test always counts (and is the only test in 'center' mode).
       if(test(n)){ nodes.push(n.id); continue; }
       if(hitMode !== 'any') continue;
@@ -442,9 +456,10 @@
     // its centre, not anywhere on its body. Otherwise treat as a background
     // click (deselect, no drag).
     if(n && state.settings.hitTestMode === 'center'){
-      const hv = nodeVisualC(n);
-      const hw = hv.width, hh = hv.height;
-      const centerR = Math.max(8, Math.min(hw, hh) * 0.25);
+      // At extreme zoom-outs the visible/hit dot is much larger in WORLD units
+      // than the original node body. Use the same effective radius, or a click
+      // on that dot is routed to background by the old world-sized centre test.
+      const centerR = nodeCentreHitRadius(n);
       if(Math.hypot(p.x - n.x, p.y - n.y) > centerR){ deselect(); return; }
     }
 
@@ -553,14 +568,14 @@
     if(zoomPreview) flushZoomPreview();
     if(pinch){ updatePinch(); return; }
     if(pan){
-      // Pan only moves the logical camera and re-applies the composited stage
-      // matrix: the SVG scene and #cameraLayer stay untouched while moving.
+      // Pan only moves the logical camera: the single matrix on #cameraLayer
+      // (an SVG group) is re-applied, with no second surface to hand off.
       const rect = canvasViewportRect(pan.rect);
       const start = pan.startViewBox;
       const scale = Math.min(rect.width / start.w, rect.height / start.h);
       const dx = (ev.clientX - pan.startClientX) / scale;
       const dy = (ev.clientY - pan.startClientY) / scale;
-      pan.previewViewBox = {...start, x:start.x - dx, y:start.y - dy};
+      pan.previewViewBox = boundedCamera({...start, x:start.x - dx, y:start.y - dy});
       if(!pan.frame){
         pan.frame = true;
         requestAnimationFrame(() => {
@@ -716,9 +731,20 @@
     unregisterPointer(ev);
   }
   
+  // Selection drafts and the edge-drag line are pointer-driven, not painted by
+  // renderCanvas(). Rebase their cached SVG coordinates when a camera move
+  // crosses the floating-origin boundary.
+  function rebaseInteractionOverlays(){
+    renderSelectionDraft();
+    if(edgeDraft){
+      const from = nodeById(edgeDraft.from);
+      if(from) dragLine.setAttribute('d',
+        `M ${renderX(from.x)} ${renderY(from.y)} L ${renderX(edgeDraft.x)} ${renderY(edgeDraft.y)}`);
+    }
+  }
   function updateDragLine(p, clientX, clientY){
     const from = nodeById(edgeDraft.from); if(!from) return;
-    dragLine.setAttribute('d', `M ${from.x} ${from.y} L ${p.x} ${p.y}`); dragLine.style.display = 'block';
+    dragLine.setAttribute('d', `M ${renderX(from.x)} ${renderY(from.y)} L ${renderX(p.x)} ${renderY(p.y)}`); dragLine.style.display = 'block';
     
     // Detect if pointer is over a node and adjust line appearance
     const target = document.elementFromPoint(clientX, clientY)?.closest?.('.node') as HTMLElement | null;
@@ -781,21 +807,21 @@
       $('#canvasWrap').classList.remove('panning');
       gestureActive = false;
     }
-    const cur = zoomPreview ? zoomPreview.preview : state.viewBox;
+    const cur = currentCamera();
     const r = zoomPreview ? zoomPreview.rect : canvasViewportRect();
     const anchor = clientToWorld(clientX, clientY, cur, r);
-    const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
+    const nw = clamp(cur.w * factor, 120, maxCameraWidth()), nh = clamp(cur.h * factor, 90, maxCameraHeight());
     // Preserve the exact world point under the cursor, including the centered
     // letterbox offsets introduced by SVG's xMidYMid meet aspect-ratio mode.
     const nextPixels = Math.min(r.width / nw, r.height / nh);
     const nextOffsetX = (r.width - nw * nextPixels) / 2;
     const nextOffsetY = (r.height - nh * nextPixels) / 2;
-    const preview = {
+    const preview = boundedCamera({
       x:anchor.x - (clientX - r.left - nextOffsetX) / nextPixels,
       y:anchor.y - (clientY - r.top - nextOffsetY) / nextPixels,
       w:nw,
       h:nh
-    };
+    });
     if(!zoomPreview){ zoomPreview = { preview, rect: r, frame: false, timer: null }; $('#canvasWrap').classList.add('fast-interaction'); }
     else zoomPreview.preview = preview;
     if(!zoomPreview.frame){
@@ -817,7 +843,7 @@
   }
   function commitZoomPreview(){
     if(!zoomPreview) return;
-    const preview = zoomPreview.preview;
+    const preview = boundedCamera(zoomPreview.preview);
     cancelZoomPreview();
     state.viewBox = {...preview};
     applyCamera();
@@ -839,8 +865,21 @@
       if(n.y < minY) minY = n.y;
       if(n.y > maxY) maxY = n.y;
     }
-    minX -= 120; maxX += 120; minY -= 120; maxY += 120;
-    state.viewBox = {x:minX, y:minY, w:Math.max(260,maxX-minX), h:Math.max(220,maxY-minY)};
+    // Fit the WHOLE span with at least ~16 screen pixels of padding, so
+    // minimum-size node dots at extreme zoom-outs are fully inside the canvas.
+    // No camera cap truncates the span: boundedCamera() selects a safe
+    // render-space scale that keeps every SVG number below Skia's limit while
+    // state.viewBox keeps the exact world viewport.
+    const rawW = maxX - minX, rawH = maxY - minY;
+    let w = Math.max(260, rawW + 240), h = Math.max(220, rawH + 240);
+    const rect = canvasViewportRect();
+    updateCameraViewportAspect(rect);
+    const pitch = (rect.width && rect.height) ? Math.min(rect.width / w, rect.height / h) : 0;
+    const pad = pitch > 0 ? Math.max(120, 16 / pitch) : 120;
+    w = Math.max(260, rawW + 2 * pad);
+    h = Math.max(220, rawH + 2 * pad);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    state.viewBox = boundedCamera({ x: cx - w / 2, y: cy - h / 2, w, h });
     applyCamera();
     saveSoon();
   }

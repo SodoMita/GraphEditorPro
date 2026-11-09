@@ -102,12 +102,14 @@
   const dashCache = new Map();
   function strokeDashArray(style, size){
     if(style !== 'dashed' && style !== 'dotted') return 'none';
-    const key = style + size;
+    const key = style + size + '|' + renderScale;
     let dash = dashCache.get(key);
     if(dash === undefined){
+      const s = renderSize(size);
+      const unit = renderScale;
       dash = style === 'dashed'
-        ? `${Math.max(4, size*2)} ${Math.max(3, size*1.5)}`
-        : `${Math.max(1, size*0.8)} ${Math.max(3, size*1.8)}`;
+        ? `${Math.max(4 * unit, s*2)} ${Math.max(3 * unit, s*1.5)}`
+        : `${Math.max(1 * unit, s*0.8)} ${Math.max(3 * unit, s*1.8)}`;
       if(dashCache.size > 128) dashCache.clear();
       dashCache.set(key, dash);
     }
@@ -141,7 +143,7 @@
   // when measurement is unavailable (e.g. jsdom) fall back to a per-glyph
   // estimate that is close enough for a background plate.
   function measuredTextWidth(el, text, size, font){
-    const sig = text + '|' + size + '|' + font;
+    const sig = text + '|' + size + '|' + font + '|' + renderScale;
     if(el.__twSig !== sig){
       let w = 0;
       try { if(typeof el.getComputedTextLength === 'function') w = el.getComputedTextLength(); } catch(err){ w = 0; }
@@ -157,9 +159,10 @@
   function applyLabelOutline(g, textEl, key, x, y, text, size, font, anchor, baseline){
     const conf = labelOutlineConf();
     if(!textEl) return null;
+    const s = renderSize(size);
     if(conf.mode === 'outline' && conf.width > 0){
       setAttr(textEl, 'stroke', conf.color);
-      setAttr(textEl, 'stroke-width', round2(labelOutlineThickness(conf, size)));
+      setAttr(textEl, 'stroke-width', renderSize(labelOutlineThickness(conf, size)));
     } else {
       setAttr(textEl, 'stroke', 'none');
       setAttr(textEl, 'stroke-width', '0');
@@ -175,17 +178,19 @@
       } else if(plate.nextSibling !== textEl){
         g.insertBefore(plate, textEl); // stays directly behind its text
       }
+      // The text's font-size is already scaled, so its measured width is in
+      // scaled SVG units. Only size-derived padding/height need scaling.
       const tw = measuredTextWidth(textEl, text, size, font);
-      const pad = Math.max(2, labelOutlineThickness(conf, size) * 0.8);
-      const h = size * 1.12 + pad;
+      const pad = Math.max(renderSize(2), renderSize(labelOutlineThickness(conf, size) * 0.8));
+      const h = s * 1.12 + pad;
       let rx = x - tw / 2 - pad, ry = y - h / 2;
       if(anchor === 'start') rx = x - pad;
       else if(anchor === 'end') rx = x - tw - pad;
-      if(baseline === 'auto') ry = y - size * 0.36 - h / 2;
-      else if(baseline === 'hanging') ry = y + size * 0.36 - h / 2;
-      setAttr(plate, 'x', round2(rx)); setAttr(plate, 'y', round2(ry));
-      setAttr(plate, 'width', round2(tw + pad * 2)); setAttr(plate, 'height', round2(h));
-      setAttr(plate, 'rx', round2(Math.min(4, size * 0.25)));
+      if(baseline === 'auto') ry = y - s * 0.36 - h / 2;
+      else if(baseline === 'hanging') ry = y + s * 0.36 - h / 2;
+      setAttr(plate, 'x', rx); setAttr(plate, 'y', ry);
+      setAttr(plate, 'width', tw + pad * 2); setAttr(plate, 'height', h);
+      setAttr(plate, 'rx', Math.min(renderSize(4), s * 0.25));
       setAttr(plate, 'fill', conf.color);
     } else if(plate){
       plate.remove(); g[plateKey] = null; plate = null;
@@ -196,6 +201,93 @@
     const plateKey = key + 'Plate';
     const plate = g[plateKey];
     if(plate){ plate.remove(); g[plateKey] = null; }
+  }
+  function clearEdgeText(g, kind){
+    const key = kind === 'label' ? '__label' : '__weight';
+    const el = g[key];
+    if(el){ el.remove(); g[key] = null; }
+    removeLabelPlate(g, key);
+  }
+  function setEdgeTextHidden(g, hidden){
+    for(const key of ['__label','__weight']){
+      const el = g[key];
+      if(el){ if(hidden) setAttr(el, 'display', 'none'); else removeAttr(el, 'display'); }
+      const plate = g[key + 'Plate'];
+      if(plate){ if(hidden) setAttr(plate, 'display', 'none'); else removeAttr(plate, 'display'); }
+    }
+  }
+
+  // Label/weight content is independent of camera visibility. Keeping the text
+  // elements (hidden, not removed) for a visible-but-off-centre midpoint lets a
+  // plain pan re-show them without a full render pass; only an EMPTY path
+  // removes them, preserving the fully-clipped ghost-label fix.
+  function edgeLabelWeightText(e, showLabels = shouldShowLabels()){
+    let labelText = '', weightText = '';
+    if(!showLabels) return {labelText, weightText};
+    const gd = state.settings.graphDefaults || {};
+    const weightMode = gd.edgeWeightMode || 'number';
+    const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
+    if(e.label) labelText = e.label;
+    if(e.weight !== '' && e.weight != null){
+      const w = edgeWeightNumber(e);
+      if(w != null){
+        if(weightMode === 'number') weightText = e.weight;
+        else if((weightMode === 'color' || weightMode === 'width') && !isWeightInRange(w, wMin, wMax)) weightText = e.weight;
+      }
+    }
+    return {labelText, weightText};
+  }
+  function paintEdgeText(g, d, v, labelText, weightText, visible){
+    if(!d.path || (!labelText && !weightText)){
+      clearEdgeText(g, 'label'); clearEdgeText(g, 'weight');
+      return;
+    }
+    const hasBoth = Boolean(labelText && weightText);
+    const labelOffsetY = hasBoth ? -renderSize((v.labelSize || 12) * 0.75 + 2) : 0;
+    let label = g.__label || null;
+    if(labelText){
+      if(!label){
+        label = document.createElementNS(NS,'text');
+        label.setAttribute('class','edge-label');
+        label.setAttribute('text-anchor','middle'); label.setAttribute('dominant-baseline','middle');
+        g.appendChild(label); g.__label = label;
+      }
+      if(label.textContent !== labelText) label.textContent = labelText;
+      setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
+      setAttr(label, 'fill', v.labelColor);
+      setAttr(label, 'font-size', renderSize(v.labelSize));
+      setAttr(label, 'font-family', v.labelFont);
+      applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, labelText, v.labelSize, v.labelFont, 'middle', 'middle');
+    } else if(label){ clearEdgeText(g, 'label'); label = null; }
+    let weight = g.__weight || null;
+    if(weightText){
+      if(!weight){
+        weight = document.createElementNS(NS,'text');
+        weight.setAttribute('class','edge-weight');
+        weight.setAttribute('text-anchor','middle'); weight.setAttribute('dominant-baseline','middle');
+        g.appendChild(weight); g.__weight = weight;
+      }
+      if(weight.textContent !== weightText) weight.textContent = weightText;
+      setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
+      setAttr(weight, 'fill', v.labelColor);
+      setAttr(weight, 'font-size', renderSize(v.labelSize));
+      setAttr(weight, 'font-family', v.labelFont);
+      applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weightText, v.labelSize, v.labelFont, 'middle', 'middle');
+    } else if(weight){ clearEdgeText(g, 'weight'); weight = null; }
+    setEdgeTextHidden(g, !visible);
+  }
+  // A pan/wheel/pinch changes only the camera matrix. Re-evaluate midpoint
+  // visibility in that same task so hidden labels reappear without waiting for
+  // a document render that may never be scheduled.
+  function syncEdgeLabelVisibility(){
+    const showLabels = shouldShowLabels();
+    for(const [id, g] of edgeEls){
+      const e = edgeById(id); if(!e) continue;
+      const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) continue;
+      const d = g.__geoData;
+      const visible = showLabels && Boolean(d && d.path) && edgeLabelVisible(a, b);
+      setEdgeTextHidden(g, !visible);
+    }
   }
   // === DOM write de-duplication ===
   // Every write to rendered graph elements goes through these helpers, which
@@ -261,20 +353,21 @@
   const SEL_RING_SCALE = 1.35;
   function selRingFor(shape, w, h){
     const S = SEL_RING_SCALE;
+    const rw = renderSize(w), rh = renderSize(h), two = renderSize(2);
     let el;
     if(shape === 'square'){
-      el = document.createElementNS(NS,'rect'); el.setAttribute('x',-w/2*S); el.setAttribute('y',-h/2*S); el.setAttribute('width',w*S); el.setAttribute('height',h*S);
+      el = document.createElementNS(NS,'rect'); el.setAttribute('x',-rw/2*S); el.setAttribute('y',-rh/2*S); el.setAttribute('width',rw*S); el.setAttribute('height',rh*S);
     } else if(shape === 'diamond'){
-      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-h/2*S-2} ${w/2*S+2},0 0,${h/2*S+2} ${-w/2*S-2},0`);
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-rh/2*S-two} ${rw/2*S+two},0 0,${rh/2*S+two} ${-rw/2*S-two},0`);
     } else if(shape === 'triangleUp'){
-      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-h/2*S} ${w/2*S},${h/2*S} ${-w/2*S},${h/2*S}`);
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${-rh/2*S} ${rw/2*S},${rh/2*S} ${-rw/2*S},${rh/2*S}`);
     } else if(shape === 'triangleDown'){
-      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${h/2*S} ${w/2*S},${-h/2*S} ${-w/2*S},${-h/2*S}`);
+      el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`0,${rh/2*S} ${rw/2*S},${-rh/2*S} ${-rw/2*S},${-rh/2*S}`);
     } else if(shape === 'hexagon'){
-      const hx = w/2*S, hy = h/2*S, mx = w/4*S;
+      const hx = rw/2*S, hy = rh/2*S, mx = rw/4*S;
       el = document.createElementNS(NS,'polygon'); el.setAttribute('points',`${-hx+mx},${-hy} ${hx-mx},${-hy} ${hx},0 ${hx-mx},${hy} ${-hx+mx},${hy} ${-hx},0`);
     } else {
-      el = document.createElementNS(NS,'ellipse'); el.setAttribute('rx',w/2*S); el.setAttribute('ry',h/2*S);
+      el = document.createElementNS(NS,'ellipse'); el.setAttribute('rx',rw/2*S); el.setAttribute('ry',rh/2*S);
     }
     el.setAttribute('class','node-sel');
     return el;
@@ -283,7 +376,7 @@
   // element (or null). Safe to call from render passes and the fast
   // selection-sync path alike.
   function syncNodeSelRing(g: any, _n: any, shape: string, w: number, h: number, selected: boolean){
-    const selSig = shape + '|' + w + '|' + h;
+    const selSig = shape + '|' + w + '|' + h + '|' + renderScale;
     let sel = g.__sel;
     if(selected){
       if(!sel || g.__selSig !== selSig){
@@ -303,7 +396,7 @@
   // centroid), which keeps the accent band even around the tip instead of only
   // pushing the apex forward.
   function edgeArrowPoints(d, scale = 1){
-    const aw = ARROW_HW, ang = d.arrowAngle;
+    const aw = renderSize(ARROW_HW), ang = d.arrowAngle;
     const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
     const lx = d.tx + px, ly = d.ty + py;
     const rx = d.tx - px, ry = d.ty - py;
@@ -397,7 +490,7 @@
       g.__sel = sel;
     }
     setAttr(sel, 'd', accentPath);
-    setAttr(sel, 'stroke-width', Math.max(SEL_EDGE_MIN, (v && v.strokeSize ? v.strokeSize : 0) + SEL_EDGE_HALO));
+    setAttr(sel, 'stroke-width', renderSize(Math.max(SEL_EDGE_MIN, (v && v.strokeSize ? v.strokeSize : 0) + SEL_EDGE_HALO)));
     if(hasEdgeTip(e, geo)){
       if(!ring){
         ring = document.createElementNS(NS,'polygon');
@@ -530,6 +623,37 @@
   // no visual input should not ask for a pass at all (the camera and the grid
   // have their own writers — see `applyCamera`/`updateGridBackground`, which the
   // resize and zoom paths call directly).
+  // A floating-origin change can happen in a preview-only pointermove. The
+  // camera matrix is written in the current task, so the geometry MUST be
+  // rebased in that same task: queueRender() would let Chromium paint one frame
+  // with the new matrix and old-origin node/edge coordinates (the exact
+  // one-frame regression this PR removes). When we are already inside
+  // renderCanvas(), its own geometry passes perform the rebase synchronously.
+  // Otherwise run a geometry-only pass right here.
+  let renderCanvasActive = false;
+  function syncRenderOriginRepaint(){
+    // A render-scale change is a geometry change too: write the inverse scene
+    // transform in the SAME task as the camera matrix, before any repaint.
+    syncRenderScaleDom();
+    if(!renderOriginMoved) return;
+    renderOriginMoved = false;
+    rebaseInteractionOverlays();
+    invalidateStyleCache();
+    documentDirty = true;
+    if(renderCanvasActive) return;
+    beginRenderPass();
+    renderGen++;
+    renderEdges();
+    renderNodes();
+    renderGizmo();
+    paintedRev = graphRev;
+    paintedStyleRev = styleRev;
+    paintedNodeStyle = styleFingerprint('node');
+    paintedEdgeStyle = styleFingerprint('edge');
+    documentDirty = false;
+    lastPaintedGen = renderGen;
+    endRenderPass();
+  }
   function queueRender(includeMatrix=false, includeSidebar=false){
     invalidateStyleCache(); documentDirty = true;
     if(includeMatrix){ clearTimeout(matrixTimer); matrixTimer = setTimeout(renderMatrixAndList, 60); }
@@ -615,6 +739,8 @@
     return out;
   }
   function renderCanvas(){
+    renderCanvasActive = true;
+    try {
     beginRenderPass();
     // One decision per pass: is this selection too large to decorate item by
     // item? Both layer passes read it, so the look can never be half outline
@@ -642,6 +768,9 @@
     updateUndoRedo();
     resetSelectionMirror();
     endRenderPass();
+    } finally {
+      renderCanvasActive = false;
+    }
   }
   // Internal selection-tool ids are not user copy: the status pill used to show
   // "Режим выбора rect" / "Выделение polygon…" for every non-default tool.
@@ -668,13 +797,19 @@
     // editing labels during the 220ms zoom debounce) never snap back to the
     // pre-zoom camera. Explicit camera-replacement callers (fitView,
     // resetCamera, setCameraFromInputs, undo/redo, import) cancel first.
-    if(zoomPreview){
-      state.viewBox = {...zoomPreview.preview};
-      cancelZoomPreview();
-      saveSoon();
+    if(zoomPreview || pan || pinch){
+      // Adopt the clamped ACTIVE camera (wheel zoom, pan or pinch) before
+      // rendering so an unrelated re-render during a gesture cannot snap back
+      // to the pre-gesture camera. A style change may also queue a render via
+      // pushHistory; that path must see the preview too, not state.viewBox.
+      state.viewBox = {...currentCamera()};
+      if(zoomPreview){ cancelZoomPreview(); saveSoon(); }
     }
-    const viewport = applyCameraTransform(state.viewBox);
-    updateGridBackground(state.viewBox, viewport);
+    // applyCameraTransform() owns the grid update; it uses the same camera as
+    // the matrix, so a style handler that fires during a preview cannot see a
+    // different (committed) camera here.
+    applyCameraTransform(currentCamera());
+    syncNodeHitTargets();
     syncCameraInputs();
     // Gizmo handles are sized in screen pixels, so a committed zoom change
     // re-sizes them in place (signature-guarded: a no-op when nothing changed).
@@ -684,185 +819,101 @@
   // === Camera ===
   // ONE paint system: the logical camera (`state.viewBox`, the value every hit
   // test, the grid, the sidebar readout and the saved document use) is written
-  // as a single matrix on #cameraLayer, for gesture previews AND for the
-  // committed camera. The root <svg> keeps a fixed viewBox, so a camera change
-  // is exactly one attribute write and never re-runs SVG layout over the scene.
+  // as a single matrix on #cameraLayer, an SVG <g> INSIDE the canvas. The root
+  // <svg> keeps a fixed world reference viewBox, written once. A gesture
+  // preview and a commit are the SAME attribute write on the SAME element, so
+  // there is no second surface, no CSS/SVG handoff and no frame that mixes two
+  // cameras.
   //
-  // There is deliberately no second mechanism (a CSS-transformed wrapper, a
-  // separate grid layer, an overscan apron): two systems that update on two
-  // clocks — even two writes in the same task — can display a frame that mixes
-  // a new scene camera with a stale second layer, which reads as the view
-  // jumping for one frame and then returning. That bug has been fixed three
-  // times in this project's history (af90851 "flashing one frame of zoomed
-  // content at pan end", aa081b7 "one-frame pan/zoom overshoot", 12df425
-  // "camera handoff overshoot frames"). Do not introduce another; if a preview
-  // path needs to be faster, make THIS write cheaper, not a second surface.
-  // The SVG keeps a fixed world reference frame; the camera is applied to the
-  // #cameraLayer DIV wrapper. World unit u maps to CSS pixel
-  //   rect.width/2 + (u - camera.x) * cameraPixels - camera.w*cameraPixels/2
-  // which is exactly the "xMidYMid meet" mapping the root viewBox used to give
-  // us, so pointer math, the grid and the graph all still describe one system.
+  // The matrix must live inside the SVG, never on an HTML wrapper around it.
+  // An outermost <svg> clips its children to the root viewBox: transforming a
+  // wrapper <div> can only move that already-clipped viewport, so nodes and
+  // edges outside the reference frame are never painted at all, and a
+  // viewport-sized CSS grid inside the wrapper shows its hard edge during a pan
+  // or zoom. That was the PR #33 regression (f18fb68). The grid is therefore
+  // drawn as world-space SVG paths in this same scene: no pattern decal limit,
+  // no separate layer, no crop, and it is always locked to the graph.
   const REFERENCE_VIEWBOX = {x:-500, y:-330, w:1000, h:660};
   let referenceViewBoxInstalled = false;
-  // The last committed camera. A preview is expressed as the delta from it, so
-  // previews compose onto exactly what is on screen instead of recomputing.
-  let committedCamera: any = null;
-  let cameraPixels = 1;
-  // The grid div is painted exactly viewport-sized and re-centred on every
-  // commit. Overscan was the obvious guess and it was the wrong trade: a bigger
-  // composited layer only adds raster work, and because a gesture moves the grid
-  // together with the graph, any overscan > 1 is pure cost. Measured over one pan
-  // at 1200 nodes: 8x = 10-12 dropped frames and a 116-216ms worst frame,
-  // 2x = 7 dropped, 1x = 0 dropped and a 16.8ms worst frame.
-  const GRID_OVERSCAN = 1;
   function canvasViewportRect(cachedRect: any = null){
     if(cachedRect && cachedRect.width && cachedRect.height) return cachedRect;
-    // #cameraLayer is the un-transformed viewport box for measurement purposes
-    // only when it is at identity; #canvasWrap never has a transform, so it is
-    // the honest source. Fall back to the svg in jsdom (0x0 layout).
-    if(canvasWrap){
-      const wr = canvasWrap.getBoundingClientRect();
-      if(wr.width && wr.height) return wr;
-    }
+    // The SVG is never transformed now, so its own box is the exact viewport
+    // the root viewBox maps with preserveAspectRatio="xMidYMid meet". Using
+    // #canvasWrap instead would include its (up to 1px) border and shift the
+    // camera and hit tests by that much. The stationary backdrop is the
+    // fallback for jsdom, which lays nothing out.
+    const sr = svg.getBoundingClientRect();
+    if(sr.width && sr.height) return sr;
     if(gridLayer){
       const gr = gridLayer.getBoundingClientRect();
       if(gr.width && gr.height) return gr;
     }
-    return svg.getBoundingClientRect();
+    if(canvasWrap) return canvasWrap.getBoundingClientRect();
+    return sr;
   }
   function cameraMatrixText(matrix){
-    const clean = value => Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
-    // CSS `matrix()` requires COMMA separators. The space-separated form is
-    // valid on an SVG attribute, but as a CSS value it is rejected outright and
-    // the element silently keeps its old transform — which looks exactly like a
-    // camera that never applies.
-    return `matrix(${clean(matrix.scale)}, 0, 0, ${clean(matrix.scale)}, ${clean(matrix.tx)}, ${clean(matrix.ty)})`;
+    // toFixed(12) destroyed small non-zero scales: a 1e15-unit Fit rounded to
+    // 1e-12 and a 2e15-unit Fit wrote scale 0. Keep 15 SIGNIFICANT digits
+    // (shortest round-trip precision) so tiny scales survive serialization.
+    const clean = value => {
+      const v = Number(value);
+      if(!Number.isFinite(v) || v === 0) return 0;
+      return Number(v.toPrecision(15));
+    };
+    // SVG transform attribute, in SVG user units (the root viewBox supplies
+    // the user -> screen scale afterwards). Space separators are intentional.
+    return `matrix(${clean(matrix.scale)} 0 0 ${clean(matrix.scale)} ${clean(matrix.tx)} ${clean(matrix.ty)})`;
   }
   function cameraDeltaMatrix(camera, base, viewport){
-    // Screen-space delta from `base` to `camera`, in CSS pixels. A world point u
-    // lands at letterboxOffset(cam) + (u - cam.x) * pitch(cam); requiring that to
-    // equal scale * (letterboxOffset(base) + (u - base.x) * pitch(base)) + t for
-    // every u gives the two terms below. The letterbox difference is its own
-    // term: it is zero only when both cameras share an aspect ratio, which is
-    // not true of a zoom that changes w and h together but not always by the
-    // same ratio as the viewport.
+    // Compose the two preserveAspectRatio="xMidYMid meet" mappings (the fixed
+    // reference frame and the logical camera). Exact for arbitrary viewport
+    // / camera aspect ratios, fitView and the numeric camera controls.
     const basePixels = Math.min(viewport.width / base.w, viewport.height / base.h);
-    const cameraPixelsNow = Math.min(viewport.width / camera.w, viewport.height / camera.h);
-    const scale = cameraPixelsNow / basePixels;
-    const baseOffsetX = viewport.width / 2 - basePixels * base.w / 2;
-    const baseOffsetY = viewport.height / 2 - basePixels * base.h / 2;
-    const cameraOffsetX = viewport.width / 2 - cameraPixelsNow * camera.w / 2;
-    const cameraOffsetY = viewport.height / 2 - cameraPixelsNow * camera.h / 2;
+    const cameraPixels = Math.min(viewport.width / camera.w, viewport.height / camera.h);
+    const scale = cameraPixels / basePixels;
+    const baseOffsetX = (viewport.width - base.w * basePixels) / 2;
+    const baseOffsetY = (viewport.height - base.h * basePixels) / 2;
+    const cameraOffsetX = (viewport.width - camera.w * cameraPixels) / 2;
+    const cameraOffsetY = (viewport.height - camera.h * cameraPixels) / 2;
     return {
       scale,
-      tx: cameraOffsetX - scale * baseOffsetX + (base.x - camera.x) * cameraPixelsNow,
-      ty: cameraOffsetY - scale * baseOffsetY + (base.y - camera.y) * cameraPixelsNow
+      tx:base.x + (cameraOffsetX - baseOffsetX) / basePixels - scale * camera.x,
+      ty:base.y + (cameraOffsetY - baseOffsetY) / basePixels - scale * camera.y
     };
   }
   function ensureReferenceViewBox(){
     if(!referenceViewBoxInstalled){
       referenceViewBoxInstalled = true;
       setAttr(svg, 'viewBox', `${REFERENCE_VIEWBOX.x} ${REFERENCE_VIEWBOX.y} ${REFERENCE_VIEWBOX.w} ${REFERENCE_VIEWBOX.h}`);
-      // `meet`, not `slice`: `slice` would crop the reference frame to fill the
-      // viewport whenever the aspect ratios differ, which shows up as a graph
-      // shifted off-centre. The reference frame is paint-only — the camera
-      // matrix on #cameraLayer supplies all the geometry — so letterboxing it
-      // costs nothing and keeps the world origin dead centre.
       setAttr(svg, 'preserveAspectRatio', 'xMidYMid meet');
     }
   }
-  // One camera change == one style write on #cameraLayer. No second surface, no
-  // second clock: previews and commits run the very same code path, so there is
-  // no handoff frame to get wrong.
   function applyCameraTransform(camera=state.viewBox, rect=null){
+    // The reference frame does not depend on the viewport, so install it even
+    // when the canvas has no size yet (hidden tab, pre-layout render).
     ensureReferenceViewBox();
     const viewport = canvasViewportRect(rect);
+    updateCameraViewportAspect(viewport);
     const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
-    cameraPixels = Math.min(projViewport.width / camera.w, projViewport.height / camera.h);
-    setStyleIfChanged(cameraLayer.style, 'transform', cameraMatrixText(cameraDeltaMatrix(camera, REFERENCE_VIEWBOX, projViewport)));
-    committedCamera = {x:camera.x, y:camera.y, w:camera.w, h:camera.h};
-    sizeGridLayer(camera, projViewport);
+    // Always derived from the fixed reference frame, never composed with the
+    // previous frame's matrix, so no drift can accumulate across gestures.
+    // Rebase onto the floating render origin: both the matrix translation and
+    // every SVG coordinate stay far below Chromium's ~2^25 coordinate limit,
+    // while state.viewBox remains the exact world camera.
+    const cam = renderCamera(camera);
+    syncRenderOriginRepaint();
+    setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(cam, REFERENCE_VIEWBOX, projViewport)));
+    updateGridBackground(cam, projViewport);
+    syncEdgeLabelVisibility();
     return (viewport.width && viewport.height) ? viewport : null;
   }
-  // A preview is the same single write, with the camera that the gesture is
-  // currently showing. It is not a separate surface and needs no handoff.
   function applyPreviewCamera(preview, rect=null){
-    ensureReferenceViewBox();
-    const viewport = canvasViewportRect(rect);
-    if(!viewport || !viewport.width || !viewport.height) return;
-    if(!committedCamera){ applyCameraTransform(preview, viewport); return; }
-    // ONLY the camera transform. Re-pitching the grid gradient here would
-    // rewrite a screen-sized div every frame and force a full repaint: measured
-    // at 1200 nodes it turned a 0-dropped pan into 21 grid writes per gesture
-    // and a zoom into 41. The grid lives INSIDE #cameraLayer, so it already
-    // scales with the camera — the lines stay locked to world coordinates and
-    // simply get a little thicker while zooming. It is re-pitched once, at
-    // commit, which is the only moment the pitch can change without a repaint
-    // we would see as a jolt.
-    setStyleIfChanged(cameraLayer.style, 'transform',
-      cameraMatrixText(cameraDeltaMatrix(preview, committedCamera, viewport)));
-    // The grid keeps the counter-transform of the COMMITTED camera for the whole
-    // gesture. Recomputing it per frame would repaint a viewport-sized div on
-    // every frame of the pan; holding it still means the grid is simply carried
-    // along by #cameraLayer like everything else.
-  }
-  // The grid div covers the viewport plus a generous apron, centred on the
-  // camera, so it can never show an edge however far a gesture travels before
-  // the commit re-centres it. Resizing only happens when it actually matters.
-  let gridMetrics = '';
-  // The transform currently on #cameraLayer, as {scale,tx,ty}.
-  function camMatrix(viewport){
-    if(!committedCamera) return { scale: 1, tx: 0, ty: 0 };
-    return cameraDeltaMatrix(committedCamera, REFERENCE_VIEWBOX, viewport);
-  }
-  function sizeGridLayer(camera, viewport){
-    const gx = state.settings.gridSizeX || state.settings.gridSize || 40;
-    const gy = state.settings.gridSizeY || state.settings.gridSize || 40;
-    const scale = Math.min(viewport.width / camera.w, viewport.height / camera.h);
-    const minorX = gx * scale, minorY = gy * scale;
-    // Decimate exactly like the old SVG pattern did, so lines stay legible and
-    // locked to world coordinates instead of turning into a grey wash.
-    const GRID_MIN_PX = 8;
-    const stepX = gx * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(minorX, 1e-6)));
-    const stepY = gy * Math.max(1, Math.ceil(GRID_MIN_PX / Math.max(minorY, 1e-6)));
-    const majorX = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
-    const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
-    const pxX = stepX * scale, pxY = stepY * scale, majX = majorX * scale, majY = majorY * scale;
-    const minorColor = hexToRgba(state.settings.gridMinorColor, state.settings.gridMinorAlpha ?? 0.105);
-    const majorColor = hexToRgba(state.settings.gridMajorColor, state.settings.gridMajorAlpha ?? 0.16);
-    const width = Math.max(1, Math.round(viewport.width));
-    const height = Math.max(1, Math.round(viewport.height));
-    const camNow = camMatrix({width, height});
-    const sig = [pxX, pxY, majX, majY, minorColor, majorColor, width, height, camNow.scale, camNow.tx, camNow.ty].join('|');
-    if(sig === gridMetrics) return;
-    gridMetrics = sig;
-    const st = gridLayer.style;
-    // Two gradients per axis: the fine step and the coarser major step. Both
-    // are painted once at these pixel pitches; a camera change only moves the
-    // already-painted div, it never re-runs this.
-    st.backgroundImage =
-      `repeating-linear-gradient(0deg, ${minorColor} 0 1px, transparent 1px ${pxY}px),` +
-      `repeating-linear-gradient(90deg, ${minorColor} 0 1px, transparent 1px ${pxX}px),` +
-      `repeating-linear-gradient(0deg, ${majorColor} 0 1.3px, transparent 1.3px ${majY}px),` +
-      `repeating-linear-gradient(90deg, ${majorColor} 0 1.3px, transparent 1.3px ${majX}px)`;
-    st.width = width + 'px';
-    st.height = height + 'px';
-    // The grid is a child of #cameraLayer, so the camera scales it too. Left
-    // alone it would shrink to the zoomed camera box and leave most of the
-    // canvas blank on zoom-out. Counter-scale it by 1/cameraScale and shift it
-    // by -translate/cameraScale, which puts it back exactly over the viewport at
-    // every zoom; the gradient pitch below is still expressed in screen pixels,
-    // so the lines stay world-locked while the div always fills the canvas.
-    const cam = camNow;
-    st.transform = `translate(${-cam.tx / cam.scale}px, ${-cam.ty / cam.scale}px) scale(${1 / cam.scale})`;
-    st.transformOrigin = '0 0';
-    // Report the decimated steps in WORLD units, where the grid is defined. The
-    // on-screen pitch above is a screen quantity and changes with zoom; these
-    // two are what make the grid "world-locked" and are what tests read.
-    gridLayer.setAttribute('data-minor-x', String(stepX));
-    gridLayer.setAttribute('data-minor-y', String(stepY));
-    gridLayer.setAttribute('data-major-x', String(majorX));
-    gridLayer.setAttribute('data-major-y', String(majorY));
+    // One camera, one write. The preview IS the camera: committing only records
+    // the value in state.viewBox, so no pixel can move at the handoff. Writing
+    // a *delta* from the last committed camera here (as PR #33 did) replaced
+    // the absolute matrix with a relative one, which flashed the graph in the
+    // wrong place for the whole preview.
+    applyCameraTransform(preview, rect);
   }
   function hexToRgba(hex, alpha){
     const h = String(hex || '#94a3b8').replace('#','');
@@ -871,22 +922,175 @@
     return `rgba(${r},${g},${b},${alpha})`;
   }
   function setStyleIfChanged(style, property, value){
-    if(style[property] === value) return;
-    style[property] = value;
-    // A property can be rejected outright when the element has no stylesheet
-    // declaration for it yet — the write is then silently dropped, leaving the
-    // camera unapplied. Assert the result once and fall back to cssText, which
-    // always lands.
-    if(style[property] !== value) style.cssText = `${style.cssText ? style.cssText.replace(/;?\s*$/, '') + ';' : ''}${property}:${value}`;
+    if(style[property] !== value) style[property] = value;
   }
-  // The grid is now a CSS-gradient div, so there is no cached SVG pattern to
-  // invalidate; keep the entry point so settings changes still force a repaint.
-  function invalidateGridCache(){ gridMetrics = ''; }
-  function updateGridBackground(vb=state.viewBox, cachedRect=null){
+  // === Render-space grid ===
+  // Paths are written in world units rebased onto the floating render origin,
+  // not absolute world coordinates: Chromium clamps SVG numbers above ~2^25,
+  // so 1e20 in a path would disappear even though the camera matrix is finite.
+  // Grid loops are bounded independently of the coordinate magnitude: a local
+  // index, a 4,000-segment cap and an index-magnitude guard replace the old
+  // absolute `k++` that could stop incrementing past 2^53.
+  const GRID_INDEX_LIMIT = 1e12;
+  const MAX_GRID_LINES = 4000;
+  function clearGridPaths(){
+    setAttr(gridMinorLines, 'd', '');
+    setAttr(gridMajorLines, 'd', '');
+  }
+  // Last drawn render-space extent. The paths are rebuilt only when the grid's
+  // decimation/colours change, the floating origin moves, or the view leaves
+  // their apron: a pan or wheel preview normally writes NOTHING but the one
+  // camera matrix, which keeps the per-update style+layout cost flat regardless
+  // of graph size.
+  let gridBounds = null; // {tileSig,x0,x1,y0,y1}
+  function invalidateGridCache(){ gridBounds = null; }
+  // Default to the ACTIVE camera (a pending zoom/pan preview), not the last
+  // committed state.viewBox. Style handlers call this with no argument; using
+  // the committed camera there recomputed the grid for the wrong view and
+  // contracted it to a small central rectangle until the preview committed.
+  // The floating origin is snapped to 1e6, which is not necessarily a multiple
+  // of a decimated grid step. Keep grid lines locked to WORLD cell boundaries
+  // by subtracting the origin's remainder modulo the major step: local line
+  // k*stepX - remainder corresponds to world G + k*stepX, where G is a multiple
+  // of majorX. BigInt makes the remainder exact even for a 1e20 world camera.
+  function worldGridPhase(origin, majorStep){
+    const m = BigInt(Math.max(1, Math.round(majorStep)));
+    const v = BigInt(Math.trunc(finite(origin, 0)));
+    return Number(((v % m) + m) % m);
+  }
+  function updateGridBackground(vb=renderCamera(), cachedRect=null){
+    // No-argument calls come from style handlers; their default can move the
+    // floating origin, so schedule the geometry repaint as well.
+    syncRenderOriginRepaint();
     const rect = canvasViewportRect(cachedRect);
     if(!rect.width || !rect.height) return;
+    updateCameraViewportAspect(rect);
     setStyleIfChanged(gridLayer.style, 'backgroundColor', state.settings.canvasBgColor || '#020617');
-    sizeGridLayer(vb, rect);
+    const settings = state.settings;
+    const gx = settings.gridSizeX || settings.gridSize || 40;
+    const gy = settings.gridSizeY || settings.gridSize || 40;
+    const cam = boundedCamera(vb);
+    // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
+    const pitch = Math.min(rect.width / cam.w, rect.height / cam.h);
+    if(!(pitch > 0) || !Number.isFinite(pitch)){ clearGridPaths(); gridBounds = null; return; }
+    // Visible world rectangle (including letterboxing) is needed by the
+    // decimation budget below.
+    const offX = (rect.width - cam.w * pitch) / 2;
+    const offY = (rect.height - cam.h * pitch) / 2;
+    const visX0 = cam.x - offX / pitch, visX1 = cam.x + cam.w + offX / pitch;
+    const visY0 = cam.y - offY / pitch, visY1 = cam.y + cam.h + offY / pitch;
+    const spanX = Math.max(1, visX1 - visX0), spanY = Math.max(1, visY1 - visY0);
+    // Zoom-adaptive decimation: when a cell would shrink below the readable
+    // minimum on screen, draw every k-th cell. Integer multiples keep the lines
+    // locked to world coordinates instead of drifting relative to the nodes.
+    const GRID_MIN_PX = 8;
+    // Do NOT floor the pitch at 1e-6: at a 1e13-unit Fit that limited the
+    // decimation to 3.2e8 world units, so the 4,000-segment cap retained only
+    // a ~178px-wide central strip. Also bound the step by the segment budget
+    // (visible range + apron + bucket padding), so the cap never crops the
+    // viewport even when the 8px readability rule alone is not enough.
+    const GRID_BUCKET = 256;
+    const segmentBudget = Math.max(1, MAX_GRID_LINES - 2 * GRID_BUCKET);
+    const decimationFactor = (base, span) => {
+      const product = base * pitch;
+      const readable = product > 0 && Number.isFinite(GRID_MIN_PX / product)
+        ? Math.ceil(GRID_MIN_PX / product) : 1;
+      const budget = Math.ceil((7 * Math.max(1, span)) / (base * segmentBudget));
+      return Math.max(1, readable, budget);
+    };
+    const stepX = gx * decimationFactor(gx, spanX);
+    const stepY = gy * decimationFactor(gy, spanY);
+    const majorX = stepX * Math.max(2, Math.ceil((gx * 5) / stepX));
+    const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
+    const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
+    const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
+    const phaseX = worldGridPhase(renderOriginX, majorX);
+    const phaseY = worldGridPhase(renderOriginY, majorY);
+    const tileSig = [stepX, stepY, majorX, majorY, phaseX, phaseY, minorColor, majorColor, renderScale].join('|');
+    // Report the decimated steps in WORLD units, where the grid is defined.
+    for(const el of [gridLayer, gridLines]){
+      if(!el) continue;
+      setAttr(el, 'data-minor-x', String(stepX));
+      setAttr(el, 'data-minor-y', String(stepY));
+      setAttr(el, 'data-major-x', String(majorX));
+      setAttr(el, 'data-major-y', String(majorY));
+    }
+    // L is in WORLD units: renderScale maps it back below RENDER_COORD_LIMIT
+    // when the SVG path is written.
+    const L = renderCoordLimit();
+    if(![visX0, visX1, visY0, visY1].every(Number.isFinite) ||
+       visX0 < -L || visX1 > L || visY0 < -L || visY1 > L ||
+       Math.max(Math.abs(visX0), Math.abs(visX1)) / stepX > GRID_INDEX_LIMIT ||
+       Math.max(Math.abs(visY0), Math.abs(visY1)) / stepY > GRID_INDEX_LIMIT){
+      clearGridPaths(); gridBounds = null; return;
+    }
+    // Keep the existing paths while the camera stays inside their apron.
+    const marginX = spanX * 0.75, marginY = spanY * 0.75;
+    if(gridBounds && gridBounds.tileSig === tileSig &&
+       gridBounds.x0 <= visX0 - marginX && gridBounds.x1 >= visX1 + marginX &&
+       gridBounds.y0 <= visY0 - marginY && gridBounds.y1 >= visY1 + marginY) return;
+    // Draw the visible render-space range plus several viewports of apron,
+    // quantised to a coarse cell bucket. Indices are LOCAL to a world-grid
+    // origin G = renderOrigin - phase, so even a 1e20 camera never increments
+    // an absolute index past 2^53. The phase keeps every line at an integer
+    // multiple of the world cell size; bucket quantisation keeps the bounds
+    // stable while a preview stays inside the apron.
+    // Cap the apron so a full safe-square Fit cannot push path coordinates past
+    // Skia's ~2^25 SVG limit. Bucket quantisation still keeps grid bounds stable
+    // while a preview stays inside the apron.
+    const apronX = Math.min(spanX * 3, L / 4), apronY = Math.min(spanY * 3, L / 4);
+    const drawX0 = Math.max(-L, visX0 - apronX), drawX1 = Math.min(L, visX1 + apronX);
+    const drawY0 = Math.max(-L, visY0 - apronY), drawY1 = Math.min(L, visY1 + apronY);
+    const bucket = GRID_BUCKET;
+    let firstX = Math.floor((drawX0 + phaseX) / stepX) - 1;
+    let lastX = Math.ceil((drawX1 + phaseX) / stepX) + 1;
+    let firstY = Math.floor((drawY0 + phaseY) / stepY) - 1;
+    let lastY = Math.ceil((drawY1 + phaseY) / stepY) + 1;
+    firstX = Math.floor(firstX / bucket) * bucket;
+    lastX = Math.ceil(lastX / bucket) * bucket;
+    firstY = Math.floor(firstY / bucket) * bucket;
+    lastY = Math.ceil(lastY / bucket) * bucket;
+    // Never write a line coordinate outside the safe render-space square.
+    const minFirstX = Math.floor((-L + phaseX) / stepX), maxLastX = Math.ceil((L + phaseX) / stepX);
+    const minFirstY = Math.floor((-L + phaseY) / stepY), maxLastY = Math.ceil((L + phaseY) / stepY);
+    firstX = Math.max(firstX, minFirstX); lastX = Math.min(lastX, maxLastX);
+    firstY = Math.max(firstY, minFirstY); lastY = Math.min(lastY, maxLastY);
+    // Hard cap on segments, centred on the visible range.
+    const cappedRange = (first, last, visFirst, visLast) => {
+      if(last - first + 1 <= MAX_GRID_LINES) return [first, last];
+      const center = Math.round((Math.ceil(visFirst) + Math.floor(visLast)) / 2);
+      const f = center - Math.floor(MAX_GRID_LINES / 2);
+      return [f, f + MAX_GRID_LINES - 1];
+    };
+    [firstX, lastX] = cappedRange(firstX, lastX, (visX0 + phaseX) / stepX, (visX1 + phaseX) / stepX);
+    [firstY, lastY] = cappedRange(firstY, lastY, (visY0 + phaseY) / stepY, (visY1 + phaseY) / stepY);
+    firstX = Math.max(firstX, minFirstX); lastX = Math.min(lastX, maxLastX);
+    firstY = Math.max(firstY, minFirstY); lastY = Math.min(lastY, maxLastY);
+    const rawX0 = rawRenderCoord(firstX * stepX - phaseX), rawX1 = rawRenderCoord(lastX * stepX - phaseX);
+    const rawY0 = rawRenderCoord(firstY * stepY - phaseY), rawY1 = rawRenderCoord(lastY * stepY - phaseY);
+    const drawnX0 = clampRenderCoord(rawX0), drawnX1 = clampRenderCoord(rawX1);
+    const drawnY0 = clampRenderCoord(rawY0), drawnY1 = clampRenderCoord(rawY1);
+    const majorEveryX = Math.max(1, Math.round(majorX / stepX));
+    const majorEveryY = Math.max(1, Math.round(majorY / stepY));
+    let minorD = '', majorD = '';
+    const nX = Math.max(0, lastX - firstX + 1), nY = Math.max(0, lastY - firstY + 1);
+    for(let i = 0; i < nX; i++){
+      const k = firstX + i, x = clampRenderCoord(k * stepX - phaseX);
+      if(k % majorEveryX === 0) majorD += `M ${x} ${drawnY0} V ${drawnY1} `;
+      else minorD += `M ${x} ${drawnY0} V ${drawnY1} `;
+    }
+    for(let i = 0; i < nY; i++){
+      const k = firstY + i, y = clampRenderCoord(k * stepY - phaseY);
+      if(k % majorEveryY === 0) majorD += `M ${drawnX0} ${y} H ${drawnX1} `;
+      else minorD += `M ${drawnX0} ${y} H ${drawnX1} `;
+    }
+    setAttr(gridMinorLines, 'd', minorD.trim());
+    setAttr(gridMajorLines, 'd', majorD.trim());
+    setAttr(gridMinorLines, 'stroke', minorColor);
+    setAttr(gridMajorLines, 'stroke', majorColor);
+    // Cache comparisons are in raw world units; only the path strings are
+    // scaled into safe SVG coordinates.
+    gridBounds = {tileSig, x0:rawX0, x1:rawX1, y0:rawY0, y1:rawY1};
   }
   function setStatusOnly(){ setText($('#statusPill'), statusText()); updateCommandStates(); }
   // Id→element registries for rendered graph elements. They are maintained by
@@ -897,7 +1101,11 @@
   function edgeEl(id){ return edgeEls.get(id) || document.getElementById('edge-' + id); }
   function moveNodeFast(id){
     const n = drag?.node?.id === id ? drag.node : nodeById(id); if(!n) return;
-    const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
+    // A node outside the safe window has no DOM, but its edges may still cross
+    // the viewport and must be clipped/updated.
+    if(isRenderablePoint(n.x, n.y)){
+      const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+    }
     if(drag && drag.liveEdges === false) return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
     for(const edge of edges) updateEdgeFast(edge);
@@ -907,7 +1115,8 @@
     try {
       const nodes = src.nodes || (src.node ? [src.node] : []);
       for(const n of nodes){
-        const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
+        if(!isRenderablePoint(n.x, n.y)) continue;
+        const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
       }
       followGizmoForPlainDrag(src);
       if(src.liveEdges === false) return;
@@ -932,25 +1141,23 @@
     if(g.__ent) g.__ent.gen = -1;
     const line = g.__line || el.querySelector('.edge-line'); if(line) setAttr(line, 'd', d.path);
     const hit = g.__hit || el.querySelector('.edge-hit'); if(hit) setAttr(hit, 'd', d.path);
-    const label = g.__label || null;
-    const weight = g.__weight || null;
-    const hasBoth = label && weight;
-    if(label || weight){
-      const v = edgeVisualC(e, vc);
-      const labelOffsetY = hasBoth ? -((v.labelSize || 12) * 0.75 + 2) : 0;
-      if(label){
-        setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
-        // Keep the background plate (if any) glued to the moving label
-        applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, label.textContent || '', v.labelSize, v.labelFont, 'middle', 'middle');
-      }
-      if(weight){
-        setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
-        applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weight.textContent || '', v.labelSize, v.labelFont, 'middle', 'middle');
-      }
+    if(!d.path){
+      // A fully clipped edge has no line to label: remove text/plates so no
+      // ghost can reappear on a later camera-only update.
+      paintEdgeText(g, d, null, '', '', false);
+      if(g.__arrow){ g.__arrow.remove(); g.__arrow = null; }
+      syncEdgeSelRing(g, e, null, d, false);
+      return;
     }
+    // The fast writer must CREATE text elements too: dragging an endpoint into
+    // view can turn an empty/edge-hidden midpoint into a visible one.
+    const labelVisible = edgeLabelVisible(a, b);
+    const texts = edgeLabelWeightText(e);
+    paintEdgeText(g, d, edgeVisualC(e, vc), texts.labelText, texts.weightText, labelVisible);
     // Update arrow tip position/angle during drag
     const arrow = g.__arrow || null;
     if(arrow && hasEdgeTip(e, d)) setAttr(arrow, 'points', edgeArrowPoints(d));
+    else if(arrow){ arrow.remove(); g.__arrow = null; }
     // ...and the selection accent with it, or the highlight would be left
     // behind at the edge's old position for the rest of the gesture.
     moveEdgeSelRing(g, d);
@@ -1093,9 +1300,6 @@
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
-    const gd = state.settings.graphDefaults || {};
-    const weightMode = gd.edgeWeightMode || 'number';
-    const wMin = gd.edgeWeightMin ?? 1, wMax = gd.edgeWeightMax ?? 10;
     // A pass whose document revision matches the last painted one has nothing
     // geometric or label-related to recompute; `genAtStart` lets an element
     // whose stamp is already current skip its frame entirely.
@@ -1173,13 +1377,17 @@
       // result is reused without recomputation.
       const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
       const lane = edgeSiblingOffset(e);
-      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}`;
+      // Include the floating origin: absolute world endpoints unchanged by a
+      // camera move still produce different SVG numbers after a rebase, so the
+      // geometry cache must not hand back a path from the previous origin.
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}|${renderOriginX},${renderOriginY}|${renderScale}`;
       let d = g.__geoSig === geoSig ? g.__geoData : null;
       if(!d){
         d = edgePath(a,b,e, passVisuals);
         g.__geoSig = geoSig;
         g.__geoData = d;
       }
+      const edgeVisible = Boolean(d.path);
       toggleClass(g, 'selected', selected);
       // Update or create hit path (child refs are stashed on the group to
       // avoid per-edge selector queries)
@@ -1202,13 +1410,13 @@
       // A bulk-selected edge is highlighted by its own stroke colour: the
       // render pass is the other writer of that colour (see syncEdgeAccent).
       const lineStroke = bulkAccents && selected ? SEL_EDGE_COLOR : v.color;
-      setAttr(line, 'stroke', lineStroke); setAttr(line, 'stroke-width', v.strokeSize);
+      setAttr(line, 'stroke', lineStroke); setAttr(line, 'stroke-width', renderSize(v.strokeSize));
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
       if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
       else removeAttr(line, 'stroke-dasharray');
       // Selection accent: a wide line behind the path and a bigger copy of the
       // tip behind the arrowhead. Neither repaints the edge itself.
-      syncEdgeAccent(g, e, v, d, selected, bulkAccents);
+      syncEdgeAccent(g, e, v, d, selected && edgeVisible, bulkAccents);
       // Update or create arrow — the tip always keeps the edge's own colour
       let arrow = g.__arrow || null;
       if(hasEdgeTip(e, d)){
@@ -1218,64 +1426,12 @@
       } else if(arrow){
         arrow.remove(); g.__arrow = null; arrow = null;
       }
-      // Compute label and weight text separately so both can be shown at once.
-      // Weight is drawn ON the line midpoint; label is drawn ABOVE it (offset).
-      let labelText = '', weightText = '';
-      if(showLabels){
-        if(e.label) labelText = e.label;
-        if(e.weight !== '' && e.weight != null){
-          const w = edgeWeightNumber(e);
-          if(w != null){
-            if(weightMode === 'number'){
-              weightText = e.weight;
-            } else if(weightMode === 'color' || weightMode === 'width'){
-              // Show number only when weight is outside the configured range
-              if(!isWeightInRange(w, wMin, wMax)) weightText = e.weight;
-            }
-            // 'none' mode: never show weight as text
-          }
-        }
-      }
-      const hasBoth = labelText && weightText;
-      const labelOffsetY = hasBoth ? -(v.labelSize * 0.75 + 2) : 0;
-      // Update or create label (drawn above weight when both present)
-      let label = g.__label || null;
-      if(labelText){
-        if(!label){
-          label = document.createElementNS(NS,'text');
-          label.setAttribute('class','edge-label');
-          label.setAttribute('text-anchor','middle'); label.setAttribute('dominant-baseline','middle');
-          g.appendChild(label); g.__label = label;
-        }
-        if(label.textContent !== labelText) label.textContent = labelText;
-        setAttr(label, 'x', d.labelX); setAttr(label, 'y', d.labelY + labelOffsetY);
-        setAttr(label, 'fill', v.labelColor);
-        setAttr(label, 'font-size', v.labelSize);
-        setAttr(label, 'font-family', v.labelFont);
-        applyLabelOutline(g, label, '__label', d.labelX, d.labelY + labelOffsetY, labelText, v.labelSize, v.labelFont, 'middle', 'middle');
-      } else if(label){
-        label.remove(); g.__label = null; label = null;
-        removeLabelPlate(g, '__label');
-      }
-      // Update or create weight text (drawn on the line midpoint)
-      let weight = g.__weight || null;
-      if(weightText){
-        if(!weight){
-          weight = document.createElementNS(NS,'text');
-          weight.setAttribute('class','edge-weight');
-          weight.setAttribute('text-anchor','middle'); weight.setAttribute('dominant-baseline','middle');
-          g.appendChild(weight); g.__weight = weight;
-        }
-        if(weight.textContent !== weightText) weight.textContent = weightText;
-        setAttr(weight, 'x', d.labelX); setAttr(weight, 'y', d.labelY);
-        setAttr(weight, 'fill', v.labelColor);
-        setAttr(weight, 'font-size', v.labelSize);
-        setAttr(weight, 'font-family', v.labelFont);
-        applyLabelOutline(g, weight, '__weight', d.labelX, d.labelY, weightText, v.labelSize, v.labelFont, 'middle', 'middle');
-      } else if(weight){
-        weight.remove(); g.__weight = null; weight = null;
-        removeLabelPlate(g, '__weight');
-      }
+      // Labels/weights are created whenever the edge has a visible path, then
+      // hidden (not removed) when the ORIGINAL midpoint is off-screen. A camera
+      // pan can therefore re-show them without a full render pass.
+      const labelVisible = edgeVisible && edgeLabelVisible(a, b);
+      const texts = edgeLabelWeightText(e, showLabels);
+      paintEdgeText(g, d, v, texts.labelText, texts.weightText, labelVisible && showLabels);
       // This element now matches the document at this generation.
       const painted = existing.get(e.id);
       if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
@@ -1321,52 +1477,192 @@
   }
   const ARROW_LEN = 18; // arrow length from base to tip
   const ARROW_HW = 8;   // arrow half-width
+  // Liang–Barsky clip of the straight centre line to the safe render-space
+  // square. A long edge may have both endpoints off-screen yet cross the
+  // viewport; clipping its geometry keeps that visible segment instead of
+  // discarding the edge. Coordinates are raw world units relative to the
+  // floating origin; the clamp helper scales them into safe SVG numbers.
+  function clipEdgeSegment(x0, y0, x1, y1){
+    const L = renderCoordLimit();
+    const dx = x1 - x0, dy = y1 - y0;
+    let t0 = 0, t1 = 1;
+    const slab = (p, q) => {
+      if(p === 0) return q >= 0;
+      const r = q / p;
+      if(p < 0){
+        if(r > t1) return false;
+        if(r > t0) t0 = r;
+      } else {
+        if(r < t0) return false;
+        if(r < t1) t1 = r;
+      }
+      return true;
+    };
+    if(!slab(-dx, x0 + L) || !slab(dx, L - x0) ||
+       !slab(-dy, y0 + L) || !slab(dy, L - y0) || t0 > t1) return null;
+    return {
+      x0: x0 + t0 * dx, y0: y0 + t0 * dy,
+      x1: x0 + t1 * dx, y1: y0 + t1 * dy,
+      startClipped: t0 > 0, endClipped: t1 < 1
+    };
+  }
+  // Label visibility is decided from the ORIGINAL world midpoint, never from
+  // the clipped segment. A partially visible edge whose true midpoint is
+  // off-screen must not show a label or weight near the canvas centre. Viewport
+  // bounds are cached per camera/scale so a large render pass computes them
+  // once rather than per edge.
+  let labelViewportCache = { sig: '', bounds: null as any };
+  function edgeLabelViewport(){
+    const cam = boundedCamera(currentCamera());
+    const rect = canvasViewportRect();
+    const sig = `${cam.x},${cam.y},${cam.w},${cam.h},${rect.width},${rect.height},${renderScale}`;
+    if(sig !== labelViewportCache.sig){
+      const pitch = (rect.width && rect.height) ? Math.min(rect.width / cam.w, rect.height / cam.h) : 0;
+      const offX = (rect.width - cam.w * pitch) / 2, offY = (rect.height - cam.h * pitch) / 2;
+      labelViewportCache = pitch > 0 ? { sig, bounds: {
+        x0: cam.x - offX / pitch, x1: cam.x + cam.w + offX / pitch,
+        y0: cam.y - offY / pitch, y1: cam.y + cam.h + offY / pitch
+      }} : { sig, bounds: null };
+    }
+    return labelViewportCache.bounds;
+  }
+  function edgeLabelVisible(a, b){
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if(!isRenderablePoint(mx, my)) return false;
+    const bounds = edgeLabelViewport();
+    return Boolean(bounds) && mx >= bounds.x0 && mx <= bounds.x1 && my >= bounds.y0 && my <= bounds.y1;
+  }
   function edgePath(a,b,e,vc=null){
     const ra = nodeRadiusC(a, vc), rb = nodeRadiusC(b, vc);
-    const arrowGap = e.directed ? ARROW_LEN : 2; // space reserved for arrow at target
+    const rc = clampRenderCoord;
+    const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
+    const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
+    const arrowGap = e.directed ? ARROW_LEN : 2; // world units
+    const empty = () => ({ path:'', labelX:0, labelY:0, tx:0, ty:0, tipX:null, tipY:null, arrowAngle:null });
+    // A self-loop lives entirely around one node: if that node is outside the
+    // safe render window the loop cannot have a visible segment.
     if(a.id === b.id){
+      if(!isRenderablePoint(a.x, a.y)) return empty();
       const lane = edgeSiblingOffset(e);
       const step = lane / 30;
       const angle = -Math.PI / 2 + step * 0.62;
       const spread = 0.72;
       const loop = 78 + Math.abs(step) * 10;
-      const sx = a.x + Math.cos(angle - spread) * (ra + 2);
-      const sy = a.y + Math.sin(angle - spread) * (ra + 2);
-      // Path ends at arrow base; tip extends to node boundary
-      const tx = a.x + Math.cos(angle + spread) * (ra + arrowGap);
-      const ty = a.y + Math.sin(angle + spread) * (ra + arrowGap);
-      const c1x = a.x + Math.cos(angle - spread * 0.45) * (ra + loop);
-      const c1y = a.y + Math.sin(angle - spread * 0.45) * (ra + loop);
-      const c2x = a.x + Math.cos(angle + spread * 0.45) * (ra + loop);
-      const c2y = a.y + Math.sin(angle + spread * 0.45) * (ra + loop);
-      const labelX = a.x + Math.cos(angle) * (ra + loop * 0.78);
-      const labelY = a.y + Math.sin(angle) * (ra + loop * 0.78);
-      // Tangent at endpoint of cubic Bezier: direction = endpoint - last control point
+      // All geometry stays in raw world units until the final rc() writes.
+      const sxRaw = rawAx + Math.cos(angle - spread) * (ra + 2);
+      const syRaw = rawAy + Math.sin(angle - spread) * (ra + 2);
+      const txRaw = rawAx + Math.cos(angle + spread) * (ra + arrowGap);
+      const tyRaw = rawAy + Math.sin(angle + spread) * (ra + arrowGap);
+      const c1xRaw = rawAx + Math.cos(angle - spread * 0.45) * (ra + loop);
+      const c1yRaw = rawAy + Math.sin(angle - spread * 0.45) * (ra + loop);
+      const c2xRaw = rawAx + Math.cos(angle + spread * 0.45) * (ra + loop);
+      const c2yRaw = rawAy + Math.sin(angle + spread * 0.45) * (ra + loop);
+      const labelRawX = rawAx + Math.cos(angle) * (ra + loop * 0.78);
+      const labelRawY = rawAy + Math.sin(angle) * (ra + loop * 0.78);
+      const sx = rc(sxRaw), sy = rc(syRaw), tx = rc(txRaw), ty = rc(tyRaw);
+      const c1x = rc(c1xRaw), c1y = rc(c1yRaw), c2x = rc(c2xRaw), c2y = rc(c2yRaw);
+      const labelX = rc(labelRawX), labelY = rc(labelRawY);
       const arrowAngle = Math.atan2(ty - c2y, tx - c2x);
-      // Tip extends from base along tangent by arrowGap to reach node boundary
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = tx + ac * arrowGap, tipY = ty + as * arrowGap;
+      const tipX = rc(txRaw + ac * arrowGap), tipY = rc(tyRaw + as * arrowGap);
       return { path:`M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle };
     }
-    const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy) || 1, ux=dx/len, uy=dy/len;
+    const clip = clipEdgeSegment(rawAx, rawAy, rawBx, rawBy);
+    if(!clip) return empty();
+    const dx = rawBx - rawAx, dy = rawBy - rawAy;
+    const len = Math.hypot(dx,dy) || 1, ux = dx/len, uy = dy/len;
     const offset = edgeSiblingOffset(e);
-    // Keep endpoints attached to node boundaries; separate parallel/reverse edges
-    // by bending the curve via its control point rather than shifting endpoints.
-    const sx=a.x+ux*(ra+2), sy=a.y+uy*(ra+2);
-    // Path ends at arrow base (rb + arrowGap from center); tip will be at node boundary (rb)
-    const tx=b.x-ux*(rb + arrowGap), ty=b.y-uy*(rb + arrowGap);
+    // ORIGINAL midpoint (raw world units), independent of the clipped segment.
+    const midRawX = (rawAx + rawBx) / 2, midRawY = (rawAy + rawBy) / 2;
+    // A clipped endpoint is an intersection with the safe window, not a node
+    // boundary: do not reserve a radius or arrow gap there.
+    const sxRaw = clip.startClipped ? clip.x0 : clip.x0 + ux * (ra + 2);
+    const syRaw = clip.startClipped ? clip.y0 : clip.y0 + uy * (ra + 2);
+    const txRaw = clip.endClipped ? clip.x1 : clip.x1 - ux * (rb + arrowGap);
+    const tyRaw = clip.endClipped ? clip.y1 : clip.y1 - uy * (rb + arrowGap);
+    const sx = rc(sxRaw), sy = rc(syRaw), tx = rc(txRaw), ty = rc(tyRaw);
     if(Math.abs(offset) > 1){
-      const mx=(sx+tx)/2 - uy*offset, my=(sy+ty)/2 + ux*offset;
-      // Tangent at endpoint of quadratic Bezier: direction = endpoint - control point
-      const arrowAngle = Math.atan2(ty - my, tx - mx);
+      const mxRaw = midRawX - uy * offset, myRaw = midRawY + ux * offset;
+      const mx = rc(mxRaw), my = rc(myRaw);
+      const arrowAngle = Math.atan2(tyRaw - myRaw, txRaw - mxRaw);
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = tx + ac * arrowGap, tipY = ty + as * arrowGap;
+      const tipX = clip.endClipped ? null : rc(txRaw + ac * arrowGap);
+      const tipY = clip.endClipped ? null : rc(tyRaw + as * arrowGap);
       return { path:`M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX:mx, labelY:my, tx, ty, tipX, tipY, arrowAngle };
     }
     const arrowAngle = Math.atan2(uy, ux);
-    // For straight edges, tip = b - ux*rb (exactly on node boundary)
-    const tipX = b.x - ux*rb, tipY = b.y - uy*rb;
-    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:(sx+tx)/2, labelY:(sy+ty)/2, tx, ty, tipX, tipY, arrowAngle };
+    const tipX = clip.endClipped ? null : rc(clip.x1 - ux * rb);
+    const tipY = clip.endClipped ? null : rc(clip.y1 - uy * rb);
+    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:rc(midRawX), labelY:rc(midRawY), tx, ty, tipX, tipY, arrowAngle };
+  }
+  // A 50-unit node becomes sub-pixel when Fit spans millions of units, so
+  // Chromium cannot hit-test the visible shape. Keep a transparent circular
+  // target at least ~7 screen pixels across, expressed in world units and
+  // refreshed whenever the camera scale changes.
+  let lastNodeHitPixelsPerWorld: any = '';
+  function nodeHitPixelsPerWorld(){
+    const rect = canvasViewportRect();
+    updateCameraViewportAspect(rect);
+    const cam = boundedCamera(currentCamera());
+    const p = (rect.width && rect.height) ? Math.min(rect.width / cam.w, rect.height / cam.h) : 0;
+    return p > 0 ? p : 0.001;
+  }
+  // Normal nodes are hit-tested by their visible shape, not by a large circle:
+  // a 300x10 rectangle must not select from 80px outside its 10-unit body.
+  // Only when the whole shape is sub-pixel do we paint a visible ~7px dot and
+  // enlarge the hit target to exactly that dot.
+  function nodeHitGeometry(v){
+    const p = nodeHitPixelsPerWorld();
+    const halfMin = Math.min(v.width, v.height) / 2;
+    const shapeRadiusPx = Math.max(v.width, v.height) / 2 * p;
+    const enlarged = shapeRadiusPx < 3;
+    // The cap is on the SCALED SVG number, so in world units it is the
+    // scaled render window / renderScale. A 1e12-unit Fit needs ~5e9 world
+    // units for a 7px dot; the old fixed 1.5e7 cap made it 0.042px wide.
+    const dotRadius = Math.min(renderCoordLimit() / 2, 7 / p);
+    return {
+      enlarged,
+      radius: enlarged ? dotRadius : Math.max(1, halfMin),
+      centreRadius: Math.max(8, Math.min(v.width, v.height) * 0.25, enlarged ? dotRadius : 0)
+    };
+  }
+  function nodeHitRadius(v){ return nodeHitGeometry(v).radius; }
+  function nodeCentreHitRadius(n){ return nodeHitGeometry(nodeVisualC(n)).centreRadius; }
+  function nodeSelectionRadius(n){
+    const geo = nodeHitGeometry(nodeVisualC(n));
+    return Math.max(nodeRadius(n), geo.enlarged ? geo.radius : 0);
+  }
+  function syncNodeHitTarget(g, v){
+    let hit = g.__hit;
+    if(!hit){
+      hit = document.createElementNS(NS,'circle');
+      hit.setAttribute('class','node-hit');
+      hit.setAttribute('cx','0'); hit.setAttribute('cy','0');
+      hit.setAttribute('stroke','none');
+      g.__hit = hit;
+    }
+    const geo = nodeHitGeometry(v);
+    // At extreme zoom-outs the actual shape is sub-pixel: paint a minimum-size
+    // dot with the node colour. At ordinary zoom the target is a small, inert
+    // circle inside the visible shape; the shape itself handles pointer events.
+    setAttr(hit, 'fill', geo.enlarged ? v.color : 'transparent');
+    setAttr(hit, 'fill-opacity', geo.enlarged ? '0.9' : '0');
+    setStyleIfChanged(hit.style, 'pointerEvents', geo.enlarged ? 'all' : 'none');
+    setAttr(hit, 'r', renderSize(geo.radius));
+    // Appending an already-last child is a remove+add mutation: during a zoom
+    // burst that would reconstruct node DOM for no reason. Only move it when
+    // a newly added label/plate has been inserted above it.
+    if(hit !== g.lastChild) g.appendChild(hit);
+  }
+  function syncNodeHitTargets(){
+    const p = nodeHitPixelsPerWorld();
+    const sig = `${p}|${renderScale}`;
+    if(sig === lastNodeHitPixelsPerWorld) return;
+    lastNodeHitPixelsPerWorld = sig;
+    for(const [id, g] of nodeEls){
+      const n = nodeById(id);
+      if(n) syncNodeHitTarget(g, nodeVisual(n));
+    }
   }
   function renderNodes(){
     const showLabels = shouldShowLabels();
@@ -1385,6 +1681,9 @@
     const stylePass = paintedNodeStyle !== styleFingerprint('node');
     const gen = renderGen;
     for(const n of state.nodes){
+      // Nodes far outside the floating origin are off-screen AND would exceed
+      // Skia's ~2^25 SVG coordinate limit. Keep them in state, skip their DOM.
+      if(!isRenderablePoint(n.x, n.y)) continue;
       // Skip non-visible nodes entirely — they are removed from DOM, not dimmed.
       // This gives real performance: fewer SVG elements, fewer attribute patches, less paint.
       if(rangeActive && !visIds.has(n.id)) continue;
@@ -1415,7 +1714,7 @@
         existing.set(n.id, fresh);
       }
       // Update transform (always — this is the hot path during drag)
-      setAttr(g, 'transform',`translate(${n.x},${n.y})`);
+      setAttr(g, 'transform',`translate(${renderX(n.x)},${renderY(n.y)})`);
       // Update selection class
       toggleClass(g, 'selected', selected);
       toggleClass(g, 'dragging', draggingId === n.id);
@@ -1425,23 +1724,24 @@
       const sel = syncNodeSelRing(g, n, v.shape, w, h, selected);
       // Update or create shape (element ref stashed on the group)
       let shape = g.__shape;
-      const shapeSig = v.shape + '|' + w + '|' + h;
+      const shapeSig = v.shape + '|' + w + '|' + h + '|' + renderScale;
       const needRebuild = !shape || g.__shapeSig !== shapeSig;
       if(needRebuild){
         if(shape) shape.remove();
+        const rw = renderSize(w), rh = renderSize(h), two = renderSize(2);
         if(v.shape === 'square'){
-          shape = document.createElementNS(NS,'rect'); shape.setAttribute('x',-w/2); shape.setAttribute('y',-h/2); shape.setAttribute('width',w); shape.setAttribute('height',h);
+          shape = document.createElementNS(NS,'rect'); shape.setAttribute('x',-rw/2); shape.setAttribute('y',-rh/2); shape.setAttribute('width',rw); shape.setAttribute('height',rh);
         } else if(v.shape === 'diamond'){
-          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-h/2-2} ${w/2+2},0 0,${h/2+2} ${-w/2-2},0`);
+          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-rh/2-two} ${rw/2+two},0 0,${rh/2+two} ${-rw/2-two},0`);
         } else if(v.shape === 'triangleUp'){
-          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-h/2} ${w/2},${h/2} ${-w/2},${h/2}`);
+          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${-rh/2} ${rw/2},${rh/2} ${-rw/2},${rh/2}`);
         } else if(v.shape === 'triangleDown'){
-          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${h/2} ${w/2},${-h/2} ${-w/2},${-h/2}`);
+          shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`0,${rh/2} ${rw/2},${-rh/2} ${-rw/2},${-rh/2}`);
         } else if(v.shape === 'hexagon'){
-          const hx = w/2, hy = h/2, mx = w/4;
+          const hx = rw/2, hy = rh/2, mx = rw/4;
           shape = document.createElementNS(NS,'polygon'); shape.setAttribute('points',`${-hx+mx},${-hy} ${hx-mx},${-hy} ${hx},0 ${hx-mx},${hy} ${-hx+mx},${hy} ${-hx},0`);
         } else {
-          shape = document.createElementNS(NS,'ellipse'); shape.setAttribute('rx',w/2); shape.setAttribute('ry',h/2);
+          shape = document.createElementNS(NS,'ellipse'); shape.setAttribute('rx',rw/2); shape.setAttribute('ry',rh/2);
         }
         shape.setAttribute('class','node-shape');
         g.__shapeSig = shapeSig;
@@ -1453,7 +1753,7 @@
       // Update shape style attributes — de-duplicated, so untouched nodes
       // write nothing
       setAttr(shape, 'fill', v.color);
-      setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', v.strokeSize);
+      setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', renderSize(v.strokeSize));
       const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
       if(dash !== 'none') setAttr(shape, 'stroke-dasharray', dash);
       else removeAttr(shape, 'stroke-dasharray');
@@ -1477,14 +1777,15 @@
         setAttr(label, 'text-anchor', anchor);
         setAttr(label, 'dominant-baseline', baseline);
         setAttr(label, 'fill', v.labelColor);
-        setAttr(label, 'font-size', v.labelSize);
+        setAttr(label, 'font-size', renderSize(v.labelSize));
         setAttr(label, 'font-family', v.labelFont);
-        setAttr(label, 'x', lx); setAttr(label, 'y', ly);
-        applyLabelOutline(g, label, '__label', lx, ly, n.label, v.labelSize, v.labelFont, anchor, baseline);
+        setAttr(label, 'x', renderSize(lx)); setAttr(label, 'y', renderSize(ly));
+        applyLabelOutline(g, label, '__label', renderSize(lx), renderSize(ly), n.label, v.labelSize, v.labelFont, anchor, baseline);
       } else if(label){
         label.remove(); g.__text = null; label = null;
         removeLabelPlate(g, '__label');
       }
+      syncNodeHitTarget(g, v);
       const painted = existing.get(n.id);
       if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
       live.add(n.id);

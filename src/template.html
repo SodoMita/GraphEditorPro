@@ -689,58 +689,52 @@
       <!-- ================= Main: canvas + data views ================= -->
       <main class="main v-canvas">
         <section id="canvasWrap" class="panel canvas-wrap empty">
-          <!-- === THE CAMERA SURFACE: one element, moved by the compositor ===
-               #cameraLayer is the ONLY thing a camera change touches. It holds
-               the grid and the graph together, so both are painted by one
-               composited transform and can never mix two cameras in a frame.
-
-               Why a wrapper and not the SVG's own transform: a per-frame
-               matrix on an <svg> (or a CSS transform on the <svg> root) makes
-               Chromium re-rasterize the whole scene — measured over one pan,
-               18 dropped frames with a 400-1150ms worst frame, against 0
-               dropped and 16.7ms for moving this wrapper. The camera must be a
-               composited transform on a plain <div>, never on the <svg>.
-
-               Do not add a SECOND camera surface: a preview surface plus a
-               commit surface is what flashed one wrong frame at gesture end
-               (af90851, aa081b7, 12df425). Speed came from the compositing
-               layer, not from splitting the camera. -->
-          <div id="cameraLayer" aria-hidden="false">
-            <!-- World-anchored grid. It is a CSS-gradient div, not the former
-                 SVG <pattern>: a pattern fill is decaled by the raster size
-                 limits and only tiles its own 200-unit cell, so panning slid
-                 its painted edge into view and left a hard crop. This div is
-                 sized several viewports wide, is cheap to paint once, and is
-                 only translated/scaled by #cameraLayer afterwards, so it moves
-                 in exact lockstep with the graph and never runs out. -->
-            <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
-            <div id="graphPlane">
-            <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor canvas" data-i18n-aria-label="graph_canvas">
-              <defs>
-                <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-                  <path d="M 1 1 L 11 6 L 1 11 z" fill="#94a3b8"></path>
-                </marker>
-                <marker id="arrowSelected" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-                  <path d="M 1 1 L 11 6 L 1 11 z" fill="#22d3ee"></path>
-                </marker>
-              </defs>
-              <!-- The scene is untransformed now: the camera lives on the
-                   #cameraLayer wrapper above, so one camera change is one
-                   composited transform and the SVG is never re-rasterized by a
-                   camera change. -->
+          <!-- Static canvas background. It stays OUTSIDE the camera so a pan or
+               zoom can never drag its edge into view (a transformed, viewport-
+               sized backdrop is what left a blank corner during gestures). -->
+          <div id="gridLayer" class="grid-layer" aria-hidden="true"></div>
+          <!-- === ONE CAMERA SURFACE, INSIDE THE SVG ===
+               #cameraLayer is a <g> in the SVG scene, not an HTML wrapper: the
+               camera matrix maps world coordinates into the SVG's fixed
+               reference viewBox, so ALL world content (including nodes and edges
+               far outside -500..500) is inside the SVG viewport and gets
+               painted. A CSS transform on a wrapper <div> around the <svg> can
+               only move the already-clipped viewport — it cannot reveal content
+               the root viewBox clipped away, which made nodes and edges vanish at
+               zoom/pan. Previews and commits write this same single matrix, so
+               there is no handoff and no frame that mixes two cameras. -->
+          <svg id="graphCanvas" tabindex="0" role="img" aria-label="Interactive graph editor canvas" data-i18n-aria-label="graph_canvas">
+            <defs>
+              <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                <path d="M 1 1 L 11 6 L 1 11 z" fill="#94a3b8"></path>
+              </marker>
+              <marker id="arrowSelected" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                <path d="M 1 1 L 11 6 L 1 11 z" fill="#22d3ee"></path>
+              </marker>
+            </defs>
+            <g id="cameraLayer">
               <g id="sceneLayer">
-                  <g id="edgesLayer"></g>
-                  <path id="dragLine" class="drag-line" d="" style="display:none"></path>
-                  <g id="selectionOverlayLayer"></g>
-                  <g id="nodesLayer"></g>
-                  <!-- Selection transform gizmo (translate/rotate/scale/rect
-                       handles) — above the nodes so its handles stay grabbable;
-                       only the handles take pointer events, never a filled area. -->
-                  <g id="gizmoLayer"></g>
+                <!-- World-anchored grid, drawn as two persistent <path>s in
+                     world coordinates. An SVG <pattern> is decaled by the raster
+                     size limit (it disappears at low zoom / far pans) and a CSS
+                     gradient on a separate HTML layer can desync from the graph.
+                     These lines ride the very same camera matrix as the nodes and
+                     edges, so they can never crop, drift or show a stale frame. -->
+                <g id="gridLines" aria-hidden="true">
+                  <path id="gridMinorLines" fill="none" stroke-width="1" vector-effect="non-scaling-stroke"></path>
+                  <path id="gridMajorLines" fill="none" stroke-width="1.3" vector-effect="non-scaling-stroke"></path>
                 </g>
-            </svg>
-            </div><!-- /#graphPlane -->
-          </div><!-- /#cameraLayer -->
+                <g id="edgesLayer"></g>
+                <path id="dragLine" class="drag-line" d="" style="display:none"></path>
+                <g id="selectionOverlayLayer"></g>
+                <g id="nodesLayer"></g>
+                <!-- Selection transform gizmo (translate/rotate/scale/rect
+                     handles) — above the nodes so its handles stay grabbable;
+                     only the handles take pointer events, never a filled area. -->
+                <g id="gizmoLayer"></g>
+              </g>
+            </g>
+          </svg>
 
           <div class="canvas-hud">
             <div id="statusPill" class="status-pill" data-i18n="ready">Ready</div>
