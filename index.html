@@ -2411,13 +2411,61 @@ const isKeyboardVisible = (el) => {
     return typeof check === 'function' ? Boolean(check.call(el)) : true;
 };
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-// Beyond this magnitude, integer world-cell indices can no longer be
-// enumerated with k++ (past 2^53 the increment vanishes) and world points
-// have no usable pixel precision. Clamp camera and node coordinates at
-// ingestion so a saved document with viewBox.x = 1e20 cannot hang the editor.
-const MAX_WORLD_COORD = 1e9;
-function safeWorldCoord(value, fallback = 0) {
-    return clamp(finite(value, fallback), -MAX_WORLD_COORD, MAX_WORLD_COORD);
+// SVG geometry/transform numbers are clamped by Chromium/Skia at ~2^25
+// (33,554,432): two nodes at 1,000,000,100 and 1,000,000,200 written as
+// absolute SVG coordinates both collapse to the same pixel. State keeps the
+// exact finite WORLD coordinates (never rewrite user data); only the numbers
+// written into SVG are rebased onto a floating render origin near the camera.
+const SVG_COORD_LIMIT = 33554432;
+const SAFE_RENDER_COORD = 1e7; // cull geometry far outside the camera entirely
+const MAX_CAMERA_SIZE = 1e6; // apron + camera still stay well below SVG_COORD_LIMIT
+const MIN_CAMERA_W = 100, MIN_CAMERA_H = 90;
+const RENDER_ORIGIN_SNAP = 1e6;
+let renderOriginX = 0, renderOriginY = 0;
+// Set when the origin moves during a preview-only camera update. The next
+// render must re-rebase node/edge SVG attributes too, not just the matrix.
+let renderOriginMoved = false;
+function renderX(x) { return finite(x, 0) - renderOriginX; }
+function renderY(y) { return finite(y, 0) - renderOriginY; }
+// Coordinates farther than this from the floating origin are off-screen and
+// would exceed Skia's coordinate limit if written into SVG at all. Skip them
+// in the DOM, but keep them untouched in state/export/autosave.
+function isRenderablePoint(x, y) {
+    return Math.abs(renderX(x)) < SAFE_RENDER_COORD && Math.abs(renderY(y)) < SAFE_RENDER_COORD;
+}
+// Keep a camera finite and its viewport size bounded, but PRESERVE its
+// centre when a size must be clamped (the old 20000 cap truncated fitView
+// without recentring). Coordinates are intentionally not magnitude-clamped:
+// the floating origin keeps the SVG numbers small instead.
+function boundedCamera(camera) {
+    const x = finite(camera?.x, 0), y = finite(camera?.y, 0);
+    const ow = finite(camera?.w, 1000), oh = finite(camera?.h, 660);
+    const w = clamp(ow, MIN_CAMERA_W, MAX_CAMERA_SIZE);
+    const h = clamp(oh, MIN_CAMERA_H, MAX_CAMERA_SIZE);
+    return { x: x + ow / 2 - w / 2, y: y + oh / 2 - h / 2, w, h };
+}
+// One floating origin for every surface inside g#cameraLayer. It changes only
+// when the camera moves past a 1e6 snap boundary, so ordinary pans/zooms are
+// still a single matrix write; crossing one forces a geometry repaint.
+function ensureRenderOrigin(camera) {
+    const cam = boundedCamera(camera);
+    const ox = Math.round(cam.x / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
+    const oy = Math.round(cam.y / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
+    if (ox !== renderOriginX || oy !== renderOriginY) {
+        renderOriginX = ox;
+        renderOriginY = oy;
+        setAttr(svg, 'data-render-origin', `${ox},${oy}`);
+        renderOriginMoved = true;
+        invalidateGridCache();
+    }
+    return cam;
+}
+// The camera as seen by the SVG: world position rebased onto the floating
+// origin. cameraDeltaMatrix()/updateGridBackground() consume this, while
+// state.viewBox, exports, hit tests and snapshots stay in world coordinates.
+function renderCamera(camera = currentCamera()) {
+    const cam = ensureRenderOrigin(camera);
+    return { x: cam.x - renderOriginX, y: cam.y - renderOriginY, w: cam.w, h: cam.h };
 }
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 let dialogEl = null;
@@ -2838,7 +2886,7 @@ function sanitizeState(input) {
         const node = {
             id,
             label: String(n.label ?? '').slice(0, 80),
-            x: safeWorldCoord(n.x, i * 35), y: safeWorldCoord(n.y, i * 35),
+            x: finite(n.x, i * 35), y: finite(n.y, i * 35),
             shape: n.shape ? validShape(n.shape) : '', // empty = unset
             color: validColor(n.color) || '', // empty = unset
             type: String(n.type || '').slice(0, 40),
@@ -3152,7 +3200,7 @@ function sanitizeState(input) {
         nextNode: maxN + 1,
         nextEdge: maxE + 1,
         nodes, edges, customAttributes, settings,
-        viewBox: { x: safeWorldCoord(vb.x, -500), y: safeWorldCoord(vb.y, -330), w: clamp(finite(vb.w, 1000), 100, 20000), h: clamp(finite(vb.h, 660), 100, 20000) }
+        viewBox: boundedCamera({ x: finite(vb.x, -500), y: finite(vb.y, -330), w: finite(vb.w, 1000), h: finite(vb.h, 660) })
     };
 }
 function isRecord(value) {
@@ -3874,6 +3922,19 @@ function syncEditTypeLists() {
 // no visual input should not ask for a pass at all (the camera and the grid
 // have their own writers — see `applyCamera`/`updateGridBackground`, which the
 // resize and zoom paths call directly).
+// A floating-origin change can happen in a preview-only pointermove, when
+// only the camera matrix and grid paths are written. Schedule one normal
+// canvas render so nodes/edges/selection/gizmo are rebased onto the new
+// origin too; ordinary pans that stay within a snap cell schedule nothing.
+function syncRenderOriginRepaint() {
+    if (!renderOriginMoved)
+        return;
+    renderOriginMoved = false;
+    // Selection drafts and the edge-drag line are pointer-driven, not part of
+    // renderCanvas(), so rebase their SVG attributes immediately as well.
+    rebaseInteractionOverlays();
+    queueRender(false);
+}
 function queueRender(includeMatrix = false, includeSidebar = false) {
     invalidateStyleCache();
     documentDirty = true;
@@ -4130,7 +4191,11 @@ function applyCameraTransform(camera = state.viewBox, rect = null) {
     const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
     // Always derived from the fixed reference frame, never composed with the
     // previous frame's matrix, so no drift can accumulate across gestures.
-    const cam = safeCamera(camera);
+    // Rebase onto the floating render origin: both the matrix translation and
+    // every SVG coordinate stay far below Chromium's ~2^25 coordinate limit,
+    // while state.viewBox remains the exact world camera.
+    const cam = renderCamera(camera);
+    syncRenderOriginRepaint();
     setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(cam, REFERENCE_VIEWBOX, projViewport)));
     updateGridBackground(cam, projViewport);
     return (viewport.width && viewport.height) ? viewport : null;
@@ -4154,38 +4219,44 @@ function setStyleIfChanged(style, property, value) {
     if (style[property] !== value)
         style[property] = value;
 }
-// === World-space grid ===
-// A camera/graph coordinate beyond this magnitude cannot be enumerated by
-// integer world-cell indices (past 2^53 `k++` stops changing) and has no
-// usable pixel precision anyway. Clamp every camera that reaches the grid
-// here as well as at ingestion, so a saved document with viewBox.x = 1e20
-// can never hang the editor in a world-cell loop.
+// === Render-space grid ===
+// Paths are written in world units rebased onto the floating render origin,
+// not absolute world coordinates: Chromium clamps SVG numbers above ~2^25,
+// so 1e20 in a path would disappear even though the camera matrix is finite.
+// Grid loops are bounded independently of the coordinate magnitude: a local
+// index, a 4,000-segment cap and an index-magnitude guard replace the old
+// absolute `k++` that could stop incrementing past 2^53.
 const GRID_INDEX_LIMIT = 1e12;
 const MAX_GRID_LINES = 4000;
-function safeCamera(camera) {
-    const vb = camera || state.viewBox;
-    return {
-        x: safeWorldCoord(vb.x, 0),
-        y: safeWorldCoord(vb.y, 0),
-        w: clamp(finite(vb.w, REFERENCE_VIEWBOX.w), 1, 20000),
-        h: clamp(finite(vb.h, REFERENCE_VIEWBOX.h), 1, 20000)
-    };
-}
 function clearGridPaths() {
     setAttr(gridMinorLines, 'd', '');
     setAttr(gridMajorLines, 'd', '');
 }
-// Last drawn world-space extent. The paths are rebuilt only when the grid's
-// decimation/colours change or the view leaves their apron: a pan or wheel
-// preview normally writes NOTHING but the one camera matrix, which keeps the
-// per-update style+layout cost flat regardless of graph size.
+// Last drawn render-space extent. The paths are rebuilt only when the grid's
+// decimation/colours change, the floating origin moves, or the view leaves
+// their apron: a pan or wheel preview normally writes NOTHING but the one
+// camera matrix, which keeps the per-update style+layout cost flat regardless
+// of graph size.
 let gridBounds = null; // {tileSig,x0,x1,y0,y1}
 function invalidateGridCache() { gridBounds = null; }
 // Default to the ACTIVE camera (a pending zoom/pan preview), not the last
 // committed state.viewBox. Style handlers call this with no argument; using
 // the committed camera there recomputed the grid for the wrong view and
 // contracted it to a small central rectangle until the preview committed.
-function updateGridBackground(vb = currentCamera(), cachedRect = null) {
+// The floating origin is snapped to 1e6, which is not necessarily a multiple
+// of a decimated grid step. Keep grid lines locked to WORLD cell boundaries
+// by subtracting the origin's remainder modulo the major step: local line
+// k*stepX - remainder corresponds to world G + k*stepX, where G is a multiple
+// of majorX. BigInt makes the remainder exact even for a 1e20 world camera.
+function worldGridPhase(origin, majorStep) {
+    const m = BigInt(Math.max(1, Math.round(majorStep)));
+    const v = BigInt(Math.trunc(finite(origin, 0)));
+    return Number(((v % m) + m) % m);
+}
+function updateGridBackground(vb = renderCamera(), cachedRect = null) {
+    // No-argument calls come from style handlers; their default can move the
+    // floating origin, so schedule the geometry repaint as well.
+    syncRenderOriginRepaint();
     const rect = canvasViewportRect(cachedRect);
     if (!rect.width || !rect.height)
         return;
@@ -4193,7 +4264,7 @@ function updateGridBackground(vb = currentCamera(), cachedRect = null) {
     const settings = state.settings;
     const gx = settings.gridSizeX || settings.gridSize || 40;
     const gy = settings.gridSizeY || settings.gridSize || 40;
-    const cam = safeCamera(vb);
+    const cam = boundedCamera(vb);
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const pitch = Math.min(rect.width / cam.w, rect.height / cam.h);
     if (!(pitch > 0) || !Number.isFinite(pitch)) {
@@ -4211,7 +4282,9 @@ function updateGridBackground(vb = currentCamera(), cachedRect = null) {
     const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
     const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
     const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-    const tileSig = [stepX, stepY, majorX, majorY, minorColor, majorColor].join('|');
+    const phaseX = worldGridPhase(renderOriginX, majorX);
+    const phaseY = worldGridPhase(renderOriginY, majorY);
+    const tileSig = [stepX, stepY, majorX, majorY, phaseX, phaseY, minorColor, majorColor].join('|');
     // Report the decimated steps in WORLD units, where the grid is defined.
     for (const el of [gridLayer, gridLines]) {
         if (!el)
@@ -4239,21 +4312,21 @@ function updateGridBackground(vb = currentCamera(), cachedRect = null) {
         gridBounds.x0 <= visX0 - marginX && gridBounds.x1 >= visX1 + marginX &&
         gridBounds.y0 <= visY0 - marginY && gridBounds.y1 >= visY1 + marginY)
         return;
-    // Draw the visible world range plus several viewports of apron, quantised
-    // to a coarse cell bucket. Because the lines are in WORLD coordinates and
-    // inside #cameraLayer, they ride the camera matrix with the graph and can
-    // never show a hard edge or a stale frame.
+    // Draw the visible render-space range plus several viewports of apron,
+    // quantised to a coarse cell bucket. Indices are LOCAL to a world-grid
+    // origin G = renderOrigin - phase, so even a 1e20 camera never increments
+    // an absolute index past 2^53. The phase keeps every line at an integer
+    // multiple of the world cell size; bucket quantisation keeps the bounds
+    // stable while a preview stays inside the apron.
     const apronX = spanX * 3, apronY = spanY * 3;
     const bucketX = stepX * 256, bucketY = stepY * 256;
-    const kx0 = Math.floor((visX0 - apronX) / bucketX) - 1;
-    const kx1 = Math.ceil((visX1 + apronX) / bucketX) + 1;
-    const ky0 = Math.floor((visY0 - apronY) / bucketY) - 1;
-    const ky1 = Math.ceil((visY1 + apronY) / bucketY) + 1;
-    let firstX = Math.ceil(kx0 * bucketX / stepX), lastX = Math.floor(kx1 * bucketX / stepX);
-    let firstY = Math.ceil(ky0 * bucketY / stepY), lastY = Math.floor(ky1 * bucketY / stepY);
-    // Hard cap on segments, centred on the visible range. Loops use a local
-    // index with a finite bound, never an absolute k++ whose increment can
-    // vanish at 2^53 (the freeze a 1e20 camera used to cause).
+    const kx0 = Math.floor((visX0 + phaseX - apronX) / bucketX) - 1;
+    const kx1 = Math.ceil((visX1 + phaseX + apronX) / bucketX) + 1;
+    const ky0 = Math.floor((visY0 + phaseY - apronY) / bucketY) - 1;
+    const ky1 = Math.ceil((visY1 + phaseY + apronY) / bucketY) + 1;
+    let firstX = kx0 * 256, lastX = kx1 * 256;
+    let firstY = ky0 * 256, lastY = ky1 * 256;
+    // Hard cap on segments, centred on the visible range.
     const cappedRange = (first, last, visFirst, visLast) => {
         if (last - first + 1 <= MAX_GRID_LINES)
             return [first, last];
@@ -4261,23 +4334,23 @@ function updateGridBackground(vb = currentCamera(), cachedRect = null) {
         const f = center - Math.floor(MAX_GRID_LINES / 2);
         return [f, f + MAX_GRID_LINES - 1];
     };
-    [firstX, lastX] = cappedRange(firstX, lastX, visX0 / stepX, visX1 / stepX);
-    [firstY, lastY] = cappedRange(firstY, lastY, visY0 / stepY, visY1 / stepY);
-    const drawnX0 = firstX * stepX, drawnX1 = lastX * stepX;
-    const drawnY0 = firstY * stepY, drawnY1 = lastY * stepY;
+    [firstX, lastX] = cappedRange(firstX, lastX, (visX0 + phaseX) / stepX, (visX1 + phaseX) / stepX);
+    [firstY, lastY] = cappedRange(firstY, lastY, (visY0 + phaseY) / stepY, (visY1 + phaseY) / stepY);
+    const drawnX0 = firstX * stepX - phaseX, drawnX1 = lastX * stepX - phaseX;
+    const drawnY0 = firstY * stepY - phaseY, drawnY1 = lastY * stepY - phaseY;
     const majorEveryX = Math.max(1, Math.round(majorX / stepX));
     const majorEveryY = Math.max(1, Math.round(majorY / stepY));
     let minorD = '', majorD = '';
     const nX = Math.max(0, lastX - firstX + 1), nY = Math.max(0, lastY - firstY + 1);
     for (let i = 0; i < nX; i++) {
-        const k = firstX + i, x = k * stepX;
+        const k = firstX + i, x = k * stepX - phaseX;
         if (k % majorEveryX === 0)
             majorD += `M ${x} ${drawnY0} V ${drawnY1} `;
         else
             minorD += `M ${x} ${drawnY0} V ${drawnY1} `;
     }
     for (let i = 0; i < nY; i++) {
-        const k = firstY + i, y = k * stepY;
+        const k = firstY + i, y = k * stepY - phaseY;
         if (k % majorEveryY === 0)
             majorD += `M ${drawnX0} ${y} H ${drawnX1} `;
         else
@@ -4300,9 +4373,11 @@ function moveNodeFast(id) {
     const n = drag?.node?.id === id ? drag.node : nodeById(id);
     if (!n)
         return;
+    if (!isRenderablePoint(n.x, n.y))
+        return;
     const el = nodeEl(id);
     if (el)
-        setAttr(el, 'transform', `translate(${n.x},${n.y})`);
+        setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
     if (drag && drag.liveEdges === false)
         return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
@@ -4315,9 +4390,11 @@ function moveDragFast(src = drag) {
     try {
         const nodes = src.nodes || (src.node ? [src.node] : []);
         for (const n of nodes) {
+            if (!isRenderablePoint(n.x, n.y))
+                continue;
             const el = nodeEl(n.id);
             if (el)
-                setAttr(el, 'transform', `translate(${n.x},${n.y})`);
+                setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
         }
         followGizmoForPlainDrag(src);
         if (src.liveEdges === false)
@@ -4336,6 +4413,8 @@ function updateEdgeFast(edgeOrId, vc = null) {
     // place, so the index always returns the live objects during a drag.
     const a = nodeById(e.from), b = nodeById(e.to);
     if (!a || !b)
+        return;
+    if (!isRenderablePoint(a.x, a.y) || !isRenderablePoint(b.x, b.y))
         return;
     const el = edgeEl(e.id);
     if (!el)
@@ -4552,6 +4631,8 @@ function renderEdges() {
         const a = nodeById(e.from), b = nodeById(e.to);
         if (!a || !b)
             continue; // dangling endpoints are dropped by the sweep
+        if (!isRenderablePoint(a.x, a.y) || !isRenderablePoint(b.x, b.y))
+            continue; // off-screen / beyond SVG coordinate limit
         // Skip edges touching non-visible nodes entirely — real performance gain, not just dimming
         if (rangeActive && (!visIds.has(e.from) || !visIds.has(e.to)))
             continue;
@@ -4649,7 +4730,10 @@ function renderEdges() {
         // result is reused without recomputation.
         const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
         const lane = edgeSiblingOffset(e);
-        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}`;
+        // Include the floating origin: absolute world endpoints unchanged by a
+        // camera move still produce different SVG numbers after a rebase, so the
+        // geometry cache must not hand back a path from the previous origin.
+        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}|${renderOriginX},${renderOriginY}`;
         let d = g.__geoSig === geoSig ? g.__geoData : null;
         if (!d) {
             d = edgePath(a, b, e, passVisuals);
@@ -4840,6 +4924,9 @@ const ARROW_LEN = 18; // arrow length from base to tip
 const ARROW_HW = 8; // arrow half-width
 function edgePath(a, b, e, vc = null) {
     const ra = nodeRadiusC(a, vc), rb = nodeRadiusC(b, vc);
+    // SVG numbers are rebased onto the floating render origin; all lengths
+    // (radii, offsets, widths) are world units and stay unchanged.
+    const ax = renderX(a.x), ay = renderY(a.y), bx = renderX(b.x), by = renderY(b.y);
     const arrowGap = e.directed ? ARROW_LEN : 2; // space reserved for arrow at target
     if (a.id === b.id) {
         const lane = edgeSiblingOffset(e);
@@ -4847,17 +4934,17 @@ function edgePath(a, b, e, vc = null) {
         const angle = -Math.PI / 2 + step * 0.62;
         const spread = 0.72;
         const loop = 78 + Math.abs(step) * 10;
-        const sx = a.x + Math.cos(angle - spread) * (ra + 2);
-        const sy = a.y + Math.sin(angle - spread) * (ra + 2);
+        const sx = ax + Math.cos(angle - spread) * (ra + 2);
+        const sy = ay + Math.sin(angle - spread) * (ra + 2);
         // Path ends at arrow base; tip extends to node boundary
-        const tx = a.x + Math.cos(angle + spread) * (ra + arrowGap);
-        const ty = a.y + Math.sin(angle + spread) * (ra + arrowGap);
-        const c1x = a.x + Math.cos(angle - spread * 0.45) * (ra + loop);
-        const c1y = a.y + Math.sin(angle - spread * 0.45) * (ra + loop);
-        const c2x = a.x + Math.cos(angle + spread * 0.45) * (ra + loop);
-        const c2y = a.y + Math.sin(angle + spread * 0.45) * (ra + loop);
-        const labelX = a.x + Math.cos(angle) * (ra + loop * 0.78);
-        const labelY = a.y + Math.sin(angle) * (ra + loop * 0.78);
+        const tx = ax + Math.cos(angle + spread) * (ra + arrowGap);
+        const ty = ay + Math.sin(angle + spread) * (ra + arrowGap);
+        const c1x = ax + Math.cos(angle - spread * 0.45) * (ra + loop);
+        const c1y = ay + Math.sin(angle - spread * 0.45) * (ra + loop);
+        const c2x = ax + Math.cos(angle + spread * 0.45) * (ra + loop);
+        const c2y = ay + Math.sin(angle + spread * 0.45) * (ra + loop);
+        const labelX = ax + Math.cos(angle) * (ra + loop * 0.78);
+        const labelY = ay + Math.sin(angle) * (ra + loop * 0.78);
         // Tangent at endpoint of cubic Bezier: direction = endpoint - last control point
         const arrowAngle = Math.atan2(ty - c2y, tx - c2x);
         // Tip extends from base along tangent by arrowGap to reach node boundary
@@ -4865,13 +4952,13 @@ function edgePath(a, b, e, vc = null) {
         const tipX = tx + ac * arrowGap, tipY = ty + as * arrowGap;
         return { path: `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle };
     }
-    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
     const offset = edgeSiblingOffset(e);
     // Keep endpoints attached to node boundaries; separate parallel/reverse edges
     // by bending the curve via its control point rather than shifting endpoints.
-    const sx = a.x + ux * (ra + 2), sy = a.y + uy * (ra + 2);
+    const sx = ax + ux * (ra + 2), sy = ay + uy * (ra + 2);
     // Path ends at arrow base (rb + arrowGap from center); tip will be at node boundary (rb)
-    const tx = b.x - ux * (rb + arrowGap), ty = b.y - uy * (rb + arrowGap);
+    const tx = bx - ux * (rb + arrowGap), ty = by - uy * (rb + arrowGap);
     if (Math.abs(offset) > 1) {
         const mx = (sx + tx) / 2 - uy * offset, my = (sy + ty) / 2 + ux * offset;
         // Tangent at endpoint of quadratic Bezier: direction = endpoint - control point
@@ -4882,7 +4969,7 @@ function edgePath(a, b, e, vc = null) {
     }
     const arrowAngle = Math.atan2(uy, ux);
     // For straight edges, tip = b - ux*rb (exactly on node boundary)
-    const tipX = b.x - ux * rb, tipY = b.y - uy * rb;
+    const tipX = bx - ux * rb, tipY = by - uy * rb;
     return { path: `M ${sx} ${sy} L ${tx} ${ty}`, labelX: (sx + tx) / 2, labelY: (sy + ty) / 2, tx, ty, tipX, tipY, arrowAngle };
 }
 function renderNodes() {
@@ -4903,6 +4990,10 @@ function renderNodes() {
     const stylePass = paintedNodeStyle !== styleFingerprint('node');
     const gen = renderGen;
     for (const n of state.nodes) {
+        // Nodes far outside the floating origin are off-screen AND would exceed
+        // Skia's ~2^25 SVG coordinate limit. Keep them in state, skip their DOM.
+        if (!isRenderablePoint(n.x, n.y))
+            continue;
         // Skip non-visible nodes entirely — they are removed from DOM, not dimmed.
         // This gives real performance: fewer SVG elements, fewer attribute patches, less paint.
         if (rangeActive && !visIds.has(n.id))
@@ -4939,7 +5030,7 @@ function renderNodes() {
             existing.set(n.id, fresh);
         }
         // Update transform (always — this is the hot path during drag)
-        setAttr(g, 'transform', `translate(${n.x},${n.y})`);
+        setAttr(g, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
         // Update selection class
         toggleClass(g, 'selected', selected);
         toggleClass(g, 'dragging', draggingId === n.id);
@@ -7053,14 +7144,13 @@ function currentCamera() {
     // zoom, pan and pinch — are the active camera for hit tests, exports, the
     // camera inputs and grid repaints. Using only state.viewBox here let a
     // style change during a preview recompute the grid for the stale,
-    // committed camera. safeCamera() is one central bound that also prevents
-    // a finite but astronomically large coordinate from reaching a world-cell
-    // index loop.
+    // committed camera. boundedCamera() keeps the viewport finite and its
+    // centre stable; the floating render origin keeps SVG numbers small.
     const active = zoomPreview ? zoomPreview.preview
         : pinch ? pinch.previewViewBox
             : pan ? pan.previewViewBox
                 : state.viewBox;
-    return safeCamera(active);
+    return boundedCamera(active);
 }
 function hasActiveCanvasGesture() {
     return Boolean(singleSweep || pinch || selectDraft || pendingNodeTap || edgeDraft || gizmoDrag || drag || pan);
@@ -7072,9 +7162,13 @@ function clientToWorld(clientX, clientY, viewBox = currentCamera(), rect = null)
     const scale = Math.min(r.width / viewBox.w, r.height / viewBox.h);
     const offsetX = (r.width - viewBox.w * scale) / 2;
     const offsetY = (r.height - viewBox.h * scale) / 2;
+    // Rebase onto the floating origin so a world camera at 1e9 still keeps
+    // sub-pixel cursor precision (1e9 + 0.5 is exact; 1e20 + 0.5 is not).
+    const rcx = finite(viewBox.x, 0) - renderOriginX;
+    const rcy = finite(viewBox.y, 0) - renderOriginY;
     return {
-        x: viewBox.x + (clientX - r.left - offsetX) / scale,
-        y: viewBox.y + (clientY - r.top - offsetY) / scale
+        x: renderOriginX + rcx + (clientX - r.left - offsetX) / scale,
+        y: renderOriginY + rcy + (clientY - r.top - offsetY) / scale
     };
 }
 function worldAtClient(clientX, clientY, viewBox = currentCamera()) { return clientToWorld(clientX, clientY, viewBox); }
@@ -7134,12 +7228,12 @@ function updatePinch() {
         return;
     const a = pts[0], b = pts[1], c = centerClient(a, b), r = canvasViewportRect(pinch.rect);
     const scale = clamp(pinch.startDistance / distClient(a, b), 0.05, 20);
-    const nw = clamp(pinch.startViewBox.w * scale, 120, 20000);
-    const nh = clamp(pinch.startViewBox.h * scale, 90, 20000);
+    const nw = clamp(pinch.startViewBox.w * scale, 120, MAX_CAMERA_SIZE);
+    const nh = clamp(pinch.startViewBox.h * scale, 90, MAX_CAMERA_SIZE);
     const previewScale = Math.min(r.width / nw, r.height / nh);
     const offsetX = (r.width - nw * previewScale) / 2;
     const offsetY = (r.height - nh * previewScale) / 2;
-    pinch.previewViewBox = safeCamera({
+    pinch.previewViewBox = boundedCamera({
         x: pinch.startWorld.x - (c.clientX - r.left - offsetX) / previewScale,
         y: pinch.startWorld.y - (c.clientY - r.top - offsetY) / previewScale,
         w: nw,
@@ -7307,22 +7401,22 @@ function renderSelectionDraft() {
     if (d.tool === 'rect') {
         el = document.createElementNS(NS, 'rect');
         const x = Math.min(d.start.x, d.end.x), y = Math.min(d.start.y, d.end.y), w = Math.abs(d.end.x - d.start.x), h = Math.abs(d.end.y - d.start.y);
-        el.setAttribute('x', x);
-        el.setAttribute('y', y);
+        el.setAttribute('x', renderX(x));
+        el.setAttribute('y', renderY(y));
         el.setAttribute('width', w);
         el.setAttribute('height', h);
     }
     else if (d.tool === 'line') {
         el = document.createElementNS(NS, 'line');
-        el.setAttribute('x1', d.start.x);
-        el.setAttribute('y1', d.start.y);
-        el.setAttribute('x2', d.end.x);
-        el.setAttribute('y2', d.end.y);
+        el.setAttribute('x1', renderX(d.start.x));
+        el.setAttribute('y1', renderY(d.start.y));
+        el.setAttribute('x2', renderX(d.end.x));
+        el.setAttribute('y2', renderY(d.end.y));
     }
     else if (d.tool === 'brush') {
         el = document.createElementNS(NS, 'circle');
-        el.setAttribute('cx', d.end.x);
-        el.setAttribute('cy', d.end.y);
+        el.setAttribute('cx', renderX(d.end.x));
+        el.setAttribute('cy', renderY(d.end.y));
         el.setAttribute('r', (state.settings.brushDiameter || 80) / 2);
     }
     else if (d.tool === 'polygon') {
@@ -7330,14 +7424,14 @@ function renderSelectionDraft() {
         const previewPts = [...pts];
         if (d.end && pts.length)
             previewPts.push(d.end);
-        const path = previewPts.length ? 'M ' + previewPts.map(q => `${q.x} ${q.y}`).join(' L ') + (pts.length > 2 ? ` L ${pts[0].x} ${pts[0].y}` : '') : '';
+        const path = previewPts.length ? 'M ' + previewPts.map(q => `${renderX(q.x)} ${renderY(q.y)}`).join(' L ') + (pts.length > 2 ? ` L ${renderX(pts[0].x)} ${renderY(pts[0].y)}` : '') : '';
         pathEl.setAttribute('d', path);
         pathEl.setAttribute('class', 'selection-draft fill-soft');
         selectionOverlayLayer.appendChild(pathEl);
         if (pts.length) {
             const start = document.createElementNS(NS, 'circle');
-            start.setAttribute('cx', String(pts[0].x));
-            start.setAttribute('cy', String(pts[0].y));
+            start.setAttribute('cx', String(renderX(pts[0].x)));
+            start.setAttribute('cy', String(renderY(pts[0].y)));
             start.setAttribute('r', String(Math.max(5, state.viewBox.w / 220)));
             start.setAttribute('class', 'selection-draft');
             selectionOverlayLayer.appendChild(start);
@@ -7346,7 +7440,7 @@ function renderSelectionDraft() {
     }
     else {
         el = document.createElementNS(NS, 'path');
-        const path = pts.length ? 'M ' + pts.map(q => `${q.x} ${q.y}`).join(' L ') + (d.tool === 'lasso' && pts.length > 2 ? ' Z' : '') : '';
+        const path = pts.length ? 'M ' + pts.map(q => `${renderX(q.x)} ${renderY(q.y)}`).join(' L ') + (d.tool === 'lasso' && pts.length > 2 ? ' Z' : '') : '';
         el.setAttribute('d', path);
         el.classList.add('fill-soft');
     }
@@ -7694,7 +7788,7 @@ canvasWrap.addEventListener('pointermove', ev => {
         const scale = Math.min(rect.width / start.w, rect.height / start.h);
         const dx = (ev.clientX - pan.startClientX) / scale;
         const dy = (ev.clientY - pan.startClientY) / scale;
-        pan.previewViewBox = safeCamera({ ...start, x: start.x - dx, y: start.y - dy });
+        pan.previewViewBox = boundedCamera({ ...start, x: start.x - dx, y: start.y - dy });
         if (!pan.frame) {
             pan.frame = true;
             requestAnimationFrame(() => {
@@ -7893,11 +7987,22 @@ function finishPointer(ev, cancel = false) {
     gestureActive = false;
     unregisterPointer(ev);
 }
+// Selection drafts and the edge-drag line are pointer-driven, not painted by
+// renderCanvas(). Rebase their cached SVG coordinates when a camera move
+// crosses the floating-origin boundary.
+function rebaseInteractionOverlays() {
+    renderSelectionDraft();
+    if (edgeDraft) {
+        const from = nodeById(edgeDraft.from);
+        if (from)
+            dragLine.setAttribute('d', `M ${renderX(from.x)} ${renderY(from.y)} L ${renderX(edgeDraft.x)} ${renderY(edgeDraft.y)}`);
+    }
+}
 function updateDragLine(p, clientX, clientY) {
     const from = nodeById(edgeDraft.from);
     if (!from)
         return;
-    dragLine.setAttribute('d', `M ${from.x} ${from.y} L ${p.x} ${p.y}`);
+    dragLine.setAttribute('d', `M ${renderX(from.x)} ${renderY(from.y)} L ${renderX(p.x)} ${renderY(p.y)}`);
     dragLine.style.display = 'block';
     // Detect if pointer is over a node and adjust line appearance
     const target = document.elementFromPoint(clientX, clientY)?.closest?.('.node');
@@ -7966,13 +8071,13 @@ function zoomAt(factor, clientX, clientY) {
     const cur = currentCamera();
     const r = zoomPreview ? zoomPreview.rect : canvasViewportRect();
     const anchor = clientToWorld(clientX, clientY, cur, r);
-    const nw = clamp(cur.w * factor, 120, 20000), nh = clamp(cur.h * factor, 90, 20000);
+    const nw = clamp(cur.w * factor, 120, MAX_CAMERA_SIZE), nh = clamp(cur.h * factor, 90, MAX_CAMERA_SIZE);
     // Preserve the exact world point under the cursor, including the centered
     // letterbox offsets introduced by SVG's xMidYMid meet aspect-ratio mode.
     const nextPixels = Math.min(r.width / nw, r.height / nh);
     const nextOffsetX = (r.width - nw * nextPixels) / 2;
     const nextOffsetY = (r.height - nh * nextPixels) / 2;
-    const preview = safeCamera({
+    const preview = boundedCamera({
         x: anchor.x - (clientX - r.left - nextOffsetX) / nextPixels,
         y: anchor.y - (clientY - r.top - nextOffsetY) / nextPixels,
         w: nw,
@@ -8006,7 +8111,7 @@ function cancelZoomPreview() {
 function commitZoomPreview() {
     if (!zoomPreview)
         return;
-    const preview = safeCamera(zoomPreview.preview);
+    const preview = boundedCamera(zoomPreview.preview);
     cancelZoomPreview();
     state.viewBox = { ...preview };
     applyCamera();
@@ -8037,11 +8142,12 @@ function fitView() {
     maxX += 120;
     minY -= 120;
     maxY += 120;
-    state.viewBox = {
-        x: safeWorldCoord(minX, 0), y: safeWorldCoord(minY, 0),
-        w: clamp(Math.max(260, maxX - minX), 100, 20000),
-        h: clamp(Math.max(220, maxY - minY), 90, 20000)
-    };
+    // Fit the WHOLE span. boundedCamera() may cap an extreme width/height at
+    // 1e6, but it keeps the exact centre, so a 100,000-unit graph is never
+    // truncated to the old 20,000-unit camera with one node pushed off-screen.
+    const w = Math.max(260, maxX - minX), h = Math.max(220, maxY - minY);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    state.viewBox = boundedCamera({ x: cx - w / 2, y: cy - h / 2, w, h });
     applyCamera();
     saveSoon();
 }
@@ -8414,6 +8520,10 @@ function renderGizmo() {
         gizmoPivotKey = key;
     }
     const P = gizmoPivot || { x: b.cx, y: b.cy };
+    // SVG attribute numbers must be rebased onto the floating render origin;
+    // signature/logic stay in exact world coordinates.
+    const rb = { minX: renderX(b.minX), minY: renderY(b.minY), maxX: renderX(b.maxX), maxY: renderY(b.maxY), cx: renderX(b.cx), cy: renderY(b.cy), w: b.w, h: b.h };
+    const px = renderX(P.x), py = renderY(P.y);
     const u = gizmoWorldPerPixel(); // world units per screen pixel
     const tool = gizmoTool;
     const active = gizmoDrag?.handle || '';
@@ -8421,7 +8531,8 @@ function renderGizmo() {
     const readoutText = gizmoDrag?.readout || '';
     const pivotLabel = I18N.t('gizmo_pivot');
     const sig = [tool, key, P.x, P.y, b.minX, b.minY, b.maxX, b.maxY, u.toFixed(4), active,
-        readoutText, pivotLabel, pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
+        renderOriginX, renderOriginY, readoutText, pivotLabel,
+        pointer ? Math.round(pointer.x) + ',' + Math.round(pointer.y) : ''].join('|');
     wrap.classList.toggle('gizmo-active', true);
     const tree = getGizmoTree(tool);
     if (gizmoRootEl !== tree.root) {
@@ -8443,15 +8554,15 @@ function renderGizmo() {
     for (const h of tree.handles)
         toggleClass(h.g, 'active', active === h.kind);
     const armLen = 52 * u, armStart = 11 * u;
-    let topY = b.minY;
+    let topY = rb.minY;
     if (tool === 'rect') {
-        setRectAttrs(tree.rectBox, b.minX, b.minY, b.w, b.h);
+        setRectAttrs(tree.rectBox, rb.minX, rb.minY, rb.w, rb.h);
         const hit = 7 * u, box = 11 * u, boxHit = 21 * u;
         const edgeCoords = [
-            [b.minX, b.minY, b.maxX, b.minY, b.cx, b.minY],
-            [b.maxX, b.minY, b.maxX, b.maxY, b.maxX, b.cy],
-            [b.minX, b.maxY, b.maxX, b.maxY, b.cx, b.maxY],
-            [b.minX, b.minY, b.minX, b.maxY, b.minX, b.cy],
+            [rb.minX, rb.minY, rb.maxX, rb.minY, rb.cx, rb.minY],
+            [rb.maxX, rb.minY, rb.maxX, rb.maxY, rb.maxX, rb.cy],
+            [rb.minX, rb.maxY, rb.maxX, rb.maxY, rb.cx, rb.maxY],
+            [rb.minX, rb.minY, rb.minX, rb.maxY, rb.minX, rb.cy],
         ];
         for (let i = 0; i < 4; i++) {
             const e = tree.edges[i];
@@ -8462,7 +8573,7 @@ function renderGizmo() {
             setRectAttrs(e.visRect, hx - box / 2, hy - box / 2, box, box);
         }
         const cornerCoords = [
-            [b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY],
+            [rb.minX, rb.minY], [rb.maxX, rb.minY], [rb.maxX, rb.maxY], [rb.minX, rb.maxY],
         ];
         for (let i = 0; i < 4; i++) {
             const c = tree.corners[i];
@@ -8470,19 +8581,19 @@ function renderGizmo() {
             setRectAttrs(c.hitRect, hx - boxHit / 2, hy - boxHit / 2, boxHit, boxHit);
             setRectAttrs(c.visRect, hx - box / 2, hy - box / 2, box, box);
         }
-        setCircleAttrs(tree.centreHit, b.cx, b.cy, 13 * u);
-        setRectAttrs(tree.centreBox, b.cx - box / 2, b.cy - box / 2, box, box);
+        setCircleAttrs(tree.centreHit, rb.cx, rb.cy, 13 * u);
+        setRectAttrs(tree.centreBox, rb.cx - box / 2, rb.cy - box / 2, box, box);
     }
     else if (tool === 'rotate') {
         const Rr = 72 * u;
-        topY = P.y - Rr;
-        setCircleAttrs(tree.ringHit, P.x, P.y, Rr);
+        topY = py - Rr;
+        setCircleAttrs(tree.ringHit, px, py, Rr);
         setAttr(tree.ringHit, 'stroke-width', 18 * u);
-        setCircleAttrs(tree.ringVis, P.x, P.y, Rr);
+        setCircleAttrs(tree.ringVis, px, py, Rr);
         const a = (gizmoDrag?.tool === 'rotate' && pointer) ? Math.atan2(pointer.y - P.y, pointer.x - P.x) : -Math.PI / 2;
-        const hx = P.x + Math.cos(a) * Rr, hy = P.y + Math.sin(a) * Rr;
+        const hx = px + Math.cos(a) * Rr, hy = py + Math.sin(a) * Rr;
         if (gizmoDrag?.tool === 'rotate') {
-            setLineAttrs(tree.spoke, P.x, P.y, hx, hy);
+            setLineAttrs(tree.spoke, px, py, hx, hy);
             setStyleIfChanged(tree.spoke.style, 'display', '');
         }
         else {
@@ -8491,16 +8602,16 @@ function renderGizmo() {
         setCircleAttrs(tree.knob, hx, hy, 6.5 * u);
     }
     else {
-        setRectAttrs(tree.bounds, b.minX, b.minY, b.w, b.h);
+        setRectAttrs(tree.bounds, rb.minX, rb.minY, rb.w, rb.h);
         const updateAxis = (ax) => {
             const { dx, dy } = ax;
-            const ex = P.x + dx * armLen, ey = P.y + dy * armLen;
-            setLineAttrs(ax.hitLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
+            const ex = px + dx * armLen, ey = py + dy * armLen;
+            setLineAttrs(ax.hitLine, px + dx * armStart, py + dy * armStart, ex, ey);
             setAttr(ax.hitLine, 'stroke-width', 16 * u);
-            setLineAttrs(ax.axisLine, P.x + dx * armStart, P.y + dy * armStart, ex, ey);
+            setLineAttrs(ax.axisLine, px + dx * armStart, py + dy * armStart, ex, ey);
             if (tool === 'move') {
                 const al = 12 * u, aw = 5 * u;
-                const tipX = P.x + dx * (armLen + al), tipY = P.y + dy * (armLen + al);
+                const tipX = px + dx * (armLen + al), tipY = py + dy * (armLen + al);
                 const pts = `${tipX},${tipY} ${ex - dy * aw},${ey + dx * aw} ${ex + dy * aw},${ey - dx * aw}`;
                 setCircleAttrs(ax.hitCircle, ex + dx * al / 2, ey + dy * al / 2, 11 * u);
                 setAttr(ax.arrow, 'points', pts);
@@ -8516,26 +8627,26 @@ function renderGizmo() {
         };
         updateAxis(tree.axisX);
         updateAxis(tree.axisY);
-        setCircleAttrs(tree.centreHit, P.x, P.y, 13 * u);
+        setCircleAttrs(tree.centreHit, px, py, 13 * u);
         if (tool === 'move') {
-            setCircleAttrs(tree.centreVis, P.x, P.y, 7.5 * u);
+            setCircleAttrs(tree.centreVis, px, py, 7.5 * u);
         }
         else {
             const box = 14 * u;
-            setRectAttrs(tree.centreVis, P.x - box / 2, P.y - box / 2, box, box);
+            setRectAttrs(tree.centreVis, px - box / 2, py - box / 2, box, box);
         }
     }
     if (tool === 'rotate' || tool === 'scale' || tool === 'rect') {
         setText(tree.pivotTitle, pivotLabel);
-        setCircleAttrs(tree.pivotHit, P.x, P.y, (tool === 'rotate' ? 11 : 7) * u);
-        setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
-        setCircleAttrs(tree.pivotDot, P.x, P.y, 2 * u);
+        setCircleAttrs(tree.pivotHit, px, py, (tool === 'rotate' ? 11 : 7) * u);
+        setCircleAttrs(tree.pivotRing, px, py, 6 * u);
+        setCircleAttrs(tree.pivotDot, px, py, 2 * u);
     }
     else {
-        setCircleAttrs(tree.pivotRing, P.x, P.y, 6 * u);
+        setCircleAttrs(tree.pivotRing, px, py, 6 * u);
     }
     if (readoutText) {
-        setAttr(tree.readout, 'x', tool === 'rect' ? b.cx : P.x);
+        setAttr(tree.readout, 'x', tool === 'rect' ? rb.cx : px);
         setAttr(tree.readout, 'y', topY - 10 * u);
         setAttr(tree.readout, 'font-size', 12.5 * u);
         setText(tree.readout, readoutText);
@@ -10567,12 +10678,12 @@ function setCameraFromInputs(sourceEl = null) {
     const useField = (el) => Boolean(el && (el === sourceEl || isCameraInputEdited(el)));
     const baseCx = base.x + base.w / 2;
     const baseCy = base.y + base.h / 2;
-    const cx = safeWorldCoord(useField(xEl) ? finite(xEl.value, baseCx) : baseCx, 0);
-    const cy = safeWorldCoord(useField(yEl) ? finite(yEl.value, baseCy) : baseCy, 0);
-    const w = clamp(useField(wEl) ? finite(wEl.value, base.w) : base.w, 100, 20000);
-    const h = clamp(useField(hEl) ? finite(hEl.value, base.h) : base.h, 90, 20000);
+    const cx = finite(useField(xEl) ? finite(xEl.value, baseCx) : baseCx, 0);
+    const cy = finite(useField(yEl) ? finite(yEl.value, baseCy) : baseCy, 0);
+    const ow = finite(useField(wEl) ? finite(wEl.value, base.w) : base.w, base.w);
+    const oh = finite(useField(hEl) ? finite(hEl.value, base.h) : base.h, base.h);
     cancelZoomPreview();
-    state.viewBox = { x: safeWorldCoord(cx - w / 2, 0), y: safeWorldCoord(cy - h / 2, 0), w, h };
+    state.viewBox = boundedCamera({ x: cx - ow / 2, y: cy - oh / 2, w: ow, h: oh });
     applyCamera();
     saveSoon();
     syncCameraInputs(true);
@@ -10590,8 +10701,8 @@ function centerOnNode(n) {
     if (!n)
         return;
     flushZoomPreview();
-    state.viewBox.x = safeWorldCoord(n.x - state.viewBox.w / 2, 0);
-    state.viewBox.y = safeWorldCoord(n.y - state.viewBox.h / 2, 0);
+    state.viewBox.x = finite(n.x - state.viewBox.w / 2, 0);
+    state.viewBox.y = finite(n.y - state.viewBox.h / 2, 0);
     applyCamera();
     saveSoon();
     syncCameraInputs();
@@ -12359,19 +12470,19 @@ function wireUi() {
             changed = true;
         }
         if (zoomPreview) {
-            state.viewBox = { ...safeCamera(zoomPreview.preview) };
+            state.viewBox = { ...boundedCamera(zoomPreview.preview) };
             cancelZoomPreview();
             changed = true;
             navigationChanged = true;
         }
         if (pan) {
-            state.viewBox = { ...safeCamera(pan.previewViewBox) };
+            state.viewBox = { ...boundedCamera(pan.previewViewBox) };
             pan = null;
             changed = true;
             navigationChanged = true;
         }
         if (pinch) {
-            state.viewBox = { ...safeCamera(pinch.previewViewBox) };
+            state.viewBox = { ...boundedCamera(pinch.previewViewBox) };
             pinch = null;
             changed = true;
             navigationChanged = true;

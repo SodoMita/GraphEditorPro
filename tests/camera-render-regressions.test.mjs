@@ -6,6 +6,44 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 const html = await readFile('index.html', 'utf8');
 const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
+// Chromium/Skia clamps SVG geometry and transform numbers above ~2^25.
+const SVG_COORD_LIMIT = 33554432;
+
+function renderOrigin(document) {
+  const raw = document.getElementById('graphCanvas').getAttribute('data-render-origin') || '0,0';
+  return raw.split(',').map(Number);
+}
+
+const COORD_ATTRS = ['x','y','cx','cy','x1','y1','x2','y2','width','height','r','d','points','transform'];
+function assertSvgCoordinatesSafe(document, label) {
+  const camera = document.getElementById('cameraLayer');
+  for (const el of [camera, ...camera.querySelectorAll('*')]) {
+    for (const attr of COORD_ATTRS) {
+      const raw = el.getAttribute(attr);
+      if (!raw) continue;
+      for (const match of raw.match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi) || []) {
+        const value = Number(match);
+        assert.ok(Number.isFinite(value) && Math.abs(value) < SVG_COORD_LIMIT,
+          `${label}: ${el.tagName}.${attr} contains unsafe SVG coordinate ${match}`);
+      }
+    }
+  }
+}
+
+function nodeRenderX(document, id) {
+  const el = document.getElementById('node-' + id);
+  assert.ok(el, `node ${id} is rendered`);
+  const match = (el.getAttribute('transform') || '').match(/translate\(([-\d.]+),([-\d.]+)\)/);
+  assert.ok(match, `node ${id} has a translate transform`);
+  return { x: Number(match[1]), y: Number(match[2]) };
+}
+
+function screenX(document, camera, x) {
+  const m = cameraMatrix(camera);
+  const basePixels = Math.min(VIEWPORT.width / REFERENCE_VIEWBOX.w, VIEWPORT.height / REFERENCE_VIEWBOX.h);
+  const offsetX = (VIEWPORT.width - REFERENCE_VIEWBOX.w * basePixels) / 2;
+  return (m.scale * x + m.tx - REFERENCE_VIEWBOX.x) * basePixels + offsetX;
+}
 
 function createEditorDom(savedGraph = null) {
   const errors = [];
@@ -379,8 +417,10 @@ test('a saved camera with astronomically large finite coordinates loads without 
   const m = cameraMatrix(camera);
   for (const value of [m.scale, m.tx, m.ty]) {
     assert.ok(Number.isFinite(value), `camera matrix value ${value} is finite`);
-    assert.ok(Math.abs(value) <= 1e12, `camera matrix value ${value} is bounded`);
+    assert.ok(Math.abs(value) < SVG_COORD_LIMIT, `camera matrix value ${value} is a safe SVG number`);
   }
+  assert.ok(renderOrigin(document)[0] > 1e19, 'the floating origin follows the 1e20 camera');
+  assertSvgCoordinatesSafe(document, '1e20 camera');
   const minorD = document.getElementById('gridMinorLines').getAttribute('d') || '';
   const majorD = document.getElementById('gridMajorLines').getAttribute('d') || '';
   assert.ok(minorD.length + majorD.length < 500000, 'grid paths stay bounded');
@@ -395,7 +435,7 @@ test('a saved camera with astronomically large finite coordinates loads without 
   dom.window.close();
 });
 
-test('camera inputs reject unbounded coordinates', async () => {
+test('camera inputs preserve large world coordinates while keeping SVG numbers safe', async () => {
   const { dom, errors } = createEditorDom(smallGraph());
   await nextFrame(dom.window);
   const window = dom.window, document = window.document;
@@ -409,8 +449,11 @@ test('camera inputs reject unbounded coordinates', async () => {
   input.dispatchEvent(new window.Event('change', { bubbles: true }));
   await nextFrame(window);
   const m = cameraMatrix(camera);
-  assert.ok(Number.isFinite(m.tx) && Math.abs(m.tx) <= 1e12, `camera translation ${m.tx} is bounded`);
-  assert.ok(Number(input.value) <= 1e9, 'the sidebar reports the clamped camera, not 1e20');
+  assert.ok(Number.isFinite(m.tx) && Math.abs(m.tx) < SVG_COORD_LIMIT,
+    `camera translation ${m.tx} is a safe SVG number`);
+  assert.equal(Number(input.value), 1e20, 'the world camera is preserved, not silently clamped');
+  assert.ok(renderOrigin(document)[0] > 1e19, 'the floating origin follows the typed camera');
+  assertSvgCoordinatesSafe(document, '1e20 camera input');
   assert.ok((document.getElementById('gridMinorLines').getAttribute('d') || '').length < 500000,
     'grid paths stay bounded after the camera input');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -536,6 +579,207 @@ test('grid style changes during a pending pinch preview keep the previewed camer
   dispatchPointer(window, svg, 'pointerup', { pointerId: 1, pointerType: 'touch', clientX: 485, clientY: 330 });
   dispatchPointer(window, svg, 'pointerup', { pointerId: 2, pointerType: 'touch', clientX: 515, clientY: 330 });
   assertGridCoversViewport(document, camera, 'after the pinch commits');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+
+test('node coordinates above 1e9 are preserved through load and autosave', async () => {
+  const graph = {
+    title: 'large-coords',
+    nodes: [
+      { id: 'a', label: 'A', x: 1000000100, y: 0 },
+      { id: 'b', label: 'B', x: 1000000200, y: 0 },
+    ],
+    edges: [],
+    viewBox: { x: 1000000000, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  const a = nodeRenderX(document, 'a'), b = nodeRenderX(document, 'b');
+  assert.equal(b.x - a.x, 100, 'the two nodes keep their distinct world offsets in the SVG');
+  assert.ok(Math.abs(a.x) < SVG_COORD_LIMIT && Math.abs(b.x) < SVG_COORD_LIMIT,
+    'node transforms are rebased onto the floating origin');
+  assert.ok(renderOrigin(document)[0] > 1e9 - 1e6, 'render origin follows the far camera');
+  assert.equal(screenX(document, camera, b.x) - screenX(document, camera, a.x), 100,
+    'the nodes project 100px apart on screen');
+  assertSvgCoordinatesSafe(document, 'large node coordinates');
+
+  // An ordinary edit must autosave the EXACT world coordinates, not collapsed
+  // values. The old sanitizer clamped both nodes to 1e9 and rewrote the file.
+  const title = document.getElementById('docTitleInput');
+  title.value = 'edited';
+  title.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await settle(window, 400);
+  const saved = JSON.parse(window.localStorage.getItem('graph-editor-pro-v2'));
+  assert.deepEqual(saved.nodes.map(n => ({ id: n.id, x: n.x, y: n.y })), [
+    { id: 'a', x: 1000000100, y: 0 },
+    { id: 'b', x: 1000000200, y: 0 },
+  ], 'autosave preserves node data');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('fitView fits a graph spanning 100000 units without truncating or decentring', async () => {
+  const graph = {
+    title: 'wide',
+    nodes: [
+      { id: 'a', label: 'A', x: 0, y: 0 },
+      { id: 'b', label: 'B', x: 100000, y: 0 },
+    ],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  document.getElementById('btnCameraFit').click();
+  await nextFrame(window);
+  const w = Number(document.getElementById('cameraW').value);
+  const cx = Number(document.getElementById('cameraX').value);
+  assert.ok(w > 100000, `fit width ${w} covers the whole span, not the old 20000 cap`);
+  assert.ok(Math.abs(cx - 50000) < 1, `fit camera centre ${cx} stays at 50000`);
+  const a = nodeRenderX(document, 'a'), b = nodeRenderX(document, 'b');
+  const ax = screenX(document, camera, a.x), bx = screenX(document, camera, b.x);
+  assert.ok(ax >= 0 && ax <= VIEWPORT.width, `node a is on screen at ${ax}`);
+  assert.ok(bx >= 0 && bx <= VIEWPORT.width, `node b is on screen at ${bx}`);
+  assertSvgCoordinatesSafe(document, 'fitView wide graph');
+  assertGridCoversViewport(document, camera, 'fitView wide graph grid');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a node at 50000000 uses the floating origin and stays inside SVG coordinate limits', async () => {
+  const graph = {
+    title: 'far-node',
+    nodes: [{ id: 'far', label: 'Far', x: 50000000, y: 0 }],
+    edges: [],
+    viewBox: { x: 50000000 - 500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  const origin = renderOrigin(document);
+  assert.ok(Math.abs(origin[0] - 50000000) < 1e6, 'render origin is snapped near the far camera');
+  const n = nodeRenderX(document, 'far');
+  assert.ok(Math.abs(n.x) < SVG_COORD_LIMIT, `node transform ${n.x} is a safe SVG number`);
+  const m = cameraMatrix(camera);
+  assert.ok(Math.abs(m.tx) < SVG_COORD_LIMIT, `camera translation ${m.tx} is a safe SVG number`);
+  assert.ok(screenX(document, camera, n.x) >= 0 && screenX(document, camera, n.x) <= VIEWPORT.width,
+    'the far node projects inside the viewport');
+  assertSvgCoordinatesSafe(document, 'far node');
+  assertGridCoversViewport(document, camera, 'far node grid');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+
+test('crossing a floating-origin boundary rebases nodes, edges and the grid', async () => {
+  const graph = {
+    title: 'origin-boundary',
+    nodes: [
+      { id: 'a', label: 'A', x: 500500, y: 0 },
+      { id: 'b', label: 'B', x: 500600, y: 0 },
+    ],
+    edges: [{ id: 'e', from: 'a', to: 'b' }],
+    viewBox: { x: 499000, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  assert.equal(renderOrigin(document)[0], 0, 'the first camera uses the 0 origin');
+  assert.equal(nodeRenderX(document, 'a').x, 500500, 'node starts in absolute render coordinates');
+  assertSvgCoordinatesSafe(document, 'before origin crossing');
+
+  // Move the camera just past the 500,000 snap boundary. A matrix-only preview
+  // path must schedule one geometry repaint, otherwise nodes stay on the old
+  // origin while the camera and grid have already moved to the new one.
+  const input = document.getElementById('cameraX');
+  input.value = '500500';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.getElementById('btnCameraSet').click();
+  await settle(window, 120);
+
+  assert.equal(renderOrigin(document)[0], 1e6, 'the render origin follows the camera');
+  assert.equal(nodeRenderX(document, 'a').x, -499500, 'node attributes are rebased onto the new origin');
+  assert.equal(nodeRenderX(document, 'b').x - nodeRenderX(document, 'a').x, 100,
+    'relative node spacing survives the origin change');
+  const edgeD = document.querySelector('#edgesLayer path')?.getAttribute('d') || '';
+  assert.ok(edgeD && /M\s+-\d/.test(edgeD), 'edge geometry is rebased too');
+  assert.ok(screenX(document, camera, nodeRenderX(document, 'a').x) > 0 &&
+    screenX(document, camera, nodeRenderX(document, 'a').x) < VIEWPORT.width,
+    'the node remains on screen after the origin change');
+  assertGridCoversViewport(document, camera, 'origin-crossed grid');
+  assertSvgCoordinatesSafe(document, 'after origin crossing');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+
+test('grid phase stays world-locked across a floating-origin boundary', async () => {
+  const graph = {
+    title: 'grid-phase',
+    nodes: [{ id: 'a', label: 'A', x: 500500, y: 0 }],
+    edges: [],
+    settings: { gridSize: 7, gridSizeX: 7, gridSizeY: 7 },
+    viewBox: { x: 499000, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  setCanvasRect(svg);
+
+  const verticalWorldXs = () => {
+    const originX = renderOrigin(document)[0];
+    const stepX = Number(document.getElementById('gridLayer').getAttribute('data-minor-x'));
+    const xs = [];
+    for (const id of ['gridMinorLines', 'gridMajorLines']) {
+      const d = document.getElementById(id).getAttribute('d') || '';
+      for (const m of d.matchAll(/M\s+(-?[\d.]+)\s+(-?[\d.]+)\s+V/g)) {
+        xs.push(Number(m[1]) + originX);
+      }
+    }
+    return { stepX, xs };
+  };
+  const assertWorldLocked = label => {
+    const { stepX, xs } = verticalWorldXs();
+    assert.ok(stepX > 0 && xs.length > 0, `${label}: vertical grid lines are drawn`);
+    for (const x of xs) {
+      const rem = ((x % stepX) + stepX) % stepX;
+      assert.ok(Math.min(rem, stepX - rem) < 1e-6,
+        `${label}: world grid line ${x} is not a multiple of ${stepX}`);
+    }
+  };
+
+  assert.equal(renderOrigin(document)[0], 0, 'initial origin is zero');
+  assertWorldLocked('before origin crossing');
+  const input = document.getElementById('cameraX');
+  input.value = '500500';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.getElementById('btnCameraSet').click();
+  await settle(window, 120);
+  assert.equal(renderOrigin(document)[0], 1e6, 'origin crossed the 1e6 snap boundary');
+  assertWorldLocked('after origin crossing');
+  assertGridCoversViewport(document, document.getElementById('cameraLayer'), 'phase-locked grid');
+  assertSvgCoordinatesSafe(document, 'phase-locked grid coordinates');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

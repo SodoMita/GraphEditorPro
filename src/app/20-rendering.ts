@@ -530,6 +530,18 @@
   // no visual input should not ask for a pass at all (the camera and the grid
   // have their own writers — see `applyCamera`/`updateGridBackground`, which the
   // resize and zoom paths call directly).
+  // A floating-origin change can happen in a preview-only pointermove, when
+  // only the camera matrix and grid paths are written. Schedule one normal
+  // canvas render so nodes/edges/selection/gizmo are rebased onto the new
+  // origin too; ordinary pans that stay within a snap cell schedule nothing.
+  function syncRenderOriginRepaint(){
+    if(!renderOriginMoved) return;
+    renderOriginMoved = false;
+    // Selection drafts and the edge-drag line are pointer-driven, not part of
+    // renderCanvas(), so rebase their SVG attributes immediately as well.
+    rebaseInteractionOverlays();
+    queueRender(false);
+  }
   function queueRender(includeMatrix=false, includeSidebar=false){
     invalidateStyleCache(); documentDirty = true;
     if(includeMatrix){ clearTimeout(matrixTimer); matrixTimer = setTimeout(renderMatrixAndList, 60); }
@@ -759,7 +771,11 @@
     const projViewport = (viewport.width && viewport.height) ? viewport : { width: REFERENCE_VIEWBOX.w, height: REFERENCE_VIEWBOX.h };
     // Always derived from the fixed reference frame, never composed with the
     // previous frame's matrix, so no drift can accumulate across gestures.
-    const cam = safeCamera(camera);
+    // Rebase onto the floating render origin: both the matrix translation and
+    // every SVG coordinate stay far below Chromium's ~2^25 coordinate limit,
+    // while state.viewBox remains the exact world camera.
+    const cam = renderCamera(camera);
+    syncRenderOriginRepaint();
     setAttr(cameraLayer, 'transform', cameraMatrixText(cameraDeltaMatrix(cam, REFERENCE_VIEWBOX, projViewport)));
     updateGridBackground(cam, projViewport);
     return (viewport.width && viewport.height) ? viewport : null;
@@ -781,45 +797,51 @@
   function setStyleIfChanged(style, property, value){
     if(style[property] !== value) style[property] = value;
   }
-  // === World-space grid ===
-  // A camera/graph coordinate beyond this magnitude cannot be enumerated by
-  // integer world-cell indices (past 2^53 `k++` stops changing) and has no
-  // usable pixel precision anyway. Clamp every camera that reaches the grid
-  // here as well as at ingestion, so a saved document with viewBox.x = 1e20
-  // can never hang the editor in a world-cell loop.
+  // === Render-space grid ===
+  // Paths are written in world units rebased onto the floating render origin,
+  // not absolute world coordinates: Chromium clamps SVG numbers above ~2^25,
+  // so 1e20 in a path would disappear even though the camera matrix is finite.
+  // Grid loops are bounded independently of the coordinate magnitude: a local
+  // index, a 4,000-segment cap and an index-magnitude guard replace the old
+  // absolute `k++` that could stop incrementing past 2^53.
   const GRID_INDEX_LIMIT = 1e12;
   const MAX_GRID_LINES = 4000;
-  function safeCamera(camera){
-    const vb = camera || state.viewBox;
-    return {
-      x: safeWorldCoord(vb.x, 0),
-      y: safeWorldCoord(vb.y, 0),
-      w: clamp(finite(vb.w, REFERENCE_VIEWBOX.w), 1, 20000),
-      h: clamp(finite(vb.h, REFERENCE_VIEWBOX.h), 1, 20000)
-    };
-  }
   function clearGridPaths(){
     setAttr(gridMinorLines, 'd', '');
     setAttr(gridMajorLines, 'd', '');
   }
-  // Last drawn world-space extent. The paths are rebuilt only when the grid's
-  // decimation/colours change or the view leaves their apron: a pan or wheel
-  // preview normally writes NOTHING but the one camera matrix, which keeps the
-  // per-update style+layout cost flat regardless of graph size.
+  // Last drawn render-space extent. The paths are rebuilt only when the grid's
+  // decimation/colours change, the floating origin moves, or the view leaves
+  // their apron: a pan or wheel preview normally writes NOTHING but the one
+  // camera matrix, which keeps the per-update style+layout cost flat regardless
+  // of graph size.
   let gridBounds = null; // {tileSig,x0,x1,y0,y1}
   function invalidateGridCache(){ gridBounds = null; }
   // Default to the ACTIVE camera (a pending zoom/pan preview), not the last
   // committed state.viewBox. Style handlers call this with no argument; using
   // the committed camera there recomputed the grid for the wrong view and
   // contracted it to a small central rectangle until the preview committed.
-  function updateGridBackground(vb=currentCamera(), cachedRect=null){
+  // The floating origin is snapped to 1e6, which is not necessarily a multiple
+  // of a decimated grid step. Keep grid lines locked to WORLD cell boundaries
+  // by subtracting the origin's remainder modulo the major step: local line
+  // k*stepX - remainder corresponds to world G + k*stepX, where G is a multiple
+  // of majorX. BigInt makes the remainder exact even for a 1e20 world camera.
+  function worldGridPhase(origin, majorStep){
+    const m = BigInt(Math.max(1, Math.round(majorStep)));
+    const v = BigInt(Math.trunc(finite(origin, 0)));
+    return Number(((v % m) + m) % m);
+  }
+  function updateGridBackground(vb=renderCamera(), cachedRect=null){
+    // No-argument calls come from style handlers; their default can move the
+    // floating origin, so schedule the geometry repaint as well.
+    syncRenderOriginRepaint();
     const rect = canvasViewportRect(cachedRect);
     if(!rect.width || !rect.height) return;
     setStyleIfChanged(gridLayer.style, 'backgroundColor', state.settings.canvasBgColor || '#020617');
     const settings = state.settings;
     const gx = settings.gridSizeX || settings.gridSize || 40;
     const gy = settings.gridSizeY || settings.gridSize || 40;
-    const cam = safeCamera(vb);
+    const cam = boundedCamera(vb);
     // Match SVG preserveAspectRatio="xMidYMid meet" exactly.
     const pitch = Math.min(rect.width / cam.w, rect.height / cam.h);
     if(!(pitch > 0) || !Number.isFinite(pitch)){ clearGridPaths(); gridBounds = null; return; }
@@ -833,7 +855,9 @@
     const majorY = stepY * Math.max(2, Math.ceil((gy * 5) / stepY));
     const minorColor = hexToRgba(settings.gridMinorColor, settings.gridMinorAlpha ?? 0.105);
     const majorColor = hexToRgba(settings.gridMajorColor, settings.gridMajorAlpha ?? 0.16);
-    const tileSig = [stepX, stepY, majorX, majorY, minorColor, majorColor].join('|');
+    const phaseX = worldGridPhase(renderOriginX, majorX);
+    const phaseY = worldGridPhase(renderOriginY, majorY);
+    const tileSig = [stepX, stepY, majorX, majorY, phaseX, phaseY, minorColor, majorColor].join('|');
     // Report the decimated steps in WORLD units, where the grid is defined.
     for(const el of [gridLayer, gridLines]){
       if(!el) continue;
@@ -857,42 +881,42 @@
     if(gridBounds && gridBounds.tileSig === tileSig &&
        gridBounds.x0 <= visX0 - marginX && gridBounds.x1 >= visX1 + marginX &&
        gridBounds.y0 <= visY0 - marginY && gridBounds.y1 >= visY1 + marginY) return;
-    // Draw the visible world range plus several viewports of apron, quantised
-    // to a coarse cell bucket. Because the lines are in WORLD coordinates and
-    // inside #cameraLayer, they ride the camera matrix with the graph and can
-    // never show a hard edge or a stale frame.
+    // Draw the visible render-space range plus several viewports of apron,
+    // quantised to a coarse cell bucket. Indices are LOCAL to a world-grid
+    // origin G = renderOrigin - phase, so even a 1e20 camera never increments
+    // an absolute index past 2^53. The phase keeps every line at an integer
+    // multiple of the world cell size; bucket quantisation keeps the bounds
+    // stable while a preview stays inside the apron.
     const apronX = spanX * 3, apronY = spanY * 3;
     const bucketX = stepX * 256, bucketY = stepY * 256;
-    const kx0 = Math.floor((visX0 - apronX) / bucketX) - 1;
-    const kx1 = Math.ceil((visX1 + apronX) / bucketX) + 1;
-    const ky0 = Math.floor((visY0 - apronY) / bucketY) - 1;
-    const ky1 = Math.ceil((visY1 + apronY) / bucketY) + 1;
-    let firstX = Math.ceil(kx0 * bucketX / stepX), lastX = Math.floor(kx1 * bucketX / stepX);
-    let firstY = Math.ceil(ky0 * bucketY / stepY), lastY = Math.floor(ky1 * bucketY / stepY);
-    // Hard cap on segments, centred on the visible range. Loops use a local
-    // index with a finite bound, never an absolute k++ whose increment can
-    // vanish at 2^53 (the freeze a 1e20 camera used to cause).
+    const kx0 = Math.floor((visX0 + phaseX - apronX) / bucketX) - 1;
+    const kx1 = Math.ceil((visX1 + phaseX + apronX) / bucketX) + 1;
+    const ky0 = Math.floor((visY0 + phaseY - apronY) / bucketY) - 1;
+    const ky1 = Math.ceil((visY1 + phaseY + apronY) / bucketY) + 1;
+    let firstX = kx0 * 256, lastX = kx1 * 256;
+    let firstY = ky0 * 256, lastY = ky1 * 256;
+    // Hard cap on segments, centred on the visible range.
     const cappedRange = (first, last, visFirst, visLast) => {
       if(last - first + 1 <= MAX_GRID_LINES) return [first, last];
       const center = Math.round((Math.ceil(visFirst) + Math.floor(visLast)) / 2);
       const f = center - Math.floor(MAX_GRID_LINES / 2);
       return [f, f + MAX_GRID_LINES - 1];
     };
-    [firstX, lastX] = cappedRange(firstX, lastX, visX0 / stepX, visX1 / stepX);
-    [firstY, lastY] = cappedRange(firstY, lastY, visY0 / stepY, visY1 / stepY);
-    const drawnX0 = firstX * stepX, drawnX1 = lastX * stepX;
-    const drawnY0 = firstY * stepY, drawnY1 = lastY * stepY;
+    [firstX, lastX] = cappedRange(firstX, lastX, (visX0 + phaseX) / stepX, (visX1 + phaseX) / stepX);
+    [firstY, lastY] = cappedRange(firstY, lastY, (visY0 + phaseY) / stepY, (visY1 + phaseY) / stepY);
+    const drawnX0 = firstX * stepX - phaseX, drawnX1 = lastX * stepX - phaseX;
+    const drawnY0 = firstY * stepY - phaseY, drawnY1 = lastY * stepY - phaseY;
     const majorEveryX = Math.max(1, Math.round(majorX / stepX));
     const majorEveryY = Math.max(1, Math.round(majorY / stepY));
     let minorD = '', majorD = '';
     const nX = Math.max(0, lastX - firstX + 1), nY = Math.max(0, lastY - firstY + 1);
     for(let i = 0; i < nX; i++){
-      const k = firstX + i, x = k * stepX;
+      const k = firstX + i, x = k * stepX - phaseX;
       if(k % majorEveryX === 0) majorD += `M ${x} ${drawnY0} V ${drawnY1} `;
       else minorD += `M ${x} ${drawnY0} V ${drawnY1} `;
     }
     for(let i = 0; i < nY; i++){
-      const k = firstY + i, y = k * stepY;
+      const k = firstY + i, y = k * stepY - phaseY;
       if(k % majorEveryY === 0) majorD += `M ${drawnX0} ${y} H ${drawnX1} `;
       else minorD += `M ${drawnX0} ${y} H ${drawnX1} `;
     }
@@ -911,7 +935,8 @@
   function edgeEl(id){ return edgeEls.get(id) || document.getElementById('edge-' + id); }
   function moveNodeFast(id){
     const n = drag?.node?.id === id ? drag.node : nodeById(id); if(!n) return;
-    const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
+    if(!isRenderablePoint(n.x, n.y)) return;
+    const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
     if(drag && drag.liveEdges === false) return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
     for(const edge of edges) updateEdgeFast(edge);
@@ -921,7 +946,8 @@
     try {
       const nodes = src.nodes || (src.node ? [src.node] : []);
       for(const n of nodes){
-        const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${n.x},${n.y})`);
+        if(!isRenderablePoint(n.x, n.y)) continue;
+        const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
       }
       followGizmoForPlainDrag(src);
       if(src.liveEdges === false) return;
@@ -934,6 +960,7 @@
     // nodeById is an indexed O(1) lookup now; node positions are mutated in
     // place, so the index always returns the live objects during a drag.
     const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) return;
+    if(!isRenderablePoint(a.x, a.y) || !isRenderablePoint(b.x, b.y)) return;
     const el = edgeEl(e.id); if(!el) return;
     const g: any = el;
     const d = edgePath(a,b,e, vc || passVisuals);
@@ -1118,6 +1145,7 @@
     for(const e of state.edges){
       const a = nodeById(e.from), b = nodeById(e.to);
       if(!a || !b) continue; // dangling endpoints are dropped by the sweep
+      if(!isRenderablePoint(a.x, a.y) || !isRenderablePoint(b.x, b.y)) continue; // off-screen / beyond SVG coordinate limit
       // Skip edges touching non-visible nodes entirely — real performance gain, not just dimming
       if(rangeActive && (!visIds.has(e.from) || !visIds.has(e.to))) continue;
       seen.add(e.id);
@@ -1187,7 +1215,10 @@
       // result is reused without recomputation.
       const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
       const lane = edgeSiblingOffset(e);
-      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}`;
+      // Include the floating origin: absolute world endpoints unchanged by a
+      // camera move still produce different SVG numbers after a rebase, so the
+      // geometry cache must not hand back a path from the previous origin.
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}|${renderOriginX},${renderOriginY}`;
       let d = g.__geoSig === geoSig ? g.__geoData : null;
       if(!d){
         d = edgePath(a,b,e, passVisuals);
@@ -1337,6 +1368,9 @@
   const ARROW_HW = 8;   // arrow half-width
   function edgePath(a,b,e,vc=null){
     const ra = nodeRadiusC(a, vc), rb = nodeRadiusC(b, vc);
+    // SVG numbers are rebased onto the floating render origin; all lengths
+    // (radii, offsets, widths) are world units and stay unchanged.
+    const ax = renderX(a.x), ay = renderY(a.y), bx = renderX(b.x), by = renderY(b.y);
     const arrowGap = e.directed ? ARROW_LEN : 2; // space reserved for arrow at target
     if(a.id === b.id){
       const lane = edgeSiblingOffset(e);
@@ -1344,17 +1378,17 @@
       const angle = -Math.PI / 2 + step * 0.62;
       const spread = 0.72;
       const loop = 78 + Math.abs(step) * 10;
-      const sx = a.x + Math.cos(angle - spread) * (ra + 2);
-      const sy = a.y + Math.sin(angle - spread) * (ra + 2);
+      const sx = ax + Math.cos(angle - spread) * (ra + 2);
+      const sy = ay + Math.sin(angle - spread) * (ra + 2);
       // Path ends at arrow base; tip extends to node boundary
-      const tx = a.x + Math.cos(angle + spread) * (ra + arrowGap);
-      const ty = a.y + Math.sin(angle + spread) * (ra + arrowGap);
-      const c1x = a.x + Math.cos(angle - spread * 0.45) * (ra + loop);
-      const c1y = a.y + Math.sin(angle - spread * 0.45) * (ra + loop);
-      const c2x = a.x + Math.cos(angle + spread * 0.45) * (ra + loop);
-      const c2y = a.y + Math.sin(angle + spread * 0.45) * (ra + loop);
-      const labelX = a.x + Math.cos(angle) * (ra + loop * 0.78);
-      const labelY = a.y + Math.sin(angle) * (ra + loop * 0.78);
+      const tx = ax + Math.cos(angle + spread) * (ra + arrowGap);
+      const ty = ay + Math.sin(angle + spread) * (ra + arrowGap);
+      const c1x = ax + Math.cos(angle - spread * 0.45) * (ra + loop);
+      const c1y = ay + Math.sin(angle - spread * 0.45) * (ra + loop);
+      const c2x = ax + Math.cos(angle + spread * 0.45) * (ra + loop);
+      const c2y = ay + Math.sin(angle + spread * 0.45) * (ra + loop);
+      const labelX = ax + Math.cos(angle) * (ra + loop * 0.78);
+      const labelY = ay + Math.sin(angle) * (ra + loop * 0.78);
       // Tangent at endpoint of cubic Bezier: direction = endpoint - last control point
       const arrowAngle = Math.atan2(ty - c2y, tx - c2x);
       // Tip extends from base along tangent by arrowGap to reach node boundary
@@ -1362,13 +1396,13 @@
       const tipX = tx + ac * arrowGap, tipY = ty + as * arrowGap;
       return { path:`M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle };
     }
-    const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy) || 1, ux=dx/len, uy=dy/len;
+    const dx=bx-ax, dy=by-ay, len=Math.hypot(dx,dy) || 1, ux=dx/len, uy=dy/len;
     const offset = edgeSiblingOffset(e);
     // Keep endpoints attached to node boundaries; separate parallel/reverse edges
     // by bending the curve via its control point rather than shifting endpoints.
-    const sx=a.x+ux*(ra+2), sy=a.y+uy*(ra+2);
+    const sx=ax+ux*(ra+2), sy=ay+uy*(ra+2);
     // Path ends at arrow base (rb + arrowGap from center); tip will be at node boundary (rb)
-    const tx=b.x-ux*(rb + arrowGap), ty=b.y-uy*(rb + arrowGap);
+    const tx=bx-ux*(rb + arrowGap), ty=by-uy*(rb + arrowGap);
     if(Math.abs(offset) > 1){
       const mx=(sx+tx)/2 - uy*offset, my=(sy+ty)/2 + ux*offset;
       // Tangent at endpoint of quadratic Bezier: direction = endpoint - control point
@@ -1379,7 +1413,7 @@
     }
     const arrowAngle = Math.atan2(uy, ux);
     // For straight edges, tip = b - ux*rb (exactly on node boundary)
-    const tipX = b.x - ux*rb, tipY = b.y - uy*rb;
+    const tipX = bx - ux*rb, tipY = by - uy*rb;
     return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:(sx+tx)/2, labelY:(sy+ty)/2, tx, ty, tipX, tipY, arrowAngle };
   }
   function renderNodes(){
@@ -1399,6 +1433,9 @@
     const stylePass = paintedNodeStyle !== styleFingerprint('node');
     const gen = renderGen;
     for(const n of state.nodes){
+      // Nodes far outside the floating origin are off-screen AND would exceed
+      // Skia's ~2^25 SVG coordinate limit. Keep them in state, skip their DOM.
+      if(!isRenderablePoint(n.x, n.y)) continue;
       // Skip non-visible nodes entirely — they are removed from DOM, not dimmed.
       // This gives real performance: fewer SVG elements, fewer attribute patches, less paint.
       if(rangeActive && !visIds.has(n.id)) continue;
@@ -1429,7 +1466,7 @@
         existing.set(n.id, fresh);
       }
       // Update transform (always — this is the hot path during drag)
-      setAttr(g, 'transform',`translate(${n.x},${n.y})`);
+      setAttr(g, 'transform',`translate(${renderX(n.x)},${renderY(n.y)})`);
       // Update selection class
       toggleClass(g, 'selected', selected);
       toggleClass(g, 'dragging', draggingId === n.id);

@@ -45,13 +45,60 @@
     return typeof check === 'function' ? Boolean(check.call(el)) : true;
   };
   const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
-  // Beyond this magnitude, integer world-cell indices can no longer be
-  // enumerated with k++ (past 2^53 the increment vanishes) and world points
-  // have no usable pixel precision. Clamp camera and node coordinates at
-  // ingestion so a saved document with viewBox.x = 1e20 cannot hang the editor.
-  const MAX_WORLD_COORD = 1e9;
-  function safeWorldCoord(value: unknown, fallback = 0): number {
-    return clamp(finite(value, fallback), -MAX_WORLD_COORD, MAX_WORLD_COORD);
+  // SVG geometry/transform numbers are clamped by Chromium/Skia at ~2^25
+  // (33,554,432): two nodes at 1,000,000,100 and 1,000,000,200 written as
+  // absolute SVG coordinates both collapse to the same pixel. State keeps the
+  // exact finite WORLD coordinates (never rewrite user data); only the numbers
+  // written into SVG are rebased onto a floating render origin near the camera.
+  const SVG_COORD_LIMIT = 33554432;
+  const SAFE_RENDER_COORD = 1e7; // cull geometry far outside the camera entirely
+  const MAX_CAMERA_SIZE = 1e6; // apron + camera still stay well below SVG_COORD_LIMIT
+  const MIN_CAMERA_W = 100, MIN_CAMERA_H = 90;
+  const RENDER_ORIGIN_SNAP = 1e6;
+  let renderOriginX = 0, renderOriginY = 0;
+  // Set when the origin moves during a preview-only camera update. The next
+  // render must re-rebase node/edge SVG attributes too, not just the matrix.
+  let renderOriginMoved = false;
+  function renderX(x: unknown): number { return finite(x, 0) - renderOriginX; }
+  function renderY(y: unknown): number { return finite(y, 0) - renderOriginY; }
+  // Coordinates farther than this from the floating origin are off-screen and
+  // would exceed Skia's coordinate limit if written into SVG at all. Skip them
+  // in the DOM, but keep them untouched in state/export/autosave.
+  function isRenderablePoint(x: unknown, y: unknown): boolean {
+    return Math.abs(renderX(x)) < SAFE_RENDER_COORD && Math.abs(renderY(y)) < SAFE_RENDER_COORD;
+  }
+  // Keep a camera finite and its viewport size bounded, but PRESERVE its
+  // centre when a size must be clamped (the old 20000 cap truncated fitView
+  // without recentring). Coordinates are intentionally not magnitude-clamped:
+  // the floating origin keeps the SVG numbers small instead.
+  function boundedCamera(camera: any): ViewBox {
+    const x = finite(camera?.x, 0), y = finite(camera?.y, 0);
+    const ow = finite(camera?.w, 1000), oh = finite(camera?.h, 660);
+    const w = clamp(ow, MIN_CAMERA_W, MAX_CAMERA_SIZE);
+    const h = clamp(oh, MIN_CAMERA_H, MAX_CAMERA_SIZE);
+    return { x: x + ow / 2 - w / 2, y: y + oh / 2 - h / 2, w, h };
+  }
+  // One floating origin for every surface inside g#cameraLayer. It changes only
+  // when the camera moves past a 1e6 snap boundary, so ordinary pans/zooms are
+  // still a single matrix write; crossing one forces a geometry repaint.
+  function ensureRenderOrigin(camera: any){
+    const cam = boundedCamera(camera);
+    const ox = Math.round(cam.x / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
+    const oy = Math.round(cam.y / RENDER_ORIGIN_SNAP) * RENDER_ORIGIN_SNAP;
+    if(ox !== renderOriginX || oy !== renderOriginY){
+      renderOriginX = ox; renderOriginY = oy;
+      setAttr(svg, 'data-render-origin', `${ox},${oy}`);
+      renderOriginMoved = true;
+      invalidateGridCache();
+    }
+    return cam;
+  }
+  // The camera as seen by the SVG: world position rebased onto the floating
+  // origin. cameraDeltaMatrix()/updateGridBackground() consume this, while
+  // state.viewBox, exports, hit tests and snapshots stay in world coordinates.
+  function renderCamera(camera: any = currentCamera()): ViewBox {
+    const cam = ensureRenderOrigin(camera);
+    return { x: cam.x - renderOriginX, y: cam.y - renderOriginY, w: cam.w, h: cam.h };
   }
   const esc = (value: unknown): string => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
   // === In-app dialogs ===
@@ -434,7 +481,7 @@
       const node: GraphNode = {
         id,
         label: String(n.label ?? '').slice(0,80),
-        x: safeWorldCoord(n.x, i*35), y: safeWorldCoord(n.y, i*35),
+        x: finite(n.x, i*35), y: finite(n.y, i*35),
         shape: n.shape ? validShape(n.shape) : '',  // empty = unset
         color: validColor(n.color) || '',            // empty = unset
         type: String(n.type || '').slice(0,40),
@@ -688,7 +735,7 @@
       nextNode: maxN + 1,
       nextEdge: maxE + 1,
       nodes, edges, customAttributes, settings,
-      viewBox: { x:safeWorldCoord(vb.x,-500), y:safeWorldCoord(vb.y,-330), w:clamp(finite(vb.w,1000),100,20000), h:clamp(finite(vb.h,660),100,20000) }
+      viewBox: boundedCamera({ x:finite(vb.x,-500), y:finite(vb.y,-330), w:finite(vb.w,1000), h:finite(vb.h,660) })
     };
   }
   function isRecord(value: unknown): value is AnyRecord {
