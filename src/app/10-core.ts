@@ -51,25 +51,34 @@
   // exact finite WORLD coordinates (never rewrite user data); only the numbers
   // written into SVG are rebased onto a floating render origin near the camera.
   const SVG_COORD_LIMIT = 33554432;
-  const SAFE_RENDER_COORD = 1e7; // cull geometry far outside the camera entirely
-  const MAX_CAMERA_SIZE = 1e6; // apron + camera still stay well below SVG_COORD_LIMIT
+  // Keep every number written into SVG comfortably below Skia's ~2^25 clamp.
+  // 3e7 still leaves room for grid aprons, long-edge clipping and gizmo arms.
+  const RENDER_COORD_LIMIT = 3e7;
+  const MAX_CAMERA_SIZE = 2e7; // a 2,000,000-unit Fit no longer truncates
   const MIN_CAMERA_W = 100, MIN_CAMERA_H = 90;
   const RENDER_ORIGIN_SNAP = 1e6;
   let renderOriginX = 0, renderOriginY = 0;
-  // Set when the origin moves during a preview-only camera update. The next
-  // render must re-rebase node/edge SVG attributes too, not just the matrix.
+  // Set when the origin moves during a preview-only camera update. Geometry
+  // must be rebased in the SAME task as the camera matrix write; a queued rAF
+  // lets Chromium paint one frame with the new matrix and old node positions.
   let renderOriginMoved = false;
-  function renderX(x: unknown): number { return finite(x, 0) - renderOriginX; }
-  function renderY(y: unknown): number { return finite(y, 0) - renderOriginY; }
+  function rawRenderX(x: unknown): number { return finite(x, 0) - renderOriginX; }
+  function rawRenderY(y: unknown): number { return finite(y, 0) - renderOriginY; }
+  function renderX(x: unknown): number { return clamp(rawRenderX(x), -RENDER_COORD_LIMIT, RENDER_COORD_LIMIT); }
+  function renderY(y: unknown): number { return clamp(rawRenderY(y), -RENDER_COORD_LIMIT, RENDER_COORD_LIMIT); }
+  function clampRenderCoord(value: unknown): number { return clamp(finite(value, 0), -RENDER_COORD_LIMIT, RENDER_COORD_LIMIT); }
   // Coordinates farther than this from the floating origin are off-screen and
-  // would exceed Skia's coordinate limit if written into SVG at all. Skip them
-  // in the DOM, but keep them untouched in state/export/autosave.
+  // would exceed Skia's coordinate limit if written into SVG at all. Skip the
+  // node in the DOM, but keep it untouched in state/export/autosave; edges are
+  // clipped instead of discarded, since a long edge can cross the viewport.
   function isRenderablePoint(x: unknown, y: unknown): boolean {
-    return Math.abs(renderX(x)) < SAFE_RENDER_COORD && Math.abs(renderY(y)) < SAFE_RENDER_COORD;
+    return Math.abs(rawRenderX(x)) < RENDER_COORD_LIMIT && Math.abs(rawRenderY(y)) < RENDER_COORD_LIMIT;
   }
   // Keep a camera finite and its viewport size bounded, but PRESERVE its
-  // centre when a size must be clamped (the old 20000 cap truncated fitView
-  // without recentring). Coordinates are intentionally not magnitude-clamped:
+  // centre when a size must be clamped (the old 20000/1e6 caps truncated
+  // fitView without recentring). The cap is large enough for a 2,000,000-unit
+  // graph while still keeping render-space grid/geometry coordinates below the
+  // Chromium SVG coordinate limit. Coordinates are not magnitude-clamped:
   // the floating origin keeps the SVG numbers small instead.
   function boundedCamera(camera: any): ViewBox {
     const x = finite(camera?.x, 0), y = finite(camera?.y, 0);

@@ -864,11 +864,17 @@
       if(n.y < minY) minY = n.y;
       if(n.y > maxY) maxY = n.y;
     }
-    minX -= 120; maxX += 120; minY -= 120; maxY += 120;
-    // Fit the WHOLE span. boundedCamera() may cap an extreme width/height at
-    // 1e6, but it keeps the exact centre, so a 100,000-unit graph is never
-    // truncated to the old 20,000-unit camera with one node pushed off-screen.
-    const w = Math.max(260, maxX - minX), h = Math.max(220, maxY - minY);
+    // Fit the WHOLE span with at least ~16 screen pixels of padding, so
+    // minimum-size node dots at extreme zoom-outs are fully inside the canvas.
+    // boundedCamera() only caps an extreme width/height at 2e7 while keeping
+    // the exact centre; a 2,000,000-unit graph is never truncated to 1e6.
+    const rawW = maxX - minX, rawH = maxY - minY;
+    let w = Math.max(260, rawW + 240), h = Math.max(220, rawH + 240);
+    const rect = canvasViewportRect();
+    const pitch = (rect.width && rect.height) ? Math.min(rect.width / w, rect.height / h) : 0;
+    const pad = pitch > 0 ? Math.max(120, 16 / pitch) : 120;
+    w = Math.max(260, rawW + 2 * pad);
+    h = Math.max(220, rawH + 2 * pad);
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     state.viewBox = boundedCamera({ x: cx - w / 2, y: cy - h / 2, w, h });
     applyCamera();

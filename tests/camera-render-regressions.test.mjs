@@ -8,6 +8,7 @@ const REFERENCE_VIEWBOX = { x: -500, y: -330, w: 1000, h: 660 };
 const VIEWPORT = { width: 1000, height: 660 };
 // Chromium/Skia clamps SVG geometry and transform numbers above ~2^25.
 const SVG_COORD_LIMIT = 33554432;
+const RENDER_COORD_LIMIT = 3e7;
 
 function renderOrigin(document) {
   const raw = document.getElementById('graphCanvas').getAttribute('data-render-origin') || '0,0';
@@ -780,6 +781,132 @@ test('grid phase stays world-locked across a floating-origin boundary', async ()
   assertWorldLocked('after origin crossing');
   assertGridCoversViewport(document, document.getElementById('cameraLayer'), 'phase-locked grid');
   assertSvgCoordinatesSafe(document, 'phase-locked grid coordinates');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+
+test('origin crossing rebases geometry in the same task as the camera matrix', async () => {
+  const graph = {
+    title: 'synchronous-origin',
+    nodes: [{ id: 'n', label: 'N', x: 500500, y: 0 }],
+    edges: [],
+    viewBox: { x: 499000, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  assert.equal(renderOrigin(document)[0], 0, 'starts on the zero origin');
+  const input = document.getElementById('cameraX');
+  input.value = '500500';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  // No settle/nextFrame: the camera matrix and node transform must already
+  // agree when the click handler returns. A queued rAF would let Chromium
+  // paint one frame with the new matrix and old node coordinates.
+  document.getElementById('btnCameraSet').click();
+
+  assert.equal(renderOrigin(document)[0], 1e6, 'origin moved immediately');
+  assert.equal(nodeRenderX(document, 'n').x, -499500, 'node transform was rebased immediately');
+  const m = cameraMatrix(camera);
+  assert.ok(Math.abs(m.tx) < RENDER_COORD_LIMIT, `camera translation ${m.tx} is safe`);
+  assert.ok(screenX(document, camera, nodeRenderX(document, 'n').x) > 0 &&
+    screenX(document, camera, nodeRenderX(document, 'n').x) < VIEWPORT.width,
+    'the node projects on screen immediately');
+  assertGridCoversViewport(document, camera, 'synchronous origin grid');
+  assertSvgCoordinatesSafe(document, 'synchronous origin');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a long edge crossing the viewport is clipped, not discarded', async () => {
+  const graph = {
+    title: 'long-edge',
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0 }, { id: 'b', label: 'B', x: 11000000, y: 0 }],
+    edges: [{ id: 'e', from: 'a', to: 'b', directed: true }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  setCanvasRect(svg);
+
+  const line = document.querySelector('#edgesLayer .edge-line');
+  assert.ok(line, 'the long edge is rendered');
+  const d = line.getAttribute('d') || '';
+  assert.match(d, /^M\s+27\s+0\s+L\s+10999957\s+0$/, `visible edge segment is drawn: ${d}`);
+  assert.equal(document.querySelector('#edgesLayer .edge-hit')?.getAttribute('d'), d,
+    'the hit path uses the same clipped geometry');
+  for (const raw of d.match(/-?\d+(?:\.\d+)?/g) || []) {
+    assert.ok(Math.abs(Number(raw)) <= RENDER_COORD_LIMIT, `edge coordinate ${raw} is safe`);
+  }
+  assertSvgCoordinatesSafe(document, '11,000,000-unit edge');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edge whose endpoint is beyond the SVG coordinate limit is clipped safely', async () => {
+  const graph = {
+    title: 'very-long-edge',
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0 }, { id: 'b', label: 'B', x: 50000000, y: 0 }],
+    edges: [{ id: 'e', from: 'a', to: 'b', directed: true }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  setCanvasRect(svg);
+
+  const d = document.querySelector('#edgesLayer .edge-line')?.getAttribute('d') || '';
+  assert.match(d, /^M\s+27\s+0\s+L\s+30000000\s+0$/, `edge is clipped at the safe limit: ${d}`);
+  assert.equal(document.querySelector('#edgesLayer .edge-arrow'), null,
+    'an arrowhead at an off-screen clipped target is not drawn');
+  for (const raw of d.match(/-?\d+(?:\.\d+)?/g) || []) {
+    assert.ok(Math.abs(Number(raw)) <= RENDER_COORD_LIMIT, `edge coordinate ${raw} is safe`);
+  }
+  assertSvgCoordinatesSafe(document, '50,000,000-unit edge');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('fitView fits a 2,000,000-unit graph with visible, hit-testable nodes', async () => {
+  const graph = {
+    title: 'fit-2m',
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0 }, { id: 'b', label: 'B', x: 2000000, y: 0 }],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.getElementById('graphCanvas');
+  const camera = document.getElementById('cameraLayer');
+  setCanvasRect(svg);
+
+  document.getElementById('btnCameraFit').click();
+  await nextFrame(window);
+  const w = Number(document.getElementById('cameraW').value);
+  const cx = Number(document.getElementById('cameraX').value);
+  assert.ok(w > 2000000, `fit width ${w} covers the whole 2,000,000-unit span`);
+  assert.ok(Math.abs(cx - 1000000) < 1, `fit centre ${cx} stays at 1,000,000`);
+  const a = nodeRenderX(document, 'a'), b = nodeRenderX(document, 'b');
+  const ax = screenX(document, camera, a.x), bx = screenX(document, camera, b.x);
+  assert.ok(ax > 0 && ax < VIEWPORT.width, `node a is on screen at ${ax}`);
+  assert.ok(bx > 0 && bx < VIEWPORT.width, `node b is on screen at ${bx}`);
+  for (const id of ['a', 'b']) {
+    const hit = document.querySelector(`#node-${id} .node-hit`);
+    assert.ok(hit, `node ${id} has a minimum-size hit target`);
+    assert.ok(Number(hit.getAttribute('r')) > 0, `node ${id} hit target has a radius`);
+    assert.notEqual(hit.getAttribute('fill'), 'transparent',
+      `node ${id} is painted as a visible minimum-size dot at this zoom`);
+  }
+  assertGridCoversViewport(document, camera, '2,000,000-unit fit grid');
+  assertSvgCoordinatesSafe(document, '2,000,000-unit fit');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

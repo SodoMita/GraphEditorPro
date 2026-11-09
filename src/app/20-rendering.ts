@@ -530,17 +530,33 @@
   // no visual input should not ask for a pass at all (the camera and the grid
   // have their own writers — see `applyCamera`/`updateGridBackground`, which the
   // resize and zoom paths call directly).
-  // A floating-origin change can happen in a preview-only pointermove, when
-  // only the camera matrix and grid paths are written. Schedule one normal
-  // canvas render so nodes/edges/selection/gizmo are rebased onto the new
-  // origin too; ordinary pans that stay within a snap cell schedule nothing.
+  // A floating-origin change can happen in a preview-only pointermove. The
+  // camera matrix is written in the current task, so the geometry MUST be
+  // rebased in that same task: queueRender() would let Chromium paint one frame
+  // with the new matrix and old-origin node/edge coordinates (the exact
+  // one-frame regression this PR removes). When we are already inside
+  // renderCanvas(), its own geometry passes perform the rebase synchronously.
+  // Otherwise run a geometry-only pass right here.
+  let renderCanvasActive = false;
   function syncRenderOriginRepaint(){
     if(!renderOriginMoved) return;
     renderOriginMoved = false;
-    // Selection drafts and the edge-drag line are pointer-driven, not part of
-    // renderCanvas(), so rebase their SVG attributes immediately as well.
     rebaseInteractionOverlays();
-    queueRender(false);
+    invalidateStyleCache();
+    documentDirty = true;
+    if(renderCanvasActive) return;
+    beginRenderPass();
+    renderGen++;
+    renderEdges();
+    renderNodes();
+    renderGizmo();
+    paintedRev = graphRev;
+    paintedStyleRev = styleRev;
+    paintedNodeStyle = styleFingerprint('node');
+    paintedEdgeStyle = styleFingerprint('edge');
+    documentDirty = false;
+    lastPaintedGen = renderGen;
+    endRenderPass();
   }
   function queueRender(includeMatrix=false, includeSidebar=false){
     invalidateStyleCache(); documentDirty = true;
@@ -627,6 +643,8 @@
     return out;
   }
   function renderCanvas(){
+    renderCanvasActive = true;
+    try {
     beginRenderPass();
     // One decision per pass: is this selection too large to decorate item by
     // item? Both layer passes read it, so the look can never be half outline
@@ -654,6 +672,9 @@
     updateUndoRedo();
     resetSelectionMirror();
     endRenderPass();
+    } finally {
+      renderCanvasActive = false;
+    }
   }
   // Internal selection-tool ids are not user copy: the status pill used to show
   // "Режим выбора rect" / "Выделение polygon…" for every non-default tool.
@@ -692,6 +713,7 @@
     // the matrix, so a style handler that fires during a preview cannot see a
     // different (committed) camera here.
     applyCameraTransform(currentCamera());
+    syncNodeHitTargets();
     syncCameraInputs();
     // Gizmo handles are sized in screen pixels, so a committed zoom change
     // re-sizes them in place (signature-guarded: a no-op when nothing changed).
@@ -871,7 +893,9 @@
     const visX0 = cam.x - offX / pitch, visX1 = cam.x + cam.w + offX / pitch;
     const visY0 = cam.y - offY / pitch, visY1 = cam.y + cam.h + offY / pitch;
     const spanX = Math.max(1, visX1 - visX0), spanY = Math.max(1, visY1 - visY0);
+    const L = RENDER_COORD_LIMIT;
     if(![visX0, visX1, visY0, visY1].every(Number.isFinite) ||
+       visX0 < -L || visX1 > L || visY0 < -L || visY1 > L ||
        Math.max(Math.abs(visX0), Math.abs(visX1)) / stepX > GRID_INDEX_LIMIT ||
        Math.max(Math.abs(visY0), Math.abs(visY1)) / stepY > GRID_INDEX_LIMIT){
       clearGridPaths(); gridBounds = null; return;
@@ -887,14 +911,26 @@
     // an absolute index past 2^53. The phase keeps every line at an integer
     // multiple of the world cell size; bucket quantisation keeps the bounds
     // stable while a preview stays inside the apron.
-    const apronX = spanX * 3, apronY = spanY * 3;
-    const bucketX = stepX * 256, bucketY = stepY * 256;
-    const kx0 = Math.floor((visX0 + phaseX - apronX) / bucketX) - 1;
-    const kx1 = Math.ceil((visX1 + phaseX + apronX) / bucketX) + 1;
-    const ky0 = Math.floor((visY0 + phaseY - apronY) / bucketY) - 1;
-    const ky1 = Math.ceil((visY1 + phaseY + apronY) / bucketY) + 1;
-    let firstX = kx0 * 256, lastX = kx1 * 256;
-    let firstY = ky0 * 256, lastY = ky1 * 256;
+    // Cap the apron so a 20,000,000-unit Fit cannot push path coordinates past
+    // Skia's ~2^25 SVG limit. Bucket quantisation still keeps grid bounds stable
+    // while a preview stays inside the apron.
+    const apronX = Math.min(spanX * 3, L / 4), apronY = Math.min(spanY * 3, L / 4);
+    const drawX0 = Math.max(-L, visX0 - apronX), drawX1 = Math.min(L, visX1 + apronX);
+    const drawY0 = Math.max(-L, visY0 - apronY), drawY1 = Math.min(L, visY1 + apronY);
+    const bucket = 256;
+    let firstX = Math.floor((drawX0 + phaseX) / stepX) - 1;
+    let lastX = Math.ceil((drawX1 + phaseX) / stepX) + 1;
+    let firstY = Math.floor((drawY0 + phaseY) / stepY) - 1;
+    let lastY = Math.ceil((drawY1 + phaseY) / stepY) + 1;
+    firstX = Math.floor(firstX / bucket) * bucket;
+    lastX = Math.ceil(lastX / bucket) * bucket;
+    firstY = Math.floor(firstY / bucket) * bucket;
+    lastY = Math.ceil(lastY / bucket) * bucket;
+    // Never write a line coordinate outside the safe render-space square.
+    const minFirstX = Math.floor((-L + phaseX) / stepX), maxLastX = Math.ceil((L + phaseX) / stepX);
+    const minFirstY = Math.floor((-L + phaseY) / stepY), maxLastY = Math.ceil((L + phaseY) / stepY);
+    firstX = Math.max(firstX, minFirstX); lastX = Math.min(lastX, maxLastX);
+    firstY = Math.max(firstY, minFirstY); lastY = Math.min(lastY, maxLastY);
     // Hard cap on segments, centred on the visible range.
     const cappedRange = (first, last, visFirst, visLast) => {
       if(last - first + 1 <= MAX_GRID_LINES) return [first, last];
@@ -904,19 +940,23 @@
     };
     [firstX, lastX] = cappedRange(firstX, lastX, (visX0 + phaseX) / stepX, (visX1 + phaseX) / stepX);
     [firstY, lastY] = cappedRange(firstY, lastY, (visY0 + phaseY) / stepY, (visY1 + phaseY) / stepY);
-    const drawnX0 = firstX * stepX - phaseX, drawnX1 = lastX * stepX - phaseX;
-    const drawnY0 = firstY * stepY - phaseY, drawnY1 = lastY * stepY - phaseY;
+    firstX = Math.max(firstX, minFirstX); lastX = Math.min(lastX, maxLastX);
+    firstY = Math.max(firstY, minFirstY); lastY = Math.min(lastY, maxLastY);
+    const drawnX0 = clampRenderCoord(firstX * stepX - phaseX);
+    const drawnX1 = clampRenderCoord(lastX * stepX - phaseX);
+    const drawnY0 = clampRenderCoord(firstY * stepY - phaseY);
+    const drawnY1 = clampRenderCoord(lastY * stepY - phaseY);
     const majorEveryX = Math.max(1, Math.round(majorX / stepX));
     const majorEveryY = Math.max(1, Math.round(majorY / stepY));
     let minorD = '', majorD = '';
     const nX = Math.max(0, lastX - firstX + 1), nY = Math.max(0, lastY - firstY + 1);
     for(let i = 0; i < nX; i++){
-      const k = firstX + i, x = k * stepX - phaseX;
+      const k = firstX + i, x = clampRenderCoord(k * stepX - phaseX);
       if(k % majorEveryX === 0) majorD += `M ${x} ${drawnY0} V ${drawnY1} `;
       else minorD += `M ${x} ${drawnY0} V ${drawnY1} `;
     }
     for(let i = 0; i < nY; i++){
-      const k = firstY + i, y = k * stepY - phaseY;
+      const k = firstY + i, y = clampRenderCoord(k * stepY - phaseY);
       if(k % majorEveryY === 0) majorD += `M ${drawnX0} ${y} H ${drawnX1} `;
       else minorD += `M ${drawnX0} ${y} H ${drawnX1} `;
     }
@@ -935,8 +975,11 @@
   function edgeEl(id){ return edgeEls.get(id) || document.getElementById('edge-' + id); }
   function moveNodeFast(id){
     const n = drag?.node?.id === id ? drag.node : nodeById(id); if(!n) return;
-    if(!isRenderablePoint(n.x, n.y)) return;
-    const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+    // A node outside the safe window has no DOM, but its edges may still cross
+    // the viewport and must be clipped/updated.
+    if(isRenderablePoint(n.x, n.y)){
+      const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+    }
     if(drag && drag.liveEdges === false) return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
     for(const edge of edges) updateEdgeFast(edge);
@@ -960,7 +1003,6 @@
     // nodeById is an indexed O(1) lookup now; node positions are mutated in
     // place, so the index always returns the live objects during a drag.
     const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) return;
-    if(!isRenderablePoint(a.x, a.y) || !isRenderablePoint(b.x, b.y)) return;
     const el = edgeEl(e.id); if(!el) return;
     const g: any = el;
     const d = edgePath(a,b,e, vc || passVisuals);
@@ -992,6 +1034,7 @@
     // Update arrow tip position/angle during drag
     const arrow = g.__arrow || null;
     if(arrow && hasEdgeTip(e, d)) setAttr(arrow, 'points', edgeArrowPoints(d));
+    else if(arrow){ arrow.remove(); g.__arrow = null; }
     // ...and the selection accent with it, or the highlight would be left
     // behind at the edge's old position for the rest of the gesture.
     moveEdgeSelRing(g, d);
@@ -1145,7 +1188,6 @@
     for(const e of state.edges){
       const a = nodeById(e.from), b = nodeById(e.to);
       if(!a || !b) continue; // dangling endpoints are dropped by the sweep
-      if(!isRenderablePoint(a.x, a.y) || !isRenderablePoint(b.x, b.y)) continue; // off-screen / beyond SVG coordinate limit
       // Skip edges touching non-visible nodes entirely — real performance gain, not just dimming
       if(rangeActive && (!visIds.has(e.from) || !visIds.has(e.to))) continue;
       seen.add(e.id);
@@ -1366,55 +1408,138 @@
   }
   const ARROW_LEN = 18; // arrow length from base to tip
   const ARROW_HW = 8;   // arrow half-width
+  // Liang–Barsky clip of the straight centre line to the safe render-space
+  // square. A long edge may have both endpoints off-screen yet cross the
+  // viewport; clipping its geometry keeps that visible segment instead of
+  // discarding the edge. All returned coordinates are below RENDER_COORD_LIMIT.
+  function clipEdgeSegment(x0, y0, x1, y1){
+    const L = RENDER_COORD_LIMIT;
+    const dx = x1 - x0, dy = y1 - y0;
+    let t0 = 0, t1 = 1;
+    const slab = (p, q) => {
+      if(p === 0) return q >= 0;
+      const r = q / p;
+      if(p < 0){
+        if(r > t1) return false;
+        if(r > t0) t0 = r;
+      } else {
+        if(r < t0) return false;
+        if(r < t1) t1 = r;
+      }
+      return true;
+    };
+    if(!slab(-dx, x0 + L) || !slab(dx, L - x0) ||
+       !slab(-dy, y0 + L) || !slab(dy, L - y0) || t0 > t1) return null;
+    return {
+      x0: x0 + t0 * dx, y0: y0 + t0 * dy,
+      x1: x0 + t1 * dx, y1: y0 + t1 * dy,
+      startClipped: t0 > 0, endClipped: t1 < 1
+    };
+  }
   function edgePath(a,b,e,vc=null){
     const ra = nodeRadiusC(a, vc), rb = nodeRadiusC(b, vc);
-    // SVG numbers are rebased onto the floating render origin; all lengths
-    // (radii, offsets, widths) are world units and stay unchanged.
-    const ax = renderX(a.x), ay = renderY(a.y), bx = renderX(b.x), by = renderY(b.y);
-    const arrowGap = e.directed ? ARROW_LEN : 2; // space reserved for arrow at target
+    const rc = clampRenderCoord;
+    const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
+    const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
+    const arrowGap = e.directed ? ARROW_LEN : 2;
+    const empty = () => ({ path:'', labelX:0, labelY:0, tx:0, ty:0, tipX:null, tipY:null, arrowAngle:null });
+    // A self-loop lives entirely around one node: if that node is outside the
+    // safe render window the loop cannot have a visible segment.
     if(a.id === b.id){
+      if(!isRenderablePoint(a.x, a.y)) return empty();
+      const ax = rc(rawAx), ay = rc(rawAy);
       const lane = edgeSiblingOffset(e);
       const step = lane / 30;
       const angle = -Math.PI / 2 + step * 0.62;
       const spread = 0.72;
       const loop = 78 + Math.abs(step) * 10;
-      const sx = ax + Math.cos(angle - spread) * (ra + 2);
-      const sy = ay + Math.sin(angle - spread) * (ra + 2);
-      // Path ends at arrow base; tip extends to node boundary
-      const tx = ax + Math.cos(angle + spread) * (ra + arrowGap);
-      const ty = ay + Math.sin(angle + spread) * (ra + arrowGap);
-      const c1x = ax + Math.cos(angle - spread * 0.45) * (ra + loop);
-      const c1y = ay + Math.sin(angle - spread * 0.45) * (ra + loop);
-      const c2x = ax + Math.cos(angle + spread * 0.45) * (ra + loop);
-      const c2y = ay + Math.sin(angle + spread * 0.45) * (ra + loop);
-      const labelX = ax + Math.cos(angle) * (ra + loop * 0.78);
-      const labelY = ay + Math.sin(angle) * (ra + loop * 0.78);
-      // Tangent at endpoint of cubic Bezier: direction = endpoint - last control point
+      const sx = rc(ax + Math.cos(angle - spread) * (ra + 2));
+      const sy = rc(ay + Math.sin(angle - spread) * (ra + 2));
+      const tx = rc(ax + Math.cos(angle + spread) * (ra + arrowGap));
+      const ty = rc(ay + Math.sin(angle + spread) * (ra + arrowGap));
+      const c1x = rc(ax + Math.cos(angle - spread * 0.45) * (ra + loop));
+      const c1y = rc(ay + Math.sin(angle - spread * 0.45) * (ra + loop));
+      const c2x = rc(ax + Math.cos(angle + spread * 0.45) * (ra + loop));
+      const c2y = rc(ay + Math.sin(angle + spread * 0.45) * (ra + loop));
+      const labelX = rc(ax + Math.cos(angle) * (ra + loop * 0.78));
+      const labelY = rc(ay + Math.sin(angle) * (ra + loop * 0.78));
       const arrowAngle = Math.atan2(ty - c2y, tx - c2x);
-      // Tip extends from base along tangent by arrowGap to reach node boundary
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = tx + ac * arrowGap, tipY = ty + as * arrowGap;
+      const tipX = rc(tx + ac * arrowGap), tipY = rc(ty + as * arrowGap);
       return { path:`M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle };
     }
-    const dx=bx-ax, dy=by-ay, len=Math.hypot(dx,dy) || 1, ux=dx/len, uy=dy/len;
+    const clip = clipEdgeSegment(rawAx, rawAy, rawBx, rawBy);
+    if(!clip) return empty();
+    const ax = rc(clip.x0), ay = rc(clip.y0), bx = rc(clip.x1), by = rc(clip.y1);
+    const dx = rawBx - rawAx, dy = rawBy - rawAy;
+    const len = Math.hypot(dx,dy) || 1, ux = dx/len, uy = dy/len;
     const offset = edgeSiblingOffset(e);
-    // Keep endpoints attached to node boundaries; separate parallel/reverse edges
-    // by bending the curve via its control point rather than shifting endpoints.
-    const sx=ax+ux*(ra+2), sy=ay+uy*(ra+2);
-    // Path ends at arrow base (rb + arrowGap from center); tip will be at node boundary (rb)
-    const tx=bx-ux*(rb + arrowGap), ty=by-uy*(rb + arrowGap);
+    // A clipped endpoint is an intersection with the safe window, not a node
+    // boundary: do not reserve a radius or arrow gap there.
+    const sx = rc(clip.startClipped ? ax : ax + ux*(ra+2));
+    const sy = rc(clip.startClipped ? ay : ay + uy*(ra+2));
+    const tx = rc(clip.endClipped ? bx : bx - ux*(rb+arrowGap));
+    const ty = rc(clip.endClipped ? by : by - uy*(rb+arrowGap));
     if(Math.abs(offset) > 1){
-      const mx=(sx+tx)/2 - uy*offset, my=(sy+ty)/2 + ux*offset;
-      // Tangent at endpoint of quadratic Bezier: direction = endpoint - control point
+      const mx = rc((sx+tx)/2 - uy*offset), my = rc((sy+ty)/2 + ux*offset);
       const arrowAngle = Math.atan2(ty - my, tx - mx);
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = tx + ac * arrowGap, tipY = ty + as * arrowGap;
+      const tipX = clip.endClipped ? null : rc(tx + ac * arrowGap);
+      const tipY = clip.endClipped ? null : rc(ty + as * arrowGap);
       return { path:`M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX:mx, labelY:my, tx, ty, tipX, tipY, arrowAngle };
     }
     const arrowAngle = Math.atan2(uy, ux);
-    // For straight edges, tip = b - ux*rb (exactly on node boundary)
-    const tipX = bx - ux*rb, tipY = by - uy*rb;
-    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:(sx+tx)/2, labelY:(sy+ty)/2, tx, ty, tipX, tipY, arrowAngle };
+    const tipX = clip.endClipped ? null : rc(bx - ux*rb);
+    const tipY = clip.endClipped ? null : rc(by - uy*rb);
+    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:rc((sx+tx)/2), labelY:rc((sy+ty)/2), tx, ty, tipX, tipY, arrowAngle };
+  }
+  // A 50-unit node becomes sub-pixel when Fit spans millions of units, so
+  // Chromium cannot hit-test the visible shape. Keep a transparent circular
+  // target at least ~7 screen pixels across, expressed in world units and
+  // refreshed whenever the camera scale changes.
+  let lastNodeHitPixelsPerWorld = 0;
+  function nodeHitPixelsPerWorld(){
+    const rect = canvasViewportRect();
+    const cam = boundedCamera(currentCamera());
+    const p = (rect.width && rect.height) ? Math.min(rect.width / cam.w, rect.height / cam.h) : 0;
+    return p > 0 ? p : 0.001;
+  }
+  function nodeHitRadius(v){
+    const minWorld = 7 / nodeHitPixelsPerWorld();
+    return Math.min(RENDER_COORD_LIMIT / 2,
+      Math.max(25, v.width / 2, v.height / 2, minWorld));
+  }
+  function syncNodeHitTarget(g, v){
+    let hit = g.__hit;
+    if(!hit){
+      hit = document.createElementNS(NS,'circle');
+      hit.setAttribute('class','node-hit');
+      hit.setAttribute('cx','0'); hit.setAttribute('cy','0');
+      hit.setAttribute('stroke','none');
+      g.__hit = hit;
+    }
+    const p = nodeHitPixelsPerWorld();
+    const shapeRadiusPx = Math.max(v.width, v.height) / 2 * p;
+    // At extreme zoom-outs the actual shape is sub-pixel: paint a minimum-size
+    // dot with the node colour so Fit really displays the graph, not just a
+    // transparent hit target.
+    const visible = shapeRadiusPx < 3;
+    setAttr(hit, 'fill', visible ? v.color : 'transparent');
+    setAttr(hit, 'fill-opacity', visible ? '0.9' : '0');
+    setAttr(hit, 'r', nodeHitRadius(v));
+    // Appending an already-last child is a remove+add mutation: during a zoom
+    // burst that would reconstruct node DOM for no reason. Only move it when
+    // a newly added label/plate has been inserted above it.
+    if(hit !== g.lastChild) g.appendChild(hit);
+  }
+  function syncNodeHitTargets(){
+    const p = nodeHitPixelsPerWorld();
+    if(p === lastNodeHitPixelsPerWorld) return;
+    lastNodeHitPixelsPerWorld = p;
+    for(const [id, g] of nodeEls){
+      const n = nodeById(id);
+      if(n) syncNodeHitTarget(g, nodeVisual(n));
+    }
   }
   function renderNodes(){
     const showLabels = shouldShowLabels();
@@ -1536,6 +1661,7 @@
         label.remove(); g.__text = null; label = null;
         removeLabelPlate(g, '__label');
       }
+      syncNodeHitTarget(g, v);
       const painted = existing.get(n.id);
       if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
       live.add(n.id);
