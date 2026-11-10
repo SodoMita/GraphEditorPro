@@ -611,7 +611,8 @@
       // Add new edges for remaining values, inheriting properties from the first existing edge
       const tpl = existing[0];
       for(let i = 1; i < values.length; i++){
-        state.edges.push({
+        const inherited = cloneCustomMap(tpl.custom);
+        const fresh: GraphEdge = {
           id:'e' + state.nextEdge++, from, to,
           weight: values[i].slice(0, 50),
           label: tpl.label || '',
@@ -619,12 +620,17 @@
           type: tpl.type || '',
           color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle,
           labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize
-        });
+        };
+        if(inherited) fresh.custom = inherited;
+        state.edges.push(fresh);
       }
     } else {
       // No existing edges — create new ones with default settings
       for(const weight of values){
         const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, weight:weight.slice(0,50), label:'', directed:Boolean(s.directed), type:'' };
+        // Pending custom property values from "New edge defaults", as on the canvas path.
+        const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
+        if(pendingCustom) e.custom = pendingCustom;
         if(s.edgeType) e.type = s.edgeType;
         const ts = e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
         if(ts){
@@ -772,6 +778,16 @@
     }
     return Object.keys(out).length ? out : undefined;
   }
+  // The definitions of every custom attribute referenced by the given
+  // entities, so a clipboard payload can be re-instantiated in a document
+  // that lacks them. Same-document pastes re-add nothing (ids already exist).
+  function referencedCustomAttributes(entities){
+    const used = new Set<string>();
+    for(const entity of entities){
+      if(isRecord(entity?.custom)) for(const key of Object.keys(entity.custom)) used.add(key);
+    }
+    return state.customAttributes.filter(attribute => used.has(attribute.id));
+  }
   function cloneNode(n){ const c = {...n}; const custom = cloneCustomMap(n?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
   function cloneEdge(e){ const c = {...e}; const custom = cloneCustomMap(e?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
   // clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
@@ -823,11 +839,14 @@
         if(edgeIds.has(e.id)) edges.push(cloneEdge(e));
       }
     }
-    clipboardData = { nodes, edges, externalEdges };
+    // Carry the definitions of the custom attributes this payload references,
+    // so pasting into a document without them can re-create them.
+    const customAttributes = referencedCustomAttributes([...nodes, ...edges, ...externalEdges]);
+    clipboardData = { nodes, edges, externalEdges, customAttributes };
     // Deduplicate externalEdges that are duplicates of internal? Already separated
     // Write to system clipboard as JSON for cross-tab paste
     try {
-      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges });
+      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes });
       if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(payload).catch(()=>{});
     } catch {}
     // Try to use copyText helper if available
@@ -856,12 +875,44 @@
       data = {
         nodes: (fromSystemClipboard.nodes || []).map((n: AnyRecord) => cloneNode(n)),
         edges: (fromSystemClipboard.edges || []).map((e: AnyRecord) => cloneEdge(e)),
-        externalEdges: (fromSystemClipboard.externalEdges || []).map((e: AnyRecord) => cloneEdge(e))
+        externalEdges: (fromSystemClipboard.externalEdges || []).map((e: AnyRecord) => cloneEdge(e)),
+        customAttributes: Array.isArray(fromSystemClipboard.customAttributes) ? fromSystemClipboard.customAttributes : []
       };
     }
     if(!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)){
       toast(I18N.t('clipboard_empty'));
       return false;
+    }
+    // Re-create carried custom-attribute definitions this document lacks
+    // (existing definitions win id conflicts; definitions beyond the 500 cap
+    // are skipped with a toast), then coerce the carried values to the
+    // resolved definitions — so pasted values are visible, exportable and
+    // survive reload instead of being silently pruned.
+    if(Array.isArray(data.customAttributes) && data.customAttributes.length){
+      const existing = new Set(state.customAttributes.map(attribute => attribute.id));
+      let remaining = Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length);
+      let skipped = 0, added = 0;
+      for(const def of data.customAttributes){
+        if(!isRecord(def)) continue;
+        const id = String(def.id ?? '').trim().slice(0, 128);
+        if(!id || existing.has(id)) continue;
+        if(remaining <= 0){ skipped++; continue; }
+        const scope = ['graph','node','edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
+        const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
+        remaining--; added++;
+        existing.add(id);
+        state.customAttributes.push({id, scope: scope as 'graph' | 'node' | 'edge', type});
+      }
+      if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
+      if(added){ renderCustomAttributes(); renderCustomPropHosts(); }
+    }
+    // Coerce carried values against the resolved definitions. Values whose
+    // definition does not exist (or was skipped over the cap) are dropped, as
+    // on any other load path — never silently kept out of reach.
+    const pasteTypeById = customAttributeTypeMap(state.customAttributes);
+    for(const entity of [...data.nodes, ...data.edges, ...(data.externalEdges || [])]){
+      const resolved = sanitizeCustomValues(entity?.custom, pasteTypeById);
+      if(resolved) entity.custom = resolved; else delete entity?.custom;
     }
     const preserveExternal = state.settings.copyPreserveExternal !== false;
     const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));

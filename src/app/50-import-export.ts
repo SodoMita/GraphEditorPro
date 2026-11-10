@@ -983,6 +983,12 @@
     const customAttributes: GraphState['customAttributes'] = [];
     const customKeyIds = new Set<string>();
     const customKeyDataName: { id: string; scope: string; type: string; dataKey: string; defaultValue?: CustomAttributeValue }[] = [];
+    // Ids reserved for built-ins are migrated to a safe unique name AT THE KEY
+    // LEVEL, deterministically. Appending the same external GraphML file twice
+    // re-resolves to the same migrated id instead of minting x_1, x_2, ... —
+    // the migration consumes no extra capacity on repeated imports.
+    const fileKeyIds = new Set<string>();
+    doc.querySelectorAll('key').forEach(k => { const kid = k.getAttribute('id'); if(kid) fileKeyIds.add(kid); });
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
       if(!id) return;
@@ -995,9 +1001,10 @@
       const isCustom = !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom);
       if(isCustom){
         const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
-        customAttributes.push({id, scope: forWhom as 'graph' | 'node' | 'edge', type: normalizedType});
-        customKeyIds.add(id);
-        customKeyDataName.push({id, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType)});
+        const defId = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()) ? uniqueCustomAttributeId(id, fileKeyIds) : id;
+        customAttributes.push({id: defId, scope: forWhom as 'graph' | 'node' | 'edge', type: normalizedType});
+        customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
+        customKeyDataName.push({id: defId, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType)});
       }
       if(defEl){
         keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
@@ -1013,7 +1020,7 @@
     const graphCustom: AnyRecord = Object.create(null);
     for(const def of customKeyDataName){
       if(def.scope !== 'graph') continue;
-      const raw = graphDataById[def.id];
+      const raw = graphDataById[def.dataKey];
       if(raw != null && String(raw).trim() !== ''){ graphCustom[def.id] = coerceCustomValue(raw, def.type); }
       else if(def.defaultValue !== undefined){ graphCustom[def.id] = def.defaultValue; }
     }
@@ -1117,7 +1124,7 @@
       const nodeCustom: AnyRecord = Object.create(null);
       for(const def of customKeyDataName){
         if(def.scope !== 'node') continue;
-        const raw = dById[def.id];
+        const raw = dById[def.dataKey];
         if(raw != null && String(raw).trim() !== ''){ nodeCustom[def.id] = coerceCustomValue(raw, def.type); }
         else if(def.defaultValue !== undefined){ nodeCustom[def.id] = def.defaultValue; }
       }
@@ -1150,7 +1157,7 @@
       const edgeCustom: AnyRecord = Object.create(null);
       for(const def of customKeyDataName){
         if(def.scope !== 'edge') continue;
-        const raw = dById[def.id];
+        const raw = dById[def.dataKey];
         if(raw != null && String(raw).trim() !== ''){ edgeCustom[def.id] = coerceCustomValue(raw, def.type); }
         else if(def.defaultValue !== undefined){ edgeCustom[def.id] = def.defaultValue; }
       }

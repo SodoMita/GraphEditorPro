@@ -1157,3 +1157,253 @@ test('an external GraphML key whose id is a built-in name is migrated, not disca
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('pasting into a document without the definitions re-creates them', async () => {
+  // Source document: a property and a valued node.
+  const source = { ...customPropertiesGraph(),
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { capacity: 7 } }],
+    edges: [], graphCustom: {},
+    customAttributes: [{ id: 'capacity', scope: 'node', type: 'int' }],
+  };
+  const { dom, errors } = createEditorDom(source);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  let clip = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async t => { clip = t; }, readText: async () => clip },
+  });
+  await selectNode(window, document, 'a', 300, 330);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window);
+  assert.match(clip, /capacity/, 'the clipboard payload carries the definitions');
+  dom.window.close();
+
+  // Target document WITHOUT the capacity definition.
+  const target = { title: 'target', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [], edges: [], customAttributes: [], graphCustom: {}, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const t2 = createEditorDom(target);
+  const t2Window = t2.dom.window; const t2Document = t2Window.document;
+  Object.defineProperty(t2Window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => clip },
+  });
+  await nextFrame(t2Window);
+  t2Document.dispatchEvent(new t2Window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(t2Window); await settle(t2Window, 60);
+
+  const exported = exportGraph(t2Document);
+  assert.equal(exported.customAttributes.some(a => a.id === 'capacity'), true,
+    'the definition is re-created on paste');
+  assert.equal(exported.nodes.length, 1);
+  assert.equal(exported.nodes[0].custom.capacity, 7, 'the value is visible and saved, not stranded');
+  const graphml = exportGraphml(t2Document);
+  assert.match(graphml, /<key id="capacity"/);
+  assert.match(graphml, /<data key="capacity">7<\/data>/);
+  t2.dom.window.close();
+});
+
+test('pasting keeps an existing same-id definition instead of duplicating it', async () => {
+  const source = { ...customPropertiesGraph(),
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { capacity: 9 } }],
+    edges: [], graphCustom: {},
+    customAttributes: [{ id: 'capacity', scope: 'node', type: 'int' }],
+  };
+  const { dom } = createEditorDom(source);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  let clip = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async t => { clip = t; }, readText: async () => clip },
+  });
+  await selectNode(window, document, 'a', 300, 330);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window);
+  dom.window.close();
+
+  // Target HAS capacity already but as a string-typed definition — the carried
+  // value must be coerced to the target definition's type, not create a second def.
+  const target = { title: 'target', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [], edges: [], graphCustom: {}, settings: {},
+    customAttributes: [{ id: 'capacity', scope: 'node', type: 'string' }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const t2 = createEditorDom(target);
+  const t2Window = t2.dom.window; const t2Document = t2Window.document;
+  Object.defineProperty(t2Window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => clip },
+  });
+  await nextFrame(t2Window);
+  t2Document.dispatchEvent(new t2Window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(t2Window); await settle(t2Window, 60);
+  const exported = exportGraph(t2Document);
+  assert.equal(exported.customAttributes.filter(a => a.id === 'capacity').length, 1, 'no duplicate definition');
+  assert.equal(exported.customAttributes.find(a => a.id === 'capacity').type, 'string', 'the existing definition wins');
+  assert.equal(exported.nodes[0].custom.capacity, '9', 'the carried value is coerced to the existing type');
+  t2.dom.window.close();
+});
+
+test('matrix-created edges clone custom values (parallel edge and pending defaults)', async () => {
+  const graph = { ...customPropertiesGraph(),
+    nodes: [
+      { id: 'a', label: 'A', x: -200, y: 0, order: 0 },
+      { id: 'b', label: 'B', x: 200, y: 0, order: 1 },
+    ],
+    edges: [{ id: 'e1', from: 'a', to: 'b', directed: true, weight: '1', label: '', type: '', custom: { enabled: true } }],
+    customAttributes: [
+      { id: 'enabled', scope: 'edge', type: 'boolean' },
+      { id: 'voltage', scope: 'edge', type: 'int' },
+    ],
+    settings: { edgeCustom: { voltage: 7 } },
+    graphCustom: {},
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  // Cell (a→b) holds the existing edge; typing "1;2" adds a parallel edge.
+  const cell = document.querySelector('[data-cell-from="a"][data-cell-to="b"]');
+  assert.ok(cell);
+  dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
+  dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
+  changeValue(window, cell, '1;2');
+  await nextFrame(window); await settle(window, 40);
+
+  let exported = exportGraph(document);
+  const e1 = exported.edges.find(e => e.weight === '1');
+  const parallel = exported.edges.find(e => e.weight === '2');
+  assert.ok(parallel, 'the parallel edge was created');
+  assert.equal(e1.custom.enabled, true);
+  assert.equal(parallel.custom?.enabled, true,
+    'the parallel edge clones the template edge\'s custom values');
+
+  // Cell (b→a) is empty; typing a weight creates a brand-new edge with the
+  // pending edge defaults applied (as the canvas path does).
+  const cellBA = document.querySelector('[data-cell-from="b"][data-cell-to="a"]');
+  assert.ok(cellBA);
+  dispatchPointer(window, cellBA, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
+  dispatchPointer(window, cellBA, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
+  changeValue(window, cellBA, '5');
+  await nextFrame(window); await settle(window, 40);
+
+  exported = exportGraph(document);
+  const created = exported.edges.find(e => e.weight === '5');
+  assert.ok(created, 'the edge was created from the empty cell');
+  assert.equal(created.custom?.voltage, 7,
+    'a matrix-created edge receives the pending edge custom defaults');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('changing a definition scope warns about and handles stored values', async () => {
+  const graph = { ...customPropertiesGraph(),
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { cap: 'red' } }],
+    edges: [],
+    customAttributes: [{ id: 'cap', scope: 'node', type: 'string' }],
+    settings: { nodeCustom: { cap: 'pending' } },
+    graphCustom: {},
+  };
+  const rowFor = document => [...document.querySelectorAll('.custom-attribute-row')]
+    .find(row => row.querySelector('[data-attribute-field="id"]').value === 'cap');
+
+  // Cancel leg: nothing is discarded, the scope stays.
+  const cancel = createEditorDom(graph);
+  await nextFrame(cancel.dom.window);
+  let document = cancel.dom.window.document;
+  rowFor(document).querySelector('[data-attribute-field="scope"]').value = 'graph';
+  rowFor(document).querySelector('[data-attribute-action="save"]').click();
+  await nextFrame(cancel.dom.window); await settle(cancel.dom.window, 30);
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'a confirmation dialog is shown for a scope change with values');
+  dialog.querySelector('[data-dialog-cancel]').click();
+  await nextFrame(cancel.dom.window);
+  let exported = exportGraph(document);
+  assert.equal(exported.customAttributes.find(a => a.id === 'cap').scope, 'node', 'cancel keeps the scope');
+  assert.equal(exported.nodes[0].custom.cap, 'red', 'cancel keeps the values');
+  assert.equal(exported.settings.nodeCustom.cap, 'pending', 'cancel keeps the pending default');
+  cancel.dom.window.close();
+
+  // Confirm leg: values are discarded explicitly, in one undo step.
+  const yes = createEditorDom(graph);
+  await nextFrame(yes.dom.window);
+  document = yes.dom.window.document;
+  rowFor(document).querySelector('[data-attribute-field="scope"]').value = 'graph';
+  rowFor(document).querySelector('[data-attribute-action="save"]').click();
+  await nextFrame(yes.dom.window); await settle(yes.dom.window, 30);
+  document.querySelector('.app-dialog [data-dialog-ok]').click();
+  await nextFrame(yes.dom.window);
+  exported = exportGraph(document);
+  assert.equal(exported.customAttributes.find(a => a.id === 'cap').scope, 'graph');
+  assert.equal(exported.nodes[0].custom, undefined, 'the node value is gone (as confirmed)');
+  assert.equal(Object.keys(exported.settings.nodeCustom || {}).length, 0, 'the pending default is gone');
+  document.querySelector('#btnUndo').click();
+  await nextFrame(yes.dom.window); await settle(yes.dom.window, 40);
+  exported = exportGraph(document);
+  assert.equal(exported.customAttributes.find(a => a.id === 'cap').scope, 'node', 'undo restores the scope');
+  assert.equal(exported.nodes[0].custom.cap, 'red', 'undo restores the values');
+  assert.equal(exported.settings.nodeCustom.cap, 'pending', 'undo restores the pending default');
+  yes.dom.window.close();
+
+  // graph -> node: the graph value is promoted to every entity (lossless), no dialog.
+  const promote = createEditorDom({ ...graph,
+    nodes: [
+      { id: 'a', label: 'A', x: -200, y: 0, order: 0 },
+      { id: 'b', label: 'B', x: 200, y: 0, order: 1 },
+    ],
+    edges: [],
+    customAttributes: [{ id: 'shared', scope: 'graph', type: 'int' }],
+    settings: {},
+    graphCustom: { shared: 5 },
+  });
+  await nextFrame(promote.dom.window);
+  document = promote.dom.window.document;
+  const promoteRow = [...document.querySelectorAll('.custom-attribute-row')]
+    .find(row => row.querySelector('[data-attribute-field="id"]').value === 'shared');
+  promoteRow.querySelector('[data-attribute-field="scope"]').value = 'node';
+  promoteRow.querySelector('[data-attribute-action="save"]').click();
+  await nextFrame(promote.dom.window); await settle(promote.dom.window, 30);
+  assert.equal(document.querySelector('.app-dialog'), null, 'no confirmation needed for the lossless direction');
+  exported = exportGraph(document);
+  assert.equal(exported.customAttributes.find(a => a.id === 'shared').scope, 'node');
+  assert.equal(exported.nodes.every(n => n.custom && n.custom.shared === 5), true,
+    'the graph value was promoted to every node');
+  assert.equal(exported.graphCustom.shared, undefined, 'the graph value moved, not copied');
+  promote.dom.window.close();
+});
+
+test('repeated GraphML appends of the same external key resolve to one migrated definition', async () => {
+  const external = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="node" attr.name="externalTag" attr.type="int"/>
+  <graph id="g" edgedefault="directed">
+    <node id="a"><data key="x">7</data></node>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  for(let round = 0; round < 3; round++){
+    document.querySelector('#btnExportGraphml').click();
+    const modal = document.querySelector('.export-modal');
+    modal.querySelector('textarea').value = external;
+    modal.querySelector('#expAppendChk').click();
+    modal.querySelector('#expImportBtn').click();
+    await nextFrame(window); await settle(window, 50);
+    modal.remove();
+  }
+  const exported = exportGraph(document);
+  const migrated = exported.customAttributes.filter(a => /^x_\d+$/.test(a.id));
+  assert.equal(migrated.length, 1, 'one migrated definition, not a new one per import');
+  assert.equal(migrated[0].id, 'x_1');
+  assert.equal(exported.customAttributes.some(a => a.id === 'x_2'), false);
+  assert.equal(migrated.length, 1);
+  for(const node of exported.nodes){
+    assert.equal(node.custom.x_1, 7, 'every node carries the value under the same definition');
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

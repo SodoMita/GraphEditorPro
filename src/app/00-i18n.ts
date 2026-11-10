@@ -306,6 +306,7 @@ const I18N: I18nService = {
     'attribute_added': { en: 'Custom attribute added', ru: 'Пользовательский атрибут добавлен' },
     'attribute_limit_reached': { en: 'Custom attribute limit (500) reached. Delete one before adding another.', ru: 'Достигнут предел пользовательских атрибутов (500). Удалите один перед добавлением нового.' },
     'attribute_import_skipped': { en: 'Skipped {n} custom attribute definition(s) beyond the 500 limit.', ru: 'Пропущено определений пользовательских атрибутов сверх лимита 500: {n}.' },
+    'attribute_scope_values': { en: 'This attribute has {n} stored value(s). They cannot move with a scope change and will be discarded. Continue?', ru: 'У этого атрибута есть сохранённые значения: {n}. При смене области они будут удалены. Продолжить?' },
     'attribute_updated': { en: 'Custom attribute updated', ru: 'Пользовательский атрибут изменён' },
     'custom_properties': { en: 'Custom properties', ru: 'Пользовательские свойства' },
     'custom_prop_unset': { en: '(unset)', ru: '(не задано)' },

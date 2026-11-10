@@ -477,7 +477,10 @@
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
   const activePointers = new Map();
   // Clipboard for copy/paste of nodes+edges
-  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[] } | null = null;
+  // The clipboard payload carries the definitions of every custom attribute
+  // it references, so pasting into a document that lacks them can re-create
+  // them. Existing definitions win on id conflicts.
+  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[]; customAttributes?: { id: string; scope: 'graph' | 'node' | 'edge'; type: string }[] } | null = null;
   let pasteOffsetCount = 0;
   // UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
   // controls call it instead of reaching for a global, so modules stay
@@ -804,6 +807,56 @@
     for(const n of state.nodes) refs.push({ store: n.custom, write: safe => { n.custom = Object.keys(safe).length ? safe : undefined; } });
     for(const e of state.edges) refs.push({ store: e.custom, write: safe => { e.custom = Object.keys(safe).length ? safe : undefined; } });
     return refs;
+  }
+  // ---- Scope changes -------------------------------------------------------
+  // Scope decides WHERE values may live: graph scope keeps one value in
+  // state.graphCustom; node/edge scope keeps per-entity values (entity.custom)
+  // and a pending new-element default (settings.nodeCustom/edgeCustom). A
+  // scope change therefore relocates one of:
+  //   graph -> node/edge : lossless — the single graph value is promoted to
+  //                        every entity lacking one (plus the pending default);
+  //   node/edge -> graph : N values cannot collapse to 1 — the values are
+  //                        discarded after explicit confirmation;
+  //   node <-> edge      : values belong to the old entity type — same
+  //                        confirmed-discard treatment. (Values are always one
+  //                        undo step with the definition edit.)
+  function countCustomAttributeValues(id: string, scope: 'graph' | 'node' | 'edge'): number {
+    let count = 0;
+    if(scope === 'graph'){
+      if(isRecord(state.graphCustom) && Object.prototype.hasOwnProperty.call(state.graphCustom, id)) count++;
+      return count;
+    }
+    const defaults = isRecord(state.settings) ? (scope === 'node' ? state.settings.nodeCustom : state.settings.edgeCustom) : undefined;
+    if(isRecord(defaults) && Object.prototype.hasOwnProperty.call(defaults, id)) count++;
+    for(const entity of (scope === 'node' ? state.nodes : state.edges)){
+      if(isRecord(entity.custom) && Object.prototype.hasOwnProperty.call(entity.custom, id)) count++;
+    }
+    return count;
+  }
+  function promoteGraphCustomAttribute(id: string, scope: 'node' | 'edge'): void {
+    if(!isRecord(state.graphCustom) || !Object.prototype.hasOwnProperty.call(state.graphCustom, id)) return;
+    const value = state.graphCustom[id];
+    const entities = scope === 'node' ? state.nodes : state.edges;
+    for(const entity of entities){
+      // Existing per-entity values are the oldest user data — keep them; the
+      // graph value is promoted only to entities that lack one.
+      if(isRecord(entity.custom) && Object.prototype.hasOwnProperty.call(entity.custom, id)) continue;
+      const store = ownKeyRecord(entity.custom);
+      store[id] = value;
+      entity.custom = store;
+    }
+    if(!isRecord(state.settings)) state.settings = {};
+    const key = scope === 'node' ? 'nodeCustom' : 'edgeCustom';
+    const pending = ownKeyRecord(state.settings[key]);
+    if(!Object.prototype.hasOwnProperty.call(pending, id)) pending[id] = value;
+    state.settings[key] = pending;
+    delete state.graphCustom[id];
+  }
+  function discardCustomAttributeValues(id: string, scope: 'graph' | 'node' | 'edge'): void {
+    if(scope === 'graph'){ unsetCustomValue('graph', id); return; }
+    const entities = scope === 'node' ? state.nodes : state.edges;
+    for(const entity of entities) unsetCustomValue(entity, id);
+    unsetCustomValue(scope === 'node' ? 'node-defaults' : 'edge-defaults', id);
   }
   // Renaming an attribute id moves its values with it, so the user does not
   // silently lose what they already typed.

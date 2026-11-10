@@ -1982,6 +1982,7 @@ const I18N = {
         'attribute_added': { en: 'Custom attribute added', ru: 'Пользовательский атрибут добавлен' },
         'attribute_limit_reached': { en: 'Custom attribute limit (500) reached. Delete one before adding another.', ru: 'Достигнут предел пользовательских атрибутов (500). Удалите один перед добавлением нового.' },
         'attribute_import_skipped': { en: 'Skipped {n} custom attribute definition(s) beyond the 500 limit.', ru: 'Пропущено определений пользовательских атрибутов сверх лимита 500: {n}.' },
+        'attribute_scope_values': { en: 'This attribute has {n} stored value(s). They cannot move with a scope change and will be discarded. Continue?', ru: 'У этого атрибута есть сохранённые значения: {n}. При смене области они будут удалены. Продолжить?' },
         'attribute_updated': { en: 'Custom attribute updated', ru: 'Пользовательский атрибут изменён' },
         'custom_properties': { en: 'Custom properties', ru: 'Пользовательские свойства' },
         'custom_prop_unset': { en: '(unset)', ru: '(не задано)' },
@@ -2923,6 +2924,9 @@ let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache 
 let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
 const activePointers = new Map();
 // Clipboard for copy/paste of nodes+edges
+// The clipboard payload carries the definitions of every custom attribute
+// it references, so pasting into a document that lacks them can re-create
+// them. Existing definitions win on id conflicts.
 let clipboardData = null;
 let pasteOffsetCount = 0;
 // UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
@@ -3310,6 +3314,67 @@ function customValueStoreRefs() {
     for (const e of state.edges)
         refs.push({ store: e.custom, write: safe => { e.custom = Object.keys(safe).length ? safe : undefined; } });
     return refs;
+}
+// ---- Scope changes -------------------------------------------------------
+// Scope decides WHERE values may live: graph scope keeps one value in
+// state.graphCustom; node/edge scope keeps per-entity values (entity.custom)
+// and a pending new-element default (settings.nodeCustom/edgeCustom). A
+// scope change therefore relocates one of:
+//   graph -> node/edge : lossless — the single graph value is promoted to
+//                        every entity lacking one (plus the pending default);
+//   node/edge -> graph : N values cannot collapse to 1 — the values are
+//                        discarded after explicit confirmation;
+//   node <-> edge      : values belong to the old entity type — same
+//                        confirmed-discard treatment. (Values are always one
+//                        undo step with the definition edit.)
+function countCustomAttributeValues(id, scope) {
+    let count = 0;
+    if (scope === 'graph') {
+        if (isRecord(state.graphCustom) && Object.prototype.hasOwnProperty.call(state.graphCustom, id))
+            count++;
+        return count;
+    }
+    const defaults = isRecord(state.settings) ? (scope === 'node' ? state.settings.nodeCustom : state.settings.edgeCustom) : undefined;
+    if (isRecord(defaults) && Object.prototype.hasOwnProperty.call(defaults, id))
+        count++;
+    for (const entity of (scope === 'node' ? state.nodes : state.edges)) {
+        if (isRecord(entity.custom) && Object.prototype.hasOwnProperty.call(entity.custom, id))
+            count++;
+    }
+    return count;
+}
+function promoteGraphCustomAttribute(id, scope) {
+    if (!isRecord(state.graphCustom) || !Object.prototype.hasOwnProperty.call(state.graphCustom, id))
+        return;
+    const value = state.graphCustom[id];
+    const entities = scope === 'node' ? state.nodes : state.edges;
+    for (const entity of entities) {
+        // Existing per-entity values are the oldest user data — keep them; the
+        // graph value is promoted only to entities that lack one.
+        if (isRecord(entity.custom) && Object.prototype.hasOwnProperty.call(entity.custom, id))
+            continue;
+        const store = ownKeyRecord(entity.custom);
+        store[id] = value;
+        entity.custom = store;
+    }
+    if (!isRecord(state.settings))
+        state.settings = {};
+    const key = scope === 'node' ? 'nodeCustom' : 'edgeCustom';
+    const pending = ownKeyRecord(state.settings[key]);
+    if (!Object.prototype.hasOwnProperty.call(pending, id))
+        pending[id] = value;
+    state.settings[key] = pending;
+    delete state.graphCustom[id];
+}
+function discardCustomAttributeValues(id, scope) {
+    if (scope === 'graph') {
+        unsetCustomValue('graph', id);
+        return;
+    }
+    const entities = scope === 'node' ? state.nodes : state.edges;
+    for (const entity of entities)
+        unsetCustomValue(entity, id);
+    unsetCustomValue(scope === 'node' ? 'node-defaults' : 'edge-defaults', id);
 }
 // Renaming an attribute id moves its values with it, so the user does not
 // silently lose what they already typed.
@@ -7616,7 +7681,8 @@ function setMatrixCell(from, to, raw) {
         // Add new edges for remaining values, inheriting properties from the first existing edge
         const tpl = existing[0];
         for (let i = 1; i < values.length; i++) {
-            state.edges.push({
+            const inherited = cloneCustomMap(tpl.custom);
+            const fresh = {
                 id: 'e' + state.nextEdge++, from, to,
                 weight: values[i].slice(0, 50),
                 label: tpl.label || '',
@@ -7624,13 +7690,20 @@ function setMatrixCell(from, to, raw) {
                 type: tpl.type || '',
                 color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle,
                 labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize
-            });
+            };
+            if (inherited)
+                fresh.custom = inherited;
+            state.edges.push(fresh);
         }
     }
     else {
         // No existing edges — create new ones with default settings
         for (const weight of values) {
             const e = { id: 'e' + state.nextEdge++, from, to, weight: weight.slice(0, 50), label: '', directed: Boolean(s.directed), type: '' };
+            // Pending custom property values from "New edge defaults", as on the canvas path.
+            const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
+            if (pendingCustom)
+                e.custom = pendingCustom;
             if (s.edgeType)
                 e.type = s.edgeType;
             const ts = e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
@@ -7833,6 +7906,18 @@ function cloneCustomMap(source) {
     }
     return Object.keys(out).length ? out : undefined;
 }
+// The definitions of every custom attribute referenced by the given
+// entities, so a clipboard payload can be re-instantiated in a document
+// that lacks them. Same-document pastes re-add nothing (ids already exist).
+function referencedCustomAttributes(entities) {
+    const used = new Set();
+    for (const entity of entities) {
+        if (isRecord(entity?.custom))
+            for (const key of Object.keys(entity.custom))
+                used.add(key);
+    }
+    return state.customAttributes.filter(attribute => used.has(attribute.id));
+}
 function cloneNode(n) { const c = { ...n }; const custom = cloneCustomMap(n?.custom); if (custom)
     c.custom = custom;
 else
@@ -7896,11 +7981,14 @@ function copySelectedNodes() {
                 edges.push(cloneEdge(e));
         }
     }
-    clipboardData = { nodes, edges, externalEdges };
+    // Carry the definitions of the custom attributes this payload references,
+    // so pasting into a document without them can re-create them.
+    const customAttributes = referencedCustomAttributes([...nodes, ...edges, ...externalEdges]);
+    clipboardData = { nodes, edges, externalEdges, customAttributes };
     // Deduplicate externalEdges that are duplicates of internal? Already separated
     // Write to system clipboard as JSON for cross-tab paste
     try {
-        const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges });
+        const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes });
         if (navigator.clipboard && navigator.clipboard.writeText)
             navigator.clipboard.writeText(payload).catch(() => { });
     }
@@ -7935,12 +8023,57 @@ function pasteClipboardInternal(fromSystemClipboard) {
         data = {
             nodes: (fromSystemClipboard.nodes || []).map((n) => cloneNode(n)),
             edges: (fromSystemClipboard.edges || []).map((e) => cloneEdge(e)),
-            externalEdges: (fromSystemClipboard.externalEdges || []).map((e) => cloneEdge(e))
+            externalEdges: (fromSystemClipboard.externalEdges || []).map((e) => cloneEdge(e)),
+            customAttributes: Array.isArray(fromSystemClipboard.customAttributes) ? fromSystemClipboard.customAttributes : []
         };
     }
     if (!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)) {
         toast(I18N.t('clipboard_empty'));
         return false;
+    }
+    // Re-create carried custom-attribute definitions this document lacks
+    // (existing definitions win id conflicts; definitions beyond the 500 cap
+    // are skipped with a toast), then coerce the carried values to the
+    // resolved definitions — so pasted values are visible, exportable and
+    // survive reload instead of being silently pruned.
+    if (Array.isArray(data.customAttributes) && data.customAttributes.length) {
+        const existing = new Set(state.customAttributes.map(attribute => attribute.id));
+        let remaining = Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length);
+        let skipped = 0, added = 0;
+        for (const def of data.customAttributes) {
+            if (!isRecord(def))
+                continue;
+            const id = String(def.id ?? '').trim().slice(0, 128);
+            if (!id || existing.has(id))
+                continue;
+            if (remaining <= 0) {
+                skipped++;
+                continue;
+            }
+            const scope = ['graph', 'node', 'edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
+            const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
+            remaining--;
+            added++;
+            existing.add(id);
+            state.customAttributes.push({ id, scope: scope, type });
+        }
+        if (skipped)
+            toast(I18N.t('attribute_import_skipped', { n: skipped }));
+        if (added) {
+            renderCustomAttributes();
+            renderCustomPropHosts();
+        }
+    }
+    // Coerce carried values against the resolved definitions. Values whose
+    // definition does not exist (or was skipped over the cap) are dropped, as
+    // on any other load path — never silently kept out of reach.
+    const pasteTypeById = customAttributeTypeMap(state.customAttributes);
+    for (const entity of [...data.nodes, ...data.edges, ...(data.externalEdges || [])]) {
+        const resolved = sanitizeCustomValues(entity?.custom, pasteTypeById);
+        if (resolved)
+            entity.custom = resolved;
+        else
+            delete entity?.custom;
     }
     const preserveExternal = state.settings.copyPreserveExternal !== false;
     const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
@@ -11214,6 +11347,13 @@ function parseGraphml(text) {
     const customAttributes = [];
     const customKeyIds = new Set();
     const customKeyDataName = [];
+    // Ids reserved for built-ins are migrated to a safe unique name AT THE KEY
+    // LEVEL, deterministically. Appending the same external GraphML file twice
+    // re-resolves to the same migrated id instead of minting x_1, x_2, ... —
+    // the migration consumes no extra capacity on repeated imports.
+    const fileKeyIds = new Set();
+    doc.querySelectorAll('key').forEach(k => { const kid = k.getAttribute('id'); if (kid)
+        fileKeyIds.add(kid); });
     doc.querySelectorAll('key').forEach(k => {
         const id = k.getAttribute('id');
         if (!id)
@@ -11227,9 +11367,10 @@ function parseGraphml(text) {
         const isCustom = !reservedAttrNames.has(name) && ['graph', 'node', 'edge'].includes(forWhom);
         if (isCustom) {
             const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
-            customAttributes.push({ id, scope: forWhom, type: normalizedType });
-            customKeyIds.add(id);
-            customKeyDataName.push({ id, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType) });
+            const defId = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()) ? uniqueCustomAttributeId(id, fileKeyIds) : id;
+            customAttributes.push({ id: defId, scope: forWhom, type: normalizedType });
+            customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
+            customKeyDataName.push({ id: defId, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType) });
         }
         if (defEl) {
             keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
@@ -11246,7 +11387,7 @@ function parseGraphml(text) {
     for (const def of customKeyDataName) {
         if (def.scope !== 'graph')
             continue;
-        const raw = graphDataById[def.id];
+        const raw = graphDataById[def.dataKey];
         if (raw != null && String(raw).trim() !== '') {
             graphCustom[def.id] = coerceCustomValue(raw, def.type);
         }
@@ -11425,7 +11566,7 @@ function parseGraphml(text) {
         for (const def of customKeyDataName) {
             if (def.scope !== 'node')
                 continue;
-            const raw = dById[def.id];
+            const raw = dById[def.dataKey];
             if (raw != null && String(raw).trim() !== '') {
                 nodeCustom[def.id] = coerceCustomValue(raw, def.type);
             }
@@ -11482,7 +11623,7 @@ function parseGraphml(text) {
         for (const def of customKeyDataName) {
             if (def.scope !== 'edge')
                 continue;
-            const raw = dById[def.id];
+            const raw = dById[def.dataKey];
             if (raw != null && String(raw).trim() !== '') {
                 edgeCustom[def.id] = coerceCustomValue(raw, def.type);
             }
@@ -12933,7 +13074,7 @@ function wireUi() {
         pushHistory('add custom attribute');
         toast(I18N.t('attribute_added'));
     });
-    $('#customAttributesList').addEventListener('click', ev => {
+    $('#customAttributesList').addEventListener('click', async (ev) => {
         const button = ev.target.closest('[data-attribute-action]');
         if (!button)
             return;
@@ -12972,9 +13113,31 @@ function wireUi() {
         const scope = row.querySelector('[data-attribute-field="scope"]').value;
         const type = row.querySelector('[data-attribute-field="type"]').value;
         const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
-        state.customAttributes[index] = { id, scope: ['graph', 'node', 'edge'].includes(scope) ? scope : 'graph', type: resolvedType };
+        const resolvedScope = ['graph', 'node', 'edge'].includes(scope) ? scope : 'graph';
+        const oldScope = oldDef.scope;
+        const scopeChanged = oldScope !== resolvedScope;
+        // A scope change away from a scope that holds values cannot carry them
+        // over (a node value is meaningless on an edge, and N values cannot
+        // collapse into one graph value). Graph scope is the one lossless
+        // direction (promoted below); everything else needs an explicit danger
+        // confirmation — or the whole save is aborted, values untouched.
+        if (scopeChanged && oldScope !== 'graph') {
+            const scopeValues = countCustomAttributeValues(oldId, oldScope);
+            if (scopeValues > 0) {
+                const proceed = await uiConfirm(I18N.t('attribute_scope_values', { n: scopeValues }), { danger: true, confirmLabel: I18N.t('save_attribute') });
+                if (!proceed)
+                    return; // nothing changes: values, definition and history untouched
+            }
+        }
+        state.customAttributes[index] = { id, scope: resolvedScope, type: resolvedType };
         if (oldId !== id)
             renameCustomAttributeValues(oldId, id);
+        if (scopeChanged) {
+            if (oldScope === 'graph')
+                promoteGraphCustomAttribute(id, resolvedScope);
+            else
+                discardCustomAttributeValues(id, oldScope);
+        }
         // A type change rewrites every stored value; values that cannot be
         // represented in the new type are dropped (undo restores all of them).
         const dropped = oldType !== resolvedType ? migrateCustomValuesForType(id, resolvedType) : 0;

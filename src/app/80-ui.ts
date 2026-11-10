@@ -12,7 +12,7 @@
       idInput.value = '';
       renderCustomAttributes(); renderCustomPropHosts(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
     });
-    $('#customAttributesList').addEventListener('click', ev => {
+    $('#customAttributesList').addEventListener('click', async ev => {
       const button = ev.target.closest('[data-attribute-action]');
       if(!button) return;
       const row = button.closest('[data-custom-attribute]');
@@ -35,8 +35,27 @@
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
       const type = row.querySelector('[data-attribute-field="type"]').value;
       const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
-      state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: resolvedType};
+      const resolvedScope = ['graph','node','edge'].includes(scope) ? scope : 'graph';
+      const oldScope = oldDef.scope;
+      const scopeChanged = oldScope !== resolvedScope;
+      // A scope change away from a scope that holds values cannot carry them
+      // over (a node value is meaningless on an edge, and N values cannot
+      // collapse into one graph value). Graph scope is the one lossless
+      // direction (promoted below); everything else needs an explicit danger
+      // confirmation — or the whole save is aborted, values untouched.
+      if(scopeChanged && oldScope !== 'graph'){
+        const scopeValues = countCustomAttributeValues(oldId, oldScope);
+        if(scopeValues > 0){
+          const proceed = await uiConfirm(I18N.t('attribute_scope_values', { n: scopeValues }), { danger: true, confirmLabel: I18N.t('save_attribute') });
+          if(!proceed) return; // nothing changes: values, definition and history untouched
+        }
+      }
+      state.customAttributes[index] = {id, scope: resolvedScope, type: resolvedType};
       if(oldId !== id) renameCustomAttributeValues(oldId, id);
+      if(scopeChanged){
+        if(oldScope === 'graph') promoteGraphCustomAttribute(id, resolvedScope as 'node' | 'edge');
+        else discardCustomAttributeValues(id, oldScope);
+      }
       // A type change rewrites every stored value; values that cannot be
       // represented in the new type are dropped (undo restores all of them).
       const dropped = oldType !== resolvedType ? migrateCustomValuesForType(id, resolvedType) : 0;
