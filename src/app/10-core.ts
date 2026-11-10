@@ -358,6 +358,8 @@
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
   const EDGE_DIRECTIONS = ['directed','mutual','undirected'];
+  const DEFAULT_ARROW_SIZE = 12;
+  const ARROW_SIZE_MIN = 4, ARROW_SIZE_MAX = 40;
   function normalizeDirection(raw: any): string {
     if(raw === true || raw === 'true' || raw === 1 || raw === '1') return 'directed';
     if(raw === false || raw === 'false' || raw === 0 || raw === '0') return 'undirected';
@@ -385,7 +387,7 @@
   function edgeIsUndirected(e: any): boolean {
     return edgeDirection(e) === 'undirected';
   }
-  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','direction','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
+  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeArrowSize','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','direction','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
@@ -401,6 +403,7 @@
       // Edit-tab edge defaults (primary for newly added edges) — QVGE uses direction string
       directed:true, direction:'directed', edgeWeight:'1', edgeLabel:'',
       edgeType:'', edgeColor:'#94a3b8', edgeStrokeSize:2.4, edgeStrokeStyle:'solid',
+      edgeArrowSize: DEFAULT_ARROW_SIZE,
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
       snap:false, snapX:false, snapY:false, gridSize:40, gridSizeX:40, gridSizeY:40,
       autosave:true, matrixLimit:90, edgeListPageSize:250, matrixDimension:0, brushDiameter:80,
@@ -436,7 +439,7 @@
       },
       edgeDefaults: {
         type:'', color:'#94a3b8', labelColor:'#dbeafe', labelFont:'Inter', labelSize:12,
-        strokeSize:2.4, strokeStyle:'solid'
+        strokeSize:2.4, strokeStyle:'solid', arrowSize: DEFAULT_ARROW_SIZE
       },
       // Per-type style overrides: { 'typeName': { color, shape, width, height, ... }, ... }
       nodeTypeStyles: {},
@@ -662,6 +665,7 @@
       if(e.color) edge.color = validColor(e.color) || '';
       if(e.strokeSize != null) edge.strokeSize = clamp(finite(e.strokeSize, 2.4), 0, 20);
       if(e.strokeStyle) edge.strokeStyle = validStroke(e.strokeStyle);
+      if(e.arrowSize != null) edge.arrowSize = clamp(finite(e.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       if(e.labelColor) edge.labelColor = validColor(e.labelColor) || '';
       if(e.labelSize != null) edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
@@ -687,6 +691,7 @@
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
     settings.edgeLabelColor = validColor(settings.edgeLabelColor) || '#dbeafe';
+    settings.edgeArrowSize = clamp(finite(settings.edgeArrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     settings.edgeLabelFont = String(settings.edgeLabelFont || 'Inter').slice(0, 60);
     settings.edgeLabelSize = clamp(finite(settings.edgeLabelSize, 12), 4, 72);
     settings.hitTestMode = ['any','center'].includes(settings.hitTestMode) ? settings.hitTestMode : 'any';
@@ -742,6 +747,7 @@
     ed.labelColor = validColor(ed.labelColor) || '#dbeafe';
     ed.strokeStyle = validStroke(ed.strokeStyle) || 'solid';
     ed.strokeSize = clamp(finite(ed.strokeSize, 2.4), 0, 20);
+    ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
     ed.type = String(ed.type || '').slice(0, 40);
@@ -766,6 +772,7 @@
       } else {
         if(ts.strokeSize != null) out.strokeSize = clamp(finite(ts.strokeSize, 2.4), 0, 20);
         if(ts.strokeStyle && STROKE_STYLES.includes(ts.strokeStyle)) out.strokeStyle = ts.strokeStyle;
+        if(ts.arrowSize != null) out.arrowSize = clamp(finite(ts.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         if(validColor(ts.labelColor)) out.labelColor = ts.labelColor;
         if(ts.labelSize != null) out.labelSize = clamp(finite(ts.labelSize, 12), 4, 72);
         if(ts.labelFont) out.labelFont = String(ts.labelFont).slice(0, 60);
@@ -844,6 +851,7 @@
           if(validColor(se.color)) out.edge.color = se.color;
           if(se.strokeSize != null) out.edge.strokeSize = clamp(finite(se.strokeSize, 2.4), 0, 20);
           if(se.strokeStyle && STROKE_STYLES.includes(se.strokeStyle)) out.edge.strokeStyle = se.strokeStyle;
+          if(se.arrowSize != null) out.edge.arrowSize = clamp(finite(se.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
           if(validColor(se.labelColor)) out.edge.labelColor = se.labelColor;
           if(se.labelSize != null) out.edge.labelSize = clamp(finite(se.labelSize, 12), 4, 72);
           if(se.labelFont) out.edge.labelFont = String(se.labelFont).slice(0, 60);

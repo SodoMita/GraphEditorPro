@@ -437,15 +437,16 @@
         if(!ts.color) e.color = s.edgeColor; else e.color = '';
         if(ts.strokeSize == null) e.strokeSize = s.edgeStrokeSize;
         if(!ts.strokeStyle) e.strokeStyle = s.edgeStrokeStyle; else e.strokeStyle = '';
+        if(ts.arrowSize == null) e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
         if(!ts.labelColor) e.labelColor = s.edgeLabelColor; else e.labelColor = '';
         if(ts.labelSize == null) e.labelSize = s.edgeLabelSize;
         if(!ts.labelFont) e.labelFont = s.edgeLabelFont;
       } else {
-        e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle;
+        e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle; e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
         e.labelColor = s.edgeLabelColor; e.labelFont = s.edgeLabelFont; e.labelSize = s.edgeLabelSize;
       }
     } else {
-      e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle;
+      e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle; e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
       e.labelColor = s.edgeLabelColor; e.labelFont = s.edgeLabelFont; e.labelSize = s.edgeLabelSize;
     }
     state.edges.push(e); setSelection([], [e.id], {type:'edge', id:e.id}, false); pushHistory('add edge'); queueRender(true, true);
@@ -611,9 +612,9 @@
           id:'e' + state.nextEdge++, from, to,
           weight: values[i].slice(0, 50),
           label: tpl.label || '',
-          directed: tpl.directed,
+          directed: tpl.directed, direction: (tpl as any).direction,
           type: tpl.type || '',
-          color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle,
+          color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle, arrowSize: (tpl as any).arrowSize,
           labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize
         });
       }
@@ -628,11 +629,12 @@
           if(!ts.color) e.color = s.edgeColor; else e.color = '';
           if(ts.strokeSize == null) e.strokeSize = s.edgeStrokeSize;
           if(!ts.strokeStyle) e.strokeStyle = s.edgeStrokeStyle; else e.strokeStyle = '';
+          if(ts.arrowSize == null) (e as any).arrowSize = (s as any).edgeArrowSize ?? DEFAULT_ARROW_SIZE;
           if(!ts.labelColor) e.labelColor = s.edgeLabelColor; else e.labelColor = '';
           if(ts.labelSize == null) e.labelSize = s.edgeLabelSize;
           if(!ts.labelFont) e.labelFont = s.edgeLabelFont;
         } else {
-          e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle;
+          e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle; (e as any).arrowSize = (s as any).edgeArrowSize ?? DEFAULT_ARROW_SIZE;
           e.labelColor = s.edgeLabelColor; e.labelFont = s.edgeLabelFont; e.labelSize = s.edgeLabelSize;
         }
         state.edges.push(e);

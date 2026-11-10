@@ -146,6 +146,7 @@ const I18N: I18nService = {
     'stroke_color': { en: 'Stroke color', ru: 'Цвет обводки' },
     'stroke_size': { en: 'Stroke size', ru: 'Толщина обводки' },
     'stroke_style': { en: 'Stroke style', ru: 'Стиль обводки' },
+    'arrow_size': { en: 'Arrow size', ru: 'Размер стрелки' },
     'type': { en: 'Type', ru: 'Тип' },
     'label_prefix': { en: 'Label prefix / exact label', ru: 'Префикс метки / точная метка' },
     'label_color': { en: 'Label color', ru: 'Цвет метки' },

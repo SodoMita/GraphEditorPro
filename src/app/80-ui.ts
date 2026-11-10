@@ -153,6 +153,7 @@
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0,60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value,12),4,72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
+    if($('#edgeArrowSize')) $('#edgeArrowSize').addEventListener('change', e => { state.settings.edgeArrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = state.settings.edgeArrowSize; pushHistory('edge arrow size'); queueRender(true); });
     $('#edgeDirected').addEventListener('change', e => { const v = (e.target as any).value || (e.target as any).checked; const dir = normalizeDirection(v); (state.settings as any).direction = dir; state.settings.directed = dir !== 'undirected'; saveSoon(); });
     $('#optAutosave').addEventListener('change', e => {
       state.settings.autosave = e.target.checked;
@@ -499,6 +500,7 @@
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
     $('#defEdgeStrokeStyle').addEventListener('change', e => { ed().strokeStyle = e.target.value; pushHistory('default edge stroke style'); queueRender(false); });
+    if($('#defEdgeArrowSize')) $('#defEdgeArrowSize').addEventListener('change', e => { ed().arrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = ed().arrowSize; pushHistory('default edge arrow size'); queueRender(true); });
     $('#defEdgeLabelColor').addEventListener('input', e => { ed().labelColor = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeLabelColor').addEventListener('change', () => pushHistory('default edge label color'));
     $('#defEdgeLabelFont').addEventListener('change', e => { ed().labelFont = e.target.value; pushHistory('default edge label font'); queueRender(false); });

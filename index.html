@@ -1053,7 +1053,7 @@
                   <label class="field" for="edgeLabelSize"><span data-i18n="label_size">Label size</span>
                     <input id="edgeLabelSize" type="number" min="4" max="72" step="1" value="12" inputmode="decimal" />
                   </label>
-                  <label class="field" for="edgeDirected" style="align-self:end"><span data-i18n="direction">Direction</span><select id="edgeDirected"><option value="directed" data-i18n="directed_edge_short">Directed</option><option value="mutual" data-i18n="mutual_edge_short">Mutual</option><option value="undirected" data-i18n="undirected_edge_short">Undirected</option></select></label>
+                  <label class="field" for="edgeArrowSize"><span data-i18n="arrow_size">Arrow size</span><input id="edgeArrowSize" type="number" min="4" max="40" step="1" value="12" inputmode="decimal" /></label><label class="field" for="edgeDirected" style="align-self:end"><span data-i18n="direction">Direction</span><select id="edgeDirected"><option value="directed" data-i18n="directed_edge_short">Directed</option><option value="mutual" data-i18n="mutual_edge_short">Mutual</option><option value="undirected" data-i18n="undirected_edge_short">Undirected</option></select></label>
                 </div>
               </div>
             </details>
@@ -1217,6 +1217,7 @@
                   <label class="field" for="defEdgeColor"><span data-i18n="color">Color</span> <input id="defEdgeColor" type="color"></label>
                   <label class="field" for="defEdgeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="defEdgeStrokeSize" type="number" min="0" max="20" step="0.1" inputmode="decimal"></label>
                   <label class="field" for="defEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="defEdgeStrokeStyle"><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option><option value="dashdot" data-i18n="stroke_dashdot">Dash-dot</option><option value="dashdotdot" data-i18n="stroke_dashdotdot">Dash-dot-dot</option><option value="none" data-i18n="stroke_none">None</option></select></label>
+                  <label class="field" for="defEdgeArrowSize"><span data-i18n="arrow_size">Arrow size</span> <input id="defEdgeArrowSize" type="number" min="4" max="40" step="1" inputmode="decimal"></label>
                   <label class="field" for="defEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="defEdgeLabelColor" type="color"></label>
                   <label class="field" for="defEdgeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defEdgeLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                   <label class="field" for="defEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defEdgeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
@@ -1271,6 +1272,7 @@
                   <label class="field" for="etsColor"><span data-i18n="color">Color</span> <input id="etsColor" type="color" value="#94a3b8"></label>
                   <label class="field" for="etsStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="etsStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4"></label>
                   <label class="field" for="etsStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="etsStrokeStyle"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option><option value="dashdot" data-i18n="stroke_dashdot">Dash-dot</option><option value="dashdotdot" data-i18n="stroke_dashdotdot">Dash-dot-dot</option><option value="none" data-i18n="stroke_none">None</option></select></label>
+                  <label class="field" for="etsArrowSize"><span data-i18n="arrow_size">Arrow size</span> <input id="etsArrowSize" type="number" min="4" max="40" step="1" value="" placeholder="Inherit" data-i18n-placeholder="stroke_inherit"></label>
                   <label class="field" for="etsLabelColor"><span data-i18n="label_color">Label color</span> <input id="etsLabelColor" type="color" value="#dbeafe"></label>
                   <label class="field" for="etsLabelSize"><span data-i18n="label_size">Label size</span> <input id="etsLabelSize" type="number" min="4" max="72" step="1" value="12"></label>
                   <label class="field" for="etsLabelFont"><span data-i18n="label_font">Label font</span> <input id="etsLabelFont" list="fontList" type="text" placeholder="Inter"></label>
@@ -1813,6 +1815,7 @@ const I18N = {
         'stroke_color': { en: 'Stroke color', ru: 'Цвет обводки' },
         'stroke_size': { en: 'Stroke size', ru: 'Толщина обводки' },
         'stroke_style': { en: 'Stroke style', ru: 'Стиль обводки' },
+        'arrow_size': { en: 'Arrow size', ru: 'Размер стрелки' },
         'type': { en: 'Type', ru: 'Тип' },
         'label_prefix': { en: 'Label prefix / exact label', ru: 'Префикс метки / точная метка' },
         'label_color': { en: 'Label color', ru: 'Цвет метки' },
@@ -2773,6 +2776,8 @@ const STROKE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot', 'dashdotdot', 'no
 const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
 const LABEL_POLICIES = ['auto', 'on', 'off'];
 const EDGE_DIRECTIONS = ['directed', 'mutual', 'undirected'];
+const DEFAULT_ARROW_SIZE = 12;
+const ARROW_SIZE_MIN = 4, ARROW_SIZE_MAX = 40;
 function normalizeDirection(raw) {
     if (raw === true || raw === 'true' || raw === 1 || raw === '1')
         return 'directed';
@@ -2808,7 +2813,7 @@ function edgeHasStartArrow(e) {
 function edgeIsUndirected(e) {
     return edgeDirection(e) === 'undirected';
 }
-const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label', 'nodeId', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize', 'labelPosition', 'weight', 'edgeLabel', 'edgeType', 'edgeColor', 'edgeStrokeSize', 'edgeStrokeStyle', 'edgeLabelColor', 'edgeLabelFont', 'edgeLabelSize', 'directed', 'direction', 'labelsPolicy', 'edgeWeightMode', 'edgeWeightMin', 'edgeWeightMax', 'edgeWeightCorr', 'edgeWidthMin', 'edgeWidthMax', 'edgeWeightColorLow', 'edgeWeightColorHigh', 'canvasBgColor', 'gridMinorColor', 'gridMajorColor', 'gridMinorAlpha', 'gridMajorAlpha']);
+const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label', 'nodeId', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize', 'labelPosition', 'weight', 'edgeLabel', 'edgeType', 'edgeColor', 'edgeStrokeSize', 'edgeStrokeStyle', 'edgeArrowSize', 'edgeLabelColor', 'edgeLabelFont', 'edgeLabelSize', 'directed', 'direction', 'labelsPolicy', 'edgeWeightMode', 'edgeWeightMin', 'edgeWeightMax', 'edgeWeightCorr', 'edgeWidthMin', 'edgeWidthMax', 'edgeWeightColorLow', 'edgeWeightColorHigh', 'canvasBgColor', 'gridMinorColor', 'gridMajorColor', 'gridMinorAlpha', 'gridMajorAlpha']);
 const FONT_FAMILIES = ['Inter', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New'];
 const defaultState = () => ({
     title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
@@ -2823,6 +2828,7 @@ const defaultState = () => ({
         // Edit-tab edge defaults (primary for newly added edges) — QVGE uses direction string
         directed: true, direction: 'directed', edgeWeight: '1', edgeLabel: '',
         edgeType: '', edgeColor: '#94a3b8', edgeStrokeSize: 2.4, edgeStrokeStyle: 'solid',
+        edgeArrowSize: DEFAULT_ARROW_SIZE,
         edgeLabelColor: '#dbeafe', edgeLabelFont: 'Inter', edgeLabelSize: 12,
         snap: false, snapX: false, snapY: false, gridSize: 40, gridSizeX: 40, gridSizeY: 40,
         autosave: true, matrixLimit: 90, edgeListPageSize: 250, matrixDimension: 0, brushDiameter: 80,
@@ -2858,7 +2864,7 @@ const defaultState = () => ({
         },
         edgeDefaults: {
             type: '', color: '#94a3b8', labelColor: '#dbeafe', labelFont: 'Inter', labelSize: 12,
-            strokeSize: 2.4, strokeStyle: 'solid'
+            strokeSize: 2.4, strokeStyle: 'solid', arrowSize: DEFAULT_ARROW_SIZE
         },
         // Per-type style overrides: { 'typeName': { color, shape, width, height, ... }, ... }
         nodeTypeStyles: {},
@@ -3125,6 +3131,8 @@ function sanitizeState(input) {
             edge.strokeSize = clamp(finite(e.strokeSize, 2.4), 0, 20);
         if (e.strokeStyle)
             edge.strokeStyle = validStroke(e.strokeStyle);
+        if (e.arrowSize != null)
+            edge.arrowSize = clamp(finite(e.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         if (e.labelColor)
             edge.labelColor = validColor(e.labelColor) || '';
         if (e.labelSize != null)
@@ -3153,6 +3161,7 @@ function sanitizeState(input) {
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
     settings.edgeLabelColor = validColor(settings.edgeLabelColor) || '#dbeafe';
+    settings.edgeArrowSize = clamp(finite(settings.edgeArrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     settings.edgeLabelFont = String(settings.edgeLabelFont || 'Inter').slice(0, 60);
     settings.edgeLabelSize = clamp(finite(settings.edgeLabelSize, 12), 4, 72);
     settings.hitTestMode = ['any', 'center'].includes(settings.hitTestMode) ? settings.hitTestMode : 'any';
@@ -3208,6 +3217,7 @@ function sanitizeState(input) {
     ed.labelColor = validColor(ed.labelColor) || '#dbeafe';
     ed.strokeStyle = validStroke(ed.strokeStyle) || 'solid';
     ed.strokeSize = clamp(finite(ed.strokeSize, 2.4), 0, 20);
+    ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
     ed.type = String(ed.type || '').slice(0, 40);
@@ -3247,6 +3257,8 @@ function sanitizeState(input) {
                 out.strokeSize = clamp(finite(ts.strokeSize, 2.4), 0, 20);
             if (ts.strokeStyle && STROKE_STYLES.includes(ts.strokeStyle))
                 out.strokeStyle = ts.strokeStyle;
+            if (ts.arrowSize != null)
+                out.arrowSize = clamp(finite(ts.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
             if (validColor(ts.labelColor))
                 out.labelColor = ts.labelColor;
             if (ts.labelSize != null)
@@ -3354,6 +3366,8 @@ function sanitizeState(input) {
                     out.edge.strokeSize = clamp(finite(se.strokeSize, 2.4), 0, 20);
                 if (se.strokeStyle && STROKE_STYLES.includes(se.strokeStyle))
                     out.edge.strokeStyle = se.strokeStyle;
+                if (se.arrowSize != null)
+                    out.edge.arrowSize = clamp(finite(se.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
                 if (validColor(se.labelColor))
                     out.edge.labelColor = se.labelColor;
                 if (se.labelSize != null)
@@ -3490,10 +3504,15 @@ function edgeVisual(e) {
         type: effectiveType,
         strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
         strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+        arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
         labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
         labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
         labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
     };
+}
+function edgeArrowSize(e) {
+    const v = edgeVisual(e);
+    return clamp(finite(v.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
 }
 // === Edge weight visualization helpers ===
 // Normalizes a weight value to t ∈ [0,1] based on range and correlation function.
@@ -3995,8 +4014,15 @@ function syncNodeSelRing(g, _n, shape, w, h, selected) {
 // can never disagree. `scale` grows the triangle about its own centre (the
 // centroid), which keeps the accent band even around the tip instead of only
 // pushing the apex forward.
+function edgeArrowMetrics(size) {
+    const len = clamp(finite(size, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+    const hw = len * (ARROW_HW / ARROW_LEN);
+    return { len, hw };
+}
 function edgeArrowPoints(d, scale = 1) {
-    const aw = renderSize(ARROW_HW), ang = d.arrowAngle;
+    const size = (d && d.arrowSize != null) ? d.arrowSize : DEFAULT_ARROW_SIZE;
+    const { hw } = edgeArrowMetrics(size);
+    const aw = renderSize(hw), ang = d.arrowAngle;
     const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
     const lx = d.tx + px, ly = d.ty + py;
     const rx = d.tx - px, ry = d.ty - py;
@@ -4214,6 +4240,8 @@ function syncControls() {
     $('#edgeColor').value = state.settings.edgeColor;
     $('#edgeStrokeSize').value = state.settings.edgeStrokeSize;
     $('#edgeStrokeStyle').value = state.settings.edgeStrokeStyle;
+    if ($('#edgeArrowSize'))
+        $('#edgeArrowSize').value = state.settings.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
     $('#edgeLabelColor').value = state.settings.edgeLabelColor;
     $('#edgeLabelFont').value = state.settings.edgeLabelFont;
     $('#edgeLabelSize').value = state.settings.edgeLabelSize;
@@ -5082,7 +5110,7 @@ function renderEdges() {
         // fields. Rebuilding it every time an *unrelated* style edit repaints a
         // 2,500-edge layer was pure overhead — and the result would be identical.
         const edgeStyleKey = e.type + '\u0001' + e.color + '\u0001' + e.strokeSize + '\u0001' + e.strokeStyle
-            + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
+            + '\u0001' + (e.arrowSize ?? '') + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
             + '\u0001' + e.weight + '\u0001' + edgeDirection(e);
         let v = (!stylePass && ent && ent.el.__styleKey === edgeStyleKey) ? ent.el.__style : null;
         if (!v) {
@@ -5160,7 +5188,7 @@ function renderEdges() {
         // Include the floating origin: absolute world endpoints unchanged by a
         // camera move still produce different SVG numbers after a rebase, so the
         // geometry cache must not hand back a path from the previous origin.
-        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${renderOriginX},${renderOriginY}|${renderScale}`;
+        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${v.arrowSize}|${renderOriginX},${renderOriginY}|${renderScale}`;
         let d = g.__geoSig === geoSig ? g.__geoData : null;
         if (!d) {
             d = edgePath(a, b, e, passVisuals);
@@ -5239,7 +5267,7 @@ function renderEdges() {
                 g.appendChild(arrowStart);
                 g.__arrowStart = arrowStart;
             }
-            setAttr(arrowStart, 'points', edgeArrowPoints({ tipX: d.startTipX, tipY: d.startTipY, arrowAngle: d.startArrowAngle }));
+            setAttr(arrowStart, 'points', edgeArrowPoints({ tipX: d.startTipX, tipY: d.startTipY, arrowAngle: d.startArrowAngle, arrowSize: d.arrowSize }));
             setAttr(arrowStart, 'fill', v.color);
         }
         else if (arrowStart) {
@@ -5376,9 +5404,12 @@ function edgePath(a, b, e, vc = null) {
     const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
     const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
     const hasEnd = edgeHasEndArrow(e), hasStart = edgeHasStartArrow(e);
-    const arrowGapEnd = hasEnd ? ARROW_LEN : 2;
-    const arrowGapStart = hasStart ? ARROW_LEN : 2;
-    const empty = () => ({ path: '', labelX: 0, labelY: 0, tx: 0, ty: 0, tipX: null, tipY: null, arrowAngle: null, startTipX: null, startTipY: null, startArrowAngle: null });
+    const v = vc || edgeVisual(e);
+    const arrowLen = edgeArrowMetrics(v.arrowSize).len;
+    const arrowGapEnd = hasEnd ? arrowLen : 2;
+    const arrowGapStart = hasStart ? arrowLen : 2;
+    const arrowSize = v.arrowSize;
+    const empty = () => ({ path: '', labelX: 0, labelY: 0, tx: 0, ty: 0, tipX: null, tipY: null, arrowAngle: null, startTipX: null, startTipY: null, startArrowAngle: null, arrowSize });
     // A self-loop lives entirely around one node: if that node is outside the
     // safe render window the loop cannot have a visible segment.
     if (a.id === b.id) {
@@ -5416,7 +5447,7 @@ function edgePath(a, b, e, vc = null) {
             startTipY = rc(syRaw + sas * arrowGapStart);
             startArrowAngle = startAngle;
         }
-        return { path: `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle };
+        return { path: `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle, arrowSize };
     }
     const clip = clipEdgeSegment(rawAx, rawAy, rawBx, rawBy);
     if (!clip)
@@ -5444,7 +5475,7 @@ function edgePath(a, b, e, vc = null) {
         const tipY = clip.endClipped || !hasEnd ? null : rc(tyRaw + as * arrowGapEnd);
         const startTipX = clip.startClipped || !hasStart ? null : rc(sxRaw + sac * arrowGapStart);
         const startTipY = clip.startClipped || !hasStart ? null : rc(syRaw + sas * arrowGapStart);
-        return { path: `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX: mx, labelY: my, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle };
+        return { path: `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX: mx, labelY: my, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle, arrowSize };
     }
     const arrowAngle = Math.atan2(uy, ux);
     const startArrowAngle = Math.atan2(-uy, -ux);
@@ -5452,7 +5483,7 @@ function edgePath(a, b, e, vc = null) {
     const tipY = clip.endClipped || !hasEnd ? null : rc(clip.y1 - uy * rb);
     const startTipX = clip.startClipped || !hasStart ? null : rc(clip.x0 + ux * ra);
     const startTipY = clip.startClipped || !hasStart ? null : rc(clip.y0 + uy * ra);
-    return { path: `M ${sx} ${sy} L ${tx} ${ty}`, labelX: rc(midRawX), labelY: rc(midRawY), tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle };
+    return { path: `M ${sx} ${sy} L ${tx} ${ty}`, labelX: rc(midRawX), labelY: rc(midRawY), tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle, arrowSize };
 }
 // A 50-unit node becomes sub-pixel when Fit spans millions of units, so
 // Chromium cannot hit-test the visible shape. Keep a transparent circular
@@ -5831,6 +5862,7 @@ function renderSelectionPanel() {
             <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
             <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
             <label class="field" for="mulEdgeStrokeStyle">${I18N.t('stroke_style')} <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
+            <label class="field" for="mulEdgeArrowSize"><span data-i18n="arrow_size">${I18N.t('arrow_size')}</span> <input id="mulEdgeArrowSize" type="number" min="4" max="40" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
             <label class="field" for="mulEdgeLabelColor">${I18N.t('label_color')} <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
             <label class="field" for="mulEdgeLabelSize">${I18N.t('label_size')} <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
             <label class="field" for="mulEdgeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulEdgeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
@@ -6002,6 +6034,12 @@ function renderSelectionPanel() {
                 if (ed)
                     ed.strokeStyle = v;
             } pushHistory('multi edge stroke style'); queueRender(false); });
+            $('#mulEdgeArrowSize').addEventListener('change', e => { const val = e.target.value; if (val === '')
+                return; const v = clamp(finite(val, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = v; for (const id of edgeIds) {
+                const ed = edgeById(id);
+                if (ed)
+                    ed.arrowSize = v;
+            } pushHistory('multi edge arrow size'); queueRender(true); });
             $('#mulEdgeLabelColor').addEventListener('input', e => { for (const id of edgeIds) {
                 const ed = edgeById(id);
                 if (ed)
@@ -6019,6 +6057,7 @@ function renderSelectionPanel() {
                     ed.labelFont = v || undefined;
             } pushHistory('multi edge label font'); queueRender(false); saveSoon(); });
             attachDragNumber($('#mulEdgeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+            attachDragNumber($('#mulEdgeArrowSize'), { min: 4, max: 40, step: 1, sensitivity: 0.5 });
             attachDragNumber($('#mulEdgeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
             $('#mulResetEdgeStyle').addEventListener('click', () => {
                 for (const id of edgeIds) {
@@ -6028,6 +6067,7 @@ function renderSelectionPanel() {
                     delete ed.color;
                     delete ed.strokeSize;
                     delete ed.strokeStyle;
+                    delete ed.arrowSize;
                     delete ed.labelColor;
                     delete ed.labelSize;
                     delete ed.labelFont;
@@ -6174,6 +6214,7 @@ function renderSelectionPanel() {
           <label class="field" for="selEdgeColor">${I18N.t('color')} <input id="selEdgeColor" type="color" value="${esc(v.color)}"></label>
           <label class="field" for="selEdgeStrokeSize">${I18N.t('stroke_size')} <input id="selEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="${v.strokeSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeStrokeStyle">${I18N.t('stroke_style')} <select id="selEdgeStrokeStyle"><option value="">${I18N.t('stroke_inherit')}</option>${strokeOptions}</select></label>
+          <label class="field" for="selEdgeArrowSize">${I18N.t('arrow_size')} <input id="selEdgeArrowSize" type="number" min="4" max="40" step="1" value="${v.arrowSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeLabelColor">${I18N.t('label_color')} <input id="selEdgeLabelColor" type="color" value="${esc(v.labelColor)}"></label>
           <label class="field" for="selEdgeLabelSize">${I18N.t('label_size')} <input id="selEdgeLabelSize" type="number" min="4" max="72" value="${v.labelSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeLabelFont">${I18N.t('label_font')} <input id="selEdgeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
@@ -6195,17 +6236,20 @@ function renderSelectionPanel() {
         $('#selEdgeColor').addEventListener('change', () => pushHistory());
         $('#selEdgeStrokeSize').addEventListener('change', ev => { e.strokeSize = clamp(finite(ev.target.value, 2.4), 0, 20); ev.target.value = e.strokeSize; pushHistory(); queueRender(false); });
         $('#selEdgeStrokeStyle').addEventListener('change', ev => { e.strokeStyle = ev.target.value; pushHistory(); queueRender(false); });
+        $('#selEdgeArrowSize').addEventListener('change', ev => { e.arrowSize = clamp(finite(ev.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); ev.target.value = e.arrowSize; pushHistory(); queueRender(true); });
         $('#selEdgeLabelColor').addEventListener('input', ev => { e.labelColor = ev.target.value; queueRender(false); saveSoon(); });
         $('#selEdgeLabelColor').addEventListener('change', () => pushHistory());
         $('#selEdgeLabelSize').addEventListener('change', ev => { e.labelSize = clamp(finite(ev.target.value, 12), 4, 72); ev.target.value = e.labelSize; pushHistory(); queueRender(false); });
         $('#selEdgeLabelFont').addEventListener('change', ev => { e.labelFont = ev.target.value.slice(0, 60) || undefined; pushHistory(); queueRender(false); });
         attachDragNumber($('#selEdgeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+        attachDragNumber($('#selEdgeArrowSize'), { min: 4, max: 40, step: 1, sensitivity: 0.5 });
         attachDragNumber($('#selEdgeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
         $('#selDelete').addEventListener('click', deleteSelected);
         $('#selResetEdgeStyle').addEventListener('click', () => {
             delete e.color;
             delete e.strokeSize;
             delete e.strokeStyle;
+            delete e.arrowSize;
             delete e.labelColor;
             delete e.labelSize;
             delete e.labelFont;
@@ -6975,6 +7019,8 @@ function addEdge(from, to) {
                 e.strokeStyle = s.edgeStrokeStyle;
             else
                 e.strokeStyle = '';
+            if (ts.arrowSize == null)
+                e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
             if (!ts.labelColor)
                 e.labelColor = s.edgeLabelColor;
             else
@@ -6988,6 +7034,7 @@ function addEdge(from, to) {
             e.color = s.edgeColor;
             e.strokeSize = s.edgeStrokeSize;
             e.strokeStyle = s.edgeStrokeStyle;
+            e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
             e.labelColor = s.edgeLabelColor;
             e.labelFont = s.edgeLabelFont;
             e.labelSize = s.edgeLabelSize;
@@ -6997,6 +7044,7 @@ function addEdge(from, to) {
         e.color = s.edgeColor;
         e.strokeSize = s.edgeStrokeSize;
         e.strokeStyle = s.edgeStrokeStyle;
+        e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
         e.labelColor = s.edgeLabelColor;
         e.labelFont = s.edgeLabelFont;
         e.labelSize = s.edgeLabelSize;
@@ -7187,9 +7235,9 @@ function setMatrixCell(from, to, raw) {
                 id: 'e' + state.nextEdge++, from, to,
                 weight: values[i].slice(0, 50),
                 label: tpl.label || '',
-                directed: tpl.directed,
+                directed: tpl.directed, direction: tpl.direction,
                 type: tpl.type || '',
-                color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle,
+                color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle, arrowSize: tpl.arrowSize,
                 labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize
             });
         }
@@ -7213,6 +7261,8 @@ function setMatrixCell(from, to, raw) {
                     e.strokeStyle = s.edgeStrokeStyle;
                 else
                     e.strokeStyle = '';
+                if (ts.arrowSize == null)
+                    e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
                 if (!ts.labelColor)
                     e.labelColor = s.edgeLabelColor;
                 else
@@ -7226,6 +7276,7 @@ function setMatrixCell(from, to, raw) {
                 e.color = s.edgeColor;
                 e.strokeSize = s.edgeStrokeSize;
                 e.strokeStyle = s.edgeStrokeStyle;
+                e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
                 e.labelColor = s.edgeLabelColor;
                 e.labelFont = s.edgeLabelFont;
                 e.labelSize = s.edgeLabelSize;
@@ -9563,10 +9614,10 @@ function csvUnescapeCell(v) {
 }
 function rowsToCsv(rows) { return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
 function edgeCsv() {
-    const rows = [['id', 'source_id', 'source_label', 'target_id', 'target_label', 'weight', 'directed', 'label', 'type', 'color', 'stroke_size', 'stroke_style', 'label_color', 'label_size']];
+    const rows = [['id', 'source_id', 'source_label', 'target_id', 'target_label', 'weight', 'directed', 'label', 'type', 'color', 'stroke_size', 'stroke_style', 'arrow_size', 'label_color', 'label_size']];
     for (const e of state.edges) {
         const a = nodeById(e.from), b = nodeById(e.to);
-        rows.push([e.id, e.from, a?.label || '', e.to, b?.label || '', e.weight, edgeDirection(e), e.label, e.type || '', e.color || '', e.strokeSize ?? '', e.strokeStyle || '', e.labelColor || '', e.labelSize ?? '']);
+        rows.push([e.id, e.from, a?.label || '', e.to, b?.label || '', e.weight, edgeDirection(e), e.label, e.type || '', e.color || '', e.strokeSize ?? '', e.strokeStyle || '', e.arrowSize ?? '', e.labelColor || '', e.labelSize ?? '']);
     }
     return rowsToCsv(rows);
 }
@@ -9826,6 +9877,8 @@ function exportDotText() {
             attrs.push(`dir=${dotString('none')}`);
         else
             attrs.push(`dir=${dotString('forward')}`);
+        if (v.arrowSize != null)
+            attrs.push(`arrowsize=${dotString(String(v.arrowSize))}`);
         lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -9864,6 +9917,7 @@ function exportGraphmlText() {
         `  <key id="edgeLabelSize" for="edge" attr.name="label.size" attr.type="double"/>`,
         `  <key id="directed" for="edge" attr.name="directed" attr.type="boolean"/>`,
         `  <key id="direction" for="edge" attr.name="direction" attr.type="string"/>`,
+        `  <key id="arrowSize" for="edge" attr.name="arrow.size" attr.type="double"/>`,
         `  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>`,
         `  <key id="edgeWeightMode" for="graph" attr.name="edge.weight.mode" attr.type="string"/>`,
         `  <key id="edgeWeightMin" for="graph" attr.name="edge.weight.min" attr.type="double"/>`,
@@ -9941,6 +9995,7 @@ function exportGraphmlText() {
         parts.push(`      <data key="edgeLabelSize">${xmlEsc(v.labelSize)}</data>`);
         parts.push(`      <data key="directed">${directedBool ? 'true' : 'false'}</data>`);
         parts.push(`      <data key="direction">${xmlEsc(dir)}</data>`);
+        parts.push(`      <data key="arrowSize">${xmlEsc(v.arrowSize)}</data>`);
         parts.push(`    </edge>`);
         lines.push(parts.join('\n'));
     }
@@ -10159,7 +10214,7 @@ function importEdgesCsv(text, append) {
     const idx = name => header.indexOf(name);
     const iId = idx('id'), iFrom = idx('source_id') >= 0 ? idx('source_id') : idx('from'), iTo = idx('target_id') >= 0 ? idx('target_id') : idx('to');
     const iWeight = idx('weight'), iLabel = idx('label'), iDirected = idx('directed'), iType = idx('type');
-    const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
+    const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style'), iArrowSize = idx('arrow_size');
     if (iFrom < 0 || iTo < 0) {
         toast(I18N.t('csv_needs_cols'));
         return;
@@ -10205,6 +10260,8 @@ function importEdgesCsv(text, append) {
             e.strokeSize = clamp(parseFloat(row[iStrokeSize]) || 2.4, 0, 20);
         if (iStrokeStyle >= 0 && row[iStrokeStyle])
             e.strokeStyle = row[iStrokeStyle];
+        if (iArrowSize >= 0 && row[iArrowSize])
+            e.arrowSize = clamp(parseFloat(row[iArrowSize]) || DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         edges.push(e);
         parsed++;
     }
@@ -10444,6 +10501,8 @@ function parseDot(text) {
             if (ss)
                 e.strokeStyle = ss;
         }
+        if (attrs.arrowsize != null)
+            e.arrowSize = clamp(finite(attrs.arrowsize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
         if (attrs.dir) {
             const dir = String(attrs.dir).toLowerCase();
@@ -10659,7 +10718,7 @@ function parseGraphml(text) {
     const keyDefaultsByFor = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
-    const reservedAttrNames = new Set(['label', 'id', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'stroke.color', 'stroke.size', 'stroke.style', 'label.color', 'label.font', 'label.size', 'label.position', 'weight', 'direction', 'labels.policy', 'edge.weight.mode', 'edge.weight.min', 'edge.weight.max', 'edge.weight.corr', 'edge.width.min', 'edge.width.max', 'edge.weight.colorlow', 'edge.weight.colorhigh', 'canvas.bg.color', 'grid.minor.color', 'grid.major.color', 'grid.minor.alpha', 'grid.major.alpha']);
+    const reservedAttrNames = new Set(['label', 'id', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'stroke.color', 'stroke.size', 'stroke.style', 'arrow.size', 'arrowSize', 'label.color', 'label.font', 'label.size', 'label.position', 'weight', 'direction', 'labels.policy', 'edge.weight.mode', 'edge.weight.min', 'edge.weight.max', 'edge.weight.corr', 'edge.width.min', 'edge.width.max', 'edge.weight.colorlow', 'edge.weight.colorhigh', 'canvas.bg.color', 'grid.minor.color', 'grid.major.color', 'grid.minor.alpha', 'grid.major.alpha']);
     const customAttributes = [];
     doc.querySelectorAll('key').forEach(k => {
         const id = k.getAttribute('id');
@@ -10795,6 +10854,10 @@ function parseGraphml(text) {
                 ed.labelSize = f.size;
         }
     }
+    if (edgeKeyDefs['arrow.size'] != null)
+        ed.arrowSize = clamp(finite(edgeKeyDefs['arrow.size'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+    if (edgeKeyDefs['arrowsize'] != null)
+        ed.arrowSize = clamp(finite(edgeKeyDefs['arrowsize'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     if (edgeKeyDefs.weight != null)
         ed.weight = String(edgeKeyDefs.weight);
     if (Object.keys(ed).length)
@@ -10880,6 +10943,8 @@ function parseGraphml(text) {
             edge.strokeSize = clamp(finite(d.strokesize ?? d['stroke.size'], 2.4), 0, 20);
         if (d.strokestyle || d['stroke.style'] || d.style)
             edge.strokeStyle = parseStrokeStyle(d.strokestyle || d['stroke.style'] || d.style);
+        if (d.arrowsize != null || d['arrow.size'] != null)
+            edge.arrowSize = clamp(finite(d.arrowsize ?? d['arrow.size'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         const elc = parseColor(d.labelcolor || d['label.color']);
         if (elc)
             edge.labelColor = elc;
@@ -11655,6 +11720,7 @@ function syncStyleControls() {
     set('defEdgeColor', ed.color);
     set('defEdgeStrokeSize', ed.strokeSize);
     set('defEdgeStrokeStyle', ed.strokeStyle);
+    set('defEdgeArrowSize', ed.arrowSize);
     set('defEdgeLabelColor', ed.labelColor);
     set('defEdgeLabelFont', ed.labelFont);
     set('defEdgeLabelSize', ed.labelSize);
@@ -11739,6 +11805,7 @@ function applyEdgeDefaultsToAll() {
         delete e.color;
         delete e.strokeSize;
         delete e.strokeStyle;
+        delete e.arrowSize;
         delete e.labelColor;
         delete e.labelSize;
         delete e.labelFont;
@@ -11766,6 +11833,7 @@ function applyEdgeDefaultsToSelected() {
         delete e.color;
         delete e.strokeSize;
         delete e.strokeStyle;
+        delete e.arrowSize;
         delete e.labelColor;
         delete e.labelSize;
         delete e.labelFont;
@@ -11810,6 +11878,7 @@ function loadEdgeTypeStyleForm(type) {
     $('#etsColor').value = ts.color || '#94a3b8';
     $('#etsStrokeSize').value = ts.strokeSize != null ? ts.strokeSize : 2.4;
     $('#etsStrokeStyle').value = ts.strokeStyle || '';
+    $('#etsArrowSize').value = ts.arrowSize != null ? ts.arrowSize : '';
     $('#etsLabelColor').value = ts.labelColor || '#dbeafe';
     $('#etsLabelSize').value = ts.labelSize != null ? ts.labelSize : 12;
     $('#etsLabelFont').value = ts.labelFont || '';
@@ -11867,6 +11936,9 @@ function saveEdgeTypeStyle() {
     };
     if ($('#etsStrokeStyle').value)
         o.strokeStyle = $('#etsStrokeStyle').value;
+    const av = $('#etsArrowSize').value;
+    if (av !== '')
+        o.arrowSize = clamp(finite(av, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     if ($('#etsLabelFont').value.trim())
         o.labelFont = $('#etsLabelFont').value.trim().slice(0, 60);
     state.settings.edgeTypeStyles[type] = o;
@@ -11955,6 +12027,7 @@ function clearEdgeOverridesForType() {
             delete e.color;
             delete e.strokeSize;
             delete e.strokeStyle;
+            delete e.arrowSize;
             delete e.labelColor;
             delete e.labelSize;
             delete e.labelFont;
@@ -12018,6 +12091,8 @@ function applyTypeStyleToEdge(e) {
     if (ts.strokeStyle) {
         e.strokeStyle = '';
     }
+    if (ts.arrowSize != null)
+        delete e.arrowSize;
     if (ts.labelColor) {
         e.labelColor = '';
     }
@@ -12145,6 +12220,8 @@ function applyPresetToSelection(idx) {
                 e.strokeSize = se.strokeSize;
             if (se.strokeStyle)
                 e.strokeStyle = se.strokeStyle;
+            if (se.arrowSize != null)
+                e.arrowSize = se.arrowSize;
             if (se.labelColor)
                 e.labelColor = se.labelColor;
             if (se.labelSize != null)
@@ -12203,6 +12280,7 @@ async function savePresetFromSelection() {
                 color: e.color || v.color,
                 strokeSize: e.strokeSize != null ? e.strokeSize : v.strokeSize,
                 strokeStyle: e.strokeStyle || v.strokeStyle,
+                arrowSize: e.arrowSize != null ? e.arrowSize : v.arrowSize,
                 labelColor: e.labelColor || v.labelColor,
                 labelSize: e.labelSize || v.labelSize,
                 labelFont: e.labelFont || v.labelFont
@@ -12468,6 +12546,8 @@ function wireUi() {
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0, 60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value, 12), 4, 72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
+    if ($('#edgeArrowSize'))
+        $('#edgeArrowSize').addEventListener('change', e => { state.settings.edgeArrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = state.settings.edgeArrowSize; pushHistory('edge arrow size'); queueRender(true); });
     $('#edgeDirected').addEventListener('change', e => { const v = e.target.value || e.target.checked; const dir = normalizeDirection(v); state.settings.direction = dir; state.settings.directed = dir !== 'undirected'; saveSoon(); });
     $('#optAutosave').addEventListener('change', e => {
         state.settings.autosave = e.target.checked;
@@ -12956,6 +13036,8 @@ function wireUi() {
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value, 2.4), 0, 20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
     $('#defEdgeStrokeStyle').addEventListener('change', e => { ed().strokeStyle = e.target.value; pushHistory('default edge stroke style'); queueRender(false); });
+    if ($('#defEdgeArrowSize'))
+        $('#defEdgeArrowSize').addEventListener('change', e => { ed().arrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = ed().arrowSize; pushHistory('default edge arrow size'); queueRender(true); });
     $('#defEdgeLabelColor').addEventListener('input', e => { ed().labelColor = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeLabelColor').addEventListener('change', () => pushHistory('default edge label color'));
     $('#defEdgeLabelFont').addEventListener('change', e => { ed().labelFont = e.target.value; pushHistory('default edge label font'); queueRender(false); });

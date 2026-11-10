@@ -46,8 +46,8 @@
   }
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
   function edgeCsv(){
-    const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','label_color','label_size']];
-    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.labelColor||'',e.labelSize??'']); }
+    const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','arrow_size','label_color','label_size']];
+    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.arrowSize??'',e.labelColor||'',e.labelSize??'']); }
     return rowsToCsv(rows);
   }
   function nodeCsv(){
@@ -245,6 +245,7 @@
       if(dir === 'mutual') attrs.push(`dir=${dotString('both')}`);
       else if(dir === 'undirected') attrs.push(`dir=${dotString('none')}`);
       else attrs.push(`dir=${dotString('forward')}`);
+      if(v.arrowSize != null) attrs.push(`arrowsize=${dotString(String(v.arrowSize))}`);
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -283,6 +284,7 @@
       `  <key id="edgeLabelSize" for="edge" attr.name="label.size" attr.type="double"/>`,
       `  <key id="directed" for="edge" attr.name="directed" attr.type="boolean"/>`,
       `  <key id="direction" for="edge" attr.name="direction" attr.type="string"/>`,
+      `  <key id="arrowSize" for="edge" attr.name="arrow.size" attr.type="double"/>`,
       `  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>`,
       `  <key id="edgeWeightMode" for="graph" attr.name="edge.weight.mode" attr.type="string"/>`,
       `  <key id="edgeWeightMin" for="graph" attr.name="edge.weight.min" attr.type="double"/>`,
@@ -358,6 +360,7 @@
       parts.push(`      <data key="edgeLabelSize">${xmlEsc(v.labelSize)}</data>`);
       parts.push(`      <data key="directed">${directedBool ? 'true' : 'false'}</data>`);
       parts.push(`      <data key="direction">${xmlEsc(dir)}</data>`);
+      parts.push(`      <data key="arrowSize">${xmlEsc(v.arrowSize)}</data>`);
       parts.push(`    </edge>`);
       lines.push(parts.join('\n'));
     }
@@ -519,7 +522,7 @@
     const idx = name => header.indexOf(name);
     const iId = idx('id'), iFrom = idx('source_id') >= 0 ? idx('source_id') : idx('from'), iTo = idx('target_id') >= 0 ? idx('target_id') : idx('to');
     const iWeight = idx('weight'), iLabel = idx('label'), iDirected = idx('directed'), iType = idx('type');
-    const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
+    const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style'), iArrowSize = idx('arrow_size');
     if(iFrom < 0 || iTo < 0){ toast(I18N.t('csv_needs_cols')); return; }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
     const idSet = new Set(state.nodes.map(n => n.id));
@@ -550,6 +553,7 @@
       if(iColor >= 0 && row[iColor]) e.color = row[iColor];
       if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(parseFloat(row[iStrokeSize])||2.4, 0, 20);
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
+      if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(parseFloat(row[iArrowSize])||DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       edges.push(e); parsed++;
     }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
@@ -730,6 +734,7 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
+      if(attrs.arrowsize != null) (e as any).arrowSize = clamp(finite(attrs.arrowsize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
       if(attrs.dir){
         const dir = String(attrs.dir).toLowerCase();
@@ -886,7 +891,7 @@
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
-    const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
+    const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','arrow.size','arrowSize','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
     const customAttributes: GraphState['customAttributes'] = [];
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
@@ -973,6 +978,8 @@
     if(edgeKeyDefs['stroke.size'] != null) ed.strokeSize = clamp(finite(edgeKeyDefs['stroke.size'], 2.4), 0, 20);
     if(edgeKeyDefs.style) ed.strokeStyle = parseStrokeStyle(edgeKeyDefs.style) || undefined;
     if(edgeKeyDefs['label.font']){ const f = parseQvgeFont(edgeKeyDefs['label.font']); if(f){ ed.labelFont = f.family; if(f.size != null) ed.labelSize = f.size; } }
+    if(edgeKeyDefs['arrow.size'] != null) ed.arrowSize = clamp(finite(edgeKeyDefs['arrow.size'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+    if(edgeKeyDefs['arrowsize'] != null) ed.arrowSize = clamp(finite(edgeKeyDefs['arrowsize'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     if(edgeKeyDefs.weight != null) ed.weight = String(edgeKeyDefs.weight);
     if(Object.keys(ed).length) settings.edgeDefaults = ed;
 
@@ -1029,6 +1036,7 @@
       const ec = parseColor(d.color || d.edgecolor); if(ec) edge.color = ec;
       if(d.strokesize != null || d['stroke.size'] != null) edge.strokeSize = clamp(finite(d.strokesize ?? d['stroke.size'], 2.4), 0, 20);
       if(d.strokestyle || d['stroke.style'] || d.style) edge.strokeStyle = parseStrokeStyle(d.strokestyle || d['stroke.style'] || d.style);
+      if(d.arrowsize != null || d['arrow.size'] != null) edge.arrowSize = clamp(finite(d.arrowsize ?? d['arrow.size'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       const elc = parseColor(d.labelcolor || d['label.color']); if(elc) edge.labelColor = elc;
       if(d.labelsize != null || d['label.size'] != null) edge.labelSize = clamp(finite(d.labelsize ?? d['label.size'], 12), 4, 72);
       if(d.labelfont || d['label.font']){ const f = parseQvgeFont(d.labelfont || d['label.font']); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }

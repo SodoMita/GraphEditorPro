@@ -321,6 +321,7 @@
     set('defEdgeColor', ed.color);
     set('defEdgeStrokeSize', ed.strokeSize);
     set('defEdgeStrokeStyle', ed.strokeStyle);
+    set('defEdgeArrowSize', ed.arrowSize);
     set('defEdgeLabelColor', ed.labelColor);
     set('defEdgeLabelFont', ed.labelFont);
     set('defEdgeLabelSize', ed.labelSize);
@@ -371,7 +372,7 @@
   function applyEdgeDefaultsToAll(){
     const d = state.settings.edgeDefaults;
     for(const e of state.edges){
-      delete e.color; delete e.strokeSize; delete e.strokeStyle;
+      delete e.color; delete e.strokeSize; delete e.strokeStyle; delete e.arrowSize;
       delete e.labelColor; delete e.labelSize; delete e.labelFont;
       if(d.type){
         e.type = d.type;
@@ -386,7 +387,7 @@
     const d = state.settings.edgeDefaults;
     for(const id of edgeIds){
       const e = edgeById(id); if(!e) continue;
-      delete e.color; delete e.strokeSize; delete e.strokeStyle;
+      delete e.color; delete e.strokeSize; delete e.strokeStyle; delete e.arrowSize;
       delete e.labelColor; delete e.labelSize; delete e.labelFont;
       if(d.type){
         e.type = d.type;
@@ -425,6 +426,7 @@
     $('#etsColor').value = ts.color || '#94a3b8';
     $('#etsStrokeSize').value = ts.strokeSize != null ? ts.strokeSize : 2.4;
     $('#etsStrokeStyle').value = ts.strokeStyle || '';
+    $('#etsArrowSize').value = ts.arrowSize != null ? ts.arrowSize : '';
     $('#etsLabelColor').value = ts.labelColor || '#dbeafe';
     $('#etsLabelSize').value = ts.labelSize != null ? ts.labelSize : 12;
     $('#etsLabelFont').value = ts.labelFont || '';
@@ -465,6 +467,7 @@
       labelSize: clamp(finite($('#etsLabelSize').value, 12), 4, 72)
     };
     if($('#etsStrokeStyle').value) o.strokeStyle = $('#etsStrokeStyle').value;
+    const av = $('#etsArrowSize').value; if(av !== '') o.arrowSize = clamp(finite(av, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     if($('#etsLabelFont').value.trim()) o.labelFont = $('#etsLabelFont').value.trim().slice(0, 60);
     state.settings.edgeTypeStyles[type] = o;
     // Apply type style to all existing edges of this type (clears blocking overrides)
@@ -514,7 +517,7 @@
     let count = 0;
     for(const e of state.edges){
       if(e.type === type){
-        delete e.color; delete e.strokeSize; delete e.strokeStyle;
+        delete e.color; delete e.strokeSize; delete e.strokeStyle; delete e.arrowSize;
         delete e.labelColor; delete e.labelSize; delete e.labelFont;
         e.color = '';
         count++;
@@ -549,6 +552,7 @@
     if(ts.color){ e.color = ''; }
     if(ts.strokeSize != null) delete e.strokeSize;
     if(ts.strokeStyle){ e.strokeStyle = ''; }
+    if(ts.arrowSize != null) delete e.arrowSize;
     if(ts.labelColor){ e.labelColor = ''; }
     if(ts.labelSize != null) delete e.labelSize;
     if(ts.labelFont) delete e.labelFont;
@@ -637,6 +641,7 @@
         if(se.color) e.color = se.color;
         if(se.strokeSize != null) e.strokeSize = se.strokeSize;
         if(se.strokeStyle) e.strokeStyle = se.strokeStyle;
+        if(se.arrowSize != null) e.arrowSize = se.arrowSize;
         if(se.labelColor) e.labelColor = se.labelColor;
         if(se.labelSize != null) e.labelSize = se.labelSize;
         if(se.labelFont) e.labelFont = se.labelFont;
@@ -682,6 +687,7 @@
           color: e.color || v.color,
           strokeSize: e.strokeSize != null ? e.strokeSize : v.strokeSize,
           strokeStyle: e.strokeStyle || v.strokeStyle,
+          arrowSize: e.arrowSize != null ? e.arrowSize : v.arrowSize,
           labelColor: e.labelColor || v.labelColor,
           labelSize: e.labelSize || v.labelSize,
           labelFont: e.labelFont || v.labelFont

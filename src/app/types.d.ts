@@ -54,6 +54,7 @@ interface GraphEdge {
   color?: string;
   strokeSize?: number;
   strokeStyle?: string;
+  arrowSize?: number;
   labelColor?: string;
   labelSize?: number;
   labelFont?: string;
