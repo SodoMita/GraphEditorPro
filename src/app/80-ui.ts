@@ -18,9 +18,12 @@
       const index = Number(row?.dataset.customAttribute);
       if(!Number.isInteger(index) || !state.customAttributes[index]) return;
       if(button.dataset.attributeAction === 'delete'){
+        const removedId = state.customAttributes[index].id;
         state.customAttributes.splice(index, 1);
-        renderCustomAttributes(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
+        stripCustomAttributeValues(removedId);
+        renderCustomAttributes(); renderSelectionPanel(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
       }
+      const oldId = state.customAttributes[index].id;
       const idInput = row.querySelector('[data-attribute-field="id"]');
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
@@ -30,7 +33,8 @@
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
       const type = row.querySelector('[data-attribute-field="type"]').value;
       state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'};
-      renderCustomAttributes(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
+      if(oldId !== id) renameCustomAttributeValues(oldId, id);
+      renderCustomAttributes(); renderSelectionPanel(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
     });
     canvasWrap.addEventListener('selectstart', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
     canvasWrap.addEventListener('contextmenu', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });

@@ -710,7 +710,22 @@
     }
   }
   const CUSTOM_ATTRIBUTE_TYPES = ['boolean','int','long','float','double','string'];
+  // Graph-scope custom property values (document-wide). Node/edge values live in
+  // the selection panel; graph values have no "selection", so they are edited
+  // here, right under the definitions they belong to.
+  function renderGraphCustomProps(){
+    const host = $('#graphCustomProps');
+    if(!host) return;
+    const defs = definedCustomAttributes('graph');
+    if(!defs.length){
+      host.innerHTML = `<div class="tiny muted">${esc(I18N.t('graph_values_none'))}</div>`;
+      return;
+    }
+    host.innerHTML = customPropsSectionHtml('graph', ['graph'], false);
+    wireCustomProps(host, 'graph', ['graph'], false);
+  }
   function renderCustomAttributes(){
+    renderGraphCustomProps();
     const host = $('#customAttributesList');
     if(!host) return;
     if(!state.customAttributes.length){

@@ -59,6 +59,25 @@ A numeric readout (delta, angle, factor, or frame size) follows the drag on the 
 
 Implementation notes: `src/app/45-gizmo.ts` owns the gizmo's preferences, rendering, gestures and keyboard nudging; the rest of the app only keeps render/selection notifications, pointermove/pointerup routing, and button/hotkey wiring. The active tool and show/hide choice are browser UI preferences in `localStorage` (`graph-editor-pro-gizmo`), not document data — they never enter exports, autosaves or undo snapshots, and toggling visibility cannot create a history step (legacy autosaves that still carry the old document fields are migrated once on load). The gizmo lives in its own `#gizmoLayer` inside the camera scene, above the nodes, and is rebuilt only when its signature (tool, selection ids, pivot, bounds, screen-pixel size, drag state) changes. Handles are sized in world units per screen pixel, so they keep a constant on-screen size at any zoom; only handle shapes take pointer events (lines and the rotate ring are stroke-only), so the frame never blocks the nodes under it. During an ordinary group drag the whole gizmo follows with a single transform write on its root instead of a rebuild.
 
+## Custom properties
+
+User-defined **custom attributes** (the Data tab → *Custom attributes* section) can carry values, not just definitions. Every attribute has an ID, a scope (`graph`, `node` or `edge`) and a GraphML type (`boolean`, `int`, `long`, `float`, `double`, `string`), and the matching editors appear where the value lives:
+
+| Scope | Where values are set and viewed |
+| --- | --- |
+| `graph` | Data tab, **Graph values** block under the definitions |
+| `node` | Selection panel in the Edit tab (single selection, or applied to all selected nodes) |
+| `edge` | Selection panel in the Edit tab (single selection, or applied to all selected edges) |
+
+Values follow the definition's type: a tri-state select for `boolean` (unset / true / false), a free-text numeric field for the numeric types (rejected with a toast and reverted to the stored value if it is not a number — text inputs with `inputmode`, not `type="number"`, so garbage can never masquerade as "empty"), and a plain text field capped at 1000 characters for `string`. An empty field unsets the value (except multi-select text/number fields, where empty means *keep*, matching the other multi-edit inputs); values for a definition that is deleted are stripped, and renaming an ID moves the values with it. Setting a value is one undo step.
+
+Persistence and interop:
+
+- **JSON** (the native format) and **GraphML** carry both definitions and values, including values on the graph element itself. The GraphML importer coerces `<data>` payloads to the declared types; QVGE files with custom keys round-trip with their values intact.
+- **DOT** and the three CSV exporters intentionally carry only their documented subsets and skip custom properties.
+- Append-mode imports merge the imported definitions with the current ones (current wins on ID conflicts) so imported values are not pruned, and graph-scope values merge with the imported values taking precedence. History snapshots, autosave and the sanitizer all round-trip the values; unknown attribute IDs and anything but `string|number|boolean` scalars are dropped/coerced at the door.
+- Copy/paste/duplicate deep-copies the value maps, so a pasted selection never shares custom property state with the original.
+
 ## Build and safety guarantees
 
 The build fails if any of these guarantees are broken:

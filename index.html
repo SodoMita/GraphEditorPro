@@ -291,6 +291,14 @@
     .custom-attribute-row .field{min-width:0}
     .custom-attribute-actions{justify-content:flex-end;margin-top:8px}
     .custom-attribute-fields input,.custom-attribute-fields select{min-width:0;width:100%}
+    /* ---------- Custom property value rows (graph / node / edge) ---------- */
+    .custom-props{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+    .custom-props-empty{margin-top:6px}
+    .custom-prop-row{min-width:0}
+    .custom-prop-label{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:55%}
+    .custom-prop-id{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .custom-prop-type{font-size:11px;font-weight:400;color:var(--muted,#94a3b8);border:1px solid var(--line,#334155);border-radius:999px;padding:0 7px;white-space:nowrap}
+    .custom-prop-row input,.custom-prop-row select{min-width:0;width:100%}
 
     /* ---------- Collapsible sections ---------- */
     .section{
@@ -1323,6 +1331,11 @@
                 </div>
                 <button id="btnAddCustomAttribute" class="btn small good" type="button" style="margin-top:8px" data-i18n="add_attribute">Add attribute</button>
                 <div id="customAttributesList" class="custom-attributes-list" style="margin-top:8px"></div>
+                <div id="graphCustomPropsWrap" style="margin-top:10px">
+                  <div class="section-title" data-i18n="graph_values">Graph values</div>
+                  <p class="tiny muted" style="margin:2px 0 6px" data-i18n="graph_values_help">Values of graph-scope attributes. They apply to the whole document.</p>
+                  <div id="graphCustomProps" class="custom-props"></div>
+                </div>
               </div>
             </details>
 
@@ -1954,6 +1967,14 @@ const I18N = {
         'attribute_id_reserved': { en: 'This ID is reserved for a built-in GraphML attribute.', ru: 'Этот ID зарезервирован встроенным атрибутом GraphML.' },
         'attribute_added': { en: 'Custom attribute added', ru: 'Пользовательский атрибут добавлен' },
         'attribute_updated': { en: 'Custom attribute updated', ru: 'Пользовательский атрибут изменён' },
+        'custom_properties': { en: 'Custom properties', ru: 'Пользовательские свойства' },
+        'custom_prop_unset': { en: '(unset)', ru: '(не задано)' },
+        'custom_prop_title': { en: 'Custom property. An empty field clears the value.', ru: 'Пользовательское свойство. Пустое поле удаляет значение.' },
+        'custom_prop_none': { en: 'No custom properties. Define them in the Data tab (Custom attributes).', ru: 'Пользовательских свойств нет. Задайте их на вкладке «Данные» (Пользовательские атрибуты).' },
+        'graph_values': { en: 'Graph values', ru: 'Значения графа' },
+        'graph_values_help': { en: 'Values of graph-scope attributes. They apply to the whole document.', ru: 'Значения атрибутов, заданных для графа. Действуют на весь документ.' },
+        'graph_values_none': { en: 'No graph-scope attributes defined yet. Add one above with scope “Graph”.', ru: 'Атрибуты для графа ещё не заданы. Добавьте их выше с областью «Граф».' },
+        'attribute_invalid_number': { en: 'That value is not a valid number.', ru: 'Это значение не является корректным числом.' },
         'attribute_deleted': { en: 'Custom attribute deleted', ru: 'Пользовательский атрибут удалён' },
         'import_export': { en: 'Import / export', ru: 'Импорт / экспорт' },
         'append_mode': { en: 'Append to current graph (keep existing nodes/edges, styles, and background)', ru: 'Добавить к текущему графу (сохранить существующие узлы, рёбра, стили и фон)' },
@@ -2763,7 +2784,7 @@ const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label', 'nodeId', 'order', 'x', 
 const FONT_FAMILIES = ['Inter', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New'];
 const defaultState = () => ({
     title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
-    nodes: [], edges: [], customAttributes: [],
+    nodes: [], edges: [], customAttributes: [], graphCustom: {},
     selected: null, selection: { nodes: [], edges: [] },
     settings: {
         // Edit-tab node placement (primary for newly added nodes)
@@ -2836,7 +2857,7 @@ function snapshot() {
     const vb = currentCamera(); // persist active camera without forcing a mid-gesture SVG commit
     return JSON.stringify({
         title: state.title, mode: state.mode, selectTool: state.selectTool, selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
-        nodes: state.nodes, edges: state.edges, customAttributes: state.customAttributes, settings: state.settings, viewBox: vb,
+        nodes: state.nodes, edges: state.edges, customAttributes: state.customAttributes, graphCustom: state.graphCustom, settings: state.settings, viewBox: vb,
         // Preserve user focus across undo/redo so editing the same object stays ergonomic
         selected: state.selected, selection: state.selection
     });
@@ -2999,6 +3020,245 @@ function updateUndoRedo() {
     $('#btnRedo').disabled = appHistoryIndex >= appHistory.length - 1;
     updateCommandStates();
 }
+// === Custom property values (values of user-defined custom attributes) ===
+// Definitions live in state.customAttributes; values live next to the entity
+// they describe: state.graphCustom for scope 'graph', node.custom / edge.custom
+// (flat id -> scalar maps) otherwise. Values are only kept while their
+// attribute is defined — deleting a definition strips its values — and are
+// always stored as plain string|number|boolean scalars with capped sizes, so a
+// hand-edited file cannot smuggle objects, prototype pollution or huge blobs
+// into the document.
+const CUSTOM_VALUE_MAX = 1000;
+const CUSTOM_VALUE_KEYS_MAX = 200;
+function customAttributeTypeMap(definitions) {
+    const map = new Map();
+    for (const attribute of definitions)
+        map.set(attribute.id, attribute.type);
+    return map;
+}
+function coerceCustomValue(value, type) {
+    const raw = typeof value === 'number' || typeof value === 'boolean' ? String(value) : String(value ?? '');
+    const text = raw.trim();
+    if (type === 'boolean') {
+        if (value === true || /^(true|1|yes|on)$/i.test(text))
+            return true;
+        if (value === false || /^(false|0|no|off)$/i.test(text))
+            return false;
+        return text.slice(0, CUSTOM_VALUE_MAX);
+    }
+    if (type === 'int' || type === 'long') {
+        const numeric = Number(text);
+        if (Number.isFinite(numeric)) {
+            const limit = type === 'int' ? 2147483647 : Number.MAX_SAFE_INTEGER;
+            return clamp(Math.trunc(numeric), -limit, limit);
+        }
+        return text.slice(0, CUSTOM_VALUE_MAX);
+    }
+    if (type === 'float' || type === 'double') {
+        const numeric = Number(text);
+        if (Number.isFinite(numeric))
+            return numeric;
+        return text.slice(0, CUSTOM_VALUE_MAX);
+    }
+    return raw.slice(0, CUSTOM_VALUE_MAX);
+}
+function sanitizeCustomValues(input, typeById) {
+    if (!isRecord(input))
+        return undefined;
+    const out = Object.create(null);
+    let count = 0;
+    for (const rawKey of Object.keys(input)) {
+        if (count >= CUSTOM_VALUE_KEYS_MAX)
+            break;
+        const key = String(rawKey).slice(0, 128);
+        if (!key)
+            continue;
+        const type = typeById.get(key);
+        if (type === undefined)
+            continue; // value without a definition is dropped, not trusted
+        const raw = input[rawKey];
+        if (raw == null)
+            continue;
+        if (typeof raw === 'string' && raw.trim() === '')
+            continue; // empty means unset
+        out[key] = coerceCustomValue(raw, type);
+        count++;
+    }
+    return count ? out : undefined;
+}
+function formatCustomValue(value) {
+    return typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value);
+}
+function definedCustomAttributes(scope) {
+    return state.customAttributes.filter(attribute => attribute.scope === scope);
+}
+function customValueOf(target, id) {
+    const store = target === 'graph' ? state.graphCustom : target.custom;
+    return isRecord(store) ? store[id] : undefined;
+}
+function setCustomValue(target, id, value) {
+    if (target === 'graph') {
+        if (!isRecord(state.graphCustom))
+            state.graphCustom = Object.create(null);
+        state.graphCustom[id] = value;
+        return;
+    }
+    if (!isRecord(target.custom))
+        target.custom = Object.create(null);
+    target.custom[id] = value;
+}
+function unsetCustomValue(target, id) {
+    const store = target === 'graph' ? state.graphCustom : target.custom;
+    if (isRecord(store)) {
+        delete store[id];
+        if (target !== 'graph' && !Object.keys(store).length)
+            delete target.custom;
+    }
+}
+// Removing an attribute definition drops its values everywhere (they have no
+// meaning, and no UI to show them, without the definition). Undo restores both.
+function stripCustomAttributeValues(id) {
+    unsetCustomValue('graph', id);
+    for (const node of state.nodes)
+        unsetCustomValue(node, id);
+    for (const edge of state.edges)
+        unsetCustomValue(edge, id);
+}
+// Renaming an attribute id moves its values with it, so the user does not
+// silently lose what they already typed.
+function renameCustomAttributeValues(oldId, newId) {
+    const stores = [state.graphCustom, ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
+    for (const store of stores) {
+        if (!isRecord(store))
+            continue;
+        if (!Object.prototype.hasOwnProperty.call(store, oldId))
+            continue;
+        store[newId] = store[oldId];
+        delete store[oldId];
+    }
+}
+// Reads one entity-or-graph target and applies a raw control value to every
+// target. Returns 'ok' | 'noop' | 'invalid'. Empty text/number input unsets in
+// single mode and is a no-op in multi mode (so a blanked field cannot wipe a
+// whole selection); the boolean '__unset__' option unsets in multi mode.
+function applyCustomPropValue(def, targets, raw, multi) {
+    const unsetAll = () => { for (const target of targets)
+        unsetCustomValue(target, def.id); };
+    const setAll = (value) => { for (const target of targets)
+        setCustomValue(target, def.id, value); };
+    if (def.type === 'boolean') {
+        if (raw === '') {
+            if (multi)
+                return 'noop';
+            unsetAll();
+            return 'ok';
+        }
+        if (raw === '__unset__') {
+            unsetAll();
+            return 'ok';
+        }
+        if (raw !== 'true' && raw !== 'false')
+            return 'invalid';
+        setAll(raw === 'true');
+        return 'ok';
+    }
+    const text = raw.trim();
+    if (text === '') {
+        if (multi)
+            return 'noop';
+        unsetAll();
+        return 'ok';
+    }
+    if (def.type === 'string') {
+        setAll(text.slice(0, CUSTOM_VALUE_MAX));
+        return 'ok';
+    }
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric))
+        return 'invalid';
+    if (def.type === 'int')
+        setAll(clamp(Math.trunc(numeric), -2147483648, 2147483647));
+    else if (def.type === 'long')
+        setAll(clamp(Math.trunc(numeric), -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER));
+    else
+        setAll(numeric); // float / double
+    return 'ok';
+}
+// Whether every target holds the identical value (used to prefill single
+// controls and to detect "mixed" multi selections).
+function sharedCustomPropValue(targets, id) {
+    const first = targets.length ? customValueOf(targets[0], id) : undefined;
+    for (let i = 1; i < targets.length; i++) {
+        if (customValueOf(targets[i], id) !== first)
+            return { value: undefined, mixed: true };
+    }
+    return { value: first, mixed: false };
+}
+// One row per attribute: an escaped label (id + type badge) and the typed
+// control. All user-visible text goes through esc()/I18N — attribute ids are
+// user input.
+function customPropControlHtml(attr, targets, multi) {
+    const { value, mixed } = sharedCustomPropValue(targets, attr.id);
+    const safeId = esc(attr.id);
+    const common = `class="custom-prop-input" data-custom-attribute="${safeId}" data-custom-type="${esc(attr.type)}" title="${esc(I18N.t('custom_prop_title'))}"`;
+    if (attr.type === 'boolean') {
+        const keepOption = multi ? `<option value="">${esc(I18N.t('keep'))}</option>` : `<option value="">${esc(I18N.t('custom_prop_unset'))}</option>`;
+        const unsetOption = multi ? `<option value="__unset__">${esc(I18N.t('custom_prop_unset'))}</option>` : '';
+        const trueSel = value === true && !mixed ? ' selected' : '';
+        const falseSel = value === false && !mixed ? ' selected' : '';
+        return `<select ${common}>${keepOption}${unsetOption}<option value="true"${trueSel}>true</option><option value="false"${falseSel}>false</option></select>`;
+    }
+    // Text inputs with a decimal/numeric inputmode, not type=number: a browser
+    // number field silently reports "" for anything it cannot parse, which
+    // would turn "clear the field" and "typed garbage" into the same action.
+    // This way garbage reaches the handler, is rejected with a toast, and the
+    // field reverts to the stored value.
+    const isNumeric = attr.type !== 'string';
+    const integer = attr.type === 'int' || attr.type === 'long';
+    const shown = !mixed && value !== undefined ? esc(formatCustomValue(value)) : '';
+    const placeholder = multi ? `placeholder="${esc(I18N.t('keep'))}" data-i18n-placeholder="keep"` : '';
+    const maxlength = isNumeric ? ' maxlength="32"' : ` maxlength="${CUSTOM_VALUE_MAX}"`;
+    return `<input type="text"${maxlength} ${common} value="${shown}" ${placeholder} inputmode="${integer ? 'numeric' : isNumeric ? 'decimal' : 'text'}" autocomplete="off" spellcheck="false">`;
+}
+function customPropsSectionHtml(scope, targets, multi) {
+    const defs = definedCustomAttributes(scope);
+    if (!defs.length) {
+        return `<div class="custom-props custom-props-empty tiny muted" data-scope="${scope}">${esc(I18N.t('custom_prop_none'))}</div>`;
+    }
+    const rows = defs.map(attr => `
+      <label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, targets, multi)}</label>`).join('');
+    return `<div class="custom-props" data-scope="${scope}">${rows}</div>`;
+}
+// Wires the freshly built custom property controls (both the selection panel
+// and the graph values block rebuild their inputs before calling this).
+function wireCustomProps(host, scope, targets, multi) {
+    host.querySelectorAll(`.custom-props[data-scope="${scope}"] .custom-prop-input`).forEach(input => {
+        input.addEventListener('change', () => {
+            const id = input.getAttribute('data-custom-attribute') || '';
+            const def = state.customAttributes.find(attribute => attribute.id === id && attribute.scope === scope);
+            if (!def)
+                return;
+            const result = applyCustomPropValue(def, targets, String(input.value ?? ''), multi);
+            if (result === 'invalid') {
+                toast(I18N.t('attribute_invalid_number'));
+                renderCustomPropHosts();
+                return;
+            }
+            if (result === 'noop')
+                return;
+            pushHistory('custom property');
+            queueRender(false);
+            saveSoon();
+        });
+    });
+}
+// Repaint every surface that shows custom property values (cheap: just the
+// fields, not the canvas). Used after invalid input reverts and after def
+// edits re-render the data panel.
+function renderCustomPropHosts() {
+    renderGraphCustomProps();
+    renderSelectionPanel();
+}
 function sanitizeState(input) {
     const base = defaultState();
     if (!isRecord(input))
@@ -3009,6 +3269,19 @@ function sanitizeState(input) {
     const validLabelPos = (value) => LABEL_POSITIONS.includes(String(value)) ? String(value) : '';
     const validPolicy = (value) => LABEL_POLICIES.includes(String(value)) ? String(value) : 'auto';
     const validColor = (value) => /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : null;
+    const customAttributeTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
+    const customAttributeIds = new Set();
+    const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
+        .slice(0, 500).filter(isRecord).map(attribute => {
+        const id = String(attribute.id ?? '').trim().slice(0, 128);
+        const scope = ['graph', 'node', 'edge'].includes(String(attribute.scope)) ? attribute.scope : null;
+        const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
+        if (!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id))
+            return null;
+        customAttributeIds.add(id);
+        return { id, scope, type };
+    }).filter(Boolean);
+    const customAttributeTypeById = customAttributeTypeMap(customAttributes);
     const usedNodeIds = new Set();
     const nodeReferences = new Map();
     const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, 3000).filter(isRecord) : [];
@@ -3046,6 +3319,9 @@ function sanitizeState(input) {
             node.labelPosition = validLabelPos(n.labelPosition);
         if (n.labelFont)
             node.labelFont = String(n.labelFont).slice(0, 60);
+        const customValues = sanitizeCustomValues(n.custom, customAttributeTypeById);
+        if (customValues)
+            node.custom = customValues;
         return node;
     });
     const nodeIds = new Set(nodes.map(node => node.id));
@@ -3078,6 +3354,9 @@ function sanitizeState(input) {
             edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
         if (e.labelFont)
             edge.labelFont = String(e.labelFont).slice(0, 60);
+        const customValues = sanitizeCustomValues(e.custom, customAttributeTypeById);
+        if (customValues)
+            edge.custom = customValues;
         edges.push(edge);
     });
     const inputSettings = isRecord(source.settings) ? source.settings : {};
@@ -3310,18 +3589,7 @@ function sanitizeState(input) {
     else {
         settings.stylePresets = [];
     }
-    const customAttributeTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
-    const customAttributeIds = new Set();
-    const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
-        .slice(0, 500).filter(isRecord).map(attribute => {
-        const id = String(attribute.id ?? '').trim().slice(0, 128);
-        const scope = ['graph', 'node', 'edge'].includes(String(attribute.scope)) ? attribute.scope : null;
-        const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if (!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id))
-            return null;
-        customAttributeIds.add(id);
-        return { id, scope, type };
-    }).filter(Boolean);
+    const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(...nodes.map(n => Number((n.id.match(/\d+$/) || [0])[0])), finite(source.nextNode, 1) - 1, nodes.length);
     const maxE = Math.max(...edges.map(e => Number((e.id.match(/\d+$/) || [0])[0])), finite(source.nextEdge, 1) - 1, edges.length);
@@ -3334,7 +3602,7 @@ function sanitizeState(input) {
         selection: { nodes: [], edges: [] },
         nextNode: maxN + 1,
         nextEdge: maxE + 1,
-        nodes, edges, customAttributes, settings,
+        nodes, edges, customAttributes, graphCustom, settings,
         viewBox: boundedCamera({ x: finite(vb.x, -500), y: finite(vb.y, -330), w: finite(vb.w, 1000), h: finite(vb.h, 660) })
     };
 }
@@ -5677,6 +5945,8 @@ function renderSelectionPanel() {
           <div class="row" style="margin-top:6px">
             <button id="mulResetNodeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
+            const mulNodeTargets = state.selection.nodes.map(id => nodeById(id)).filter(Boolean);
+            html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('node', mulNodeTargets, true)}`;
         }
         // Edge editing section (if any edges selected)
         if (edgeCount > 0) {
@@ -5697,8 +5967,12 @@ function renderSelectionPanel() {
           <div class="row" style="margin-top:6px">
             <button id="mulResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
+            const mulEdgeTargets = state.selection.edges.map(id => edgeById(id)).filter(Boolean);
+            html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('edge', mulEdgeTargets, true)}`;
         }
         host.innerHTML = html;
+        wireCustomProps(host, 'node', state.selection.nodes.map(id => nodeById(id)).filter(Boolean), true);
+        wireCustomProps(host, 'edge', state.selection.edges.map(id => edgeById(id)).filter(Boolean), true);
         $('#selAdjacent').addEventListener('click', () => expandSelection(false));
         $('#selDirectedAdjacent').addEventListener('click', () => expandSelection(true));
         $('#selClear').addEventListener('click', deselect);
@@ -5936,11 +6210,14 @@ function renderSelectionPanel() {
           <label class="field" for="selNodeLabelPos">${I18N.t('label_pos')} <select id="selNodeLabelPos"><option value="">${I18N.t('stroke_inherit')}</option><option value="center">${I18N.t('pos_center')}</option><option value="top">${I18N.t('pos_top')}</option><option value="bottom">${I18N.t('pos_bottom')}</option><option value="left">${I18N.t('pos_left')}</option><option value="right">${I18N.t('pos_right')}</option></select></label>
           <label class="field" for="selNodeLabelFont">${I18N.t('label_font')} <input id="selNodeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
+        <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
+        ${customPropsSectionHtml('node', [n], false)}
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_btn')}</button>
           <button id="selResetStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
         </div>
         <p class="drag-hint">${I18N.t('drag_hint')}</p>`;
+        wireCustomProps(host, 'node', [n], false);
         $('#selNodeShape').value = n.shape || '';
         $('#selNodeStrokeStyle').value = n.strokeStyle || '';
         $('#selNodeLabelPos').value = n.labelPosition || '';
@@ -6035,10 +6312,13 @@ function renderSelectionPanel() {
           <label class="field" for="selEdgeLabelSize">${I18N.t('label_size')} <input id="selEdgeLabelSize" type="number" min="4" max="72" value="${v.labelSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeLabelFont">${I18N.t('label_font')} <input id="selEdgeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
+        <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
+        ${customPropsSectionHtml('edge', [e], false)}
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_edge')}</button>
           <button id="selResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
         </div>`;
+        wireCustomProps(host, 'edge', [e], false);
         $('#selEdgeStrokeStyle').value = e.strokeStyle || '';
         $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0, 50); if (v === '')
             delete e.weight;
@@ -7242,6 +7522,25 @@ function deleteSelected() {
     queueRender(true, true);
 }
 // === Copy / Paste ===
+function cloneCustomMap(source) {
+    if (!source || typeof source !== 'object')
+        return undefined;
+    const out = {};
+    for (const key of Object.keys(source)) {
+        const value = source[key];
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+            out[key] = value;
+    }
+    return Object.keys(out).length ? out : undefined;
+}
+function cloneNode(n) { const c = { ...n }; const custom = cloneCustomMap(n?.custom); if (custom)
+    c.custom = custom;
+else
+    delete c.custom; return c; }
+function cloneEdge(e) { const c = { ...e }; const custom = cloneCustomMap(e?.custom); if (custom)
+    c.custom = custom;
+else
+    delete c.custom; return c; }
 // clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
 function getSelectedNodeIdsForCopy() {
     const ids = new Set(state.selection?.nodes || []);
@@ -7265,7 +7564,7 @@ function copySelectedNodes() {
     }
     // If no nodes selected but edges selected, copy those edges (both endpoints must exist on paste)
     // If nodes selected, copy nodes + edges between them + candidate external edges
-    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(n => ({ ...n }));
+    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(cloneNode);
     const edges = [];
     const externalEdges = [];
     if (nodeIds.size) {
@@ -7274,17 +7573,17 @@ function copySelectedNodes() {
             const toIn = nodeIds.has(e.to);
             const selected = edgeIds.has(e.id);
             if (fromIn && toIn) {
-                edges.push({ ...e });
+                edges.push(cloneEdge(e));
             }
             else if (fromIn || toIn) {
                 // Incident edge: store as external candidate (preserve optionally)
                 // If edge was explicitly selected, we also mark it external (it has exactly one endpoint in selection)
                 // If edge was not selected but incident, we still store it as external for optional preservation
-                externalEdges.push({ ...e });
+                externalEdges.push(cloneEdge(e));
             }
             else if (selected && !fromIn && !toIn) {
                 // Edge selected without its endpoints selected: treat as external requiring both endpoints exist
-                externalEdges.push({ ...e });
+                externalEdges.push(cloneEdge(e));
             }
         }
         // If user explicitly selected edges whose both endpoints are in selection but edge wasn't captured above? Already captured as internal.
@@ -7294,7 +7593,7 @@ function copySelectedNodes() {
         // No nodes selected: copy selected edges only
         for (const e of state.edges) {
             if (edgeIds.has(e.id))
-                edges.push({ ...e });
+                edges.push(cloneEdge(e));
         }
     }
     clipboardData = { nodes, edges, externalEdges };
@@ -7334,9 +7633,9 @@ function pasteClipboardInternal(fromSystemClipboard) {
     let data = clipboardData;
     if (fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard') {
         data = {
-            nodes: (fromSystemClipboard.nodes || []).map((n) => ({ ...n })),
-            edges: (fromSystemClipboard.edges || []).map((e) => ({ ...e })),
-            externalEdges: (fromSystemClipboard.externalEdges || []).map((e) => ({ ...e }))
+            nodes: (fromSystemClipboard.nodes || []).map((n) => cloneNode(n)),
+            edges: (fromSystemClipboard.edges || []).map((e) => cloneEdge(e)),
+            externalEdges: (fromSystemClipboard.externalEdges || []).map((e) => cloneEdge(e))
         };
     }
     if (!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)) {
@@ -7396,7 +7695,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
                 state.nextNode = num + 1;
         }
         idMap.set(orig.id, newId);
-        const cloned = { ...orig, id: newId, order: nextOrder++ };
+        const cloned = cloneNode({ ...orig, id: newId, order: nextOrder++ });
         let nx = finite(orig.x, 0) + offsetDist;
         let ny = finite(orig.y, 0) + offsetDist;
         // The clone is not in state.nodes yet, so nothing may be ignored:
@@ -7427,7 +7726,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
             if (Number.isFinite(num) && num >= state.nextEdge)
                 state.nextEdge = num + 1;
         }
-        const ce = { ...orig, id: nid, from, to };
+        const ce = cloneEdge({ ...orig, id: nid, from, to });
         finalNewEdges.push(ce);
         edgeIdMap.add(nid);
         usedEdgeIds2.add(nid);
@@ -9692,6 +9991,18 @@ function exportGraphmlText() {
     lines.push(`    <data key="gridMajorColor">${xmlEsc(state.settings.gridMajorColor)}</data>`);
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
+    // User-defined custom attribute values (definitions are emitted as <key> above).
+    const customGraphDefs = state.customAttributes.filter(a => a.scope === 'graph');
+    const customNodeDefs = state.customAttributes.filter(a => a.scope === 'node');
+    const customEdgeDefs = state.customAttributes.filter(a => a.scope === 'edge');
+    if (isRecord(state.graphCustom)) {
+        for (const attr of customGraphDefs) {
+            const value = state.graphCustom[attr.id];
+            if (value === undefined || value === '')
+                continue;
+            lines.push(`    <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+        }
+    }
     // Node defaults are serialised per node below (resolved visuals), so no
     // separate <default> block is emitted.
     // Serialize nodes sorted by order
@@ -9718,6 +10029,14 @@ function exportGraphmlText() {
         parts.push(`      <data key="labelFont">${xmlEsc(v.labelFont)}</data>`);
         parts.push(`      <data key="labelSize">${xmlEsc(v.labelSize)}</data>`);
         parts.push(`      <data key="labelPosition">${xmlEsc(v.labelPosition)}</data>`);
+        if (n.custom) {
+            for (const attr of customNodeDefs) {
+                const value = n.custom[attr.id];
+                if (value === undefined || value === '')
+                    continue;
+                parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+            }
+        }
         parts.push(`    </node>`);
         lines.push(parts.join('\n'));
     }
@@ -9735,6 +10054,14 @@ function exportGraphmlText() {
         parts.push(`      <data key="edgeLabelFont">${xmlEsc(v.labelFont)}</data>`);
         parts.push(`      <data key="edgeLabelSize">${xmlEsc(v.labelSize)}</data>`);
         parts.push(`      <data key="directed">${e.directed ? 'true' : 'false'}</data>`);
+        if (e.custom) {
+            for (const attr of customEdgeDefs) {
+                const value = e.custom[attr.id];
+                if (value === undefined || value === '')
+                    continue;
+                parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+            }
+        }
         parts.push(`    </edge>`);
         lines.push(parts.join('\n'));
     }
@@ -9762,7 +10089,13 @@ function replaceWithImportedGraph(data, label = 'graph') {
 function appendImportedGraph(data, label = 'graph') {
     // Append mode: merge imported nodes/edges into the current graph.
     // Keep existing settings (styles, defaults, background, grid colors) unchanged.
-    const sane = sanitizeState({ ...data, settings: state.settings });
+    // Keep the current graph's attribute definitions while still learning the
+    // import's: values in the imported file reference the imported definitions,
+    // and pruning against the merged set drops nothing legitimate. Document-wide
+    // (graph-scope) values merge with the imported ones taking precedence.
+    const mergedCustomAttributes = [...state.customAttributes, ...(Array.isArray(data.customAttributes) ? data.customAttributes : [])];
+    const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
+    const sane = sanitizeState({ ...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom });
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -9817,6 +10150,8 @@ function appendImportedGraph(data, label = 'graph') {
     state.edges.push(...validEdges);
     const customIds = new Set(state.customAttributes.map(attribute => attribute.id));
     state.customAttributes.push(...sane.customAttributes.filter(attribute => !customIds.has(attribute.id)));
+    if (isRecord(sane.graphCustom))
+        state.graphCustom = sane.graphCustom;
     state.nextNode = Math.max(state.nextNode, counter);
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
     pushHistory(`append ${label}`);
@@ -9920,6 +10255,7 @@ function commitCsvGraph(nodes, edges, label) {
         title: state.title, mode: state.mode, selectTool: state.selectTool,
         selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
         nodes, edges, customAttributes: state.customAttributes,
+        graphCustom: state.graphCustom,
         settings: state.settings, viewBox: currentCamera()
     });
     const droppedNodes = nodes.length - sane.nodes.length;
@@ -10379,6 +10715,7 @@ function parseGraphml(text) {
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
     const reservedAttrNames = new Set(['label', 'id', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'stroke.color', 'stroke.size', 'stroke.style', 'label.color', 'label.font', 'label.size', 'label.position', 'weight', 'direction', 'labels.policy', 'edge.weight.mode', 'edge.weight.min', 'edge.weight.max', 'edge.weight.corr', 'edge.width.min', 'edge.width.max', 'edge.weight.colorlow', 'edge.weight.colorhigh', 'canvas.bg.color', 'grid.minor.color', 'grid.major.color', 'grid.minor.alpha', 'grid.major.alpha']);
     const customAttributes = [];
+    const customKeyDataName = [];
     doc.querySelectorAll('key').forEach(k => {
         const id = k.getAttribute('id');
         const name = (k.getAttribute('attr.name') || id).toLowerCase();
@@ -10386,7 +10723,9 @@ function parseGraphml(text) {
         keyNames[id] = name;
         const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
         if (id && !reservedKeyIds.has(id) && !reservedAttrNames.has(name) && ['graph', 'node', 'edge'].includes(forWhom)) {
-            customAttributes.push({ id, scope: forWhom, type: graphmlTypes.includes(attributeType) ? attributeType : 'string' });
+            const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
+            customAttributes.push({ id, scope: forWhom, type: normalizedType });
+            customKeyDataName.push({ id, scope: forWhom, type: normalizedType, dataKey: name });
         }
         const defEl = k.querySelector('default');
         if (defEl) {
@@ -10400,6 +10739,15 @@ function parseGraphml(text) {
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
     const graphData = graphmlDataMap(graph || doc, keyNames);
+    const graphCustom = Object.create(null);
+    for (const def of customKeyDataName) {
+        if (def.scope !== 'graph')
+            continue;
+        const raw = graphData[def.dataKey];
+        if (raw == null || String(raw).trim() === '')
+            continue;
+        graphCustom[def.id] = coerceCustomValue(raw, def.type);
+    }
     const graphKeyDefs = keyDefaultsByFor.graph || {};
     // Build settings from QVGE key defaults + graph data
     const settings = {};
@@ -10567,6 +10915,17 @@ function parseGraphml(text) {
             if (p)
                 node.labelPosition = p;
         }
+        const nodeCustom = Object.create(null);
+        for (const def of customKeyDataName) {
+            if (def.scope !== 'node')
+                continue;
+            const raw = d[def.dataKey];
+            if (raw == null || String(raw).trim() === '')
+                continue;
+            nodeCustom[def.id] = coerceCustomValue(raw, def.type);
+        }
+        if (Object.keys(nodeCustom).length)
+            node.custom = nodeCustom;
         nodes.push(node);
         idMap.set(raw, id);
     });
@@ -10610,6 +10969,17 @@ function parseGraphml(text) {
                     edge.labelSize = f.size;
             }
         }
+        const edgeCustom = Object.create(null);
+        for (const def of customKeyDataName) {
+            if (def.scope !== 'edge')
+                continue;
+            const raw = d[def.dataKey];
+            if (raw == null || String(raw).trim() === '')
+                continue;
+            edgeCustom[def.id] = coerceCustomValue(raw, def.type);
+        }
+        if (Object.keys(edgeCustom).length)
+            edge.custom = edgeCustom;
         edges.push(edge);
     });
     if (nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1) {
@@ -10619,7 +10989,7 @@ function parseGraphml(text) {
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.
-    return { title: 'imported-graphml', nodes, edges, customAttributes, settings };
+    return { title: 'imported-graphml', nodes, edges, customAttributes, graphCustom, settings };
 }
 function importFile(file, forcedFormat = 'auto') {
     if (!file)
@@ -11952,7 +12322,23 @@ function togglePresetsOverlay(force) {
     }
 }
 const CUSTOM_ATTRIBUTE_TYPES = ['boolean', 'int', 'long', 'float', 'double', 'string'];
+// Graph-scope custom property values (document-wide). Node/edge values live in
+// the selection panel; graph values have no "selection", so they are edited
+// here, right under the definitions they belong to.
+function renderGraphCustomProps() {
+    const host = $('#graphCustomProps');
+    if (!host)
+        return;
+    const defs = definedCustomAttributes('graph');
+    if (!defs.length) {
+        host.innerHTML = `<div class="tiny muted">${esc(I18N.t('graph_values_none'))}</div>`;
+        return;
+    }
+    host.innerHTML = customPropsSectionHtml('graph', ['graph'], false);
+    wireCustomProps(host, 'graph', ['graph'], false);
+}
 function renderCustomAttributes() {
+    renderGraphCustomProps();
     const host = $('#customAttributesList');
     if (!host)
         return;
@@ -12011,12 +12397,16 @@ function wireUi() {
         if (!Number.isInteger(index) || !state.customAttributes[index])
             return;
         if (button.dataset.attributeAction === 'delete') {
+            const removedId = state.customAttributes[index].id;
             state.customAttributes.splice(index, 1);
+            stripCustomAttributeValues(removedId);
             renderCustomAttributes();
+            renderSelectionPanel();
             pushHistory('delete custom attribute');
             toast(I18N.t('attribute_deleted'));
             return;
         }
+        const oldId = state.customAttributes[index].id;
         const idInput = row.querySelector('[data-attribute-field="id"]');
         const id = String(idInput.value || '').trim();
         if (!id) {
@@ -12036,7 +12426,10 @@ function wireUi() {
         const scope = row.querySelector('[data-attribute-field="scope"]').value;
         const type = row.querySelector('[data-attribute-field="type"]').value;
         state.customAttributes[index] = { id, scope: ['graph', 'node', 'edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string' };
+        if (oldId !== id)
+            renameCustomAttributeValues(oldId, id);
         renderCustomAttributes();
+        renderSelectionPanel();
         pushHistory('edit custom attribute');
         toast(I18N.t('attribute_updated'));
     });

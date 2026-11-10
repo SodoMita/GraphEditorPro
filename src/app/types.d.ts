@@ -22,6 +22,8 @@ interface ViewBox extends Point {
   h: number;
 }
 
+type CustomAttributeValue = string | number | boolean;
+
 interface GraphNode extends Point {
   id: string;
   label: string;
@@ -38,6 +40,8 @@ interface GraphNode extends Point {
   labelSize?: number;
   labelPosition?: string;
   labelFont?: string;
+  /** Values of user-defined customAttributes with scope 'node', keyed by attribute id. */
+  custom?: Record<string, CustomAttributeValue>;
   [key: string]: any;
 }
 
@@ -55,6 +59,8 @@ interface GraphEdge {
   labelColor?: string;
   labelSize?: number;
   labelFont?: string;
+  /** Values of user-defined customAttributes with scope 'edge', keyed by attribute id. */
+  custom?: Record<string, CustomAttributeValue>;
   [key: string]: any;
 }
 
@@ -73,6 +79,8 @@ interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
   customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string }[];
+  /** Values of user-defined customAttributes with scope 'graph', keyed by attribute id. */
+  graphCustom: Record<string, CustomAttributeValue>;
   selected: { type: 'node' | 'edge'; id: string } | null;
   selection: GraphSelection;
   settings: AnyRecord;

@@ -271,6 +271,17 @@
     lines.push(`    <data key="gridMajorColor">${xmlEsc(state.settings.gridMajorColor)}</data>`);
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
+    // User-defined custom attribute values (definitions are emitted as <key> above).
+    const customGraphDefs = state.customAttributes.filter(a => a.scope === 'graph');
+    const customNodeDefs = state.customAttributes.filter(a => a.scope === 'node');
+    const customEdgeDefs = state.customAttributes.filter(a => a.scope === 'edge');
+    if(isRecord(state.graphCustom)){
+      for(const attr of customGraphDefs){
+        const value = state.graphCustom[attr.id];
+        if(value === undefined || value === '') continue;
+        lines.push(`    <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+      }
+    }
     // Node defaults are serialised per node below (resolved visuals), so no
     // separate <default> block is emitted.
     // Serialize nodes sorted by order
@@ -296,6 +307,13 @@
       parts.push(`      <data key="labelFont">${xmlEsc(v.labelFont)}</data>`);
       parts.push(`      <data key="labelSize">${xmlEsc(v.labelSize)}</data>`);
       parts.push(`      <data key="labelPosition">${xmlEsc(v.labelPosition)}</data>`);
+      if(n.custom){
+        for(const attr of customNodeDefs){
+          const value = n.custom[attr.id];
+          if(value === undefined || value === '') continue;
+          parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+        }
+      }
       parts.push(`    </node>`);
       lines.push(parts.join('\n'));
     }
@@ -312,6 +330,13 @@
       parts.push(`      <data key="edgeLabelFont">${xmlEsc(v.labelFont)}</data>`);
       parts.push(`      <data key="edgeLabelSize">${xmlEsc(v.labelSize)}</data>`);
       parts.push(`      <data key="directed">${e.directed ? 'true' : 'false'}</data>`);
+      if(e.custom){
+        for(const attr of customEdgeDefs){
+          const value = e.custom[attr.id];
+          if(value === undefined || value === '') continue;
+          parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+        }
+      }
       parts.push(`    </edge>`);
       lines.push(parts.join('\n'));
     }
@@ -334,7 +359,13 @@
   function appendImportedGraph(data, label='graph'){
     // Append mode: merge imported nodes/edges into the current graph.
     // Keep existing settings (styles, defaults, background, grid colors) unchanged.
-    const sane = sanitizeState({...data, settings: state.settings});
+    // Keep the current graph's attribute definitions while still learning the
+    // import's: values in the imported file reference the imported definitions,
+    // and pruning against the merged set drops nothing legitimate. Document-wide
+    // (graph-scope) values merge with the imported ones taking precedence.
+    const mergedCustomAttributes = [...state.customAttributes, ...(Array.isArray(data.customAttributes) ? data.customAttributes : [])];
+    const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
+    const sane = sanitizeState({...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom});
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -386,6 +417,7 @@
     state.edges.push(...validEdges);
     const customIds = new Set(state.customAttributes.map(attribute => attribute.id));
     state.customAttributes.push(...sane.customAttributes.filter(attribute => !customIds.has(attribute.id)));
+    if(isRecord(sane.graphCustom)) state.graphCustom = sane.graphCustom;
     state.nextNode = Math.max(state.nextNode, counter);
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
     pushHistory(`append ${label}`);
@@ -451,6 +483,7 @@
       title: state.title, mode: state.mode, selectTool: state.selectTool,
       selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
       nodes, edges, customAttributes: state.customAttributes,
+      graphCustom: state.graphCustom,
       settings: state.settings, viewBox: currentCamera()
     });
     const droppedNodes = nodes.length - sane.nodes.length;
@@ -795,6 +828,7 @@
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
     const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
     const customAttributes: GraphState['customAttributes'] = [];
+    const customKeyDataName: { id: string; scope: string; type: string; dataKey: string }[] = [];
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
       const name = (k.getAttribute('attr.name') || id).toLowerCase();
@@ -802,7 +836,9 @@
       keyNames[id] = name;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
       if(id && !reservedKeyIds.has(id) && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom)){
-        customAttributes.push({id, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
+        const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
+        customAttributes.push({id, scope: forWhom as 'graph' | 'node' | 'edge', type: normalizedType});
+        customKeyDataName.push({id, scope: forWhom, type: normalizedType, dataKey: name});
       }
       const defEl = k.querySelector('default');
       if(defEl){
@@ -816,6 +852,13 @@
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
     const graphData = graphmlDataMap(graph || doc, keyNames);
+    const graphCustom: AnyRecord = Object.create(null);
+    for(const def of customKeyDataName){
+      if(def.scope !== 'graph') continue;
+      const raw = graphData[def.dataKey];
+      if(raw == null || String(raw).trim() === '') continue;
+      graphCustom[def.id] = coerceCustomValue(raw, def.type);
+    }
     const graphKeyDefs = keyDefaultsByFor.graph || {};
 
     // Build settings from QVGE key defaults + graph data
@@ -913,6 +956,14 @@
         const p = parseLabelPosition(d.labelposition ?? d['label.position']);
         if(p) node.labelPosition = p;
       }
+      const nodeCustom: AnyRecord = Object.create(null);
+      for(const def of customKeyDataName){
+        if(def.scope !== 'node') continue;
+        const raw = d[def.dataKey];
+        if(raw == null || String(raw).trim() === '') continue;
+        nodeCustom[def.id] = coerceCustomValue(raw, def.type);
+      }
+      if(Object.keys(nodeCustom).length) node.custom = nodeCustom;
       nodes.push(node);
       idMap.set(raw, id);
     });
@@ -938,13 +989,21 @@
       const elc = parseColor(d.labelcolor || d['label.color']); if(elc) edge.labelColor = elc;
       if(d.labelsize != null || d['label.size'] != null) edge.labelSize = clamp(finite(d.labelsize ?? d['label.size'], 12), 4, 72);
       if(d.labelfont || d['label.font']){ const f = parseQvgeFont(d.labelfont || d['label.font']); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }
+      const edgeCustom: AnyRecord = Object.create(null);
+      for(const def of customKeyDataName){
+        if(def.scope !== 'edge') continue;
+        const raw = d[def.dataKey];
+        if(raw == null || String(raw).trim() === '') continue;
+        edgeCustom[def.id] = coerceCustomValue(raw, def.type);
+      }
+      if(Object.keys(edgeCustom).length) edge.custom = edgeCustom;
       edges.push(edge);
     });
     if(nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1){ const r=Math.max(120,nodes.length*24); nodes.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/nodes.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r;}); }
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.
-    return {title:'imported-graphml', nodes, edges, customAttributes, settings};
+    return {title:'imported-graphml', nodes, edges, customAttributes, graphCustom, settings};
   }
   function importFile(file, forcedFormat='auto'){
     if(!file) return;

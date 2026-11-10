@@ -1875,6 +1875,8 @@
           <div class="row" style="margin-top:6px">
             <button id="mulResetNodeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
+        const mulNodeTargets = state.selection.nodes.map(id => nodeById(id)).filter(Boolean);
+        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('node', mulNodeTargets, true)}`;
       }
       // Edge editing section (if any edges selected)
       if(edgeCount > 0){
@@ -1895,8 +1897,12 @@
           <div class="row" style="margin-top:6px">
             <button id="mulResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
+        const mulEdgeTargets = state.selection.edges.map(id => edgeById(id)).filter(Boolean);
+        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('edge', mulEdgeTargets, true)}`;
       }
       host.innerHTML = html;
+      wireCustomProps(host, 'node', state.selection.nodes.map(id => nodeById(id)).filter(Boolean), true);
+      wireCustomProps(host, 'edge', state.selection.edges.map(id => edgeById(id)).filter(Boolean), true);
       $('#selAdjacent').addEventListener('click', () => expandSelection(false));
       $('#selDirectedAdjacent').addEventListener('click', () => expandSelection(true));
       $('#selClear').addEventListener('click', deselect);
@@ -1999,11 +2005,14 @@
           <label class="field" for="selNodeLabelPos">${I18N.t('label_pos')} <select id="selNodeLabelPos"><option value="">${I18N.t('stroke_inherit')}</option><option value="center">${I18N.t('pos_center')}</option><option value="top">${I18N.t('pos_top')}</option><option value="bottom">${I18N.t('pos_bottom')}</option><option value="left">${I18N.t('pos_left')}</option><option value="right">${I18N.t('pos_right')}</option></select></label>
           <label class="field" for="selNodeLabelFont">${I18N.t('label_font')} <input id="selNodeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
+        <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
+        ${customPropsSectionHtml('node', [n], false)}
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_btn')}</button>
           <button id="selResetStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
         </div>
         <p class="drag-hint">${I18N.t('drag_hint')}</p>`;
+      wireCustomProps(host, 'node', [n], false);
       $('#selNodeShape').value = n.shape || '';
       $('#selNodeStrokeStyle').value = n.strokeStyle || '';
       $('#selNodeLabelPos').value = n.labelPosition || '';
@@ -2078,10 +2087,13 @@
           <label class="field" for="selEdgeLabelSize">${I18N.t('label_size')} <input id="selEdgeLabelSize" type="number" min="4" max="72" value="${v.labelSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeLabelFont">${I18N.t('label_font')} <input id="selEdgeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
+        <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
+        ${customPropsSectionHtml('edge', [e], false)}
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_edge')}</button>
           <button id="selResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
         </div>`;
+      wireCustomProps(host, 'edge', [e], false);
       $('#selEdgeStrokeStyle').value = e.strokeStyle || '';
       $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory(); queueRender(true); });
       $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0,80); pushHistory(); queueRender(true); });

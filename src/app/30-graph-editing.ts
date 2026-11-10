@@ -756,6 +756,17 @@
   }
 
   // === Copy / Paste ===
+  function cloneCustomMap(source){
+    if(!source || typeof source !== 'object') return undefined;
+    const out: AnyRecord = {};
+    for(const key of Object.keys(source)){
+      const value = source[key];
+      if(typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') out[key] = value;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+  function cloneNode(n){ const c = {...n}; const custom = cloneCustomMap(n?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
+  function cloneEdge(e){ const c = {...e}; const custom = cloneCustomMap(e?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
   // clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
   function getSelectedNodeIdsForCopy(): Set<string> {
     const ids = new Set(state.selection?.nodes || []);
@@ -777,7 +788,7 @@
     }
     // If no nodes selected but edges selected, copy those edges (both endpoints must exist on paste)
     // If nodes selected, copy nodes + edges between them + candidate external edges
-    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(n => ({...n}));
+    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(cloneNode);
     const edges: GraphEdge[] = [];
     const externalEdges: GraphEdge[] = [];
     if(nodeIds.size){
@@ -786,15 +797,15 @@
         const toIn = nodeIds.has(e.to);
         const selected = edgeIds.has(e.id);
         if(fromIn && toIn){
-          edges.push({...e});
+          edges.push(cloneEdge(e));
         } else if(fromIn || toIn){
           // Incident edge: store as external candidate (preserve optionally)
           // If edge was explicitly selected, we also mark it external (it has exactly one endpoint in selection)
           // If edge was not selected but incident, we still store it as external for optional preservation
-          externalEdges.push({...e});
+          externalEdges.push(cloneEdge(e));
         } else if(selected && !fromIn && !toIn){
           // Edge selected without its endpoints selected: treat as external requiring both endpoints exist
-          externalEdges.push({...e});
+          externalEdges.push(cloneEdge(e));
         }
       }
       // If user explicitly selected edges whose both endpoints are in selection but edge wasn't captured above? Already captured as internal.
@@ -802,7 +813,7 @@
     } else {
       // No nodes selected: copy selected edges only
       for(const e of state.edges){
-        if(edgeIds.has(e.id)) edges.push({...e});
+        if(edgeIds.has(e.id)) edges.push(cloneEdge(e));
       }
     }
     clipboardData = { nodes, edges, externalEdges };
@@ -836,9 +847,9 @@
     let data = clipboardData;
     if(fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard'){
       data = {
-        nodes: (fromSystemClipboard.nodes || []).map((n: AnyRecord) => ({...n})),
-        edges: (fromSystemClipboard.edges || []).map((e: AnyRecord) => ({...e})),
-        externalEdges: (fromSystemClipboard.externalEdges || []).map((e: AnyRecord) => ({...e}))
+        nodes: (fromSystemClipboard.nodes || []).map((n: AnyRecord) => cloneNode(n)),
+        edges: (fromSystemClipboard.edges || []).map((e: AnyRecord) => cloneEdge(e)),
+        externalEdges: (fromSystemClipboard.externalEdges || []).map((e: AnyRecord) => cloneEdge(e))
       };
     }
     if(!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)){
@@ -891,7 +902,7 @@
         if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
       }
       idMap.set(orig.id, newId);
-      const cloned: GraphNode = {...orig, id: newId, order: nextOrder++};
+      const cloned: GraphNode = cloneNode({...orig, id: newId, order: nextOrder++} as GraphNode);
       let nx = finite(orig.x, 0) + offsetDist;
       let ny = finite(orig.y, 0) + offsetDist;
       // The clone is not in state.nodes yet, so nothing may be ignored:
@@ -919,7 +930,7 @@
         const num = Number((nid.match(/\d+$/)||[0])[0]);
         if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
       }
-      const ce: GraphEdge = {...orig, id: nid, from, to};
+      const ce: GraphEdge = cloneEdge({...orig, id: nid, from, to} as GraphEdge);
       finalNewEdges.push(ce);
       edgeIdMap.add(nid);
       usedEdgeIds2.add(nid);

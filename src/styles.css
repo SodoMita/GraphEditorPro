@@ -284,6 +284,14 @@
     .custom-attribute-row .field{min-width:0}
     .custom-attribute-actions{justify-content:flex-end;margin-top:8px}
     .custom-attribute-fields input,.custom-attribute-fields select{min-width:0;width:100%}
+    /* ---------- Custom property value rows (graph / node / edge) ---------- */
+    .custom-props{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+    .custom-props-empty{margin-top:6px}
+    .custom-prop-row{min-width:0}
+    .custom-prop-label{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:55%}
+    .custom-prop-id{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .custom-prop-type{font-size:11px;font-weight:400;color:var(--muted,#94a3b8);border:1px solid var(--line,#334155);border-radius:999px;padding:0 7px;white-space:nowrap}
+    .custom-prop-row input,.custom-prop-row select{min-width:0;width:100%}
 
     /* ---------- Collapsible sections ---------- */
     .section{

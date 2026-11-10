@@ -360,7 +360,7 @@
 
   const defaultState = (): GraphState => ({
     title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
-    nodes: [], edges: [], customAttributes: [],
+    nodes: [], edges: [], customAttributes: [], graphCustom: {},
     selected: null, selection: {nodes: [], edges: []},
     settings: {
       // Edit-tab node placement (primary for newly added nodes)
@@ -434,7 +434,7 @@
     const vb = currentCamera(); // persist active camera without forcing a mid-gesture SVG commit
     return JSON.stringify({
       title:state.title, mode:state.mode, selectTool:state.selectTool, selectCombine:state.selectCombine, nextNode:state.nextNode, nextEdge:state.nextEdge,
-      nodes:state.nodes, edges:state.edges, customAttributes:state.customAttributes, settings:state.settings, viewBox:vb,
+      nodes:state.nodes, edges:state.edges, customAttributes:state.customAttributes, graphCustom:state.graphCustom, settings:state.settings, viewBox:vb,
       // Preserve user focus across undo/redo so editing the same object stays ergonomic
       selected:state.selected, selection:state.selection
     });
@@ -569,6 +569,198 @@
     updateCommandStates();
   }
 
+
+  // === Custom property values (values of user-defined custom attributes) ===
+  // Definitions live in state.customAttributes; values live next to the entity
+  // they describe: state.graphCustom for scope 'graph', node.custom / edge.custom
+  // (flat id -> scalar maps) otherwise. Values are only kept while their
+  // attribute is defined — deleting a definition strips its values — and are
+  // always stored as plain string|number|boolean scalars with capped sizes, so a
+  // hand-edited file cannot smuggle objects, prototype pollution or huge blobs
+  // into the document.
+  const CUSTOM_VALUE_MAX = 1000;
+  const CUSTOM_VALUE_KEYS_MAX = 200;
+  function customAttributeTypeMap(definitions: readonly { id: string; type: string }[]): Map<string, string> {
+    const map = new Map<string, string>();
+    for(const attribute of definitions) map.set(attribute.id, attribute.type);
+    return map;
+  }
+  function coerceCustomValue(value: unknown, type: string): CustomAttributeValue {
+    const raw = typeof value === 'number' || typeof value === 'boolean' ? String(value) : String(value ?? '');
+    const text = raw.trim();
+    if(type === 'boolean'){
+      if(value === true || /^(true|1|yes|on)$/i.test(text)) return true;
+      if(value === false || /^(false|0|no|off)$/i.test(text)) return false;
+      return text.slice(0, CUSTOM_VALUE_MAX);
+    }
+    if(type === 'int' || type === 'long'){
+      const numeric = Number(text);
+      if(Number.isFinite(numeric)){
+        const limit = type === 'int' ? 2147483647 : Number.MAX_SAFE_INTEGER;
+        return clamp(Math.trunc(numeric), -limit, limit);
+      }
+      return text.slice(0, CUSTOM_VALUE_MAX);
+    }
+    if(type === 'float' || type === 'double'){
+      const numeric = Number(text);
+      if(Number.isFinite(numeric)) return numeric;
+      return text.slice(0, CUSTOM_VALUE_MAX);
+    }
+    return raw.slice(0, CUSTOM_VALUE_MAX);
+  }
+  function sanitizeCustomValues(input: unknown, typeById: Map<string, string>): Record<string, CustomAttributeValue> | undefined {
+    if(!isRecord(input)) return undefined;
+    const out: Record<string, CustomAttributeValue> = Object.create(null);
+    let count = 0;
+    for(const rawKey of Object.keys(input)){
+      if(count >= CUSTOM_VALUE_KEYS_MAX) break;
+      const key = String(rawKey).slice(0, 128);
+      if(!key) continue;
+      const type = typeById.get(key);
+      if(type === undefined) continue; // value without a definition is dropped, not trusted
+      const raw = input[rawKey];
+      if(raw == null) continue;
+      if(typeof raw === 'string' && raw.trim() === '') continue; // empty means unset
+      out[key] = coerceCustomValue(raw, type);
+      count++;
+    }
+    return count ? out : undefined;
+  }
+  function formatCustomValue(value: CustomAttributeValue): string {
+    return typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value);
+  }
+  function definedCustomAttributes(scope: 'graph' | 'node' | 'edge'){
+    return state.customAttributes.filter(attribute => attribute.scope === scope);
+  }
+  function customValueOf(target: 'graph' | GraphNode | GraphEdge, id: string): CustomAttributeValue | undefined {
+    const store = target === 'graph' ? state.graphCustom : target.custom;
+    return isRecord(store) ? store[id] : undefined;
+  }
+  function setCustomValue(target: 'graph' | GraphNode | GraphEdge, id: string, value: CustomAttributeValue): void {
+    if(target === 'graph'){
+      if(!isRecord(state.graphCustom)) state.graphCustom = Object.create(null);
+      state.graphCustom[id] = value;
+      return;
+    }
+    if(!isRecord(target.custom)) target.custom = Object.create(null);
+    target.custom[id] = value;
+  }
+  function unsetCustomValue(target: 'graph' | GraphNode | GraphEdge, id: string): void {
+    const store = target === 'graph' ? state.graphCustom : target.custom;
+    if(isRecord(store)){
+      delete store[id];
+      if(target !== 'graph' && !Object.keys(store).length) delete target.custom;
+    }
+  }
+  // Removing an attribute definition drops its values everywhere (they have no
+  // meaning, and no UI to show them, without the definition). Undo restores both.
+  function stripCustomAttributeValues(id: string): void {
+    unsetCustomValue('graph', id);
+    for(const node of state.nodes) unsetCustomValue(node, id);
+    for(const edge of state.edges) unsetCustomValue(edge, id);
+  }
+  // Renaming an attribute id moves its values with it, so the user does not
+  // silently lose what they already typed.
+  function renameCustomAttributeValues(oldId: string, newId: string): void {
+    const stores = [state.graphCustom, ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
+    for(const store of stores){
+      if(!isRecord(store)) continue;
+      if(!Object.prototype.hasOwnProperty.call(store, oldId)) continue;
+      store[newId] = store[oldId];
+      delete store[oldId];
+    }
+  }
+  // Reads one entity-or-graph target and applies a raw control value to every
+  // target. Returns 'ok' | 'noop' | 'invalid'. Empty text/number input unsets in
+  // single mode and is a no-op in multi mode (so a blanked field cannot wipe a
+  // whole selection); the boolean '__unset__' option unsets in multi mode.
+  function applyCustomPropValue(def: { id: string; type: string }, targets: ('graph' | GraphNode | GraphEdge)[], raw: string, multi: boolean): 'ok' | 'noop' | 'invalid' {
+    const unsetAll = () => { for(const target of targets) unsetCustomValue(target, def.id); };
+    const setAll = (value: CustomAttributeValue) => { for(const target of targets) setCustomValue(target, def.id, value); };
+    if(def.type === 'boolean'){
+      if(raw === ''){ if(multi) return 'noop'; unsetAll(); return 'ok'; }
+      if(raw === '__unset__'){ unsetAll(); return 'ok'; }
+      if(raw !== 'true' && raw !== 'false') return 'invalid';
+      setAll(raw === 'true');
+      return 'ok';
+    }
+    const text = raw.trim();
+    if(text === ''){ if(multi) return 'noop'; unsetAll(); return 'ok'; }
+    if(def.type === 'string'){ setAll(text.slice(0, CUSTOM_VALUE_MAX)); return 'ok'; }
+    const numeric = Number(text);
+    if(!Number.isFinite(numeric)) return 'invalid';
+    if(def.type === 'int') setAll(clamp(Math.trunc(numeric), -2147483648, 2147483647));
+    else if(def.type === 'long') setAll(clamp(Math.trunc(numeric), -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER));
+    else setAll(numeric); // float / double
+    return 'ok';
+  }
+  // Whether every target holds the identical value (used to prefill single
+  // controls and to detect "mixed" multi selections).
+  function sharedCustomPropValue(targets: ('graph' | GraphNode | GraphEdge)[], id: string): { value?: CustomAttributeValue; mixed: boolean } {
+    const first = targets.length ? customValueOf(targets[0], id) : undefined;
+    for(let i = 1; i < targets.length; i++){
+      if(customValueOf(targets[i], id) !== first) return { value: undefined, mixed: true };
+    }
+    return { value: first, mixed: false };
+  }
+  // One row per attribute: an escaped label (id + type badge) and the typed
+  // control. All user-visible text goes through esc()/I18N — attribute ids are
+  // user input.
+  function customPropControlHtml(attr: { id: string; type: string }, targets: ('graph' | GraphNode | GraphEdge)[], multi: boolean): string {
+    const { value, mixed } = sharedCustomPropValue(targets, attr.id);
+    const safeId = esc(attr.id);
+    const common = `class="custom-prop-input" data-custom-attribute="${safeId}" data-custom-type="${esc(attr.type)}" title="${esc(I18N.t('custom_prop_title'))}"`;
+    if(attr.type === 'boolean'){
+      const keepOption = multi ? `<option value="">${esc(I18N.t('keep'))}</option>` : `<option value="">${esc(I18N.t('custom_prop_unset'))}</option>`;
+      const unsetOption = multi ? `<option value="__unset__">${esc(I18N.t('custom_prop_unset'))}</option>` : '';
+      const trueSel = value === true && !mixed ? ' selected' : '';
+      const falseSel = value === false && !mixed ? ' selected' : '';
+      return `<select ${common}>${keepOption}${unsetOption}<option value="true"${trueSel}>true</option><option value="false"${falseSel}>false</option></select>`;
+    }
+    // Text inputs with a decimal/numeric inputmode, not type=number: a browser
+    // number field silently reports "" for anything it cannot parse, which
+    // would turn "clear the field" and "typed garbage" into the same action.
+    // This way garbage reaches the handler, is rejected with a toast, and the
+    // field reverts to the stored value.
+    const isNumeric = attr.type !== 'string';
+    const integer = attr.type === 'int' || attr.type === 'long';
+    const shown = !mixed && value !== undefined ? esc(formatCustomValue(value)) : '';
+    const placeholder = multi ? `placeholder="${esc(I18N.t('keep'))}" data-i18n-placeholder="keep"` : '';
+    const maxlength = isNumeric ? ' maxlength="32"' : ` maxlength="${CUSTOM_VALUE_MAX}"`;
+    return `<input type="text"${maxlength} ${common} value="${shown}" ${placeholder} inputmode="${integer ? 'numeric' : isNumeric ? 'decimal' : 'text'}" autocomplete="off" spellcheck="false">`;
+  }
+  function customPropsSectionHtml(scope: 'graph' | 'node' | 'edge', targets: ('graph' | GraphNode | GraphEdge)[], multi: boolean): string {
+    const defs = definedCustomAttributes(scope);
+    if(!defs.length){
+      return `<div class="custom-props custom-props-empty tiny muted" data-scope="${scope}">${esc(I18N.t('custom_prop_none'))}</div>`;
+    }
+    const rows = defs.map(attr => `
+      <label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, targets, multi)}</label>`).join('');
+    return `<div class="custom-props" data-scope="${scope}">${rows}</div>`;
+  }
+  // Wires the freshly built custom property controls (both the selection panel
+  // and the graph values block rebuild their inputs before calling this).
+  function wireCustomProps(host: ParentNode, scope: 'graph' | 'node' | 'edge', targets: ('graph' | GraphNode | GraphEdge)[], multi: boolean){
+    host.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`.custom-props[data-scope="${scope}"] .custom-prop-input`).forEach(input => {
+      input.addEventListener('change', () => {
+        const id = input.getAttribute('data-custom-attribute') || '';
+        const def = state.customAttributes.find(attribute => attribute.id === id && attribute.scope === scope);
+        if(!def) return;
+        const result = applyCustomPropValue(def, targets, String(input.value ?? ''), multi);
+        if(result === 'invalid'){ toast(I18N.t('attribute_invalid_number')); renderCustomPropHosts(); return; }
+        if(result === 'noop') return;
+        pushHistory('custom property'); queueRender(false); saveSoon();
+      });
+    });
+  }
+  // Repaint every surface that shows custom property values (cheap: just the
+  // fields, not the canvas). Used after invalid input reverts and after def
+  // edits re-render the data panel.
+  function renderCustomPropHosts(){
+    renderGraphCustomProps();
+    renderSelectionPanel();
+  }
+
   function sanitizeState(input: unknown): GraphState {
     const base = defaultState();
     if(!isRecord(input)) return base;
@@ -578,6 +770,19 @@
     const validLabelPos = (value: unknown) => LABEL_POSITIONS.includes(String(value)) ? String(value) : '';
     const validPolicy = (value: unknown) => LABEL_POLICIES.includes(String(value)) ? String(value) : 'auto';
     const validColor = (value: unknown) => /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : null;
+
+    const customAttributeTypes = ['boolean','int','long','float','double','string'];
+    const customAttributeIds = new Set<string>();
+    const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
+      .slice(0, 500).filter(isRecord).map(attribute => {
+        const id = String(attribute.id ?? '').trim().slice(0, 128);
+        const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
+        const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
+        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id)) return null;
+        customAttributeIds.add(id);
+        return {id, scope, type};
+      }).filter(Boolean) as GraphState['customAttributes'];
+    const customAttributeTypeById = customAttributeTypeMap(customAttributes);
 
     const usedNodeIds = new Set<string>();
     const nodeReferences = new Map<string, string>();
@@ -606,6 +811,8 @@
       if(n.labelSize != null) node.labelSize = clamp(finite(n.labelSize, 13), 4, 72);
       if(n.labelPosition) node.labelPosition = validLabelPos(n.labelPosition);
       if(n.labelFont) node.labelFont = String(n.labelFont).slice(0, 60);
+      const customValues = sanitizeCustomValues(n.custom, customAttributeTypeById);
+      if(customValues) node.custom = customValues;
       return node;
     });
 
@@ -631,6 +838,8 @@
       if(e.labelColor) edge.labelColor = validColor(e.labelColor) || '';
       if(e.labelSize != null) edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
+      const customValues = sanitizeCustomValues(e.custom, customAttributeTypeById);
+      if(customValues) edge.custom = customValues;
       edges.push(edge);
     });
     const inputSettings = isRecord(source.settings) ? source.settings : {};
@@ -812,17 +1021,7 @@
         return out;
       }).filter(Boolean);
     } else { settings.stylePresets = []; }
-    const customAttributeTypes = ['boolean','int','long','float','double','string'];
-    const customAttributeIds = new Set<string>();
-    const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
-      .slice(0, 500).filter(isRecord).map(attribute => {
-        const id = String(attribute.id ?? '').trim().slice(0, 128);
-        const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
-        const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id)) return null;
-        customAttributeIds.add(id);
-        return {id, scope, type};
-      }).filter(Boolean) as GraphState['customAttributes'];
+    const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),
@@ -843,7 +1042,7 @@
       selection: {nodes: [], edges: []},
       nextNode: maxN + 1,
       nextEdge: maxE + 1,
-      nodes, edges, customAttributes, settings,
+      nodes, edges, customAttributes, graphCustom, settings,
       viewBox: boundedCamera({ x:finite(vb.x,-500), y:finite(vb.y,-330), w:finite(vb.w,1000), h:finite(vb.h,660) })
     };
   }
