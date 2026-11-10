@@ -987,3 +987,173 @@ test('a __proto__ custom property works like any other: own-key storage end to e
   assert.deepEqual(seededDom.errors.map(error => error.message), []);
   seededDom.dom.window.close();
 });
+
+test('legacy migration reserves ids from the whole input — no overwrite of existing definitions', async () => {
+  const legacy = {
+    title: 'legacy-reserve', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, custom: { Label: 'a', Label_1: 'b' } }],
+    edges: [],
+    customAttributes: [
+      { id: 'Label', scope: 'node', type: 'string' },
+      { id: 'Label_1', scope: 'node', type: 'string' },
+      { id: 'Weight', scope: 'graph', type: 'string' },
+      { id: 'Weight_1', scope: 'graph', type: 'string' },
+    ],
+    graphCustom: { Weight: 'x', Weight_1: 'y', Weight_2: 'orphan' },
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(legacy);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const graph = exportGraph(document);
+  const ids = graph.customAttributes.map(a => a.id).sort();
+  // The pre-existing Label_1 and Tag_1 survive untouched; the legacy ids are
+  // migrated to fresh ids that collide with nothing in the input.
+  assert.deepEqual(ids, ['Label_1', 'Label_2', 'Weight_1', 'Weight_3'],
+    'pre-existing definitions and orphan value keys are both reserved; migrated ids skip them');
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom.Label_1, 'b');
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom.Label_2, 'a', 'the legacy value moved to the migrated id');
+  assert.equal(graph.graphCustom.Weight_1, 'y', 'the pre-existing definition keeps its value');
+  assert.equal(graph.graphCustom.Weight_3, 'x', 'the graph value moved to the migrated id');
+  assert.equal(Object.prototype.hasOwnProperty.call(graph.graphCustom, 'Weight_2'), false,
+    'an orphan value key with no definition is dropped, not adopted');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append import counts duplicate definitions for free against capacity', async () => {
+  const customAttributes = Array.from({ length: 499 }, (_, i) => ({
+    id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
+  }));
+  const graph = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes, graphCustom: {} };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  // attr000 already exists; extra is new — it fits exactly once (499 + 1 = 500).
+  const imported = {
+    title: 'imported', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [{ id: 'app1', label: 'App', x: 100, y: 100, order: 0, custom: { extra: 'kept' } }],
+    edges: [],
+    customAttributes: [
+      { id: 'attr000', scope: 'node', type: 'string' },
+      { id: 'extra', scope: 'node', type: 'string' },
+    ],
+    graphCustom: {},
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = JSON.stringify(imported);
+  modal.querySelector('#expAppendChk').click();
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  let exported = exportGraph(document);
+  assert.equal(exported.customAttributes.length, 500);
+  assert.equal(exported.customAttributes.some(a => a.id === 'extra'), true,
+    'the new definition fits the remaining capacity and is kept');
+  assert.equal(exported.nodes.find(n => n.id === 'app1').custom.extra, 'kept',
+    'its value survives together with the definition');
+  const toastText = [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ');
+  assert.doesNotMatch(toastText, /Skipped/, 'nothing was skipped — capacity was used, not duplicates');
+  dom.window.close();
+
+  // Genuinely full: the new definition is skipped with a toast.
+  const fullAttributes = Array.from({ length: 500 }, (_, i) => ({
+    id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
+  }));
+  const full = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes: fullAttributes, graphCustom: {} };
+  const fullDom = createEditorDom(full);
+  const fullWindow = fullDom.dom.window; const fullDocument = fullWindow.document;
+  await nextFrame(fullWindow);
+  fullDocument.querySelector('#btnExportJson').click();
+  const fullModal = fullDocument.querySelector('.export-modal');
+  fullModal.querySelector('textarea').value = JSON.stringify(imported);
+  fullModal.querySelector('#expAppendChk').click();
+  fullModal.querySelector('#expImportBtn').click();
+  await nextFrame(fullWindow); await settle(fullWindow, 60);
+  exported = exportGraph(fullDocument);
+  assert.equal(exported.customAttributes.length, 500);
+  assert.equal(exported.customAttributes.some(a => a.id === 'extra'), false);
+  const fullToast = [...fullDocument.querySelectorAll('.toast')].map(t => t.textContent).join(' | ');
+  assert.match(fullToast, /Skipped 1/, 'only the definition that does not fit is skipped');
+  fullDom.dom.window.close();
+});
+
+test('__proto__ values survive cloning: new nodes from pending defaults and duplication', async () => {
+  const seeded = JSON.parse('{"title":"proto-clone","mode":"select","selectTool":"single","selectCombine":"replace","nextNode":2,"nextEdge":1,"nodes":[{"id":"seed1","label":"Seed","x":-200,"y":0,"order":0,"custom":{"__proto__":"keep"}}],"edges":[],"customAttributes":[{"id":"__proto__","scope":"node","type":"string"}],"graphCustom":{},"settings":{"nodeCustom":{"__proto__":"hello"}},"viewBox":{"x":-500,"y":-330,"w":1000,"h":660}}');
+  const { dom, errors } = createEditorDom(seeded);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  // Leg 1: duplicate the selected seed node — the clone keeps the own key.
+  await selectNode(window, document, 'seed1', 300, 330);
+  document.querySelector('#btnDuplicate2').click();
+  await nextFrame(window); await settle(window, 40);
+  let exported = exportGraph(document);
+  assert.equal(exported.nodes.length, 2, 'duplicate created');
+  for(const node of exported.nodes){
+    assert.equal(Object.prototype.hasOwnProperty.call(node.custom, '__proto__'), true);
+    assert.equal(node.custom['__proto__'], 'keep');
+  }
+
+  // Leg 2: a new node created in node mode applies the pending default (which
+  // goes through the same clone helper) to the new element.
+  document.querySelector('[data-mode="node"]').click();
+  const canvas = document.querySelector('#graphCanvas');
+  setCanvasRect(canvas);
+  dispatchPointer(window, canvas, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 400 });
+  dispatchPointer(window, canvas, 'pointerup', { pointerId: 1, clientX: 500, clientY: 400 });
+  await nextFrame(window); await settle(window, 40);
+  exported = exportGraph(document);
+  assert.equal(exported.nodes.length, 3, 'new node created');
+  const newNode = exported.nodes.find(n => n.id !== 'seed1' && n.order >= 0 && n.custom && n.custom['__proto__'] === 'hello');
+  assert.ok(newNode, 'the pending default was cloned into the new node');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an external GraphML key whose id is a built-in name is migrated, not discarded', async () => {
+  const qvge = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="node" attr.name="externalTag" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <node id="a"><data key="x">hello</data></node>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = qvge;
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  let graph = exportGraph(document);
+  const def = graph.customAttributes.find(a => a.scope === 'node');
+  assert.ok(def, 'the external key is kept as a custom definition');
+  assert.equal(def.id, 'x_1', 'the reserved id is migrated to a safe unique id');
+  const node = graph.nodes.find(n => n.id === 'a');
+  assert.equal(node.custom.x_1, 'hello', 'the value moved with the definition');
+  assert.equal(typeof node.x, 'number', 'the built-in x coordinate was not captured');
+
+  // The migrated definition round-trips cleanly from then on.
+  const graphml = exportGraphml(document);
+  assert.match(graphml, /<key id="x_1" /);
+  document.querySelector('#btnExportGraphml').click();
+  const reimport = document.querySelector('.export-modal');
+  reimport.querySelector('textarea').value = graphml;
+  reimport.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+  graph = exportGraph(document);
+  assert.equal(graph.customAttributes.some(a => a.id === 'x_1' && a.scope === 'node'), true);
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom.x_1, 'hello');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

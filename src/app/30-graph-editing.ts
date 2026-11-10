@@ -765,7 +765,7 @@
   // === Copy / Paste ===
   function cloneCustomMap(source){
     if(!source || typeof source !== 'object') return undefined;
-    const out: AnyRecord = {};
+    const out: AnyRecord = Object.create(null); // own keys only: "__proto__" must survive the clone
     for(const key of Object.keys(source)){
       const value = source[key];
       if(typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') out[key] = value;

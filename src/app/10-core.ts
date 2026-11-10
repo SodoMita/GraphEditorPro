@@ -367,7 +367,7 @@
     'posx','posy','position.x','position.y',
     'strokecolor','stroke.color','strokesize','stroke.size','strokestyle','stroke.style',
     'labelcolor','label.color','labelfont','label.font','labelsize','label.size','labelposition','label.position',
-    'edgelabel','edgecolor','weight','value','direction','style',
+    'edgelabel','edgecolor','weight','value','direction','style','directed',
     'labels.policy',
     'edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr',
     'edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh',
@@ -388,9 +388,14 @@
   function uniqueCustomAttributeId(base: string, taken: Set<string>): string {
     for(let n = 1; n < 1000; n++){
       const candidate = `${base.slice(0, 120)}_${n}`;
-      if(!taken.has(candidate) && !RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(candidate.toLowerCase())) return candidate;
+      if(!taken.has(candidate) && !RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(candidate.toLowerCase())){
+        taken.add(candidate);
+        return candidate;
+      }
     }
-    return `${base.slice(0, 110)}_${Math.floor(Math.random() * 1e6)}`;
+    const fallback = `${base.slice(0, 110)}_${Math.floor(Math.random() * 1e6)}`;
+    taken.add(fallback);
+    return fallback;
   }
   // Custom-value maps must carry their keys as OWN properties: a user-chosen
   // id like "__proto__" must never mutate a prototype or shadow inherited
@@ -919,11 +924,27 @@
     const validColor = (value: unknown) => /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : null;
 
     const customAttributeTypes = ['boolean','int','long','float','double','string'];
+    // Pre-scan: every id present in the input — as a definition or as a key of
+    // any custom-value map — is off-limits for renames, so migrating a legacy
+    // id can never clobber an existing definition or value.
+    const usedCustomIds = new Set<string>();
+    if(Array.isArray(source.customAttributes)){
+      for(const a of source.customAttributes){
+        if(isRecord(a)){ const rid = String(a.id ?? '').trim().slice(0, 128); if(rid) usedCustomIds.add(rid); }
+      }
+    }
+    const collectCustomKeys = (m: unknown) => { if(isRecord(m)) for(const key of Object.keys(m)) usedCustomIds.add(String(key).slice(0, 128)); };
+    collectCustomKeys(source.graphCustom);
+    if(isRecord(source.settings)){ collectCustomKeys(source.settings.nodeCustom); collectCustomKeys(source.settings.edgeCustom); }
+    if(Array.isArray(source.nodes)) for(const n of source.nodes) if(isRecord(n)) collectCustomKeys(n.custom);
+    if(Array.isArray(source.edges)) for(const e of source.edges) if(isRecord(e)) collectCustomKeys(e.custom);
     const customAttributeIds = new Set<string>();
-    // Legacy documents may contain ids that were legal when they were saved
-    // but collide with built-ins today (e.g. "Label" or "stroke.color"). Their
-    // definitions — and their values everywhere — are migrated to a fresh
-    // unique id instead of being silently dropped.
+    // Legacy documents may contain ids that collide with built-ins (e.g.
+    // "Label", "stroke.color" or "x"), whether user-created back then or
+    // authored in an external GraphML file. Their definitions — and their
+    // values everywhere — are migrated to a fresh unique id instead of being
+    // silently dropped. Ids already present in the input are reserved up
+    // front, so the migration target can never overwrite existing data.
     const customIdRenames = new Map<string, string>();
     const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
       .slice(0, CUSTOM_DEFINITIONS_MAX).filter(isRecord).map(attribute => {
@@ -932,8 +953,7 @@
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
         if(!id || !scope || customAttributeIds.has(id)) return null;
         if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){
-          if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)) return null; // always-reserved ids stay rejected
-          const renamed = uniqueCustomAttributeId(id, customAttributeIds);
+          const renamed = uniqueCustomAttributeId(id, usedCustomIds);
           customIdRenames.set(id, renamed);
           id = renamed;
         }

@@ -407,7 +407,13 @@
     // import's: values in the imported file reference the imported definitions,
     // and pruning against the merged set drops nothing legitimate. Document-wide
     // (graph-scope) values merge with the imported ones taking precedence.
-    const mergedCustomAttributes = [...state.customAttributes, ...(Array.isArray(data.customAttributes) ? data.customAttributes : [])];
+    // Imported definitions that fit the remaining capacity are merged; the
+    // rest are skipped with a toast. Duplicates of existing ids are dropped
+    // here (the current definition wins) and consume no capacity.
+    const existingCustomIds = new Set(state.customAttributes.map(attribute => attribute.id));
+    const { defs: cappedDefs, skipped: defsSkipped } = capCustomDefinitions(data.customAttributes, existingCustomIds);
+    if(defsSkipped) toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
+    const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
     const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
     const sane = sanitizeState({...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom});
     // Map imported node IDs to avoid collisions with existing nodes
@@ -474,15 +480,32 @@
       ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
       : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
   }
+  // Keeps the first CUSTOM_DEFINITIONS_MAX unique definitions and reports how
+  // many unique definitions did not fit. Definitions whose id is already
+  // defined — in the current document or earlier in the imported list — merge
+  // for free and consume no capacity, so appending into a nearly full
+  // document never discards a new property that still fits.
+  function capCustomDefinitions(defs, existingIds){
+    const budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existingIds.size);
+    const seen = new Set(existingIds);
+    const kept = [];
+    let skipped = 0;
+    for(const def of Array.isArray(defs) ? defs : []){
+      if(!isRecord(def)) continue; // unparseable: sanitize drops it too
+      const id = String(def.id ?? '').trim().slice(0, 128);
+      if(!id) continue; // no id: sanitize drops it too
+      if(seen.has(id)) continue; // already defined — merges without capacity
+      if(kept.length >= budget){ skipped++; continue; }
+      seen.add(id);
+      kept.push(def);
+    }
+    return { defs: kept, skipped };
+  }
   function importGraphData(data, label, append){
-    // Enforce the definition cap at the door: definitions beyond the budget
-    // are skipped (with a toast) instead of silently vanishing on reload.
-    if(isRecord(data) && Array.isArray(data.customAttributes)){
-      const budget = append ? Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length) : CUSTOM_DEFINITIONS_MAX;
-      if(data.customAttributes.length > budget){
-        toast(I18N.t('attribute_import_skipped', { n: data.customAttributes.length - budget }));
-        data = { ...data, customAttributes: data.customAttributes.slice(0, budget) };
-      }
+    if(!append && isRecord(data) && Array.isArray(data.customAttributes)){
+      const { defs, skipped } = capCustomDefinitions(data.customAttributes, new Set());
+      if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
+      data = { ...data, customAttributes: defs };
     }
     if(append){ appendImportedGraph(data, label); }
     else { replaceWithImportedGraph(data, label); }
