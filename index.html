@@ -3584,7 +3584,8 @@ function sanitizeState(input) {
         // Keep the importer's migration marker (raw GraphML key id) so
         // re-appending the same external file lands on the same definition.
         const dataKey = String(attribute.dataKey ?? '').trim().slice(0, 128);
-        return dataKey ? { id, scope, type, dataKey } : { id, scope, type };
+        const dataName = String(attribute.dataName ?? '').toLowerCase().trim().slice(0, 128);
+        return dataKey ? { id, scope, type, dataKey, ...(dataName ? { dataName } : {}) } : { id, scope, type };
     }).filter(Boolean);
     // Rewrites the keys of a value map with the renames collected above, so
     // values stored under a migrated legacy id move to the new id.
@@ -8058,7 +8059,11 @@ function pasteClipboardInternal(fromSystemClipboard) {
         const id = String(def.id ?? '').trim().slice(0, 128);
         const scope = ['graph', 'node', 'edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
-        return id ? { id, scope: scope, type } : null;
+        if (!id)
+            return null;
+        const dataKey = String(def.dataKey ?? '').trim().slice(0, 128);
+        const dataName = String(def.dataName ?? '').toLowerCase().trim().slice(0, 128);
+        return { id, scope: scope, type, ...(dataKey ? { dataKey, ...(dataName ? { dataName } : {}) } : {}) };
     })
         .filter((def) => def !== null);
     const existingPairs = new Set(state.customAttributes.map(attribute => attribute.id + '|' + attribute.scope));
@@ -8072,11 +8077,12 @@ function pasteClipboardInternal(fromSystemClipboard) {
     const mintTaken = new Set([...createdIds, ...carriedTypeById.keys()]);
     let remaining = Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length);
     let skipped = 0;
+    let renamed = 0;
     const failedPairs = new Set();
     const renameByPair = new Map();
     const defsToAdd = [];
-    const addDef = (id, scope, type) => {
-        defsToAdd.push({ id, scope, type });
+    const addDef = (id, scope, type, provenance) => {
+        defsToAdd.push({ id, scope, type, ...provenance });
         existingPairs.add(id + '|' + scope);
         createdIds.add(id);
         mintTaken.add(id);
@@ -8094,12 +8100,25 @@ function pasteClipboardInternal(fromSystemClipboard) {
         const type = carriedPair ? carriedPair.type : (carriedTypeById.get(id) || 'string');
         if (!createdIds.has(id)) {
             remaining--;
-            addDef(id, scope, type);
+            addDef(id, scope, type, carriedPair?.dataKey ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) } : undefined);
+            return;
+        }
+        // A previous paste already re-created this exact conflict under a fresh
+        // id (marked with dataKey = the carried id) — reuse it so repeated
+        // pastes never split one property into tag_1, tag_2, ... GraphML
+        // migrations always carry a non-empty dataName, so they never match here.
+        const prior = state.customAttributes.find(attribute => attribute.dataKey === id
+            && attribute.scope === scope
+            && String(attribute.dataName ?? '') === ''
+            && !carriedTypeById.has(attribute.id));
+        if (prior) {
+            renameByPair.set(key, prior.id);
             return;
         }
         const newId = uniqueCustomAttributeId(id, mintTaken);
         remaining--;
-        addDef(newId, scope, type);
+        renamed++;
+        addDef(newId, scope, type, { dataKey: id });
         renameByPair.set(key, newId);
     };
     const ensureEntityPairs = (entities, scope) => {
@@ -8137,8 +8156,8 @@ function pasteClipboardInternal(fromSystemClipboard) {
     }
     if (skipped)
         toast(I18N.t('attribute_import_skipped', { n: skipped }));
-    if (renameByPair.size)
-        toast(I18N.t('attribute_scope_renamed', { n: renameByPair.size }));
+    if (renamed)
+        toast(I18N.t('attribute_scope_renamed', { n: renamed }));
     // Coerce carried values against the resolved definitions. Values whose
     // definition does not exist (or was skipped over the cap) are dropped, as
     // on any other load path — never silently kept out of reach.
@@ -10493,7 +10512,7 @@ function exportDot() { showExportPreview(`${fileBase()}.dot`, exportDotText(), '
 function xmlEsc(v) { return String(v ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&apos;', '"': '&quot;' }[c])); }
 function exportGraphmlText() {
     const gd = state.settings.graphDefaults;
-    const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">`,
+    const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml" xmlns:grapheditor="https://grapheditor.pro/ns">`,
         `  <key id="label" for="node" attr.name="label" attr.type="string"/>`,
         `  <key id="nodeId" for="node" attr.name="id" attr.type="string"/>`,
         `  <key id="order" for="node" attr.name="order" attr.type="int"/>`,
@@ -10535,7 +10554,7 @@ function exportGraphmlText() {
         `  <key id="gridMajorColor" for="graph" attr.name="grid.major.color" attr.type="string"/>`,
         `  <key id="gridMinorAlpha" for="graph" attr.name="grid.minor.alpha" attr.type="double"/>`,
         `  <key id="gridMajorAlpha" for="graph" attr.name="grid.major.alpha" attr.type="double"/>`,
-        ...state.customAttributes.map(attribute => `  <key id="${xmlEsc(attribute.id)}" for="${attribute.scope}" attr.name="${xmlEsc(attribute.id)}" attr.type="${attribute.type}"/>`),
+        ...state.customAttributes.map(attribute => `  <key id="${xmlEsc(attribute.id)}" for="${attribute.scope}" attr.name="${xmlEsc(attribute.id)}" attr.type="${attribute.type}"${attribute.dataKey ? ` grapheditor:dataKey="${xmlEsc(attribute.dataKey)}"` : ''}${attribute.dataName ? ` grapheditor:dataName="${xmlEsc(attribute.dataName)}"` : ''}/>`),
         `  <graph id="${xmlEsc(fileBase())}" edgedefault="directed">`];
     // Graph-level defaults
     lines.push(`    <data key="labelsPolicy">${xmlEsc(gd.labelsPolicy)}</data>`);
@@ -11425,11 +11444,14 @@ function parseGraphml(text) {
     // Ids reserved for built-ins are migrated to a safe unique name AT THE KEY
     // LEVEL, deterministically. Appending the same external GraphML file twice
     // re-resolves to the same migrated id instead of minting x_1, x_2, ... —
-    // the migration consumes no extra capacity on repeated imports. The
-    // migration never reuses an existing id it did not mint itself: only a
-    // definition produced by the importer (marked with `dataKey`) is a
-    // migration target, so an unrelated definition that happens to occupy
-    // the candidate id is never overwritten.
+    // the migration consumes no extra capacity on repeated imports. A prior
+    // migration is reused only when the raw key id, the key's lowered
+    // attr.name AND the scope all match, and never when the candidate id is
+    // itself a key in the incoming file — so distinct properties sharing a
+    // raw key id (e.g. two files both defining key "x") never share a
+    // definition, and an unrelated definition occupying the candidate id is
+    // never overwritten. `dataKey`/`dataName` markers travel with our own
+    // GraphML exports, so the round-trip keeps the same identity.
     const fileKeyIds = new Set();
     doc.querySelectorAll('key').forEach(k => { const kid = k.getAttribute('id'); if (kid)
         fileKeyIds.add(kid); });
@@ -11447,10 +11469,17 @@ function parseGraphml(text) {
         if (isCustom) {
             const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
             const migrated = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase());
+            // Provenance markers written by our own GraphML export (namespaced
+            // attributes on <key>), read back on import.
+            const geAttr = (k, local) => (k.getAttribute('grapheditor:' + local) || k.getAttributeNS('https://grapheditor.pro/ns', local) || '').trim().slice(0, 128);
             let defId = id;
+            let markers = {};
             if (migrated) {
                 const prior = Array.isArray(state.customAttributes)
-                    ? state.customAttributes.find(attribute => attribute.dataKey === id && attribute.scope === forWhom)
+                    ? state.customAttributes.find(attribute => attribute.dataKey === id
+                        && attribute.scope === forWhom
+                        && String(attribute.dataName ?? '') === name
+                        && !fileKeyIds.has(attribute.id))
                     : undefined;
                 if (prior) {
                     defId = prior.id;
@@ -11461,8 +11490,15 @@ function parseGraphml(text) {
                         taken.add(attribute.id);
                     defId = uniqueCustomAttributeId(id, taken);
                 }
+                markers = { dataKey: id, dataName: name };
             }
-            customAttributes.push({ id: defId, scope: forWhom, type: normalizedType, ...(migrated ? { dataKey: id } : {}) });
+            else {
+                const importedDataKey = geAttr(k, 'dataKey');
+                const importedDataName = geAttr(k, 'dataName').toLowerCase();
+                if (importedDataKey)
+                    markers = { dataKey: importedDataKey, ...(importedDataName ? { dataName: importedDataName } : {}) };
+            }
+            customAttributes.push({ id: defId, scope: forWhom, type: normalizedType, ...markers });
             customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
             customKeyDataName.push({ id: defId, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType) });
         }
@@ -13223,7 +13259,9 @@ function wireUi() {
                     return; // nothing changes: values, definition and history untouched
             }
         }
-        state.customAttributes[index] = { id, scope: resolvedScope, type: resolvedType };
+        // Keep the importer's/copy's provenance markers (dataKey/dataName) —
+        // they bind this definition to the source it migrated from.
+        state.customAttributes[index] = { ...oldDef, id, scope: resolvedScope, type: resolvedType };
         if (oldId !== id)
             renameCustomAttributeValues(oldId, id);
         if (scopeChanged) {

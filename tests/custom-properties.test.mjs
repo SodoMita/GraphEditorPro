@@ -1561,3 +1561,177 @@ test('pasting starts from the copied originals — the internal clipboard is nev
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+const appendGraphmlFile = async (document, window, text, append = true) => {
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = text;
+  const chk = modal.querySelector('#expAppendChk');
+  if(Boolean(chk.checked) !== append) chk.click();
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 50);
+  modal.remove();
+};
+
+test('GraphML keys sharing a raw id in two files migrate to distinct definitions', async () => {
+  const file1 = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="graph" attr.name="colour" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <data key="x">red</data>
+    <node id="a"/>
+  </graph>
+</graphml>`;
+  const file2 = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="graph" attr.name="owner" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <data key="x">bob</data>
+    <node id="b"/>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await appendGraphmlFile(document, window, file1);
+  await appendGraphmlFile(document, window, file2);
+  const exported = exportGraph(document);
+  const migratedColour = exported.customAttributes.find(a => a.dataName === 'colour');
+  const migratedOwner = exported.customAttributes.find(a => a.dataName === 'owner');
+  assert.ok(migratedColour, 'the colour property migrated');
+  assert.ok(migratedOwner, 'the owner property of the same raw key id migrated to a distinct definition');
+  assert.notEqual(migratedColour.id, migratedOwner.id);
+  assert.equal(exported.graphCustom[migratedColour.id], 'red');
+  assert.equal(exported.graphCustom[migratedOwner.id], 'bob', 'the second property does not overwrite the first');
+  assert.equal(exported.customAttributes.filter(a => a.dataKey === 'x').length, 2);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a reused migration id is not handed out when the incoming file uses it as a key', async () => {
+  const file1 = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="graph" attr.name="externalTag" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <data key="x">original</data>
+    <node id="a"/>
+  </graph>
+</graphml>`;
+  const file2 = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="graph" attr.name="externalTag" attr.type="string"/>
+  <key id="x_1" for="graph" attr.name="other" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <data key="x">second</data>
+    <data key="x_1">other-value</data>
+    <node id="b"/>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await appendGraphmlFile(document, window, file1);
+  let exported = exportGraph(document);
+  assert.equal(exported.graphCustom.x_1, 'original');
+  // The migrated x_1 now collides with a key id inside the incoming file,
+  // so the reserved key must mint a fresh definition instead of merging.
+  await appendGraphmlFile(document, window, file2);
+  exported = exportGraph(document);
+  const fresh = exported.customAttributes.find(a => a.id === 'x_2');
+  assert.ok(fresh, 'the reused candidate was skipped because the file uses x_1 as a key');
+  assert.equal(fresh.dataKey, 'x');
+  assert.equal(exported.graphCustom.x_2, 'second', 'the reserved key keeps both of the file’s properties');
+  assert.equal(exported.graphCustom.x_1, 'other-value', 'the file’s x_1 key merges with the existing x_1 definition');
+  const reused = exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id);
+  assert.deepEqual(new Set(reused), new Set(['x_1', 'x_2']));
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('migration provenance survives a GraphML export/reopen cycle and definition edits', async () => {
+  const source = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="graph" attr.name="externalTag" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <data key="x">original</data>
+    <node id="a"/>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await appendGraphmlFile(document, window, source);
+  let exported = exportGraph(document);
+  assert.equal(exported.customAttributes.find(a => a.dataKey === 'x').id, 'x_1');
+
+  // Export → reopen (replace mode) loses nothing: provenance travels in the GraphML.
+  const graphml = exportGraphml(document);
+  assert.match(graphml, /grapheditor:dataKey="x"/);
+  await appendGraphmlFile(document, window, graphml, false);
+  exported = exportGraph(document);
+  const reopened = exported.customAttributes.find(a => a.dataKey === 'x');
+  assert.ok(reopened, 'provenance is restored when the exported GraphML is reopened');
+  assert.equal(reopened.id, 'x_1');
+  // Appending the original source again merges into the restored definition.
+  await appendGraphmlFile(document, window, source);
+  exported = exportGraph(document);
+  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id), ['x_1']);
+
+  // Editing the definition keeps the markers too.
+  const row = () => [...document.querySelectorAll('.custom-attribute-row')]
+    .find(r => r.querySelector('[data-attribute-field="id"]').value === 'x_1');
+  row().querySelector('[data-attribute-field="type"]').value = 'long';
+  row().querySelector('[data-attribute-action="save"]').click();
+  await nextFrame(window); await settle(window, 40);
+  await appendGraphmlFile(document, window, source);
+  exported = exportGraph(document);
+  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id), ['x_1']);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('repeated pastes reuse the definition renamed for a scope conflict instead of splitting it', async () => {
+  const source = { ...customPropertiesGraph(),
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { tag: 'yes' } }],
+    edges: [], graphCustom: {},
+    customAttributes: [{ id: 'tag', scope: 'node', type: 'string' }],
+  };
+  const { dom } = createEditorDom(source);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  let clip = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async t => { clip = t; }, readText: async () => clip },
+  });
+  await selectNode(window, document, 'a', 300, 330);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window);
+  dom.window.close();
+
+  const target = { title: 'target', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [], edges: [], graphCustom: { tag: 'graphval' }, settings: {},
+    customAttributes: [{ id: 'tag', scope: 'graph', type: 'string' }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const t2 = createEditorDom(target);
+  const t2Window = t2.dom.window; const t2Document = t2Window.document;
+  Object.defineProperty(t2Window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => clip },
+  });
+  await nextFrame(t2Window);
+  for(let round = 0; round < 2; round++){
+    t2Document.dispatchEvent(new t2Window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+    await nextFrame(t2Window); await settle(t2Window, 60);
+  }
+  const exported = exportGraph(t2Document);
+  assert.equal(exported.customAttributes.filter(a => a.scope === 'node').length, 1,
+    'the scope conflict created exactly one node-scope definition');
+  assert.equal(exported.customAttributes.some(a => a.id === 'tag_2'), false, 'no split definition on the second paste');
+  const renamed = exported.customAttributes.find(a => a.scope === 'node');
+  assert.equal(exported.nodes.length, 2);
+  assert.ok(exported.nodes.every(n => n.custom[renamed.id] === 'yes'));
+  assert.equal(exported.graphCustom.tag, 'graphval');
+  t2.dom.window.close();
+});

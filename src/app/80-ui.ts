@@ -50,7 +50,9 @@
           if(!proceed) return; // nothing changes: values, definition and history untouched
         }
       }
-      state.customAttributes[index] = {id, scope: resolvedScope, type: resolvedType};
+      // Keep the importer's/copy's provenance markers (dataKey/dataName) —
+      // they bind this definition to the source it migrated from.
+      state.customAttributes[index] = { ...oldDef, id, scope: resolvedScope, type: resolvedType };
       if(oldId !== id) renameCustomAttributeValues(oldId, id);
       if(scopeChanged){
         if(oldScope === 'graph') promoteGraphCustomAttribute(id, resolvedScope as 'node' | 'edge');

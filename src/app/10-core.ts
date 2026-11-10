@@ -480,7 +480,7 @@
   // The clipboard payload carries the definitions of every custom attribute
   // it references, so pasting into a document that lacks them can re-create
   // them. Existing definitions win on id conflicts.
-  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[]; customAttributes?: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string }[] } | null = null;
+  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[]; customAttributes?: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }[] } | null = null;
   let pasteOffsetCount = 0;
   // UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
   // controls call it instead of reaching for a global, so modules stay
@@ -1014,7 +1014,8 @@
         // Keep the importer's migration marker (raw GraphML key id) so
         // re-appending the same external file lands on the same definition.
         const dataKey = String((attribute as AnyRecord).dataKey ?? '').trim().slice(0, 128);
-        return dataKey ? {id, scope, type, dataKey} : {id, scope, type};
+        const dataName = String((attribute as AnyRecord).dataName ?? '').toLowerCase().trim().slice(0, 128);
+        return dataKey ? {id, scope, type, dataKey, ...(dataName ? {dataName} : {})} : {id, scope, type};
       }).filter(Boolean) as GraphState['customAttributes'];
     // Rewrites the keys of a value map with the renames collected above, so
     // values stored under a migrated legacy id move to the new id.

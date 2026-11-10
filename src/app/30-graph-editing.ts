@@ -905,11 +905,14 @@
         const id = String(def.id ?? '').trim().slice(0, 128);
         const scope = ['graph','node','edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
-        return id ? { id, scope: scope as 'graph' | 'node' | 'edge', type } : null;
+        if(!id) return null;
+        const dataKey = String(def.dataKey ?? '').trim().slice(0, 128);
+        const dataName = String(def.dataName ?? '').toLowerCase().trim().slice(0, 128);
+        return { id, scope: scope as 'graph' | 'node' | 'edge', type, ...(dataKey ? { dataKey, ...(dataName ? { dataName } : {}) } : {}) };
       })
-      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string } => def !== null);
+      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string } => def !== null);
     const existingPairs = new Set(state.customAttributes.map(attribute => attribute.id + '|' + attribute.scope));
-    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
     const carriedTypeById = new Map<string, string>(carriedDefs.map(def => [def.id, def.type]));
     // Ids that may not be handed out during this paste. A pair's own carried
     // id stays available for its own direct creation; every existing
@@ -919,11 +922,12 @@
     const mintTaken = new Set([...createdIds, ...carriedTypeById.keys()]);
     let remaining = Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length);
     let skipped = 0;
+    let renamed = 0;
     const failedPairs = new Set<string>();
     const renameByPair = new Map<string, string>();
-    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string }[] = [];
-    const addDef = (id: string, scope: 'node' | 'edge', type: string) => {
-      defsToAdd.push({ id, scope, type });
+    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }[] = [];
+    const addDef = (id: string, scope: 'node' | 'edge', type: string, provenance?: { dataKey: string }) => {
+      defsToAdd.push({ id, scope, type, ...provenance });
       existingPairs.add(id + '|' + scope);
       createdIds.add(id);
       mintTaken.add(id);
@@ -936,12 +940,25 @@
       const type = carriedPair ? carriedPair.type : (carriedTypeById.get(id) || 'string');
       if(!createdIds.has(id)){
         remaining--;
-        addDef(id, scope, type);
+        addDef(id, scope, type, carriedPair?.dataKey ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) } : undefined);
+        return;
+      }
+      // A previous paste already re-created this exact conflict under a fresh
+      // id (marked with dataKey = the carried id) — reuse it so repeated
+      // pastes never split one property into tag_1, tag_2, ... GraphML
+      // migrations always carry a non-empty dataName, so they never match here.
+      const prior = state.customAttributes.find(attribute => attribute.dataKey === id
+        && attribute.scope === scope
+        && String(attribute.dataName ?? '') === ''
+        && !carriedTypeById.has(attribute.id));
+      if(prior){
+        renameByPair.set(key, prior.id);
         return;
       }
       const newId = uniqueCustomAttributeId(id, mintTaken);
       remaining--;
-      addDef(newId, scope, type);
+      renamed++;
+      addDef(newId, scope, type, { dataKey: id });
       renameByPair.set(key, newId);
     };
     const ensureEntityPairs = (entities: AnyRecord[], scope: 'node' | 'edge') => {
@@ -969,7 +986,7 @@
     }
     if(defsToAdd.length){ renderCustomAttributes(); renderCustomPropHosts(); }
     if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
-    if(renameByPair.size) toast(I18N.t('attribute_scope_renamed', { n: renameByPair.size }));
+    if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
     // Coerce carried values against the resolved definitions. Values whose
     // definition does not exist (or was skipped over the cap) are dropped, as
     // on any other load path — never silently kept out of reach.
