@@ -356,6 +356,11 @@
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
   const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
+  // The built-in GraphML keys our reader recognizes are matched
+  // case-insensitively (GraphML ids compare exactly, but attribute lookups in
+  // imported files normalize case for QVGE compatibility), so a custom id may
+  // never collide with a built-in name even by letter case.
+  const RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER = new Set([...RESERVED_CUSTOM_ATTRIBUTE_IDS].map(id => id.toLowerCase()));
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
@@ -596,7 +601,7 @@
   // hand-edited file cannot smuggle objects, prototype pollution or huge blobs
   // into the document.
   const CUSTOM_VALUE_MAX = 1000;
-  const CUSTOM_VALUE_KEYS_MAX = 200;
+  const CUSTOM_VALUE_KEYS_MAX = 500; // matches the 500-definition cap in sanitizeState
   function customAttributeTypeMap(definitions: readonly { id: string; type: string }[]): Map<string, string> {
     const map = new Map<string, string>();
     for(const attribute of definitions) map.set(attribute.id, attribute.type);
@@ -613,8 +618,13 @@
     if(type === 'int' || type === 'long'){
       const numeric = Number(text);
       if(Number.isFinite(numeric)){
-        const limit = type === 'int' ? 2147483647 : Number.MAX_SAFE_INTEGER;
-        return clamp(Math.trunc(numeric), -limit, limit);
+        const truncated = Math.trunc(numeric);
+        // Out-of-range values are kept as the exact text the user typed or the
+        // file contains (never silently clamped) — same lenient rule as for
+        // unparseable input, so a valid 64-bit long round-trips intact.
+        if(type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
+        if(type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
+        return truncated;
       }
       return text.slice(0, CUSTOM_VALUE_MAX);
     }
@@ -624,6 +634,56 @@
       return text.slice(0, CUSTOM_VALUE_MAX);
     }
     return raw.slice(0, CUSTOM_VALUE_MAX);
+  }
+  // Migrates stored values of one attribute to a new type. Unlike
+  // coerceCustomValue (the import path, which keeps unrepresentable text),
+  // this returns undefined for values that cannot be represented in the target
+  // type, so the caller can drop them explicitly.
+  function coerceCustomValueForType(value: CustomAttributeValue, type: string): CustomAttributeValue | undefined {
+    if(type === 'string') return String(value).slice(0, CUSTOM_VALUE_MAX);
+    if(type === 'boolean'){
+      if(typeof value === 'boolean') return value;
+      const text = String(value ?? '').trim();
+      if(/^(true|1|yes|on)$/i.test(text)) return true;
+      if(/^(false|0|no|off)$/i.test(text)) return false;
+      return undefined;
+    }
+    if(type === 'int' || type === 'long'){
+      if(typeof value === 'boolean') return undefined; // a truthy flag is not a number
+      const text = String(value ?? '').trim();
+      if(text === '') return undefined;
+      const numeric = Number(text);
+      if(!Number.isFinite(numeric)) return undefined;
+      const truncated = Math.trunc(numeric);
+      if(type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) return undefined;
+      if(type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) return undefined;
+      return truncated;
+    }
+    if(type === 'float' || type === 'double'){
+      if(typeof value === 'boolean') return undefined;
+      const numeric = Number(String(value ?? '').trim());
+      return Number.isFinite(numeric) ? numeric : undefined;
+    }
+    return String(value).slice(0, CUSTOM_VALUE_MAX);
+  }
+  // Rewrites every stored value of one attribute id to a new type, dropping
+  // values that cannot be represented. Returns how many were dropped. Undo
+  // restores the pre-migration state as one history entry.
+  function migrateCustomValuesForType(id: string, newType: string): number {
+    let dropped = 0;
+    const stores = [state.graphCustom,
+      isRecord(state.settings) ? state.settings.nodeCustom : undefined,
+      isRecord(state.settings) ? state.settings.edgeCustom : undefined,
+      ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
+    for(const store of stores){
+      if(!isRecord(store)) continue;
+      const raw = store[id];
+      if(raw === undefined) continue;
+      const migrated = coerceCustomValueForType(raw, newType);
+      if(migrated === undefined){ delete store[id]; dropped++; }
+      else store[id] = migrated;
+    }
+    return dropped;
   }
   function sanitizeCustomValues(input: unknown, typeById: Map<string, string>): Record<string, CustomAttributeValue> | undefined {
     if(!isRecord(input)) return undefined;
@@ -718,8 +778,12 @@
     if(def.type === 'string'){ setAll(text.slice(0, CUSTOM_VALUE_MAX)); return 'ok'; }
     const numeric = Number(text);
     if(!Number.isFinite(numeric)) return 'invalid';
-    if(def.type === 'int') setAll(clamp(Math.trunc(numeric), -2147483648, 2147483647));
-    else if(def.type === 'long') setAll(clamp(Math.trunc(numeric), -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER));
+    const truncated = Math.trunc(numeric);
+    // Out-of-range input is stored as the exact text (never silently clamped);
+    // it round-trips unchanged and the field keeps showing what was typed.
+    if(def.type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) setAll(text.slice(0, CUSTOM_VALUE_MAX));
+    else if(def.type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) setAll(text.slice(0, CUSTOM_VALUE_MAX));
+    else if(def.type === 'int' || def.type === 'long') setAll(truncated);
     else setAll(numeric); // float / double
     return 'ok';
   }
@@ -808,7 +872,7 @@
         const id = String(attribute.id ?? '').trim().slice(0, 128);
         const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id)) return null;
+        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()) || customAttributeIds.has(id)) return null;
         customAttributeIds.add(id);
         return {id, scope, type};
       }).filter(Boolean) as GraphState['customAttributes'];

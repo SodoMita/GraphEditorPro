@@ -1982,6 +1982,7 @@ const I18N = {
         'graph_values_help': { en: 'Values of graph-scope attributes. They apply to the whole document.', ru: 'Значения атрибутов, заданных для графа. Действуют на весь документ.' },
         'graph_values_none': { en: 'No graph-scope attributes defined yet. Add one above with scope “Graph”.', ru: 'Атрибуты для графа ещё не заданы. Добавьте их выше с областью «Граф».' },
         'attribute_invalid_number': { en: 'That value is not a valid number.', ru: 'Это значение не является корректным числом.' },
+        'attribute_type_changed': { en: 'Type changed; {n} incompatible value(s) were removed.', ru: 'Тип изменён; {n} несовместимых значения было удалено.' },
         'attribute_deleted': { en: 'Custom attribute deleted', ru: 'Пользовательский атрибут удалён' },
         'import_export': { en: 'Import / export', ru: 'Импорт / экспорт' },
         'append_mode': { en: 'Append to current graph (keep existing nodes/edges, styles, and background)', ru: 'Добавить к текущему графу (сохранить существующие узлы, рёбра, стили и фон)' },
@@ -2788,6 +2789,11 @@ const STROKE_STYLES = ['solid', 'dashed', 'dotted'];
 const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
 const LABEL_POLICIES = ['auto', 'on', 'off'];
 const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label', 'nodeId', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize', 'labelPosition', 'weight', 'edgeLabel', 'edgeType', 'edgeColor', 'edgeStrokeSize', 'edgeStrokeStyle', 'edgeLabelColor', 'edgeLabelFont', 'edgeLabelSize', 'directed', 'labelsPolicy', 'edgeWeightMode', 'edgeWeightMin', 'edgeWeightMax', 'edgeWeightCorr', 'edgeWidthMin', 'edgeWidthMax', 'edgeWeightColorLow', 'edgeWeightColorHigh', 'canvasBgColor', 'gridMinorColor', 'gridMajorColor', 'gridMinorAlpha', 'gridMajorAlpha']);
+// The built-in GraphML keys our reader recognizes are matched
+// case-insensitively (GraphML ids compare exactly, but attribute lookups in
+// imported files normalize case for QVGE compatibility), so a custom id may
+// never collide with a built-in name even by letter case.
+const RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER = new Set([...RESERVED_CUSTOM_ATTRIBUTE_IDS].map(id => id.toLowerCase()));
 const FONT_FAMILIES = ['Inter', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New'];
 const defaultState = () => ({
     title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
@@ -3050,7 +3056,7 @@ function isPendingDefaultsTarget(target) {
 // hand-edited file cannot smuggle objects, prototype pollution or huge blobs
 // into the document.
 const CUSTOM_VALUE_MAX = 1000;
-const CUSTOM_VALUE_KEYS_MAX = 200;
+const CUSTOM_VALUE_KEYS_MAX = 500; // matches the 500-definition cap in sanitizeState
 function customAttributeTypeMap(definitions) {
     const map = new Map();
     for (const attribute of definitions)
@@ -3070,8 +3076,15 @@ function coerceCustomValue(value, type) {
     if (type === 'int' || type === 'long') {
         const numeric = Number(text);
         if (Number.isFinite(numeric)) {
-            const limit = type === 'int' ? 2147483647 : Number.MAX_SAFE_INTEGER;
-            return clamp(Math.trunc(numeric), -limit, limit);
+            const truncated = Math.trunc(numeric);
+            // Out-of-range values are kept as the exact text the user typed or the
+            // file contains (never silently clamped) — same lenient rule as for
+            // unparseable input, so a valid 64-bit long round-trips intact.
+            if (type === 'int' && (truncated < -2147483648 || truncated > 2147483647))
+                return text.slice(0, CUSTOM_VALUE_MAX);
+            if (type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER)
+                return text.slice(0, CUSTOM_VALUE_MAX);
+            return truncated;
         }
         return text.slice(0, CUSTOM_VALUE_MAX);
     }
@@ -3082,6 +3095,72 @@ function coerceCustomValue(value, type) {
         return text.slice(0, CUSTOM_VALUE_MAX);
     }
     return raw.slice(0, CUSTOM_VALUE_MAX);
+}
+// Migrates stored values of one attribute to a new type. Unlike
+// coerceCustomValue (the import path, which keeps unrepresentable text),
+// this returns undefined for values that cannot be represented in the target
+// type, so the caller can drop them explicitly.
+function coerceCustomValueForType(value, type) {
+    if (type === 'string')
+        return String(value).slice(0, CUSTOM_VALUE_MAX);
+    if (type === 'boolean') {
+        if (typeof value === 'boolean')
+            return value;
+        const text = String(value ?? '').trim();
+        if (/^(true|1|yes|on)$/i.test(text))
+            return true;
+        if (/^(false|0|no|off)$/i.test(text))
+            return false;
+        return undefined;
+    }
+    if (type === 'int' || type === 'long') {
+        if (typeof value === 'boolean')
+            return undefined; // a truthy flag is not a number
+        const text = String(value ?? '').trim();
+        if (text === '')
+            return undefined;
+        const numeric = Number(text);
+        if (!Number.isFinite(numeric))
+            return undefined;
+        const truncated = Math.trunc(numeric);
+        if (type === 'int' && (truncated < -2147483648 || truncated > 2147483647))
+            return undefined;
+        if (type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER)
+            return undefined;
+        return truncated;
+    }
+    if (type === 'float' || type === 'double') {
+        if (typeof value === 'boolean')
+            return undefined;
+        const numeric = Number(String(value ?? '').trim());
+        return Number.isFinite(numeric) ? numeric : undefined;
+    }
+    return String(value).slice(0, CUSTOM_VALUE_MAX);
+}
+// Rewrites every stored value of one attribute id to a new type, dropping
+// values that cannot be represented. Returns how many were dropped. Undo
+// restores the pre-migration state as one history entry.
+function migrateCustomValuesForType(id, newType) {
+    let dropped = 0;
+    const stores = [state.graphCustom,
+        isRecord(state.settings) ? state.settings.nodeCustom : undefined,
+        isRecord(state.settings) ? state.settings.edgeCustom : undefined,
+        ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
+    for (const store of stores) {
+        if (!isRecord(store))
+            continue;
+        const raw = store[id];
+        if (raw === undefined)
+            continue;
+        const migrated = coerceCustomValueForType(raw, newType);
+        if (migrated === undefined) {
+            delete store[id];
+            dropped++;
+        }
+        else
+            store[id] = migrated;
+    }
+    return dropped;
 }
 function sanitizeCustomValues(input, typeById) {
     if (!isRecord(input))
@@ -3211,10 +3290,15 @@ function applyCustomPropValue(def, targets, raw, multi) {
     const numeric = Number(text);
     if (!Number.isFinite(numeric))
         return 'invalid';
-    if (def.type === 'int')
-        setAll(clamp(Math.trunc(numeric), -2147483648, 2147483647));
-    else if (def.type === 'long')
-        setAll(clamp(Math.trunc(numeric), -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER));
+    const truncated = Math.trunc(numeric);
+    // Out-of-range input is stored as the exact text (never silently clamped);
+    // it round-trips unchanged and the field keeps showing what was typed.
+    if (def.type === 'int' && (truncated < -2147483648 || truncated > 2147483647))
+        setAll(text.slice(0, CUSTOM_VALUE_MAX));
+    else if (def.type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER)
+        setAll(text.slice(0, CUSTOM_VALUE_MAX));
+    else if (def.type === 'int' || def.type === 'long')
+        setAll(truncated);
     else
         setAll(numeric); // float / double
     return 'ok';
@@ -3312,7 +3396,7 @@ function sanitizeState(input) {
         const id = String(attribute.id ?? '').trim().slice(0, 128);
         const scope = ['graph', 'node', 'edge'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if (!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id))
+        if (!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()) || customAttributeIds.has(id))
             return null;
         customAttributeIds.add(id);
         return { id, scope, type };
@@ -10204,6 +10288,11 @@ function appendImportedGraph(data, label = 'graph') {
         state.graphCustom = sane.graphCustom;
     state.nextNode = Math.max(state.nextNode, counter);
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
+    // The append path keeps the current settings, but may contribute new
+    // definitions — repaint every custom-property surface so the Data tab,
+    // the pending-defaults editors and the selection panel show them.
+    renderCustomAttributes();
+    renderSelectionPanel();
     pushHistory(`append ${label}`);
     queueRender(true, true);
     saveSoon();
@@ -10646,9 +10735,41 @@ function parseDot(text) {
     }
     return { title: 'imported-dot', nodes: arr.map(({ original, ...n }) => n), edges };
 }
-function graphmlDataMap(el, keyNames) {
+// <data> elements that are DIRECT children of el. querySelectorAll('data')
+// would also match descendants — a node's <data> leaked into the graph map
+// and could overwrite document-wide values.
+function graphmlChildData(el) {
+    const items = [];
+    const root = el && el.nodeType === 9 ? el.documentElement : el; // document → root element
+    if (!root || !root.children)
+        return items;
+    for (const child of root.children) {
+        if ((child.localName || child.tagName) === 'data') {
+            items.push({ key: child.getAttribute('key') || '', text: (child.textContent || '').trim() });
+        }
+    }
+    return items;
+}
+// Name-indexed map for BUILT-IN attributes (QVGE writes data under arbitrary
+// key ids with well-known attr.name values). Custom keys are excluded, so a
+// custom key can never shadow a built-in attribute (e.g. attr.name="Label").
+function graphmlDataMap(el, keyNames, customKeyIds) {
     const map = {};
-    el.querySelectorAll('data').forEach(d => { const key = d.getAttribute('key') || ''; const name = (keyNames[key] || key).toLowerCase(); map[name] = d.textContent.trim(); });
+    for (const { key, text } of graphmlChildData(el)) {
+        if (customKeyIds.has(key))
+            continue;
+        const name = (keyNames[key] || key).toLowerCase();
+        map[name] = text;
+    }
+    return map;
+}
+// Exact key-id map for custom attributes: identity is the <data key="...">
+// attribute, never the (case-normalised) attr.name, so case-distinct custom
+// ids and custom ids that merely look like built-in names round-trip as-is.
+function graphmlDataMapById(el) {
+    const map = {};
+    for (const { key, text } of graphmlChildData(el))
+        map[key] = text;
     return map;
 }
 function parseShape(raw) {
@@ -10762,41 +10883,50 @@ function parseGraphml(text) {
     const keyNames = {};
     const keyDefaultsByFor = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
-    const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
+    const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER;
     const reservedAttrNames = new Set(['label', 'id', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'stroke.color', 'stroke.size', 'stroke.style', 'label.color', 'label.font', 'label.size', 'label.position', 'weight', 'direction', 'labels.policy', 'edge.weight.mode', 'edge.weight.min', 'edge.weight.max', 'edge.weight.corr', 'edge.width.min', 'edge.width.max', 'edge.weight.colorlow', 'edge.weight.colorhigh', 'canvas.bg.color', 'grid.minor.color', 'grid.major.color', 'grid.minor.alpha', 'grid.major.alpha']);
     const customAttributes = [];
+    const customKeyIds = new Set();
     const customKeyDataName = [];
     doc.querySelectorAll('key').forEach(k => {
         const id = k.getAttribute('id');
+        if (!id)
+            return;
         const name = (k.getAttribute('attr.name') || id).toLowerCase();
         const forWhom = k.getAttribute('for') || 'all';
         keyNames[id] = name;
         const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-        if (id && !reservedKeyIds.has(id) && !reservedAttrNames.has(name) && ['graph', 'node', 'edge'].includes(forWhom)) {
+        const defEl = k.querySelector('default');
+        const defVal = defEl ? defEl.textContent.trim() : '';
+        const isCustom = !reservedKeyIds.has(id.toLowerCase()) && !reservedAttrNames.has(name) && ['graph', 'node', 'edge'].includes(forWhom);
+        if (isCustom) {
             const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
             customAttributes.push({ id, scope: forWhom, type: normalizedType });
-            customKeyDataName.push({ id, scope: forWhom, type: normalizedType, dataKey: name });
+            customKeyIds.add(id);
+            customKeyDataName.push({ id, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType) });
         }
-        const defEl = k.querySelector('default');
         if (defEl) {
-            const val = defEl.textContent.trim();
             keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
-            keyDefaultsByFor[forWhom][name] = val;
+            keyDefaultsByFor[forWhom][name] = defVal;
         }
     });
     const graph = doc.querySelector('graph');
     const edgeDefaultAttr = graph?.getAttribute('edgedefault') || 'directed';
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
-    const graphData = graphmlDataMap(graph || doc, keyNames);
+    const graphData = graphmlDataMap(graph || doc, keyNames, customKeyIds);
+    const graphDataById = graphmlDataMapById(graph || doc);
     const graphCustom = Object.create(null);
     for (const def of customKeyDataName) {
         if (def.scope !== 'graph')
             continue;
-        const raw = graphData[def.dataKey];
-        if (raw == null || String(raw).trim() === '')
-            continue;
-        graphCustom[def.id] = coerceCustomValue(raw, def.type);
+        const raw = graphDataById[def.id];
+        if (raw != null && String(raw).trim() !== '') {
+            graphCustom[def.id] = coerceCustomValue(raw, def.type);
+        }
+        else if (def.defaultValue !== undefined) {
+            graphCustom[def.id] = def.defaultValue;
+        }
     }
     const graphKeyDefs = keyDefaultsByFor.graph || {};
     // Build settings from QVGE key defaults + graph data
@@ -10921,7 +11051,7 @@ function parseGraphml(text) {
         edgeDirectionDefault = parseDirection(edgeKeyDefs.direction);
     const nodes = [], idMap = new Map();
     doc.querySelectorAll('node').forEach((el, i) => {
-        const raw = el.getAttribute('id') || ('n' + (i + 1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames);
+        const raw = el.getAttribute('id') || ('n' + (i + 1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames, customKeyIds), dById = graphmlDataMapById(el);
         // QVGE: nodes are unlabeled by default. Only use label data if present.
         const label = String(d.label || d.name || '');
         let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
@@ -10969,10 +11099,13 @@ function parseGraphml(text) {
         for (const def of customKeyDataName) {
             if (def.scope !== 'node')
                 continue;
-            const raw = d[def.dataKey];
-            if (raw == null || String(raw).trim() === '')
-                continue;
-            nodeCustom[def.id] = coerceCustomValue(raw, def.type);
+            const raw = dById[def.id];
+            if (raw != null && String(raw).trim() !== '') {
+                nodeCustom[def.id] = coerceCustomValue(raw, def.type);
+            }
+            else if (def.defaultValue !== undefined) {
+                nodeCustom[def.id] = def.defaultValue;
+            }
         }
         if (Object.keys(nodeCustom).length)
             node.custom = nodeCustom;
@@ -10984,7 +11117,7 @@ function parseGraphml(text) {
         const from = idMap.get(el.getAttribute('source')), to = idMap.get(el.getAttribute('target'));
         if (!from || !to)
             return;
-        const d = graphmlDataMap(el, keyNames);
+        const d = graphmlDataMap(el, keyNames, customKeyIds), dById = graphmlDataMapById(el);
         const directedAttr = el.getAttribute('directed');
         // QVGE: edge direction can come from data "direction" field or the XML attribute
         let directed = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
@@ -11023,10 +11156,13 @@ function parseGraphml(text) {
         for (const def of customKeyDataName) {
             if (def.scope !== 'edge')
                 continue;
-            const raw = d[def.dataKey];
-            if (raw == null || String(raw).trim() === '')
-                continue;
-            edgeCustom[def.id] = coerceCustomValue(raw, def.type);
+            const raw = dById[def.id];
+            if (raw != null && String(raw).trim() !== '') {
+                edgeCustom[def.id] = coerceCustomValue(raw, def.type);
+            }
+            else if (def.defaultValue !== undefined) {
+                edgeCustom[def.id] = def.defaultValue;
+            }
         }
         if (Object.keys(edgeCustom).length)
             edge.custom = edgeCustom;
@@ -12441,7 +12577,7 @@ function wireUi() {
             return;
         }
         idInput.setCustomValidity('');
-        if (RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)) {
+        if (RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())) {
             toast(I18N.t('attribute_id_reserved'));
             return;
         }
@@ -12452,6 +12588,7 @@ function wireUi() {
         state.customAttributes.push({ id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value });
         idInput.value = '';
         renderCustomAttributes();
+        renderCustomPropHosts();
         pushHistory('add custom attribute');
         toast(I18N.t('attribute_added'));
     });
@@ -12468,12 +12605,13 @@ function wireUi() {
             state.customAttributes.splice(index, 1);
             stripCustomAttributeValues(removedId);
             renderCustomAttributes();
-            renderSelectionPanel();
+            renderCustomPropHosts();
             pushHistory('delete custom attribute');
             toast(I18N.t('attribute_deleted'));
             return;
         }
-        const oldId = state.customAttributes[index].id;
+        const oldDef = state.customAttributes[index];
+        const oldId = oldDef.id, oldType = oldDef.type;
         const idInput = row.querySelector('[data-attribute-field="id"]');
         const id = String(idInput.value || '').trim();
         if (!id) {
@@ -12482,7 +12620,7 @@ function wireUi() {
             return;
         }
         idInput.setCustomValidity('');
-        if (RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)) {
+        if (RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())) {
             toast(I18N.t('attribute_id_reserved'));
             return;
         }
@@ -12492,13 +12630,17 @@ function wireUi() {
         }
         const scope = row.querySelector('[data-attribute-field="scope"]').value;
         const type = row.querySelector('[data-attribute-field="type"]').value;
-        state.customAttributes[index] = { id, scope: ['graph', 'node', 'edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string' };
+        const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
+        state.customAttributes[index] = { id, scope: ['graph', 'node', 'edge'].includes(scope) ? scope : 'graph', type: resolvedType };
         if (oldId !== id)
             renameCustomAttributeValues(oldId, id);
+        // A type change rewrites every stored value; values that cannot be
+        // represented in the new type are dropped (undo restores all of them).
+        const dropped = oldType !== resolvedType ? migrateCustomValuesForType(id, resolvedType) : 0;
         renderCustomAttributes();
-        renderSelectionPanel();
+        renderCustomPropHosts();
         pushHistory('edit custom attribute');
-        toast(I18N.t('attribute_updated'));
+        toast(dropped > 0 ? I18N.t('attribute_type_changed', { n: dropped }) : I18N.t('attribute_updated'));
     });
     canvasWrap.addEventListener('selectstart', ev => { if (!isCanvasOverlayControl(ev.target))
         ev.preventDefault(); });

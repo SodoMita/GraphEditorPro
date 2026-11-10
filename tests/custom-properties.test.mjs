@@ -499,3 +499,263 @@ test('renaming and deleting a definition migrates and strips pending new-element
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('GraphML round-trip keeps case-distinct custom ids and never rewrites the node label', async () => {
+  const graph = { ...customPropertiesGraph(),
+    nodes: [{ id: 'a', label: 'Original', x: -200, y: 0, shape: 'circle', color: '#0ea5e9', type: '', order: 0, custom: { ColorTag: 'red', colortag: 7 } }],
+    edges: [],
+    customAttributes: [
+      { id: 'ColorTag', scope: 'node', type: 'string' },
+      { id: 'colortag', scope: 'node', type: 'int' },
+    ],
+    graphCustom: {},
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const graphml = exportGraphml(document);
+  assert.match(graphml, /<key id="ColorTag"/);
+  assert.match(graphml, /<key id="colortag"/);
+  assert.match(graphml, /<data key="ColorTag">red<\/data>/);
+  assert.match(graphml, /<data key="colortag">7<\/data>/);
+
+  // Re-import through the export modal (replace mode).
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = graphml;
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  const roundTripped = exportGraph(document);
+  assert.equal(roundTripped.nodes.find(n => n.id === 'a').label, 'Original', 'the built-in label is untouched');
+  assert.equal(roundTripped.nodes.find(n => n.id === 'a').custom.ColorTag, 'red');
+  assert.equal(roundTripped.nodes.find(n => n.id === 'a').custom.colortag, 7);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('GraphML graph-scope values are not overwritten by node values sharing attr.name', async () => {
+  const qvge = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="gOwner" for="graph" attr.name="owner" attr.type="string"/>
+  <key id="nOwner" for="node" attr.name="owner" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <data key="gOwner">Alice</data>
+    <node id="a"><data key="nOwner">Bob</data></node>
+    <node id="b"/>
+    <edge id="e1" source="a" target="b" directed="true"/>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = qvge;
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  const exported = exportGraph(document);
+  assert.equal(exported.graphCustom.gOwner, 'Alice', 'the graph-scope value survives; node data cannot overwrite it');
+  assert.equal(exported.nodes.find(n => n.id === 'a').custom.nOwner, 'Bob');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('more than 200 custom values survive a load (cap matches the 500-definition limit)', async () => {
+  const customAttributes = [];
+  const custom = {};
+  for (let i = 0; i < 210; i++) {
+    const id = 'attr_' + String(i).padStart(3, '0');
+    customAttributes.push({ id, scope: 'node', type: 'int' });
+    custom[id] = i;
+  }
+  const graph = {
+    title: 'cap', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, custom }],
+    edges: [], customAttributes, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  const exported = exportGraph(document);
+  assert.equal(Object.keys(exported.nodes[0].custom || {}).length, 210, 'no values are silently dropped past 200');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('int32 minimum and beyond-safe-range long are never silently clamped', async () => {
+  const graph = { ...customPropertiesGraph(),
+    customAttributes: [
+      { id: 'intDef', scope: 'node', type: 'int' },
+      { id: 'longDef', scope: 'node', type: 'long' },
+    ],
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { intDef: -2147483648 } }],
+    edges: [],
+  };
+  delete graph.graphCustom;
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await selectNode(window, document, 'a', 300, 330);
+
+  // Loaded value is the int32 minimum, not clamped upward.
+  let input = document.querySelector('#selectionPanel [data-custom-attribute="intDef"]');
+  assert.equal(input.value, '-2147483648');
+
+  // Above int32: preserved as the exact text, not clamped to 2147483647.
+  changeValue(window, input, '2147483648');
+  await nextFrame(window);
+  let exported = exportGraph(document);
+  assert.equal(exported.nodes.find(n => n.id === 'a').custom.intDef, '2147483648');
+
+  // A 64-bit long the JS number line cannot hold exactly: exact text round-trips.
+  const longInput = document.querySelector('#selectionPanel [data-custom-attribute="longDef"]');
+  changeValue(window, longInput, '9223372036854775807');
+  await nextFrame(window);
+  exported = exportGraph(document);
+  assert.equal(exported.nodes.find(n => n.id === 'a').custom.longDef, '9223372036854775807');
+
+  // Undo restores the pre-clamp history entry with the int32 minimum intact.
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 40);
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 40);
+  input = document.querySelector('#selectionPanel [data-custom-attribute="intDef"]');
+  exported = exportGraph(document);
+  assert.equal(exported.nodes.find(n => n.id === 'a').custom.intDef, -2147483648, 'int32 minimum survives undo');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('GraphML <default> on custom keys is applied to elements without explicit data', async () => {
+  const qvge = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="dCap" for="node" attr.name="dCap" attr.type="int"><default>42</default></key>
+  <key id="dTag" for="graph" attr.name="dTag" attr.type="string"><default>hello</default></key>
+  <key id="dFlag" for="edge" attr.name="dFlag" attr.type="boolean"><default>yes</default></key>
+  <graph id="g" edgedefault="directed">
+    <node id="a"><data key="dCap">7</data></node>
+    <node id="b"/>
+    <edge id="e1" source="a" target="b" directed="true"/>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = qvge;
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  const exported = exportGraph(document);
+  assert.equal(exported.nodes.find(n => n.id === 'a').custom.dCap, 7, 'explicit data wins over the default');
+  assert.equal(exported.nodes.find(n => n.id === 'b').custom.dCap, 42, 'the key default applies to elements without data');
+  assert.equal(exported.graphCustom.dTag, 'hello', 'graph-scope default applied');
+  assert.equal(exported.edges[0].custom.dFlag, true, 'edge-scope default applied');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('changing a definition type migrates values and drops the unconvertible ones', async () => {
+  const graph = { ...customPropertiesGraph(),
+    customAttributes: [
+      { id: 'flag', scope: 'graph', type: 'string' },
+      { id: 'count', scope: 'graph', type: 'string' },
+      { id: 'score', scope: 'node', type: 'int' },
+    ],
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { score: 42 } }],
+    edges: [],
+    graphCustom: { flag: 'yes', count: 'hello' },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const rowFor = id => [...document.querySelectorAll('.custom-attribute-row')]
+    .find(row => row.querySelector('[data-attribute-field="id"]').value === id);
+  const setType = (row, type) => {
+    row.querySelector('[data-attribute-field="type"]').value = type;
+    row.querySelector('[data-attribute-action="save"]').click();
+  };
+
+  // string "yes" → boolean true (converted, not dropped, not left as junk)
+  setType(rowFor('flag'), 'boolean');
+  await nextFrame(window);
+  let exported = exportGraph(document);
+  assert.equal(exported.graphCustom.flag, true);
+
+  // string "hello" → int: cannot be represented, value is dropped explicitly
+  setType(rowFor('count'), 'int');
+  await nextFrame(window);
+  exported = exportGraph(document);
+  assert.equal(Object.prototype.hasOwnProperty.call(exported.graphCustom, 'count'), false, 'unconvertible graph value is dropped, not left dangling');
+  assert.equal(exported.graphCustom.flag, true, 'untouched definitions keep their values');
+
+  // int → string: value is converted, not dropped
+  setType(rowFor('score'), 'string');
+  await nextFrame(window);
+  exported = exportGraph(document);
+  assert.equal(exported.nodes.find(n => n.id === 'a').custom.score, '42');
+
+  // Undo still steps over the migrations one edit at a time.
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 40);
+  exported = exportGraph(document);
+  assert.equal(exported.nodes.find(n => n.id === 'a').custom.score, 42, 'undo restores the pre-migration value');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('adding a definition refreshes an open selection panel; append import repaints the Data tab', async () => {
+  const graph = { ...customPropertiesGraph(),
+    nodes: [
+      { id: 'a', label: 'A', x: -200, y: 0, order: 0 },
+      { id: 'b', label: 'B', x: 200, y: 0, order: 1 },
+    ],
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await selectNode(window, document, 'a', 300, 330);
+  assert.equal(document.querySelector('#selectionPanel [data-custom-attribute="newTag"]'), null);
+
+  // Add a node-scope definition via the form while the node stays selected.
+  document.querySelector('#customAttributeId').value = 'newTag';
+  document.querySelector('#customAttributeScope').value = 'node';
+  document.querySelector('#customAttributeType').value = 'string';
+  document.querySelector('#btnAddCustomAttribute').click();
+  await nextFrame(window);
+  assert.ok(document.querySelector('#selectionPanel [data-custom-attribute="newTag"]'),
+    'the selection panel immediately shows the new attribute');
+
+  // Append-import a document declaring a graph-scope definition with a value.
+  const appended = {
+    title: 'appended', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [{ id: 'app1', label: 'App', x: 400, y: 200, order: 2 }],
+    edges: [],
+    customAttributes: [{ id: 'appendedDef', scope: 'graph', type: 'string' }],
+    graphCustom: { appendedDef: 'from-append' },
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = JSON.stringify(appended);
+  modal.querySelector('#expAppendChk').click();
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  assert.ok([...document.querySelectorAll('#customAttributesList .custom-attribute-row')]
+    .some(row => row.querySelector('[data-attribute-field="id"]').value === 'appendedDef'),
+    'the Data tab lists the appended definition');
+  assert.equal(document.querySelector('#graphCustomProps [data-custom-attribute="appendedDef"]')?.value,
+    'from-append', 'the imported graph value is visible without further interaction');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

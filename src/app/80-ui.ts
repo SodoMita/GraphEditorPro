@@ -5,11 +5,11 @@
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)){ toast(I18N.t('attribute_id_reserved')); return; }
+      if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){ toast(I18N.t('attribute_id_reserved')); return; }
       if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
       idInput.value = '';
-      renderCustomAttributes(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
+      renderCustomAttributes(); renderCustomPropHosts(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
     });
     $('#customAttributesList').addEventListener('click', ev => {
       const button = ev.target.closest('[data-attribute-action]');
@@ -21,20 +21,26 @@
         const removedId = state.customAttributes[index].id;
         state.customAttributes.splice(index, 1);
         stripCustomAttributeValues(removedId);
-        renderCustomAttributes(); renderSelectionPanel(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
+        renderCustomAttributes(); renderCustomPropHosts(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
       }
-      const oldId = state.customAttributes[index].id;
+      const oldDef = state.customAttributes[index];
+      const oldId = oldDef.id, oldType = oldDef.type;
       const idInput = row.querySelector('[data-attribute-field="id"]');
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)){ toast(I18N.t('attribute_id_reserved')); return; }
+      if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){ toast(I18N.t('attribute_id_reserved')); return; }
       if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
       const type = row.querySelector('[data-attribute-field="type"]').value;
-      state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'};
+      const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
+      state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: resolvedType};
       if(oldId !== id) renameCustomAttributeValues(oldId, id);
-      renderCustomAttributes(); renderSelectionPanel(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
+      // A type change rewrites every stored value; values that cannot be
+      // represented in the new type are dropped (undo restores all of them).
+      const dropped = oldType !== resolvedType ? migrateCustomValuesForType(id, resolvedType) : 0;
+      renderCustomAttributes(); renderCustomPropHosts(); pushHistory('edit custom attribute');
+      toast(dropped > 0 ? I18N.t('attribute_type_changed', { n: dropped }) : I18N.t('attribute_updated'));
     });
     canvasWrap.addEventListener('selectstart', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
     canvasWrap.addEventListener('contextmenu', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });

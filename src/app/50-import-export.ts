@@ -420,6 +420,10 @@
     if(isRecord(sane.graphCustom)) state.graphCustom = sane.graphCustom;
     state.nextNode = Math.max(state.nextNode, counter);
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
+    // The append path keeps the current settings, but may contribute new
+    // definitions — repaint every custom-property surface so the Data tab,
+    // the pending-defaults editors and the selection panel show them.
+    renderCustomAttributes(); renderSelectionPanel();
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
     toast(discarded > 0
@@ -733,9 +737,38 @@
     }
     return {title:'imported-dot', nodes:arr.map(({original,...n}) => n), edges};
   }
-  function graphmlDataMap(el, keyNames): AnyRecord {
+  // <data> elements that are DIRECT children of el. querySelectorAll('data')
+  // would also match descendants — a node's <data> leaked into the graph map
+  // and could overwrite document-wide values.
+  function graphmlChildData(el): { key: string, text: string }[] {
+    const items: { key: string, text: string }[] = [];
+    const root = el && el.nodeType === 9 ? el.documentElement : el; // document → root element
+    if(!root || !root.children) return items;
+    for(const child of root.children){
+      if((child.localName || child.tagName) === 'data'){
+        items.push({ key: child.getAttribute('key') || '', text: (child.textContent || '').trim() });
+      }
+    }
+    return items;
+  }
+  // Name-indexed map for BUILT-IN attributes (QVGE writes data under arbitrary
+  // key ids with well-known attr.name values). Custom keys are excluded, so a
+  // custom key can never shadow a built-in attribute (e.g. attr.name="Label").
+  function graphmlDataMap(el, keyNames, customKeyIds): AnyRecord {
     const map: AnyRecord = {};
-    el.querySelectorAll('data').forEach(d => { const key=d.getAttribute('key') || ''; const name=(keyNames[key] || key).toLowerCase(); map[name] = d.textContent.trim(); });
+    for(const { key, text } of graphmlChildData(el)){
+      if(customKeyIds.has(key)) continue;
+      const name = (keyNames[key] || key).toLowerCase();
+      map[name] = text;
+    }
+    return map;
+  }
+  // Exact key-id map for custom attributes: identity is the <data key="...">
+  // attribute, never the (case-normalised) attr.name, so case-distinct custom
+  // ids and custom ids that merely look like built-in names round-trip as-is.
+  function graphmlDataMapById(el): AnyRecord {
+    const map: AnyRecord = {};
+    for(const { key, text } of graphmlChildData(el)) map[key] = text;
     return map;
   }
   function parseShape(raw){
@@ -825,39 +858,44 @@
     const keyNames: Record<string, string> = {};
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
-    const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
+    const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER;
     const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
     const customAttributes: GraphState['customAttributes'] = [];
-    const customKeyDataName: { id: string; scope: string; type: string; dataKey: string }[] = [];
+    const customKeyIds = new Set<string>();
+    const customKeyDataName: { id: string; scope: string; type: string; dataKey: string; defaultValue?: CustomAttributeValue }[] = [];
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
+      if(!id) return;
       const name = (k.getAttribute('attr.name') || id).toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
       keyNames[id] = name;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      if(id && !reservedKeyIds.has(id) && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom)){
+      const defEl = k.querySelector('default');
+      const defVal = defEl ? defEl.textContent.trim() : '';
+      const isCustom = !reservedKeyIds.has(id.toLowerCase()) && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom);
+      if(isCustom){
         const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
         customAttributes.push({id, scope: forWhom as 'graph' | 'node' | 'edge', type: normalizedType});
-        customKeyDataName.push({id, scope: forWhom, type: normalizedType, dataKey: name});
+        customKeyIds.add(id);
+        customKeyDataName.push({id, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType)});
       }
-      const defEl = k.querySelector('default');
       if(defEl){
-        const val = defEl.textContent.trim();
         keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
-        keyDefaultsByFor[forWhom][name] = val;
+        keyDefaultsByFor[forWhom][name] = defVal;
       }
     });
     const graph = doc.querySelector('graph');
     const edgeDefaultAttr = graph?.getAttribute('edgedefault') || 'directed';
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
-    const graphData = graphmlDataMap(graph || doc, keyNames);
+    const graphData = graphmlDataMap(graph || doc, keyNames, customKeyIds);
+    const graphDataById = graphmlDataMapById(graph || doc);
     const graphCustom: AnyRecord = Object.create(null);
     for(const def of customKeyDataName){
       if(def.scope !== 'graph') continue;
-      const raw = graphData[def.dataKey];
-      if(raw == null || String(raw).trim() === '') continue;
-      graphCustom[def.id] = coerceCustomValue(raw, def.type);
+      const raw = graphDataById[def.id];
+      if(raw != null && String(raw).trim() !== ''){ graphCustom[def.id] = coerceCustomValue(raw, def.type); }
+      else if(def.defaultValue !== undefined){ graphCustom[def.id] = def.defaultValue; }
     }
     const graphKeyDefs = keyDefaultsByFor.graph || {};
 
@@ -932,7 +970,7 @@
 
     const nodes: GraphNode[] = [], idMap = new Map<string, string>();
     doc.querySelectorAll('node').forEach((el,i) => {
-      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames);
+      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames, customKeyIds), dById = graphmlDataMapById(el);
       // QVGE: nodes are unlabeled by default. Only use label data if present.
       const label = String(d.label || d.name || '');
       let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
@@ -959,9 +997,9 @@
       const nodeCustom: AnyRecord = Object.create(null);
       for(const def of customKeyDataName){
         if(def.scope !== 'node') continue;
-        const raw = d[def.dataKey];
-        if(raw == null || String(raw).trim() === '') continue;
-        nodeCustom[def.id] = coerceCustomValue(raw, def.type);
+        const raw = dById[def.id];
+        if(raw != null && String(raw).trim() !== ''){ nodeCustom[def.id] = coerceCustomValue(raw, def.type); }
+        else if(def.defaultValue !== undefined){ nodeCustom[def.id] = def.defaultValue; }
       }
       if(Object.keys(nodeCustom).length) node.custom = nodeCustom;
       nodes.push(node);
@@ -970,7 +1008,7 @@
     const edges: GraphEdge[] = [];
     doc.querySelectorAll('edge').forEach((el,i) => {
       const from = idMap.get(el.getAttribute('source')), to = idMap.get(el.getAttribute('target')); if(!from || !to) return;
-      const d = graphmlDataMap(el, keyNames);
+      const d = graphmlDataMap(el, keyNames, customKeyIds), dById = graphmlDataMapById(el);
       const directedAttr = el.getAttribute('directed');
       // QVGE: edge direction can come from data "direction" field or the XML attribute
       let directed = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
@@ -992,9 +1030,9 @@
       const edgeCustom: AnyRecord = Object.create(null);
       for(const def of customKeyDataName){
         if(def.scope !== 'edge') continue;
-        const raw = d[def.dataKey];
-        if(raw == null || String(raw).trim() === '') continue;
-        edgeCustom[def.id] = coerceCustomValue(raw, def.type);
+        const raw = dById[def.id];
+        if(raw != null && String(raw).trim() !== ''){ edgeCustom[def.id] = coerceCustomValue(raw, def.type); }
+        else if(def.defaultValue !== undefined){ edgeCustom[def.id] = def.defaultValue; }
       }
       if(Object.keys(edgeCustom).length) edge.custom = edgeCustom;
       edges.push(edge);

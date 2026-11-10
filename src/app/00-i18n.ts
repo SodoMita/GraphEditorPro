@@ -312,6 +312,7 @@ const I18N: I18nService = {
     'graph_values_help': { en: 'Values of graph-scope attributes. They apply to the whole document.', ru: 'Значения атрибутов, заданных для графа. Действуют на весь документ.' },
     'graph_values_none': { en: 'No graph-scope attributes defined yet. Add one above with scope “Graph”.', ru: 'Атрибуты для графа ещё не заданы. Добавьте их выше с областью «Граф».' },
     'attribute_invalid_number': { en: 'That value is not a valid number.', ru: 'Это значение не является корректным числом.' },
+    'attribute_type_changed': { en: 'Type changed; {n} incompatible value(s) were removed.', ru: 'Тип изменён; {n} несовместимых значения было удалено.' },
     'attribute_deleted': { en: 'Custom attribute deleted', ru: 'Пользовательский атрибут удалён' },
     'import_export': { en: 'Import / export', ru: 'Импорт / экспорт' },
     'append_mode': { en: 'Append to current graph (keep existing nodes/edges, styles, and background)', ru: 'Добавить к текущему графу (сохранить существующие узлы, рёбра, стили и фон)' },
