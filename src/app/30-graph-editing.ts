@@ -612,7 +612,10 @@
           id:'e' + state.nextEdge++, from, to,
           weight: values[i].slice(0, 50),
           label: tpl.label || '',
-          directed: tpl.directed, direction: (tpl as any).direction,
+          // Carry the canonical tristate: copying only the legacy boolean turned
+          // every extra weight of a mutual edge into a directed edge.
+          direction: (tpl as any).direction ?? (tpl.directed ? 'directed' : 'undirected'),
+          directed: tpl.directed,
           type: tpl.type || '',
           color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle, arrowSize: (tpl as any).arrowSize,
           labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize

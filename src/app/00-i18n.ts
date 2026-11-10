@@ -216,6 +216,7 @@ const I18N: I18nService = {
     'direction': { en: 'Direction', ru: 'Направление' },
     'directed_edge_short': { en: 'Directed', ru: 'Направленное' },
     'mutual_edge_short': { en: 'Mutual', ru: 'Взаимное' },
+    'mutual': { en: 'mutual', ru: 'взаимных' },
     'undirected_edge_short': { en: 'Undirected', ru: 'Ненаправленное' },
     'reset_style_title': { en: 'Clear all per-item style overrides', ru: 'Очистить все переопределения стиля элемента' },
     'reset_edge_style_title': { en: 'Clear all per-edge style overrides', ru: 'Очистить все переопределения стиля ребра' },

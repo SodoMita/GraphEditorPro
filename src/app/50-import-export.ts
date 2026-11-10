@@ -198,8 +198,11 @@
     return style;
   }
   function exportDotText(){
-    const allDirected = state.edges.every(e => edgeDirection(e) === 'directed');
-    const header = `${allDirected ? 'digraph' : 'graph'} ${dotId(fileBase())} {`;
+    // DOT grammar: `graph` may only use `--`, `digraph` may use `->` and `dir=both/none`.
+    // A single mutual edge inside a `graph` with `->` is invalid, so the header
+    // must be `digraph` unless every edge is undirected.
+    const allUndirected = state.edges.length > 0 && state.edges.every(e => edgeIsUndirected(e));
+    const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
       const v = nodeVisual(n);
@@ -245,7 +248,11 @@
       if(dir === 'mutual') attrs.push(`dir=${dotString('both')}`);
       else if(dir === 'undirected') attrs.push(`dir=${dotString('none')}`);
       else attrs.push(`dir=${dotString('forward')}`);
-      if(v.arrowSize != null) attrs.push(`arrowsize=${dotString(String(v.arrowSize))}`);
+      if(v.arrowSize != null){
+        const mul = v.arrowSize / DEFAULT_ARROW_SIZE;
+        const txt = Number(mul.toFixed(4)).toString();
+        attrs.push(`arrowsize=${dotString(txt)}`);
+      }
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -734,7 +741,17 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
-      if(attrs.arrowsize != null) (e as any).arrowSize = clamp(finite(attrs.arrowsize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      if(attrs.arrowsize != null){
+        const mul = Number(attrs.arrowsize);
+        const m = Number.isFinite(mul) ? mul : 1;
+        // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
+        // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
+        if(m > 5){
+          (e as any).arrowSize = clamp(m, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+        } else {
+          (e as any).arrowSize = clamp(m * DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+        }
+      }
       // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
       if(attrs.dir){
         const dir = String(attrs.dir).toLowerCase();

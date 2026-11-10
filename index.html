@@ -545,7 +545,7 @@
        render-space scale just like dynamically written geometry. */
     .edge-hit{stroke:transparent; stroke-width:calc(14px * var(--render-scale, 1)); fill:none; cursor:pointer}
     .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
-    .edge-arrow{pointer-events:none}
+    .edge-arrow,.edge-arrow-start{pointer-events:none}
     /* Edge selection: a wide accent LINE that reuses the edge's own path (no
        outline of the edge shape to derive, so a drag can keep it glued to the
        edge for free), plus the tip triangle enlarged about its own centre and
@@ -1880,6 +1880,7 @@ const I18N = {
         'direction': { en: 'Direction', ru: 'Направление' },
         'directed_edge_short': { en: 'Directed', ru: 'Направленное' },
         'mutual_edge_short': { en: 'Mutual', ru: 'Взаимное' },
+        'mutual': { en: 'mutual', ru: 'взаимных' },
         'undirected_edge_short': { en: 'Undirected', ru: 'Ненаправленное' },
         'reset_style_title': { en: 'Clear all per-item style overrides', ru: 'Очистить все переопределения стиля элемента' },
         'reset_edge_style_title': { en: 'Clear all per-edge style overrides', ru: 'Очистить все переопределения стиля ребра' },
@@ -4037,6 +4038,26 @@ function edgeArrowPoints(d, scale = 1) {
         `${cx + (lx - cx) * scale},${cy + (ly - cy) * scale} ` +
         `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
 }
+// Same triangle as edgeArrowPoints, but from an explicit tip point/angle.
+// The start tip sits at a different point than d.tx/d.ty, so routing it
+// through the end-tip helper produced NaN vertices.
+function tipPointsAt(tipX, tipY, ang, size = DEFAULT_ARROW_SIZE, scale = 1) {
+    const { len, hw } = edgeArrowMetrics(size);
+    const aw = renderSize(hw);
+    const lenPx = renderSize(len);
+    // Base of the triangle is lenPx behind the tip along the arrow angle
+    const bx = tipX - Math.cos(ang) * lenPx;
+    const by = tipY - Math.sin(ang) * lenPx;
+    const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
+    const lx = bx + px, ly = by + py;
+    const rx = bx - px, ry = by - py;
+    if (scale === 1)
+        return `${tipX},${tipY} ${lx},${ly} ${rx},${ry}`;
+    const cx = (tipX + lx + rx) / 3, cy = (tipY + ly + ry) / 3;
+    return `${cx + (tipX - cx) * scale},${cy + (tipY - cy) * scale} ` +
+        `${cx + (lx - cx) * scale},${cy + (ly - cy) * scale} ` +
+        `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
+}
 function hasEdgeTip(e, d) {
     return Boolean(e && edgeHasEndArrow(e) && d && d.tipX != null && d.arrowAngle != null);
 }
@@ -4159,6 +4180,10 @@ function moveEdgeSelRing(g, d) {
         setAttr(g.__sel, 'd', d.path);
     if (g.__selArrow && d.tipX != null && d.arrowAngle != null)
         setAttr(g.__selArrow, 'points', edgeArrowPoints(d, SEL_TIP_SCALE));
+    // A drag patches geometry in place and skips the release re-render, so a
+    // mutual edge's start arrowhead has to be moved here or it is left behind.
+    if (g.__arrowStart && d.startTipX != null && d.startArrowAngle != null)
+        setAttr(g.__arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
 }
 function nodeRadiusC(n, vc) {
     const c = vc || passVisuals;
@@ -4906,6 +4931,10 @@ function updateEdgeFast(edgeOrId, vc = null) {
             g.__arrow.remove();
             g.__arrow = null;
         }
+        if (g.__arrowStart) {
+            g.__arrowStart.remove();
+            g.__arrowStart = null;
+        }
         syncEdgeSelRing(g, e, null, d, false);
         return;
     }
@@ -4921,6 +4950,30 @@ function updateEdgeFast(edgeOrId, vc = null) {
     else if (arrow) {
         arrow.remove();
         g.__arrow = null;
+    }
+    else if (hasEdgeTip(e, d) && !arrow) {
+        // Edge became mutual/directed during drag? create missing arrow
+        const na = document.createElementNS(NS, 'polygon');
+        na.setAttribute('class', 'edge-arrow');
+        g.appendChild(na);
+        g.__arrow = na;
+        setAttr(na, 'points', edgeArrowPoints(d));
+        setAttr(na, 'fill', edgeVisualC(e, vc).color);
+    }
+    const arrowStart = g.__arrowStart || null;
+    if (arrowStart && hasEdgeStartTip(e, d))
+        setAttr(arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
+    else if (arrowStart) {
+        arrowStart.remove();
+        g.__arrowStart = null;
+    }
+    else if (hasEdgeStartTip(e, d)) {
+        const ns = document.createElementNS(NS, 'polygon');
+        ns.setAttribute('class', 'edge-arrow-start');
+        g.appendChild(ns);
+        g.__arrowStart = ns;
+        setAttr(ns, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
+        setAttr(ns, 'fill', edgeVisualC(e, vc).color);
     }
     // ...and the selection accent with it, or the highlight would be left
     // behind at the edge's old position for the rest of the gesture.
@@ -5271,7 +5324,7 @@ function renderEdges() {
                 g.appendChild(arrowStart);
                 g.__arrowStart = arrowStart;
             }
-            setAttr(arrowStart, 'points', edgeArrowPoints({ tipX: d.startTipX, tipY: d.startTipY, arrowAngle: d.startArrowAngle, arrowSize: d.arrowSize }));
+            setAttr(arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
             setAttr(arrowStart, 'fill', v.color);
         }
         else if (arrowStart) {
@@ -5408,7 +5461,7 @@ function edgePath(a, b, e, vc = null) {
     const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
     const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
     const hasEnd = edgeHasEndArrow(e), hasStart = edgeHasStartArrow(e);
-    const v = vc || edgeVisual(e);
+    const v = vc ? edgeVisualC(e, vc) : edgeVisual(e);
     const arrowLen = edgeArrowMetrics(v.arrowSize).len;
     const arrowGapEnd = hasEnd ? arrowLen : 2;
     const arrowGapStart = hasStart ? arrowLen : 2;
@@ -6363,7 +6416,10 @@ function adjacencyMatrixData(nodes = state.nodes, includeEdgeIds = true) {
         cellAt(values[from] || (values[from] = []), to).push(weight);
         if (edgeIds)
             cellAt(edgeIds[from] || (edgeIds[from] = []), to).push(edge.id);
-        if (edgeIsUndirected(edge) || edgeDirection(edge) === 'mutual' && from !== to) {
+        // `&&` binds tighter than `||`, so without these parentheses the
+        // undirected half ignored the self-loop guard and pushed the weight into
+        // the same cell twice (7;7), which re-imports as two edges.
+        if ((edgeIsUndirected(edge) || edgeDirection(edge) === 'mutual') && from !== to) {
             cellAt(values[to] || (values[to] = []), from).push(weight);
             if (edgeIds)
                 cellAt(edgeIds[to] || (edgeIds[to] = []), from).push(edge.id);
@@ -7239,7 +7295,10 @@ function setMatrixCell(from, to, raw) {
                 id: 'e' + state.nextEdge++, from, to,
                 weight: values[i].slice(0, 50),
                 label: tpl.label || '',
-                directed: tpl.directed, direction: tpl.direction,
+                // Carry the canonical tristate: copying only the legacy boolean turned
+                // every extra weight of a mutual edge into a directed edge.
+                direction: tpl.direction ?? (tpl.directed ? 'directed' : 'undirected'),
+                directed: tpl.directed,
                 type: tpl.type || '',
                 color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle, arrowSize: tpl.arrowSize,
                 labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize
@@ -9822,8 +9881,11 @@ function dotStrokeStyle(style) {
     return style;
 }
 function exportDotText() {
-    const allDirected = state.edges.every(e => edgeDirection(e) === 'directed');
-    const header = `${allDirected ? 'digraph' : 'graph'} ${dotId(fileBase())} {`;
+    // DOT grammar: `graph` may only use `--`, `digraph` may use `->` and `dir=both/none`.
+    // A single mutual edge inside a `graph` with `->` is invalid, so the header
+    // must be `digraph` unless every edge is undirected.
+    const allUndirected = state.edges.length > 0 && state.edges.every(e => edgeIsUndirected(e));
+    const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
         const v = nodeVisual(n);
@@ -9881,8 +9943,11 @@ function exportDotText() {
             attrs.push(`dir=${dotString('none')}`);
         else
             attrs.push(`dir=${dotString('forward')}`);
-        if (v.arrowSize != null)
-            attrs.push(`arrowsize=${dotString(String(v.arrowSize))}`);
+        if (v.arrowSize != null) {
+            const mul = v.arrowSize / DEFAULT_ARROW_SIZE;
+            const txt = Number(mul.toFixed(4)).toString();
+            attrs.push(`arrowsize=${dotString(txt)}`);
+        }
         lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -10505,8 +10570,18 @@ function parseDot(text) {
             if (ss)
                 e.strokeStyle = ss;
         }
-        if (attrs.arrowsize != null)
-            e.arrowSize = clamp(finite(attrs.arrowsize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+        if (attrs.arrowsize != null) {
+            const mul = Number(attrs.arrowsize);
+            const m = Number.isFinite(mul) ? mul : 1;
+            // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
+            // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
+            if (m > 5) {
+                e.arrowSize = clamp(m, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+            }
+            else {
+                e.arrowSize = clamp(m * DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+            }
+        }
         // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
         if (attrs.dir) {
             const dir = String(attrs.dir).toLowerCase();
@@ -11105,10 +11180,18 @@ function runComponents() {
 function runTopo() {
     const adj = adjacency(true), indeg = new Map(state.nodes.map(n => [n.id, 0]));
     for (const e of state.edges) {
-        if (!edgeIsUndirected(e) && indeg.has(e.to))
-            indeg.set(e.to, indeg.get(e.to) + 1);
         if (edgeIsUndirected(e))
             return out(I18N.t('topo_undirected'));
+        if (edgeDirection(e) === 'mutual') {
+            if (indeg.has(e.to))
+                indeg.set(e.to, indeg.get(e.to) + 1);
+            if (indeg.has(e.from))
+                indeg.set(e.from, indeg.get(e.from) + 1);
+        }
+        else {
+            if (indeg.has(e.to))
+                indeg.set(e.to, indeg.get(e.to) + 1);
+        }
     }
     const q = state.nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id), order = [];
     while (q.length) {
@@ -11143,7 +11226,7 @@ function graphStats() {
         }
     }
     const maxDeg = [...deg.entries()].sort((a, b) => b[1].total - a[1].total)[0];
-    return I18N.t('graph_statistics') + '\n' + I18N.t('nodes_label') + ' ' + state.nodes.length + '\n' + I18N.t('edges_label') + ' ' + state.edges.length + ' (' + directed + ' ' + (I18N.current === 'ru' ? 'направленных' : 'directed') + ', ' + mutual + ' mutual, ' + undirected + ' ' + (I18N.current === 'ru' ? 'ненаправленных' : 'undirected') + ')\n' + I18N.t('density') + ' ' + density() + '\n' + I18N.t('highest_degree') + ' ' + (maxDeg ? labelOf(maxDeg[0]) + ' (' + maxDeg[1].total + ')' : I18N.t('na'));
+    return I18N.t('graph_statistics') + '\n' + I18N.t('nodes_label') + ' ' + state.nodes.length + '\n' + I18N.t('edges_label') + ' ' + state.edges.length + ' (' + directed + ' ' + (I18N.current === 'ru' ? 'направленных' : 'directed') + ', ' + mutual + ' ' + I18N.t('mutual') + ', ' + undirected + ' ' + (I18N.current === 'ru' ? 'ненаправленных' : 'undirected') + ')\n' + I18N.t('density') + ' ' + density() + '\n' + I18N.t('highest_degree') + ' ' + (maxDeg ? labelOf(maxDeg[0]) + ' (' + maxDeg[1].total + ')' : I18N.t('na'));
 }
 function density() { const n = state.nodes.length; if (n < 2)
     return '0'; return (state.edges.length / (n * (n - 1))).toFixed(3); }

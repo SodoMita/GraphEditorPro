@@ -435,6 +435,25 @@
       `${cx + (lx - cx) * scale},${cy + (ly - cy) * scale} ` +
       `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
   }
+  // Same triangle as edgeArrowPoints, but from an explicit tip point/angle.
+  // The start tip sits at a different point than d.tx/d.ty, so routing it
+  // through the end-tip helper produced NaN vertices.
+  function tipPointsAt(tipX, tipY, ang, size = DEFAULT_ARROW_SIZE, scale = 1){
+    const {len, hw} = edgeArrowMetrics(size);
+    const aw = renderSize(hw);
+    const lenPx = renderSize(len);
+    // Base of the triangle is lenPx behind the tip along the arrow angle
+    const bx = tipX - Math.cos(ang) * lenPx;
+    const by = tipY - Math.sin(ang) * lenPx;
+    const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
+    const lx = bx + px, ly = by + py;
+    const rx = bx - px, ry = by - py;
+    if(scale === 1) return `${tipX},${tipY} ${lx},${ly} ${rx},${ry}`;
+    const cx = (tipX + lx + rx) / 3, cy = (tipY + ly + ry) / 3;
+    return `${cx + (tipX - cx) * scale},${cy + (tipY - cy) * scale} ` +
+      `${cx + (lx - cx) * scale},${cy + (ly - cy) * scale} ` +
+      `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
+  }
   function hasEdgeTip(e, d){
     return Boolean(e && edgeHasEndArrow(e) && d && d.tipX != null && d.arrowAngle != null);
   }
@@ -546,6 +565,9 @@
   function moveEdgeSelRing(g: any, d: any){
     if(g.__sel) setAttr(g.__sel, 'd', d.path);
     if(g.__selArrow && d.tipX != null && d.arrowAngle != null) setAttr(g.__selArrow, 'points', edgeArrowPoints(d, SEL_TIP_SCALE));
+    // A drag patches geometry in place and skips the release re-render, so a
+    // mutual edge's start arrowhead has to be moved here or it is left behind.
+    if((g as any).__arrowStart && d.startTipX != null && d.startArrowAngle != null) setAttr((g as any).__arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, (d as any).arrowSize));
   }
   function nodeRadiusC(n, vc){
     const c = vc || passVisuals;
@@ -1183,6 +1205,7 @@
       // ghost can reappear on a later camera-only update.
       paintEdgeText(g, d, null, '', '', false);
       if(g.__arrow){ g.__arrow.remove(); g.__arrow = null; }
+      if((g as any).__arrowStart){ (g as any).__arrowStart.remove(); (g as any).__arrowStart = null; }
       syncEdgeSelRing(g, e, null, d, false);
       return;
     }
@@ -1195,6 +1218,18 @@
     const arrow = g.__arrow || null;
     if(arrow && hasEdgeTip(e, d)) setAttr(arrow, 'points', edgeArrowPoints(d));
     else if(arrow){ arrow.remove(); g.__arrow = null; }
+    else if(hasEdgeTip(e, d) && !arrow){
+      // Edge became mutual/directed during drag? create missing arrow
+      const na = document.createElementNS(NS,'polygon'); na.setAttribute('class','edge-arrow'); g.appendChild(na); g.__arrow = na;
+      setAttr(na, 'points', edgeArrowPoints(d)); setAttr(na, 'fill', edgeVisualC(e, vc).color);
+    }
+    const arrowStart = (g as any).__arrowStart || null;
+    if(arrowStart && hasEdgeStartTip(e, d)) setAttr(arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
+    else if(arrowStart){ arrowStart.remove(); (g as any).__arrowStart = null; }
+    else if(hasEdgeStartTip(e, d)){
+      const ns = document.createElementNS(NS,'polygon'); ns.setAttribute('class','edge-arrow-start'); g.appendChild(ns); (g as any).__arrowStart = ns;
+      setAttr(ns, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize)); setAttr(ns, 'fill', edgeVisualC(e, vc).color);
+    }
     // ...and the selection accent with it, or the highlight would be left
     // behind at the edge's old position for the rest of the gesture.
     moveEdgeSelRing(g, d);
@@ -1475,7 +1510,7 @@
       let arrowStart = g.__arrowStart || null;
       if(hasEdgeStartTip(e, d)){
         if(!arrowStart){ arrowStart = document.createElementNS(NS,'polygon'); arrowStart.setAttribute('class','edge-arrow-start'); g.appendChild(arrowStart); g.__arrowStart = arrowStart; }
-        setAttr(arrowStart, 'points', edgeArrowPoints({tipX: d.startTipX, tipY: d.startTipY, arrowAngle: d.startArrowAngle, arrowSize: (d as any).arrowSize} as any));
+        setAttr(arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
         setAttr(arrowStart, 'fill', v.color);
       } else if(arrowStart){
         arrowStart.remove(); g.__arrowStart = null; arrowStart = null;
@@ -1592,7 +1627,7 @@
     const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
     const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
     const hasEnd = edgeHasEndArrow(e), hasStart = edgeHasStartArrow(e);
-    const v = vc || edgeVisual(e);
+    const v = vc ? edgeVisualC(e, vc) : edgeVisual(e);
     const arrowLen = edgeArrowMetrics(v.arrowSize).len;
     const arrowGapEnd = hasEnd ? arrowLen : 2;
     const arrowGapStart = hasStart ? arrowLen : 2;
@@ -2277,7 +2312,10 @@
       const weight = (edge.weight != null && edge.weight !== '') ? edge.weight : '';
       cellAt(values[from] || (values[from] = []), to).push(weight);
       if(edgeIds) cellAt(edgeIds[from] || (edgeIds[from] = []), to).push(edge.id);
-      if(edgeIsUndirected(edge) || edgeDirection(edge)==='mutual' && from !== to){
+      // `&&` binds tighter than `||`, so without these parentheses the
+      // undirected half ignored the self-loop guard and pushed the weight into
+      // the same cell twice (7;7), which re-imports as two edges.
+      if((edgeIsUndirected(edge) || edgeDirection(edge)==='mutual') && from !== to){
         cellAt(values[to] || (values[to] = []), from).push(weight);
         if(edgeIds) cellAt(edgeIds[to] || (edgeIds[to] = []), from).push(edge.id);
       }
