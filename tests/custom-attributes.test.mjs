@@ -152,3 +152,38 @@ test('reserved built-in ids are still rejected when adding or renaming definitio
   assert.equal(document.querySelectorAll('.custom-attribute-row').length, 1, 'a free id is accepted');
   dom.window.close();
 });
+
+test('legacy migration keeps going when every short numbered name is already taken', async () => {
+  // 99 definitions is far below the 500 limit, so this document is legal. A
+  // migration that stopped at suffix 99 lost `direction` entirely.
+  const customAttributes = [{id:'direction', scope:'edge', type:'string'}];
+  for(let i = 2; i <= 99; i++) customAttributes.push({id:`direction${i}`, scope:'edge', type:'string'});
+  customAttributes.push({id:'capacity', scope:'edge', type:'int'});
+  const {dom, errors} = createEditorDom({nodes:[{id:'n1', label:'A', x:0, y:0, order:0}], edges:[], customAttributes});
+  const {document} = dom.window;
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.equal(ids.length, 100, 'every definition survives');
+  assert.equal(new Set(ids).size, ids.length, 'ids stay unique');
+  assert.ok(!ids.includes('direction'), 'the reserved id is vacated');
+  assert.ok(ids.includes('direction100'), 'the legacy definition moves past the occupied range');
+  assert.ok(ids.includes('capacity'), 'unrelated definitions are untouched');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('GraphML export keeps definitions that collide past the whole short suffix range', async () => {
+  const customAttributes = [{id:'arrowSize', scope:'edge', type:'double'}];
+  for(let i = 2; i <= 99; i++) customAttributes.push({id:`arrowSize${i}`, scope:'edge', type:'double'});
+  const {dom, errors} = createEditorDom({nodes:[{id:'n1', label:'A', x:0, y:0, order:0}], edges:[], customAttributes});
+  const {document} = dom.window;
+  assert.equal(document.querySelectorAll('.custom-attribute-row').length, 99, 'all definitions load');
+  document.querySelector('#btnExportGraphml').click();
+  const graphml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  const keyIds = [...graphml.matchAll(/<key id="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(new Set(keyIds).size, keyIds.length, 'no duplicate key ids');
+  assert.equal(keyIds.filter(id => id === 'arrowSize').length, 1, 'exactly one built-in key');
+  assert.equal(keyIds.filter(id => id.startsWith('arrowSize')).length, 100, 'the built-in plus all 99 definitions are exported');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

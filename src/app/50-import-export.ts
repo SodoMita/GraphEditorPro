@@ -325,16 +325,14 @@
     for(const attribute of state.customAttributes){
       let id = attribute.id;
       if(emitted.has(id)){
-        for(let suffix = 2; suffix <= 99; suffix++){
+        // Unbounded search for the same reason as the sanitizer's migration: a
+        // document may legitimately already use every short suffix.
+        for(let suffix = 2; ; suffix++){
           const candidate = `${attribute.id}${suffix}`;
           if(emitted.has(candidate) || reservedForOthers.has(candidate)) continue;
           id = candidate;
           break;
         }
-        // Every suffix taken: fall back to the declared name rather than
-        // dropping the definition. The sanitizer already renames on load, so
-        // this only guards state built outside it.
-        if(emitted.has(id)) id = attribute.id;
       }
       emitted.add(id);
       out.push(`  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attribute.id)}" attr.type="${xmlEsc(attribute.type)}"/>`);
@@ -950,19 +948,23 @@
     const keyNames: Record<string, string> = {};
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
-    const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
     // Compare against the lowercased attr.name the loop below produces, so a
-    // built-in written in camelCase (attr.name="arrowSize") is still recognised
-    // and does not come back as an extra custom definition.
+    // built-in written in camelCase (attr.name="arrowSize") is still recognised.
     const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','arrow.size','arrowSize','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha'].map(n => n.toLowerCase()));
     const customAttributes: GraphState['customAttributes'] = [];
+    // The attribute NAME is what makes a key a built-in: the engine reads those
+    // values positionally by name (weight, direction, x, …). An id is only an
+    // identifier, so an external document may legitimately reuse a now-built-in
+    // id for an unrelated attribute (id="direction" attr.name="externalTag").
+    // Those used to be dropped here because the filter ran on reserved *ids*;
+    // they are kept and renamed by the sanitizer's migration instead.
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
       const name = (k.getAttribute('attr.name') || id).toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
       keyNames[id] = name;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      if(id && !reservedKeyIds.has(id) && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom)){
+      if(id && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom)){
         customAttributes.push({id, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
       }
       const defEl = k.querySelector('default');

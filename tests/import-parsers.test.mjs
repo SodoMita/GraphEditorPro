@@ -491,3 +491,70 @@ test('GraphML export never repeats a built-in key id, even when a custom definit
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('GraphML keys that reuse a built-in id for an unrelated attr.name become custom definitions', async () => {
+  // The attribute NAME is what makes a key built-in — the engine reads those
+  // values positionally by name. An external document may reuse a now-reserved
+  // id for something else entirely; filtering on the id alone discarded it.
+  const graphml = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="direction" for="node" attr.name="externalTag" attr.type="string"/>',
+    '  <key id="arrowSize" for="edge" attr.name="packetCount" attr.type="int"/>',
+    '  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="direction">alpha</data></node>',
+    '    <node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="weight">3</data><data key="arrowSize">9</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+
+  const rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => ({
+    id: row.querySelector('[data-attribute-field="id"]').value,
+    scope: row.querySelector('[data-attribute-field="scope"]').value,
+    type: row.querySelector('[data-attribute-field="type"]').value,
+  }));
+  assert.equal(rows.length, 2, 'both external definitions are kept');
+  assert.ok(!rows.some(row => row.id === 'weight'), 'a genuine built-in name is not a custom definition');
+  assert.equal(rows.find(row => row.id === 'arrowSize2').type, 'int', 'the definition type survives the rename');
+  assert.equal(rows.find(row => row.id === 'direction2').scope, 'node', 'the definition scope survives the rename');
+
+  // The graph itself still imports, and the unrelated data does not leak into
+  // the built-in fields it happens to share an id with.
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 2);
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].weight, '3', 'the real built-in weight is parsed');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('GraphML import keeps built-in-only documents free of custom definitions', async () => {
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+    '  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>',
+    '  <key id="direction" for="edge" attr.name="direction" attr.type="string"/>',
+    '  <key id="arrowSize" for="edge" attr.name="arrow.size" attr.type="double"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="label">A</data></node>',
+    '    <node id="n2"><data key="label">B</data></node>',
+    '    <edge id="e1" source="n1" target="n2"><data key="weight">2</data><data key="direction">mutual</data><data key="arrowSize">30</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(document.querySelectorAll('.custom-attribute-row').length, 0, 'no built-in comes back as a custom definition');
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges[0].direction, 'mutual');
+  assert.equal(graph.edges[0].arrowSize, 30);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

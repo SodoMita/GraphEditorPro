@@ -396,14 +396,15 @@
   // Rename a legacy custom-attribute id to a free one. `declared` holds every id
   // the document itself declares, so migration cannot steal a name that a later
   // entry is about to claim (a file with both `direction` and `direction2` keeps
-  // both, instead of the migrated one swallowing the explicit one).
+  // both, instead of the migrated one swallowing the explicit one). The search
+  // is unbounded: a legal document may already use direction2 … direction99,
+  // and stopping at a fixed suffix would silently drop the legacy definition.
   function migrateLegacyAttributeId(id: string, taken: Set<string>, declared: Set<string>): string | null {
-    for(let suffix = 2; suffix <= 99; suffix++){
+    for(let suffix = 2; ; suffix++){
       const candidate = `${id}${suffix}`;
       if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(candidate) || taken.has(candidate) || declared.has(candidate)) continue;
       return candidate;
     }
-    return null;
   }
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
