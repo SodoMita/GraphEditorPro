@@ -804,7 +804,11 @@
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
     // QVGE: edge direction default is directed/mutual/undirected (string); keep boolean legacy
-    const dirRaw = (settings as any).direction ?? settings.directed;
+    // Prefer explicit inputSettings values over merged defaults so legacy
+    // documents like { directed:false } (without direction) are not masked by
+    // the base default direction='directed'.
+    const dirRawInput = (inputSettings as any).direction ?? (inputSettings as any).directed;
+    const dirRaw = dirRawInput !== undefined ? dirRawInput : ((settings as any).direction ?? settings.directed);
     const dirNorm = normalizeDirection(dirRaw);
     settings.direction = dirNorm;
     settings.directed = dirNorm !== 'undirected';
