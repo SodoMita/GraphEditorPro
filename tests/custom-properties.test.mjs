@@ -1390,7 +1390,8 @@ test('repeated GraphML appends of the same external key resolve to one migrated 
     document.querySelector('#btnExportGraphml').click();
     const modal = document.querySelector('.export-modal');
     modal.querySelector('textarea').value = external;
-    modal.querySelector('#expAppendChk').click();
+    const appendChk = modal.querySelector('#expAppendChk');
+    if(!appendChk.checked) appendChk.click();
     modal.querySelector('#expImportBtn').click();
     await nextFrame(window); await settle(window, 50);
     modal.remove();
@@ -1404,6 +1405,159 @@ test('repeated GraphML appends of the same external key resolve to one migrated 
   for(const node of exported.nodes){
     assert.equal(node.custom.x_1, 7, 'every node carries the value under the same definition');
   }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('appending a GraphML file never overwrites an unrelated property that occupies a migration candidate', async () => {
+  const external = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="x" for="graph" attr.name="externalTag" attr.type="string"/>
+  <key id="directed" for="node" attr.name="externalFlag" attr.type="boolean"/>
+  <graph id="g" edgedefault="directed">
+    <data key="x">fresh</data>
+    <node id="imp"><data key="directed">true</data></node>
+  </graph>
+</graphml>`;
+  const seed = { ...customPropertiesGraph(),
+    nodes: [{ id: 'seed', label: 'S', x: 0, y: 0, order: 0, custom: { directed_1: true } }],
+    edges: [],
+    graphCustom: { x_1: 'keep' },
+    customAttributes: [
+      { id: 'x_1', scope: 'graph', type: 'string' },
+      { id: 'directed_1', scope: 'node', type: 'boolean' },
+    ],
+    settings: {},
+  };
+  const { dom, errors } = createEditorDom(seed);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  const appendOnce = async () => {
+    document.querySelector('#btnExportGraphml').click();
+    const modal = document.querySelector('.export-modal');
+    modal.querySelector('textarea').value = external;
+    const appendChk = modal.querySelector('#expAppendChk');
+    if(!appendChk.checked) appendChk.click();
+    modal.querySelector('#expImportBtn').click();
+    await nextFrame(window); await settle(window, 50);
+    modal.remove();
+  };
+  await appendOnce();
+  let exported = exportGraph(document);
+  assert.equal(exported.graphCustom.x_1, 'keep',
+    'the unrelated x_1 graph value survives the append');
+  const migratedGraph = exported.customAttributes.find(a => a.dataKey === 'x');
+  assert.ok(migratedGraph, 'the reserved key migrated to a fresh definition');
+  assert.equal(migratedGraph.id, 'x_2', 'the migration skipped the occupied candidate');
+  assert.equal(exported.graphCustom[migratedGraph.id], 'fresh', 'the imported value landed on the migrated definition');
+  const migratedNode = exported.customAttributes.find(a => a.dataKey === 'directed');
+  assert.ok(migratedNode, 'the node-scope reserved key migrated');
+  assert.equal(migratedNode.id, 'directed_2', 'the migration skipped the occupied candidate');
+  const importedNode = exported.nodes.find(n => n.id === 'imp');
+  assert.ok(importedNode);
+  assert.equal(importedNode.custom.directed_2, true);
+  assert.equal(exported.nodes.find(n => n.id === 'seed').custom.directed_1, true,
+    'the unrelated directed_1 definition and value are untouched');
+
+  // Re-appending the same file merges into the migrated definitions instead of minting new ones.
+  await appendOnce();
+  exported = exportGraph(document);
+  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id), ['x_2']);
+  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'directed').map(a => a.id), ['directed_2']);
+  assert.equal(exported.graphCustom.x_1, 'keep');
+  assert.equal(exported.graphCustom.x_2, 'fresh');
+  assert.equal(exported.nodes.find(n => n.id === 'seed').custom.directed_1, true);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('pasting values into a document where the id is used by another scope renames the carried definition', async () => {
+  const source = { ...customPropertiesGraph(),
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { tag: 'yes' } }],
+    edges: [], graphCustom: {},
+    customAttributes: [{ id: 'tag', scope: 'node', type: 'string' }],
+  };
+  const { dom } = createEditorDom(source);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  let clip = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async t => { clip = t; }, readText: async () => clip },
+  });
+  await selectNode(window, document, 'a', 300, 330);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window);
+  dom.window.close();
+
+  // Target has "tag" as a GRAPH-scope definition — a node value under that id
+  // would be invisible and omitted from GraphML, so paste must rename it.
+  const target = { title: 'target', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [], edges: [], graphCustom: { tag: 'graphval' }, settings: {},
+    customAttributes: [{ id: 'tag', scope: 'graph', type: 'string' }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const t2 = createEditorDom(target);
+  const t2Window = t2.dom.window; const t2Document = t2Window.document;
+  Object.defineProperty(t2Window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => clip },
+  });
+  await nextFrame(t2Window);
+  t2Document.dispatchEvent(new t2Window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(t2Window); await settle(t2Window, 60);
+
+  assert.match(t2Document.querySelector('#toastStack')?.textContent || '', /renamed/i,
+    'the rename is announced, not silent');
+  const exported = exportGraph(t2Document);
+  const graphDef = exported.customAttributes.find(a => a.id === 'tag');
+  assert.equal(graphDef.scope, 'graph', 'the existing definition keeps its scope');
+  const renamed = exported.customAttributes.find(a => a.scope === 'node');
+  assert.ok(renamed, 'a node-scope definition is created for the pasted values');
+  assert.notEqual(renamed.id, 'tag');
+  const pasted = exported.nodes[0];
+  assert.equal(pasted.custom[renamed.id], 'yes', 'the value moved to the renamed definition');
+  assert.equal(pasted.custom.tag, undefined, 'nothing is stranded under the graph-scoped id');
+  assert.equal(exported.graphCustom.tag, 'graphval', 'the graph value is untouched');
+  const graphml = exportGraphml(t2Document);
+  assert.match(graphml, new RegExp('<key id="' + renamed.id + '" for="node"'));
+  assert.match(graphml, new RegExp('<data key="' + renamed.id + '">yes</data>'));
+  t2.dom.window.close();
+});
+
+test('pasting starts from the copied originals — the internal clipboard is never coerced in place', async () => {
+  const graph = { ...customPropertiesGraph(),
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { tag: 'no' } }],
+    edges: [], graphCustom: {},
+    customAttributes: [{ id: 'tag', scope: 'node', type: 'string' }],
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await selectNode(window, document, 'a', 300, 330);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window);
+  const rowFor = () => [...document.querySelectorAll('.custom-attribute-row')]
+    .find(row => row.querySelector('[data-attribute-field="id"]').value === 'tag');
+  const setType = async type => {
+    rowFor().querySelector('[data-attribute-field="type"]').value = type;
+    rowFor().querySelector('[data-attribute-action="save"]').click();
+    await nextFrame(window); await settle(window, 40);
+  };
+  // Flip the definition to boolean — the stored values migrate ('no' -> false).
+  await setType('boolean');
+  // Paste — the carried 'no' coerces to false; the clipboard itself must not change.
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window); await settle(window, 60);
+  // Flip the definition back to string — stored values migrate (false -> 'false').
+  await setType('string');
+  // Paste again — a pristine clipboard must yield 'no', not a previously coerced 'false'.
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window); await settle(window, 60);
+
+  const exported = exportGraph(document);
+  const restored = exported.nodes.filter(n => n.custom && n.custom.tag === 'no');
+  assert.equal(restored.length, 1, 'the second paste carries the original copied value');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

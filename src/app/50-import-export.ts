@@ -986,7 +986,11 @@
     // Ids reserved for built-ins are migrated to a safe unique name AT THE KEY
     // LEVEL, deterministically. Appending the same external GraphML file twice
     // re-resolves to the same migrated id instead of minting x_1, x_2, ... —
-    // the migration consumes no extra capacity on repeated imports.
+    // the migration consumes no extra capacity on repeated imports. The
+    // migration never reuses an existing id it did not mint itself: only a
+    // definition produced by the importer (marked with `dataKey`) is a
+    // migration target, so an unrelated definition that happens to occupy
+    // the candidate id is never overwritten.
     const fileKeyIds = new Set<string>();
     doc.querySelectorAll('key').forEach(k => { const kid = k.getAttribute('id'); if(kid) fileKeyIds.add(kid); });
     doc.querySelectorAll('key').forEach(k => {
@@ -1001,8 +1005,21 @@
       const isCustom = !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom);
       if(isCustom){
         const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
-        const defId = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()) ? uniqueCustomAttributeId(id, fileKeyIds) : id;
-        customAttributes.push({id: defId, scope: forWhom as 'graph' | 'node' | 'edge', type: normalizedType});
+        const migrated = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase());
+        let defId = id;
+        if(migrated){
+          const prior = Array.isArray(state.customAttributes)
+            ? state.customAttributes.find(attribute => attribute.dataKey === id && attribute.scope === forWhom)
+            : undefined;
+          if(prior){
+            defId = prior.id;
+          } else {
+            const taken = new Set(fileKeyIds);
+            for(const attribute of state.customAttributes) taken.add(attribute.id);
+            defId = uniqueCustomAttributeId(id, taken);
+          }
+        }
+        customAttributes.push({id: defId, scope: forWhom as 'graph' | 'node' | 'edge', type: normalizedType, ...(migrated ? {dataKey: id} : {})});
         customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
         customKeyDataName.push({id: defId, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType)});
       }

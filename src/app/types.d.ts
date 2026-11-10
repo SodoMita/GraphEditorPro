@@ -78,7 +78,8 @@ interface GraphState {
   nextEdge: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string }[];
+  /** `dataKey` (the raw id of the GraphML <key> this definition migrated from) is kept on importer-created definitions so re-appending the same external file re-resolves to the same definition. */
+  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string }[];
   /** Values of user-defined customAttributes with scope 'graph', keyed by attribute id. */
   graphCustom: Record<string, CustomAttributeValue>;
   selected: { type: 'node' | 'edge'; id: string } | null;

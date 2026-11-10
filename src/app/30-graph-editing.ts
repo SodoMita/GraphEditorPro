@@ -786,7 +786,7 @@
     for(const entity of entities){
       if(isRecord(entity?.custom)) for(const key of Object.keys(entity.custom)) used.add(key);
     }
-    return state.customAttributes.filter(attribute => used.has(attribute.id));
+    return state.customAttributes.filter(attribute => used.has(attribute.id)).map(attribute => ({ ...attribute }));
   }
   function cloneNode(n){ const c = {...n}; const custom = cloneCustomMap(n?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
   function cloneEdge(e){ const c = {...e}; const custom = cloneCustomMap(e?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
@@ -870,42 +870,106 @@
     pasteClipboardInternal();
   }
   function pasteClipboardInternal(fromSystemClipboard?: AnyRecord | null){
-    let data = clipboardData;
+    // Clone the clipboard entities — the definition resolution below may
+    // remap or coerce their custom values, which must never leak back into
+    // the clipboard (a second paste has to start from the copied originals).
+    const cloneClipboardData = (src: AnyRecord) => ({
+      nodes: (Array.isArray(src.nodes) ? src.nodes : []).map((n: AnyRecord) => cloneNode(n)),
+      edges: (Array.isArray(src.edges) ? src.edges : []).map((e: AnyRecord) => cloneEdge(e)),
+      externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).map((e: AnyRecord) => cloneEdge(e)),
+      customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
+        .filter(isRecord)
+        .map((def: AnyRecord) => ({ ...def })),
+    });
+    let data = null;
     if(fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard'){
-      data = {
-        nodes: (fromSystemClipboard.nodes || []).map((n: AnyRecord) => cloneNode(n)),
-        edges: (fromSystemClipboard.edges || []).map((e: AnyRecord) => cloneEdge(e)),
-        externalEdges: (fromSystemClipboard.externalEdges || []).map((e: AnyRecord) => cloneEdge(e)),
-        customAttributes: Array.isArray(fromSystemClipboard.customAttributes) ? fromSystemClipboard.customAttributes : []
-      };
+      data = cloneClipboardData(fromSystemClipboard);
+    } else if(clipboardData){
+      data = cloneClipboardData(clipboardData);
     }
     if(!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)){
       toast(I18N.t('clipboard_empty'));
       return false;
     }
-    // Re-create carried custom-attribute definitions this document lacks
-    // (existing definitions win id conflicts; definitions beyond the 500 cap
-    // are skipped with a toast), then coerce the carried values to the
-    // resolved definitions — so pasted values are visible, exportable and
-    // survive reload instead of being silently pruned.
-    if(Array.isArray(data.customAttributes) && data.customAttributes.length){
-      const existing = new Set(state.customAttributes.map(attribute => attribute.id));
-      let remaining = Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length);
-      let skipped = 0, added = 0;
-      for(const def of data.customAttributes){
-        if(!isRecord(def)) continue;
+    // Re-create carried custom-attribute definitions this document lacks.
+    // Definitions are resolved per (id, scope) PAIR, not by id alone: an
+    // existing definition with the same id but a different scope cannot
+    // display or export the pasted values, so in that case the carried
+    // definition is re-created under a fresh unique id and the carried values
+    // are remapped to it (lossless). Same-pair definitions merge (the
+    // existing one wins). Definitions beyond the 500 cap are skipped with a
+    // toast and their values are dropped, as on any other load path.
+    const carriedDefs = (Array.isArray(data.customAttributes) ? data.customAttributes : [])
+      .filter(isRecord)
+      .map(def => {
         const id = String(def.id ?? '').trim().slice(0, 128);
-        if(!id || existing.has(id)) continue;
-        if(remaining <= 0){ skipped++; continue; }
         const scope = ['graph','node','edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
-        remaining--; added++;
-        existing.add(id);
-        state.customAttributes.push({id, scope: scope as 'graph' | 'node' | 'edge', type});
+        return id ? { id, scope: scope as 'graph' | 'node' | 'edge', type } : null;
+      })
+      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string } => def !== null);
+    const existingPairs = new Set(state.customAttributes.map(attribute => attribute.id + '|' + attribute.scope));
+    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedTypeById = new Map<string, string>(carriedDefs.map(def => [def.id, def.type]));
+    // Ids that may not be handed out during this paste. A pair's own carried
+    // id stays available for its own direct creation; every existing
+    // definition, every carried id (another pair's creation target) and every
+    // definition created here is off-limits for minting a fresh unique id.
+    const createdIds = new Set(state.customAttributes.map(attribute => attribute.id));
+    const mintTaken = new Set([...createdIds, ...carriedTypeById.keys()]);
+    let remaining = Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length);
+    let skipped = 0;
+    const failedPairs = new Set<string>();
+    const renameByPair = new Map<string, string>();
+    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string }[] = [];
+    const addDef = (id: string, scope: 'node' | 'edge', type: string) => {
+      defsToAdd.push({ id, scope, type });
+      existingPairs.add(id + '|' + scope);
+      createdIds.add(id);
+      mintTaken.add(id);
+    };
+    const ensurePair = (id: string, scope: 'node' | 'edge') => {
+      const key = id + '|' + scope;
+      if(existingPairs.has(key) || failedPairs.has(key)) return;
+      if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
+      const carriedPair = carriedByPair.get(key);
+      const type = carriedPair ? carriedPair.type : (carriedTypeById.get(id) || 'string');
+      if(!createdIds.has(id)){
+        remaining--;
+        addDef(id, scope, type);
+        return;
       }
-      if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
-      if(added){ renderCustomAttributes(); renderCustomPropHosts(); }
+      const newId = uniqueCustomAttributeId(id, mintTaken);
+      remaining--;
+      addDef(newId, scope, type);
+      renameByPair.set(key, newId);
+    };
+    const ensureEntityPairs = (entities: AnyRecord[], scope: 'node' | 'edge') => {
+      for(const entity of entities){
+        if(!isRecord(entity?.custom)) continue;
+        for(const key of Object.keys(entity.custom)) ensurePair(key, scope);
+      }
+    };
+    ensureEntityPairs(data.nodes, 'node');
+    ensureEntityPairs(data.edges, 'edge');
+    ensureEntityPairs(data.externalEdges || [], 'edge');
+    if(defsToAdd.length) state.customAttributes.push(...defsToAdd);
+    // Remap carried values whose definition was re-created under a fresh id.
+    if(renameByPair.size){
+      const remapCustom = (entity: AnyRecord, scope: 'node' | 'edge') => {
+        if(!isRecord(entity?.custom)) return;
+        const out: Record<string, CustomAttributeValue> = Object.create(null);
+        for(const [key, value] of Object.entries(entity.custom)){
+          out[renameByPair.get(key + '|' + scope) || key] = value as CustomAttributeValue;
+        }
+        entity.custom = out;
+      };
+      for(const node of data.nodes) remapCustom(node, 'node');
+      for(const edge of [...data.edges, ...(data.externalEdges || [])]) remapCustom(edge, 'edge');
     }
+    if(defsToAdd.length){ renderCustomAttributes(); renderCustomPropHosts(); }
+    if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
+    if(renameByPair.size) toast(I18N.t('attribute_scope_renamed', { n: renameByPair.size }));
     // Coerce carried values against the resolved definitions. Values whose
     // definition does not exist (or was skipped over the cap) are dropped, as
     // on any other load path — never silently kept out of reach.
