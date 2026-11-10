@@ -97,23 +97,40 @@
     }
     return v;
   }
-  // Dash patterns depend only on (style, stroke size); sizes repeat heavily
-  // across a graph, so the built strings are memoized.
+  // Dash patterns identical to QVGE/Qt (QPen::dashPattern):
+  // dash=4, dot=1, space=2 in units of pen width (QPen source). QVGE maps:
+  // solid->SolidLine, dashed->DashLine [4,2], dotted->DotLine [1,2],
+  // dashdot->DashDotLine [4,2,1,2], dashdotdot->DashDotDotLine [4,2,1,2,1,2],
+  // none->NoPen (no stroke). These are written in SVG user units as
+  // patternValue * renderSize(width) so they scale with the floating origin
+  // and renderScale exactly like Qt's width-scaled pattern.
   const dashCache = new Map();
   function strokeDashArray(style, size){
-    if(style !== 'dashed' && style !== 'dotted') return 'none';
-    const key = style + size + '|' + renderScale;
+    if(!style || style === 'solid' || style === 'none') return 'none';
+    const key = style + '|' + size + '|' + renderScale;
     let dash = dashCache.get(key);
     if(dash === undefined){
       const s = renderSize(size);
-      const unit = renderScale;
-      dash = style === 'dashed'
-        ? `${Math.max(4 * unit, s*2)} ${Math.max(3 * unit, s*1.5)}`
-        : `${Math.max(1 * unit, s*0.8)} ${Math.max(3 * unit, s*1.8)}`;
+      // Qt patterns in width-units
+      const patterns = {
+        dashed: [4, 2],
+        dotted: [1, 2],
+        dashdot: [4, 2, 1, 2],
+        dashdotdot: [4, 2, 1, 2, 1, 2]
+      };
+      const pat = patterns[style];
+      if(!pat) return 'none';
+      dash = pat.map(v => v * s).join(' ');
       if(dashCache.size > 128) dashCache.clear();
       dashCache.set(key, dash);
     }
     return dash;
+  }
+  function strokeLineCap(style){
+    // QVGE uses Qt::FlatCap (SquareCap) for edges and default SquareCap for nodes.
+    // SVG "square" matches that visual extension; "butt" would shorten dashes.
+    if(!style || style === 'solid' || style === 'none') return 'butt';
+    return 'square';
   }
   // === Label outline / background (Style tab → Graph defaults) ===
   // Applies to node labels, edge labels, and edge weights. 'outline' draws a
@@ -1410,10 +1427,19 @@
       // A bulk-selected edge is highlighted by its own stroke colour: the
       // render pass is the other writer of that colour (see syncEdgeAccent).
       const lineStroke = bulkAccents && selected ? SEL_EDGE_COLOR : v.color;
-      setAttr(line, 'stroke', lineStroke); setAttr(line, 'stroke-width', renderSize(v.strokeSize));
-      const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
-      if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
-      else removeAttr(line, 'stroke-dasharray');
+      if(v.strokeStyle === 'none'){
+        setAttr(line, 'stroke', 'none');
+        removeAttr(line, 'stroke-dasharray');
+        removeAttr(line, 'stroke-linecap');
+        removeAttr(line, 'stroke-linejoin');
+      } else {
+        setAttr(line, 'stroke', lineStroke); setAttr(line, 'stroke-width', renderSize(v.strokeSize));
+        const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
+        if(dash !== 'none') setAttr(line, 'stroke-dasharray', dash);
+        else removeAttr(line, 'stroke-dasharray');
+        setAttr(line, 'stroke-linecap', strokeLineCap(v.strokeStyle));
+        setAttr(line, 'stroke-linejoin', 'round');
+      }
       // Selection accent: a wide line behind the path and a bigger copy of the
       // tip behind the arrowhead. Neither repaints the edge itself.
       syncEdgeAccent(g, e, v, d, selected && edgeVisible, bulkAccents);
@@ -1751,12 +1777,22 @@
         g.__shape = shape;
       }
       // Update shape style attributes — de-duplicated, so untouched nodes
-      // write nothing
+      // write nothing. QVGE/Qt uses SquareCap+Bevel for nodes, FlatCap+RoundJoin for edges;
+      // we keep SVG close by using square caps for dashed styles.
       setAttr(shape, 'fill', v.color);
-      setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', renderSize(v.strokeSize));
-      const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
-      if(dash !== 'none') setAttr(shape, 'stroke-dasharray', dash);
-      else removeAttr(shape, 'stroke-dasharray');
+      if(v.strokeStyle === 'none'){
+        setAttr(shape, 'stroke', 'none');
+        removeAttr(shape, 'stroke-dasharray');
+        removeAttr(shape, 'stroke-linecap');
+        removeAttr(shape, 'stroke-linejoin');
+      } else {
+        setAttr(shape, 'stroke', v.strokeColor); setAttr(shape, 'stroke-width', renderSize(v.strokeSize));
+        const dash = strokeDashArray(v.strokeStyle, v.strokeSize);
+        if(dash !== 'none') setAttr(shape, 'stroke-dasharray', dash);
+        else removeAttr(shape, 'stroke-dasharray');
+        setAttr(shape, 'stroke-linecap', strokeLineCap(v.strokeStyle));
+        setAttr(shape, 'stroke-linejoin', 'round');
+      }
       // Update label
       let label = g.__text || null;
       const wantLabel = showLabels && n.label;

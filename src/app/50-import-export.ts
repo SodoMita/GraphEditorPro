@@ -184,25 +184,58 @@
   }
   function dotId(id){ return /^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : '"' + String(id).replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"'; }
   function dotString(v){ return '"' + String(v ?? '').replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n') + '"'; }
+  // DOT style mapping for QVGE parity: QVGE uses style values solid/dashed/dotted/dashdot/dashdotdot/none
+  // (CUtils::penStyleToText). DOT natively supports solid/dashed/dotted/bold/invis/filled,
+  // but QVGE's DOT import (via CUtils) recognises dashdot/dashdotdot as well, so we emit
+  // them directly for fidelity; GraphViz will fallback to dashed where unsupported.
+  function dotStrokeStyle(style){
+    if(!style || style === 'solid') return 'solid';
+    if(style === 'dashed') return 'dashed';
+    if(style === 'dotted') return 'dotted';
+    if(style === 'dashdot') return 'dashdot';
+    if(style === 'dashdotdot') return 'dashdotdot';
+    if(style === 'none') return 'invis';
+    return style;
+  }
   function exportDotText(){
     const allDirected = state.edges.every(e => e.directed);
     const header = `${allDirected ? 'digraph' : 'graph'} ${dotId(fileBase())} {`;
     const connector = allDirected ? '->' : '--';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
-      const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(n.shape))}`];
-      // Hexagon has no native DOT shape: emit a regular polygon so the importer
-      // can restore it instead of flattening it to an ellipse.
-      if(n.shape === 'hexagon') attrs.push('sides=6', 'regular=true');
-      attrs.push(`fillcolor=${dotString(n.color)}`, `order=${n.order ?? 0}`);
+      const v = nodeVisual(n);
+      const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
+      if(v.shape === 'hexagon') attrs.push('sides=6', 'regular=true');
+      // QVGE DOT: fillcolor=fill, color=stroke.color, penwidth=stroke.size, style=stroke.style
+      attrs.push(`fillcolor=${dotString(v.color)}`);
+      attrs.push(`color=${dotString(v.strokeColor)}`);
+      attrs.push(`penwidth=${v.strokeSize}`);
+      const ss = v.strokeStyle;
+      if(ss && ss !== 'solid' && ss !== 'none'){
+        attrs.push(`style=${dotString(`filled,${dotStrokeStyle(ss)}`)}`);
+      } else if(ss === 'none'){
+        attrs.push(`style=${dotString('filled')}`);
+      } else {
+        attrs.push(`style=${dotString('filled')}`);
+      }
+      attrs.push(`width=${(v.width/72).toFixed(4)}`, `height=${(v.height/72).toFixed(4)}`);
+      attrs.push(`order=${n.order ?? 0}`);
       if(n.type) attrs.push(`type=${dotString(n.type)}`);
       lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for(const e of state.edges){
+      const v = edgeVisual(e);
       const op = e.directed ? '->' : connector;
       const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
       if(e.label) attrs.push(`label=${dotString(e.label)}`); else if(e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number') attrs.push(`label=${dotString(e.weight)}`);
       if(!allDirected && e.directed) attrs.push('directed=true');
+      // QVGE DOT: color, penwidth, style, dir
+      attrs.push(`color=${dotString(v.color)}`);
+      attrs.push(`penwidth=${v.strokeSize}`);
+      const es = v.strokeStyle;
+      if(es) attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
+      if(e.directed) attrs.push(`dir=${dotString('forward')}`);
+      else attrs.push(`dir=${dotString('none')}`);
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -235,7 +268,7 @@
       `  <key id="edgeType" for="edge" attr.name="type" attr.type="string"/>`,
       `  <key id="edgeColor" for="edge" attr.name="color" attr.type="string"/>`,
       `  <key id="edgeStrokeSize" for="edge" attr.name="stroke.size" attr.type="double"/>`,
-      `  <key id="edgeStrokeStyle" for="edge" attr.name="stroke.style" attr.type="string"/>`,
+      `  <key id="edgeStrokeStyle" for="edge" attr.name="style" attr.type="string"/>`,
       `  <key id="edgeLabelColor" for="edge" attr.name="label.color" attr.type="string"/>`,
       `  <key id="edgeLabelFont" for="edge" attr.name="label.font" attr.type="string"/>`,
       `  <key id="edgeLabelSize" for="edge" attr.name="label.size" attr.type="double"/>`,
@@ -670,11 +703,23 @@
     while((m = edgeRe.exec(body))){
       const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
       const a = ensureNode(fromOrig), b = ensureNode(toOrig);
-      // Only fall back to the label when the file has no weight attribute at
-      // all: an explicit empty weight (weight="") means "no weight", and
-      // treating it as missing gave label-only edges a spurious weight.
       const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
-      edges.push({ id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed:m[2] === '->' || attrs.directed === 'true' || directedGraph });
+      const e = { id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed:m[2] === '->' || attrs.directed === 'true' || directedGraph } as any;
+      // QVGE DOT edge: color, penwidth->strokeSize, style->strokeStyle, dir controls directed flag
+      const ec = parseColor(attrs.color);
+      if(ec) (e as any).color = ec;
+      if(attrs.penwidth != null && Number.isFinite(Number(attrs.penwidth))) (e as any).strokeSize = Math.max(0, Number(attrs.penwidth));
+      if(attrs.style){
+        const ss = parseStrokeStyle(attrs.style);
+        if(ss) (e as any).strokeStyle = ss;
+      }
+      // dir attribute (QVGE uses dir=forward/none) can override directed flag
+      if(attrs.dir){
+        const dir = String(attrs.dir).toLowerCase();
+        if(dir === 'none' || dir === 'undirected') e.directed = false;
+        else if(dir === 'forward' || dir === 'directed' || dir === 'both') e.directed = true;
+      }
+      edges.push(e as any);
     }
     const withoutEdges = body.replace(edgeRe, '');
     const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
@@ -691,6 +736,24 @@
       }
       if(attrs.type) n.type = String(attrs.type).slice(0, 40);
       if(attrs.order != null && Number.isFinite(Number(attrs.order))) n.order = Math.max(0, Math.trunc(Number(attrs.order)));
+      // QVGE DOT node: fillcolor->fill, color->stroke.color, penwidth->stroke.size, style->stroke.style
+      // DOT may have fillcolor for interior and color for border; respect both
+      if(attrs.fillcolor){
+        const fc = parseColor(attrs.fillcolor);
+        if(fc) n.color = fc;
+      }
+      if(attrs.color){
+        const sc = parseColor(attrs.color);
+        if(sc) (n as any).strokeColor = sc;
+      }
+      if(attrs.penwidth != null && Number.isFinite(Number(attrs.penwidth))) (n as any).strokeSize = Math.max(0, Number(attrs.penwidth));
+      if(attrs.style){
+        const ss = parseStrokeStyle(attrs.style);
+        if(ss) (n as any).strokeStyle = ss;
+      }
+      // width/height from DOT are in inches (72 dpi -> px)
+      if(attrs.width != null && Number.isFinite(Number(attrs.width))) (n as any).width = Math.max(10, Math.round(Number(attrs.width)*72));
+      if(attrs.height != null && Number.isFinite(Number(attrs.height))) (n as any).height = Math.max(10, Math.round(Number(attrs.height)*72));
       if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
     }
     const arr = [...nodes.values()];
@@ -719,12 +782,22 @@
     return '';
   }
   function parseStrokeStyle(raw){
-    const s = String(raw || '').toLowerCase();
-    if(s.includes('dashdotdot') || s.includes('dash-dot-dot')) return 'dashed'; // approximate
-    if(s.includes('dashdot') || s.includes('dash-dot')) return 'dashed';       // approximate
+    const s = String(raw || '').toLowerCase().trim();
+    if(!s) return '';
+    // QVGE/CUtils exact mapping: none, solid, dotted, dashed, dashdot, dashdotdot
+    // Also handle GraphViz DOT style values (dashed/dotted/solid/bold/invis) and
+    // common hyphen variants. Order matters: longest first.
+    if(s === 'none' || s === 'nopen' || s === 'transparent' || s === 'invis' || s === 'invisible') return 'none';
+    if(s.includes('dashdotdot') || s.includes('dash-dot-dot') || s.includes('dash_dot_dot')) return 'dashdotdot';
+    if(s.includes('dashdot') || s.includes('dash-dot') || s.includes('dash_dot')) return 'dashdot';
     if(s.includes('dash')) return 'dashed';
     if(s.includes('dot')) return 'dotted';
     if(s.includes('solid')) return 'solid';
+    // Qt enum names that may leak through
+    if(s.includes('dashline')) return 'dashed';
+    if(s.includes('dotline')) return 'dotted';
+    if(s.includes('dashdotline') && !s.includes('dashdotdot')) return 'dashdot';
+    if(s.includes('dashdotdotline')) return 'dashdotdot';
     return '';
   }
   // Parse QVGE font descriptor: "Family,Size,-1,5,weight,italic,underline,strikeout,0,0"

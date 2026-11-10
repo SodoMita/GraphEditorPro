@@ -597,7 +597,13 @@
       const e = p.edge;
       const color = e.color || '#94a3b8';
       const sw = e.strokeSize != null ? e.strokeSize : 2.4;
-      const dash = e.strokeStyle === 'dashed' ? ' stroke-dasharray="4 3"' : e.strokeStyle === 'dotted' ? ' stroke-dasharray="1 3"' : '';
+      const raw = e.strokeStyle || 'solid';
+      let dash = '';
+      if(raw === 'none') dash = ' style="display:none"';
+      else if(raw === 'dashed') dash = ' stroke-dasharray="8 4" stroke-linecap="square"';
+      else if(raw === 'dotted') dash = ' stroke-dasharray="2 4" stroke-linecap="square"';
+      else if(raw === 'dashdot') dash = ' stroke-dasharray="8 4 2 4" stroke-linecap="square"';
+      else if(raw === 'dashdotdot') dash = ' stroke-dasharray="8 4 2 4 2 4" stroke-linecap="square"';
       parts.push(`<svg width="36" height="24" viewBox="-18 -12 36 24"><line x1="-12" y1="0" x2="12" y2="0" stroke="${color}" stroke-width="${sw}"${dash}/></svg>`);
     }
     return parts.join('');
