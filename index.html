@@ -263,7 +263,8 @@
     /* ---------- Sidebar: non-modal bottom sheet / drawer over the canvas ---------- */
     .sidebar{
       position:absolute; left:0; right:0; bottom:0; z-index:30;
-      max-height:min(78%, calc(100% - 16px)); display:flex; flex-direction:column;
+      max-height:min(60%, calc(100% - 16px)); /* fallback for browsers without dvh */
+      max-height:min(60dvh, calc(100% - 16px)); display:flex; flex-direction:column;
       background:linear-gradient(180deg,#0d1524,#080d18); border:1px solid var(--line-2);
       border-bottom:0; border-radius:18px 18px 0 0;
       box-shadow:0 -18px 50px rgba(0,0,0,.55);
@@ -659,10 +660,14 @@
       .toast-stack{top:calc(160px + var(--sa-top));bottom:auto}
     }
 
-    /* Portrait: canvas on top, panels below — stacked full-width, sized
-       by content (max 50%). The split toggle switches matrix + edge list to
-       side-by-side (and back). */
+    /* Portrait bottom sheet: ~60dvh, leaving a usable canvas strip. The
+       floating mode switcher and tool rows lift above the sheet's top edge
+       while it is open so mode switching never gets covered. */
     @media (max-width:950px) and (orientation:portrait){
+      .canvas-wrap.sheet-open .mode-fab{bottom:calc(min(60dvh, calc(100% - 16px)) + 12px); z-index:31}
+      .canvas-wrap.sheet-open .sel-tools,
+      .canvas-wrap.sheet-open .edge-tools{bottom:calc(min(60dvh, calc(100% - 16px)) + 68px); z-index:31}
+      .canvas-wrap.sheet-open .gizmo-tools{bottom:calc(min(60dvh, calc(100% - 16px)) + 122px); z-index:31}
       .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
       .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
@@ -2306,6 +2311,7 @@ const I18N = {
         'no_custom_attrs': { en: 'No custom attributes defined.', ru: 'Пользовательские атрибуты не заданы.' },
         'err_not_node_clipboard': { en: 'the clipboard does not contain nodes', ru: 'в буфере обмена нет узлов' },
         'err_invalid_graphml': { en: 'invalid XML/GraphML', ru: 'некорректный XML/GraphML' },
+        'err_empty_graph': { en: 'the input contains no graph (zero nodes found)', ru: 'во вводе не найден граф (ноль узлов)' },
         'camera_readout': { en: 'center ({x}, {y}) · zoom {zoom}%', ru: 'центр ({x}, {y}) · масштаб {zoom}%' },
         'preset_what_nodes': { en: '{n:node}', ru: '{n:node}' },
         'preset_what_edges': { en: '{n:edge}', ru: '{n:edge}' },
@@ -9805,13 +9811,13 @@ function renderGizmo() {
     }
     if (sig === gizmoSig) {
         // Clear any plain-drag translation if renderGizmo was called after a node drag commit
-        setAttr(tree.root, 'transform', null);
+        removeAttr(tree.root, 'transform');
         gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
         return;
     }
     gizmoSig = sig;
     gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
-    setAttr(tree.root, 'transform', null);
+    removeAttr(tree.root, 'transform');
     for (const h of tree.handles)
         toggleClass(h.g, 'active', active === h.kind);
     const armLen = 52 * u, armStart = 11 * u;
@@ -10662,9 +10668,11 @@ function replaceWithImportedGraph(data, label = 'graph') {
     // if the file explicitly carries its own defaults.
     const mergedSettings = { ...state.settings, ...(data.settings || {}) };
     const sane = sanitizeState({ ...data, title: data.title || fileBase(), settings: mergedSettings });
+    // Snapshot the pre-import document FIRST: after a replace, undo must bring
+    // the old document back instead of starting from a one-entry history.
+    pushHistory('before import ' + label);
     state = { ...state, ...sane, selected: null, selection: { nodes: [], edges: [] } };
-    appHistory = [snapshot()];
-    appHistoryIndex = 0;
+    pushHistory('import ' + label);
     syncControls();
     updateUndoRedo();
     fitView();
@@ -10787,17 +10795,34 @@ function capCustomDefinitions(defs, existingIds) {
     return { defs: kept, skipped };
 }
 function importGraphData(data, label, append) {
-    if (!append && isRecord(data) && Array.isArray(data.customAttributes)) {
-        const { defs, skipped } = capCustomDefinitions(data.customAttributes, new Set());
-        if (skipped)
-            toast(I18N.t('attribute_import_skipped', { n: skipped }));
-        data = { ...data, customAttributes: defs };
+    // A blank or non-graph input ({}, [], an empty <graphml>, bare prose as DOT,
+    // a truncated file) must never reach the document: replacing with zero
+    // nodes destroys it silently. Fail loudly, change nothing.
+    if (!isRecord(data) && !Array.isArray(data)) {
+        toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+        return;
+    }
+    // The guard above leaves data as a record or an array; read it through a
+    // record-typed local (arrays fail the .nodes check below, as intended).
+    const graph = data;
+    if (!Array.isArray(graph.nodes) || graph.nodes.length === 0) {
+        toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+        return;
+    }
+    if (!append && isRecord(graph)) {
+        const customAttributes = graph.customAttributes;
+        if (Array.isArray(customAttributes)) {
+            const { defs, skipped } = capCustomDefinitions(customAttributes, new Set());
+            if (skipped)
+                toast(I18N.t('attribute_import_skipped', { n: skipped }));
+            graph.customAttributes = defs;
+        }
     }
     if (append) {
-        appendImportedGraph(data, label);
+        appendImportedGraph(graph, label);
     }
     else {
-        replaceWithImportedGraph(data, label);
+        replaceWithImportedGraph(graph, label);
     }
 }
 async function pasteFromClipboard(format) {
@@ -11175,6 +11200,9 @@ function parseDot(text) {
     const open = body.indexOf('{'), close = body.lastIndexOf('}');
     if (open >= 0 && close > open)
         body = body.slice(open + 1, close);
+    // Bare prose without a braces block and without a graph keyword is not a
+    // graph — the node matcher below would otherwise invent a node out of it.
+    const hasStructure = (open >= 0 && close > open) || directedGraph || /\bgraph\b/i.test(text);
     const nodes = new Map(), edges = [];
     const ensureNode = id => { if (!nodes.has(id))
         nodes.set(id, { id: safeId(id, 'n'), original: id, label: id, x: 0, y: 0, shape: 'circle', color: '#0ea5e9' }); return nodes.get(id); };
@@ -11209,58 +11237,59 @@ function parseDot(text) {
     }
     const withoutEdges = body.replace(edgeRe, '');
     const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
-    while ((m = nodeRe.exec(withoutEdges))) {
-        const name = cleanDotToken(m[1]);
-        if (['graph', 'node', 'edge'].includes(name.toLowerCase()))
-            continue;
-        const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
-        if (attrs.label)
-            n.label = attrs.label;
-        if (attrs.fillcolor || attrs.color)
-            n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
-        if (attrs.shape) {
-            const shape = parseShape(attrs.shape);
-            if (shape)
-                n.shape = shape;
-            else if (/polygon/i.test(attrs.shape) && String(attrs.sides) === '6')
-                n.shape = 'hexagon';
+    if (hasStructure || edges.length)
+        while ((m = nodeRe.exec(withoutEdges))) {
+            const name = cleanDotToken(m[1]);
+            if (['graph', 'node', 'edge'].includes(name.toLowerCase()))
+                continue;
+            const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
+            if (attrs.label)
+                n.label = attrs.label;
+            if (attrs.fillcolor || attrs.color)
+                n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
+            if (attrs.shape) {
+                const shape = parseShape(attrs.shape);
+                if (shape)
+                    n.shape = shape;
+                else if (/polygon/i.test(attrs.shape) && String(attrs.sides) === '6')
+                    n.shape = 'hexagon';
+            }
+            if (attrs.type)
+                n.type = String(attrs.type).slice(0, 40);
+            if (attrs.order != null && Number.isFinite(Number(attrs.order)))
+                n.order = Math.max(0, Math.trunc(Number(attrs.order)));
+            // QVGE DOT node: fillcolor->fill, color->stroke.color, penwidth->stroke.size, style->stroke.style
+            // DOT may have fillcolor for interior and color for border; respect both
+            if (attrs.fillcolor) {
+                const fc = parseColor(attrs.fillcolor);
+                if (fc)
+                    n.color = fc;
+            }
+            if (attrs.color) {
+                const sc = parseColor(attrs.color);
+                if (sc)
+                    n.strokeColor = sc;
+            }
+            if (attrs.penwidth != null && Number.isFinite(Number(attrs.penwidth)))
+                n.strokeSize = Math.max(0, Number(attrs.penwidth));
+            if (attrs.style) {
+                const ss = parseStrokeStyle(attrs.style);
+                if (ss)
+                    n.strokeStyle = ss;
+            }
+            // width/height from DOT are in inches (72 dpi -> px)
+            if (attrs.width != null && Number.isFinite(Number(attrs.width)))
+                n.width = Math.max(10, Math.round(Number(attrs.width) * 72));
+            if (attrs.height != null && Number.isFinite(Number(attrs.height)))
+                n.height = Math.max(10, Math.round(Number(attrs.height) * 72));
+            if (attrs.pos) {
+                const parts = attrs.pos.replace('!', '').split(',').map(Number);
+                if (Number.isFinite(parts[0]))
+                    n.x = parts[0];
+                if (Number.isFinite(parts[1]))
+                    n.y = -parts[1];
+            }
         }
-        if (attrs.type)
-            n.type = String(attrs.type).slice(0, 40);
-        if (attrs.order != null && Number.isFinite(Number(attrs.order)))
-            n.order = Math.max(0, Math.trunc(Number(attrs.order)));
-        // QVGE DOT node: fillcolor->fill, color->stroke.color, penwidth->stroke.size, style->stroke.style
-        // DOT may have fillcolor for interior and color for border; respect both
-        if (attrs.fillcolor) {
-            const fc = parseColor(attrs.fillcolor);
-            if (fc)
-                n.color = fc;
-        }
-        if (attrs.color) {
-            const sc = parseColor(attrs.color);
-            if (sc)
-                n.strokeColor = sc;
-        }
-        if (attrs.penwidth != null && Number.isFinite(Number(attrs.penwidth)))
-            n.strokeSize = Math.max(0, Number(attrs.penwidth));
-        if (attrs.style) {
-            const ss = parseStrokeStyle(attrs.style);
-            if (ss)
-                n.strokeStyle = ss;
-        }
-        // width/height from DOT are in inches (72 dpi -> px)
-        if (attrs.width != null && Number.isFinite(Number(attrs.width)))
-            n.width = Math.max(10, Math.round(Number(attrs.width) * 72));
-        if (attrs.height != null && Number.isFinite(Number(attrs.height)))
-            n.height = Math.max(10, Math.round(Number(attrs.height) * 72));
-        if (attrs.pos) {
-            const parts = attrs.pos.replace('!', '').split(',').map(Number);
-            if (Number.isFinite(parts[0]))
-                n.x = parts[0];
-            if (Number.isFinite(parts[1]))
-                n.y = -parts[1];
-        }
-    }
     const arr = [...nodes.values()];
     if (arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1) {
         const r = Math.max(120, arr.length * 24);
@@ -11769,6 +11798,8 @@ function parseGraphml(text) {
         const r = Math.max(120, nodes.length * 24);
         nodes.forEach((n, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / nodes.length; n.x = Math.cos(a) * r; n.y = Math.sin(a) * r; });
     }
+    if (!nodes.length)
+        return null;
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.
@@ -13313,6 +13344,7 @@ function wireUi() {
         sidebarEl.inert = false;
         sidebarEl.setAttribute('aria-hidden', 'false');
         sidebarEl.classList.add('open');
+        canvasWrap.classList.add('sheet-open');
         menuBtn.classList.add('active');
         menuBtn.setAttribute('aria-expanded', 'true');
         menuBtn.setAttribute('aria-label', I18N.t('panel_close'));
@@ -13324,6 +13356,7 @@ function wireUi() {
         if (!sidebarEl.classList.contains('open'))
             return;
         sidebarEl.classList.remove('open');
+        canvasWrap.classList.remove('sheet-open');
         sidebarEl.setAttribute('aria-hidden', 'true');
         sidebarEl.inert = true;
         menuBtn.classList.remove('active');

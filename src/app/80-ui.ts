@@ -97,6 +97,7 @@
       sidebarEl.inert = false;
       sidebarEl.setAttribute('aria-hidden', 'false');
       sidebarEl.classList.add('open');
+      canvasWrap.classList.add('sheet-open');
       menuBtn.classList.add('active');
       menuBtn.setAttribute('aria-expanded', 'true');
       menuBtn.setAttribute('aria-label', I18N.t('panel_close'));
@@ -107,6 +108,7 @@
     const closePanels = (restoreFocus = true) => {
       if(!sidebarEl.classList.contains('open')) return;
       sidebarEl.classList.remove('open');
+      canvasWrap.classList.remove('sheet-open');
       sidebarEl.setAttribute('aria-hidden', 'true');
       sidebarEl.inert = true;
       menuBtn.classList.remove('active');

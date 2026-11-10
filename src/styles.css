@@ -256,7 +256,8 @@
     /* ---------- Sidebar: non-modal bottom sheet / drawer over the canvas ---------- */
     .sidebar{
       position:absolute; left:0; right:0; bottom:0; z-index:30;
-      max-height:min(78%, calc(100% - 16px)); display:flex; flex-direction:column;
+      max-height:min(60%, calc(100% - 16px)); /* fallback for browsers without dvh */
+      max-height:min(60dvh, calc(100% - 16px)); display:flex; flex-direction:column;
       background:linear-gradient(180deg,#0d1524,#080d18); border:1px solid var(--line-2);
       border-bottom:0; border-radius:18px 18px 0 0;
       box-shadow:0 -18px 50px rgba(0,0,0,.55);
@@ -652,10 +653,14 @@
       .toast-stack{top:calc(160px + var(--sa-top));bottom:auto}
     }
 
-    /* Portrait: canvas on top, panels below — stacked full-width, sized
-       by content (max 50%). The split toggle switches matrix + edge list to
-       side-by-side (and back). */
+    /* Portrait bottom sheet: ~60dvh, leaving a usable canvas strip. The
+       floating mode switcher and tool rows lift above the sheet's top edge
+       while it is open so mode switching never gets covered. */
     @media (max-width:950px) and (orientation:portrait){
+      .canvas-wrap.sheet-open .mode-fab{bottom:calc(min(60dvh, calc(100% - 16px)) + 12px); z-index:31}
+      .canvas-wrap.sheet-open .sel-tools,
+      .canvas-wrap.sheet-open .edge-tools{bottom:calc(min(60dvh, calc(100% - 16px)) + 68px); z-index:31}
+      .canvas-wrap.sheet-open .gizmo-tools{bottom:calc(min(60dvh, calc(100% - 16px)) + 122px); z-index:31}
       .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
       .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}

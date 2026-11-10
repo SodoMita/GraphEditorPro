@@ -295,13 +295,13 @@
     }
     if(sig === gizmoSig){
       // Clear any plain-drag translation if renderGizmo was called after a node drag commit
-      setAttr(tree.root, 'transform', null);
+      removeAttr(tree.root, 'transform');
       gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
       return;
     }
     gizmoSig = sig;
     gizmoAnchor = { id: nodes[0].id, x: nodes[0].x, y: nodes[0].y };
-    setAttr(tree.root, 'transform', null);
+    removeAttr(tree.root, 'transform');
     for(const h of tree.handles) toggleClass(h.g, 'active', active === h.kind);
 
     const armLen = 52 * u, armStart = 11 * u;

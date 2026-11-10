@@ -395,8 +395,11 @@
     // if the file explicitly carries its own defaults.
     const mergedSettings = {...state.settings, ...(data.settings || {})};
     const sane = sanitizeState({...data, title:data.title || fileBase(), settings: mergedSettings});
+    // Snapshot the pre-import document FIRST: after a replace, undo must bring
+    // the old document back instead of starting from a one-entry history.
+    pushHistory('before import ' + label);
     state = {...state, ...sane, selected:null, selection:{nodes:[], edges:[]}};
-    appHistory=[snapshot()]; appHistoryIndex=0;
+    pushHistory('import ' + label);
     syncControls(); updateUndoRedo(); fitView(); queueRender(true, true); saveSoon();
     toast(I18N.t('imported', {label: label}));
   }
@@ -501,14 +504,31 @@
     }
     return { defs: kept, skipped };
   }
-  function importGraphData(data, label, append){
-    if(!append && isRecord(data) && Array.isArray(data.customAttributes)){
-      const { defs, skipped } = capCustomDefinitions(data.customAttributes, new Set());
-      if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
-      data = { ...data, customAttributes: defs };
+  function importGraphData(data: any, label, append){
+    // A blank or non-graph input ({}, [], an empty <graphml>, bare prose as DOT,
+    // a truncated file) must never reach the document: replacing with zero
+    // nodes destroys it silently. Fail loudly, change nothing.
+    if(!isRecord(data) && !Array.isArray(data)){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+      return;
     }
-    if(append){ appendImportedGraph(data, label); }
-    else { replaceWithImportedGraph(data, label); }
+    // The guard above leaves data as a record or an array; read it through a
+    // record-typed local (arrays fail the .nodes check below, as intended).
+    const graph = data as AnyRecord;
+    if(!Array.isArray(graph.nodes) || graph.nodes.length === 0){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+      return;
+    }
+    if(!append && isRecord(graph)){
+      const customAttributes = graph.customAttributes;
+      if(Array.isArray(customAttributes)){
+        const { defs, skipped } = capCustomDefinitions(customAttributes, new Set());
+        if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
+        graph.customAttributes = defs;
+      }
+    }
+    if(append){ appendImportedGraph(graph, label); }
+    else { replaceWithImportedGraph(graph, label); }
   }
   async function pasteFromClipboard(format){
     try{
@@ -775,6 +795,9 @@
     const directedGraph = /\bdigraph\b/i.test(text);
     let body = stripDotComments(text);
     const open = body.indexOf('{'), close = body.lastIndexOf('}'); if(open >= 0 && close > open) body = body.slice(open+1, close);
+    // Bare prose without a braces block and without a graph keyword is not a
+    // graph — the node matcher below would otherwise invent a node out of it.
+    const hasStructure = (open >= 0 && close > open) || directedGraph || /\bgraph\b/i.test(text);
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
     const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]+)';
@@ -803,6 +826,7 @@
     }
     const withoutEdges = body.replace(edgeRe, '');
     const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
+    if(hasStructure || edges.length)
     while((m = nodeRe.exec(withoutEdges))){
       const name = cleanDotToken(m[1]);
       if(['graph','node','edge'].includes(name.toLowerCase())) continue;
@@ -1197,6 +1221,7 @@
       edges.push(edge);
     });
     if(nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1){ const r=Math.max(120,nodes.length*24); nodes.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/nodes.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r;}); }
+    if(!nodes.length) return null;
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.

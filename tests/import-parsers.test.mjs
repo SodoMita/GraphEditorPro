@@ -415,3 +415,73 @@ test('the page exposes one h1, named tables and a language button whose name con
   assert.ok(langButton.getAttribute('aria-label').includes(code), 'accessible name contains the visible text');
   assert.equal(dom.window.I18N, undefined, 'no debug global is exposed');
 });
+
+test('malformed graph input never destroys the document and reports the failure', async () => {
+  const saved = { title: 'keep-me', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [] };
+  const cases = [
+    ['#btnPasteDot', 'hello'],
+    ['#btnPasteDot', 'digraph {'],
+    ['#btnPasteDot', 'a; b;'],
+    ['#btnPasteDot', '{}'],
+    ['#btnPasteJson', '{}'],
+    ['#btnPasteJson', '[]'],
+    ['#btnPasteJson', '{"edges":[]}'],
+    ['#btnPasteGraphml', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"></graphml>'],
+  ];
+  for(const [button, text] of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, button, text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 3, `document survives ${JSON.stringify(text)} via ${button}`);
+    assert.match(toasts(document), /fail|no graph/i, `a failure is reported for ${JSON.stringify(text)}`);
+    assert.deepEqual(errors.map(error => error.message), [], `no uncaught errors for ${JSON.stringify(text)}`);
+    dom.window.close();
+  }
+});
+
+test('a replace-mode import can be undone back to the pre-import document', async () => {
+  const saved = { title: 'undoable', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const dot = 'digraph G {\n  x [label="Replacement"];\n}';
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'the replace import went through');
+  assert.equal(graph.nodes[0].label, 'Replacement');
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'undo restores the pre-import document');
+  assert.deepEqual(graph.nodes.map(n => n.label), ['One', 'Two', 'Three']);
+  assert.equal(graph.edges.length, 1, 'the pre-import edges are restored too');
+  dom.window.close();
+});
+
+test('a valid append of malformed DOT content is rejected but an empty graph is an error, not a wipe', async () => {
+  // The empty <graphml> case: parser returns null, the replace never happens,
+  // and the success toast is NOT shown.
+  const saved = { title: 'keep-me-2', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"><graph id="g" edgedefault="directed"></graph></graphml>');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'the document is intact');
+  assert.equal(graph.nodes[0].label, 'One');
+  assert.match(toasts(document), /fail|no graph/i);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

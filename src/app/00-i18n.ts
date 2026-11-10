@@ -638,6 +638,7 @@ const I18N: I18nService = {
     'no_custom_attrs': { en: 'No custom attributes defined.', ru: 'Пользовательские атрибуты не заданы.' },
     'err_not_node_clipboard': { en: 'the clipboard does not contain nodes', ru: 'в буфере обмена нет узлов' },
     'err_invalid_graphml': { en: 'invalid XML/GraphML', ru: 'некорректный XML/GraphML' },
+    'err_empty_graph': { en: 'the input contains no graph (zero nodes found)', ru: 'во вводе не найден граф (ноль узлов)' },
     'camera_readout': { en: 'center ({x}, {y}) · zoom {zoom}%', ru: 'центр ({x}, {y}) · масштаб {zoom}%' },
     'preset_what_nodes': { en: '{n:node}', ru: '{n:node}' },
     'preset_what_edges': { en: '{n:edge}', ru: '{n:edge}' },
