@@ -170,10 +170,13 @@ const I18N: I18nService = {
     'shape_triangleDown': { en: 'Triangle down', ru: 'Треугольник вниз' },
     'shape_hexagon': { en: 'Hexagon', ru: 'Шестиугольник' },
 
-    // --- Stroke styles ---
+    // --- Stroke styles --- (QVGE-compatible: CUtils::penStyleToText)
     'stroke_solid': { en: 'Solid', ru: 'Сплошная' },
     'stroke_dashed': { en: 'Dashed', ru: 'Штриховая' },
     'stroke_dotted': { en: 'Dotted', ru: 'Пунктирная' },
+    'stroke_dashdot': { en: 'Dash-dot', ru: 'Штрих-пунктирная' },
+    'stroke_dashdotdot': { en: 'Dash-dot-dot', ru: 'Штрих-два пунктира' },
+    'stroke_none': { en: 'None', ru: 'Без обводки' },
     'stroke_inherit': { en: 'Inherit', ru: 'Наследовать' },
 
     // --- Label positions ---
