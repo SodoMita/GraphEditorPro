@@ -83,3 +83,72 @@ test('custom attribute IDs are required and unique', async () => {
   assert.equal(document.querySelectorAll('.custom-attribute-row').length, 1, 'duplicate IDs are rejected');
   dom.window.close();
 });
+
+test('legacy custom definitions using direction/arrowSize ids are migrated, not discarded', async () => {
+  // `direction`, `arrowSize` and `edgeArrowSize` only became built-in GraphML
+  // keys after custom attributes shipped, so an existing document can hold a
+  // definition under one of them. The sanitizer used to drop those silently.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}],
+    edges: [],
+    customAttributes: [
+      {id:'direction', scope:'edge', type:'string'},
+      {id:'edgeArrowSize', scope:'edge', type:'double'},
+      {id:'capacity', scope:'edge', type:'int'},
+    ],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.equal(ids.length, 3, 'no definition is lost on load');
+  assert.equal(new Set(ids).size, 3, 'migrated ids stay unique');
+  assert.ok(ids.includes('capacity'), 'a non-reserved id is untouched');
+  assert.ok(!ids.includes('direction') && !ids.includes('edgeArrowSize'), 'built-in ids are vacated');
+  assert.ok(ids.includes('direction2') && ids.includes('edgeArrowSize2'), 'each legacy id gets a numbered successor');
+
+  // The migrated definitions export under their new ids and come back.
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const graphml = modal.querySelector('textarea').value;
+  modal.remove();
+  const keyIds = [...graphml.matchAll(/<key id="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(new Set(keyIds).size, keyIds.length, 'exported key ids stay unique');
+  assert.ok(keyIds.includes('direction2') && keyIds.includes('capacity'));
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a legacy reserved id does not swallow an explicitly declared numbered id', async () => {
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}],
+    edges: [],
+    customAttributes: [
+      {id:'arrowSize', scope:'edge', type:'double'},
+      {id:'arrowSize2', scope:'graph', type:'string'},
+    ],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const rows = [...document.querySelectorAll('.custom-attribute-row')];
+  const ids = rows.map(row => row.querySelector('[data-attribute-field="id"]').value);
+  assert.equal(ids.length, 2, 'both definitions survive');
+  assert.ok(ids.includes('arrowSize2'), 'the explicitly declared id keeps its name');
+  assert.ok(ids.includes('arrowSize3'), 'the legacy one moves past it');
+  assert.equal(document.querySelectorAll('.custom-attribute-row [data-attribute-field="scope"]')[ids.indexOf('arrowSize2')].value, 'graph', 'the explicit definition keeps its own scope');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('reserved built-in ids are still rejected when adding or renaming definitions', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  for(const reserved of ['direction', 'arrowSize', 'edgeArrowSize', 'directed']){
+    document.querySelector('#customAttributeId').value = reserved;
+    document.querySelector('#btnAddCustomAttribute').click();
+    assert.equal(document.querySelectorAll('.custom-attribute-row').length, 0, `${reserved} is rejected`);
+  }
+  document.querySelector('#customAttributeId').value = 'capacity';
+  document.querySelector('#btnAddCustomAttribute').click();
+  assert.equal(document.querySelectorAll('.custom-attribute-row').length, 1, 'a free id is accepted');
+  dom.window.close();
+});

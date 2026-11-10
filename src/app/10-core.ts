@@ -387,7 +387,24 @@
   function edgeIsUndirected(e: any): boolean {
     return edgeDirection(e) === 'undirected';
   }
-  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeArrowSize','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','direction','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
+  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','arrowSize','edgeArrowSize','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','direction','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
+  // Subset of the reserved IDs that was NOT reserved before the QVGE edge
+  // tristate and the configurable arrow tip size landed. Saved documents may
+  // legitimately hold custom attributes under these names, so they are
+  // migrated on load instead of being discarded (see sanitizeState).
+  const LEGACY_CUSTOM_ATTRIBUTE_IDS = new Set(['direction','arrowSize','edgeArrowSize']);
+  // Rename a legacy custom-attribute id to a free one. `declared` holds every id
+  // the document itself declares, so migration cannot steal a name that a later
+  // entry is about to claim (a file with both `direction` and `direction2` keeps
+  // both, instead of the migrated one swallowing the explicit one).
+  function migrateLegacyAttributeId(id: string, taken: Set<string>, declared: Set<string>): string | null {
+    for(let suffix = 2; suffix <= 99; suffix++){
+      const candidate = `${id}${suffix}`;
+      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(candidate) || taken.has(candidate) || declared.has(candidate)) continue;
+      return candidate;
+    }
+    return null;
+  }
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
@@ -865,15 +882,25 @@
     } else { settings.stylePresets = []; }
     const customAttributeTypes = ['boolean','int','long','float','double','string'];
     const customAttributeIds = new Set<string>();
-    const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
-      .slice(0, 500).filter(isRecord).map(attribute => {
-        const id = String(attribute.id ?? '').trim().slice(0, 128);
-        const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
-        const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id)) return null;
-        customAttributeIds.add(id);
-        return {id, scope, type};
-      }).filter(Boolean) as GraphState['customAttributes'];
+    const rawCustomAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : []).slice(0, 500).filter(isRecord);
+    // Every id the document declares, used so a migration never takes a name a
+    // later entry claims for itself.
+    const declaredAttributeIds = new Set(rawCustomAttributes.map(attribute => String(attribute.id ?? '').trim().slice(0, 128)));
+    const customAttributes = rawCustomAttributes.map(attribute => {
+      const id = String(attribute.id ?? '').trim().slice(0, 128);
+      const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
+      const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
+      // `direction`, `arrowSize` and `edgeArrowSize` became built-ins after
+      // custom attributes shipped, so a file written by an older version can
+      // hold a definition under one of those IDs. Dropping it silently lost
+      // data: migrate the definition to a free ID derived from the original
+      // instead of returning null. IDs that were reserved from the start keep
+      // being rejected outright, so a built-in can never be shadowed.
+      const migrated = LEGACY_CUSTOM_ATTRIBUTE_IDS.has(id) ? migrateLegacyAttributeId(id, customAttributeIds, declaredAttributeIds) : id;
+      if(!migrated || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(migrated) || customAttributeIds.has(migrated)) return null;
+      customAttributeIds.add(migrated);
+      return {id: migrated, scope, type};
+    }).filter(Boolean) as GraphState['customAttributes'];
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),

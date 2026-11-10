@@ -415,3 +415,79 @@ test('the page exposes one h1, named tables and a language button whose name con
   assert.ok(langButton.getAttribute('aria-label').includes(code), 'accessible name contains the visible text');
   assert.equal(dom.window.I18N, undefined, 'no debug global is exposed');
 });
+
+test('DOT export of a mixed graph stays valid: digraph uses only -> and direction lives in dir', async () => {
+  // A graph with both a mutual and an undirected edge has to be a `digraph`
+  // (for dir=both), and DOT forbids `--` inside a digraph. Emitting `--` for
+  // the undirected member made Graphviz reject the whole file.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}, {id:'n3', label:'C', x:200, y:0, order:2}],
+    edges: [
+      {id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'mutual'},
+      {id:'e2', from:'n2', to:'n3', label:'', weight:'1', directed:false, direction:'undirected'},
+    ],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  assert.ok(dot.startsWith('digraph '), 'a mixed graph is exported as digraph');
+  const edgeLines = dot.split('\n').filter(line => /\s(?:->|--)\s/.test(line));
+  assert.equal(edgeLines.length, 2);
+  assert.ok(edgeLines.every(line => line.includes('->')), 'no -- operator inside a digraph');
+  assert.ok(!dot.includes(' -- '), 'the whole document is free of --');
+  assert.match(edgeLines[0], /dir="both"/, 'mutual edge keeps both arrowheads via dir');
+  assert.match(edgeLines[1], /dir="none"/, 'undirected edge keeps no arrowheads via dir');
+
+  // And those two directions survive the import.
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.edges.map(e => e.direction).sort(), ['mutual', 'undirected']);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('DOT export of a fully undirected graph still uses graph and --', async () => {
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:false, direction:'undirected'}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(dot.startsWith('graph '), 'an all-undirected graph keeps the graph header');
+  assert.match(dot, /n1 -- n2/, 'and its -- operator');
+  assert.ok(!dot.includes('->'), 'no -> operator inside a graph');
+  dom.window.close();
+});
+
+test('GraphML export never repeats a built-in key id, even when a custom definition collides', async () => {
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'directed', arrowSize:20}],
+    // A document from before `arrowSize` became a built-in key.
+    customAttributes: [{id:'arrowSize', scope:'edge', type:'double'}, {id:'capacity', scope:'edge', type:'int'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportGraphml').click();
+  const graphml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  const keyIds = [...graphml.matchAll(/<key id="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(new Set(keyIds).size, keyIds.length, 'every <key> id is unique');
+  assert.equal(keyIds.filter(id => id === 'arrowSize').length, 1, 'exactly one arrowSize key');
+  assert.ok(keyIds.includes('capacity'), 'the non-colliding custom definition is exported');
+
+  // The built-in key still carries the value, and the import restores it.
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].arrowSize, 20, 'arrowSize survives the round-trip');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

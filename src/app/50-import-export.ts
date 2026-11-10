@@ -198,11 +198,16 @@
     return style;
   }
   function exportDotText(){
-    // DOT grammar: `graph` may only use `--`, `digraph` may use `->` and `dir=both/none`.
-    // A single mutual edge inside a `graph` with `->` is invalid, so the header
-    // must be `digraph` unless every edge is undirected.
+    // DOT grammar: the edge operator is fixed by the graph kind — `graph` takes
+    // only `--`, `digraph` takes only `->`. Emitting `--` for an undirected edge
+    // inside a `digraph` (which a mixed graph needs, for its `dir=both` edge)
+    // is a syntax error, so the operator follows the header and the *direction*
+    // is carried by `dir` alone: none -> undirected, both -> mutual,
+    // forward -> directed.
     const allUndirected = state.edges.length > 0 && state.edges.every(e => edgeIsUndirected(e));
     const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
+    // `graph` may only use `--`, and a mutual edge is invalid there anyway.
+    const op = allUndirected ? '--' : '->';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
       const v = nodeVisual(n);
@@ -236,7 +241,6 @@
     for(const e of state.edges){
       const v = edgeVisual(e);
       const dir = edgeDirection(e);
-      const op = dir === 'undirected' ? '--' : '->';
       const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
       if(e.label) attrs.push(`label=${dotString(e.label)}`); else if(e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number') attrs.push(`label=${dotString(e.weight)}`);
       // QVGE: store direction explicitly via dir for DOT
@@ -260,53 +264,92 @@
   }
   function exportDot(){ showExportPreview(`${fileBase()}.dot`, exportDotText(), 'text/vnd.graphviz;charset=utf-8'); }
   function xmlEsc(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&apos;','"':'&quot;'}[c])); }
+  // Every <key> the GraphML exporter writes itself, in emission order. Declared
+  // once so the custom-definition filter right below can use the same set of
+  // reserved ids instead of a hand-copied list that drifts.
+  const GRAPHML_BUILTIN_KEYS: readonly [string, string, string, string][] = [
+    ['label', 'node', 'label', 'string'],
+    ['nodeId', 'node', 'id', 'string'],
+    ['order', 'node', 'order', 'int'],
+    ['x', 'node', 'x', 'double'],
+    ['y', 'node', 'y', 'double'],
+    ['type', 'node', 'type', 'string'],
+    ['shape', 'node', 'shape', 'string'],
+    ['color', 'node', 'color', 'string'],
+    ['width', 'node', 'width', 'double'],
+    ['height', 'node', 'height', 'double'],
+    ['strokeColor', 'node', 'stroke.color', 'string'],
+    ['strokeSize', 'node', 'stroke.size', 'double'],
+    ['strokeStyle', 'node', 'stroke.style', 'string'],
+    ['labelColor', 'node', 'label.color', 'string'],
+    ['labelFont', 'node', 'label.font', 'string'],
+    ['labelSize', 'node', 'label.size', 'double'],
+    ['labelPosition', 'node', 'label.position', 'string'],
+    ['weight', 'edge', 'weight', 'string'],
+    ['edgeLabel', 'edge', 'label', 'string'],
+    ['edgeType', 'edge', 'type', 'string'],
+    ['edgeColor', 'edge', 'color', 'string'],
+    ['edgeStrokeSize', 'edge', 'stroke.size', 'double'],
+    ['edgeStrokeStyle', 'edge', 'style', 'string'],
+    ['edgeLabelColor', 'edge', 'label.color', 'string'],
+    ['edgeLabelFont', 'edge', 'label.font', 'string'],
+    ['edgeLabelSize', 'edge', 'label.size', 'double'],
+    ['directed', 'edge', 'directed', 'boolean'],
+    ['direction', 'edge', 'direction', 'string'],
+    ['arrowSize', 'edge', 'arrow.size', 'double'],
+    ['labelsPolicy', 'graph', 'labels.policy', 'string'],
+    ['edgeWeightMode', 'graph', 'edge.weight.mode', 'string'],
+    ['edgeWeightMin', 'graph', 'edge.weight.min', 'double'],
+    ['edgeWeightMax', 'graph', 'edge.weight.max', 'double'],
+    ['edgeWeightCorr', 'graph', 'edge.weight.corr', 'string'],
+    ['edgeWidthMin', 'graph', 'edge.width.min', 'double'],
+    ['edgeWidthMax', 'graph', 'edge.width.max', 'double'],
+    ['edgeWeightColorLow', 'graph', 'edge.weight.colorLow', 'string'],
+    ['edgeWeightColorHigh', 'graph', 'edge.weight.colorHigh', 'string'],
+    ['canvasBgColor', 'graph', 'canvas.bg.color', 'string'],
+    ['gridMinorColor', 'graph', 'grid.minor.color', 'string'],
+    ['gridMajorColor', 'graph', 'grid.major.color', 'string'],
+    ['gridMinorAlpha', 'graph', 'grid.minor.alpha', 'double'],
+    ['gridMajorAlpha', 'graph', 'grid.major.alpha', 'double'],
+  ];
+  const GRAPHML_BUILTIN_KEY_IDS = new Set(GRAPHML_BUILTIN_KEYS.map(([id]) => id));
+  // <key> lines for the user's custom definitions. An id that collides with a
+  // built-in one gets a numbered suffix (arrowSize -> arrowSize2) instead of
+  // being emitted twice or dropped, so a definition is never lost in export.
+  function graphmlCustomKeyLines(): string[]{
+    const emitted = new Set(GRAPHML_BUILTIN_KEY_IDS);
+    // Ids the document declares that keep their own name. A rename must not
+    // take one of those, or the renamed key would collide with its neighbour.
+    const reservedForOthers = new Set(state.customAttributes.map(attribute => attribute.id).filter(id => !emitted.has(id)));
+    const out: string[] = [];
+    for(const attribute of state.customAttributes){
+      let id = attribute.id;
+      if(emitted.has(id)){
+        for(let suffix = 2; suffix <= 99; suffix++){
+          const candidate = `${attribute.id}${suffix}`;
+          if(emitted.has(candidate) || reservedForOthers.has(candidate)) continue;
+          id = candidate;
+          break;
+        }
+        // Every suffix taken: fall back to the declared name rather than
+        // dropping the definition. The sanitizer already renames on load, so
+        // this only guards state built outside it.
+        if(emitted.has(id)) id = attribute.id;
+      }
+      emitted.add(id);
+      out.push(`  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attribute.id)}" attr.type="${xmlEsc(attribute.type)}"/>`);
+    }
+    return out;
+  }
   function exportGraphmlText(){
     const gd = state.settings.graphDefaults;
     const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">`,
-      `  <key id="label" for="node" attr.name="label" attr.type="string"/>`,
-      `  <key id="nodeId" for="node" attr.name="id" attr.type="string"/>`,
-      `  <key id="order" for="node" attr.name="order" attr.type="int"/>`,
-      `  <key id="x" for="node" attr.name="x" attr.type="double"/>`,
-      `  <key id="y" for="node" attr.name="y" attr.type="double"/>`,
-      `  <key id="type" for="node" attr.name="type" attr.type="string"/>`,
-      `  <key id="shape" for="node" attr.name="shape" attr.type="string"/>`,
-      `  <key id="color" for="node" attr.name="color" attr.type="string"/>`,
-      `  <key id="width" for="node" attr.name="width" attr.type="double"/>`,
-      `  <key id="height" for="node" attr.name="height" attr.type="double"/>`,
-      `  <key id="strokeColor" for="node" attr.name="stroke.color" attr.type="string"/>`,
-      `  <key id="strokeSize" for="node" attr.name="stroke.size" attr.type="double"/>`,
-      `  <key id="strokeStyle" for="node" attr.name="stroke.style" attr.type="string"/>`,
-      `  <key id="labelColor" for="node" attr.name="label.color" attr.type="string"/>`,
-      `  <key id="labelFont" for="node" attr.name="label.font" attr.type="string"/>`,
-      `  <key id="labelSize" for="node" attr.name="label.size" attr.type="double"/>`,
-      `  <key id="labelPosition" for="node" attr.name="label.position" attr.type="string"/>`,
-      `  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>`,
-      `  <key id="edgeLabel" for="edge" attr.name="label" attr.type="string"/>`,
-      `  <key id="edgeType" for="edge" attr.name="type" attr.type="string"/>`,
-      `  <key id="edgeColor" for="edge" attr.name="color" attr.type="string"/>`,
-      `  <key id="edgeStrokeSize" for="edge" attr.name="stroke.size" attr.type="double"/>`,
-      `  <key id="edgeStrokeStyle" for="edge" attr.name="style" attr.type="string"/>`,
-      `  <key id="edgeLabelColor" for="edge" attr.name="label.color" attr.type="string"/>`,
-      `  <key id="edgeLabelFont" for="edge" attr.name="label.font" attr.type="string"/>`,
-      `  <key id="edgeLabelSize" for="edge" attr.name="label.size" attr.type="double"/>`,
-      `  <key id="directed" for="edge" attr.name="directed" attr.type="boolean"/>`,
-      `  <key id="direction" for="edge" attr.name="direction" attr.type="string"/>`,
-      `  <key id="arrowSize" for="edge" attr.name="arrow.size" attr.type="double"/>`,
-      `  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>`,
-      `  <key id="edgeWeightMode" for="graph" attr.name="edge.weight.mode" attr.type="string"/>`,
-      `  <key id="edgeWeightMin" for="graph" attr.name="edge.weight.min" attr.type="double"/>`,
-      `  <key id="edgeWeightMax" for="graph" attr.name="edge.weight.max" attr.type="double"/>`,
-      `  <key id="edgeWeightCorr" for="graph" attr.name="edge.weight.corr" attr.type="string"/>`,
-      `  <key id="edgeWidthMin" for="graph" attr.name="edge.width.min" attr.type="double"/>`,
-      `  <key id="edgeWidthMax" for="graph" attr.name="edge.width.max" attr.type="double"/>`,
-      `  <key id="edgeWeightColorLow" for="graph" attr.name="edge.weight.colorLow" attr.type="string"/>`,
-      `  <key id="edgeWeightColorHigh" for="graph" attr.name="edge.weight.colorHigh" attr.type="string"/>`,
-      `  <key id="canvasBgColor" for="graph" attr.name="canvas.bg.color" attr.type="string"/>`,
-      `  <key id="gridMinorColor" for="graph" attr.name="grid.minor.color" attr.type="string"/>`,
-      `  <key id="gridMajorColor" for="graph" attr.name="grid.major.color" attr.type="string"/>`,
-      `  <key id="gridMinorAlpha" for="graph" attr.name="grid.minor.alpha" attr.type="double"/>`,
-      `  <key id="gridMajorAlpha" for="graph" attr.name="grid.major.alpha" attr.type="double"/>`,
-      ...state.customAttributes.map(attribute => `  <key id="${xmlEsc(attribute.id)}" for="${attribute.scope}" attr.name="${xmlEsc(attribute.id)}" attr.type="${attribute.type}"/>`),
+      ...GRAPHML_BUILTIN_KEYS.map(([id, forWhom, attrName, type]) => `  <key id="${id}" for="${forWhom}" attr.name="${attrName}" attr.type="${type}"/>`),
+      // Custom definitions come after the built-ins, so a custom id that matches
+      // one of them would emit a second <key> with the same id and make every
+      // <data key="..."> reference ambiguous. Rename those to a free id (the
+      // sanitizer does the same on load) so the definition is kept, not dropped.
+      ...graphmlCustomKeyLines(),
       `  <graph id="${xmlEsc(fileBase())}" edgedefault="directed">`];
     // Graph-level defaults
     lines.push(`    <data key="labelsPolicy">${xmlEsc(gd.labelsPolicy)}</data>`);
@@ -908,7 +951,10 @@
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
     const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS;
-    const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','arrow.size','arrowSize','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
+    // Compare against the lowercased attr.name the loop below produces, so a
+    // built-in written in camelCase (attr.name="arrowSize") is still recognised
+    // and does not come back as an extra custom definition.
+    const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','arrow.size','arrowSize','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha'].map(n => n.toLowerCase()));
     const customAttributes: GraphState['customAttributes'] = [];
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
