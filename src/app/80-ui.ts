@@ -153,7 +153,7 @@
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0,60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value,12),4,72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
-    $('#edgeDirected').addEventListener('change', e => { state.settings.directed = e.target.checked; saveSoon(); });
+    $('#edgeDirected').addEventListener('change', e => { const v = (e.target as any).value || (e.target as any).checked; const dir = normalizeDirection(v); (state.settings as any).direction = dir; state.settings.directed = dir !== 'undirected'; saveSoon(); });
     $('#optAutosave').addEventListener('change', e => {
       state.settings.autosave = e.target.checked;
       persistAutosavePreference(e.target.checked);
@@ -262,7 +262,7 @@
         if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-elabel')){ e.label = t.value.slice(0,80); pushHistory('edit edge label'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edit edge type'); queueRender(false); saveSoon(); }
-        else if(t.matches('.edge-directed')){ e.directed = t.checked; pushHistory('edit edge directed'); queueRender(false); saveSoon(); }
+        else if(t.matches('.edge-directed')){ const v = (t as any).value || (t as any).checked; const dir = normalizeDirection(v); (e as any).direction = dir; (e as any).directed = dir !== 'undirected'; pushHistory('edit edge directed'); queueRender(true); saveSoon(); }
         else if(t.matches('.edge-color')){ e.color = t.value; pushHistory('edit edge color'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-stroke-style')){ e.strokeStyle = t.value || undefined; pushHistory('edit edge stroke style'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-id')){

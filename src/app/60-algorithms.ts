@@ -4,7 +4,7 @@
       if(!adj.has(e.from) || !adj.has(e.to)) continue;
       const w = (e.weight === '' || e.weight == null) ? 1 : Number(e.weight); const wt = Number.isFinite(w) ? w : 1;
       adj.get(e.from).push({to:e.to, weight:wt, edge:e});
-      if(!e.directed || !directedMode) adj.get(e.to).push({to:e.from, weight:wt, edge:e});
+      if(edgeIsUndirected(e) || edgeDirection(e)==='mutual' || !directedMode) adj.get(e.to).push({to:e.from, weight:wt, edge:e});
     }
     for(const arr of adj.values()) arr.sort((a,b) => (nodeById(a.to)?.label || a.to).localeCompare(nodeById(b.to)?.label || b.to));
     return adj;
@@ -24,18 +24,18 @@
   }
   function runTopo(){
     const adj=adjacency(true), indeg=new Map(state.nodes.map(n=>[n.id,0]));
-    for(const e of state.edges){ if(e.directed && indeg.has(e.to)) indeg.set(e.to, indeg.get(e.to)+1); if(!e.directed) return out(I18N.t('topo_undirected')); }
+    for(const e of state.edges){ if(!edgeIsUndirected(e) && indeg.has(e.to)) indeg.set(e.to, indeg.get(e.to)+1); if(edgeIsUndirected(e)) return out(I18N.t('topo_undirected')); }
     const q=state.nodes.filter(n=>indeg.get(n.id)===0).map(n=>n.id), order=[];
     while(q.length){ const v=q.shift(); order.push(v); for(const nb of adj.get(v)||[]){ indeg.set(nb.to, indeg.get(nb.to)-1); if(indeg.get(nb.to)===0) q.push(nb.to); } }
     if(order.length !== state.nodes.length) out(I18N.t('topo_cycle')); else out(I18N.t('topo_order') + '\n' + order.map(labelOf).join(' → '));
   }
   function runStats(){ out(graphStats()); }
   function graphStats(){
-    const directed=state.edges.filter(e=>e.directed).length, undirected=state.edges.length-directed;
+    const directed=state.edges.filter(e=>edgeDirection(e)==='directed').length, mutual=state.edges.filter(e=>edgeDirection(e)==='mutual').length, undirected=state.edges.filter(e=>edgeIsUndirected(e)).length;
     const deg = new Map(state.nodes.map(n=>[n.id,{in:0,out:0,total:0}]));
-    for(const e of state.edges){ const a=deg.get(e.from), b=deg.get(e.to); if(!a||!b) continue; a.out++; b.in++; a.total++; b.total++; if(!e.directed){ a.in++; b.out++; } }
+    for(const e of state.edges){ const a=deg.get(e.from), b=deg.get(e.to); if(!a||!b) continue; a.out++; b.in++; a.total++; b.total++; if(edgeIsUndirected(e) || edgeDirection(e)==='mutual'){ a.in++; b.out++; } }
     const maxDeg = [...deg.entries()].sort((a,b)=>b[1].total-a[1].total)[0];
-    return I18N.t('graph_statistics') + '\n' + I18N.t('nodes_label') + ' ' + state.nodes.length + '\n' + I18N.t('edges_label') + ' ' + state.edges.length + ' (' + directed + ' ' + (I18N.current==='ru'?'направленных':'directed') + ', ' + undirected + ' ' + (I18N.current==='ru'?'ненаправленных':'undirected') + ')\n' + I18N.t('density') + ' ' + density() + '\n' + I18N.t('highest_degree') + ' ' + (maxDeg ? labelOf(maxDeg[0]) + ' (' + maxDeg[1].total + ')' : I18N.t('na'));
+    return I18N.t('graph_statistics') + '\n' + I18N.t('nodes_label') + ' ' + state.nodes.length + '\n' + I18N.t('edges_label') + ' ' + state.edges.length + ' (' + directed + ' ' + (I18N.current==='ru'?'направленных':'directed') + ', ' + mutual + ' mutual, ' + undirected + ' ' + (I18N.current==='ru'?'ненаправленных':'undirected') + ')\n' + I18N.t('density') + ' ' + density() + '\n' + I18N.t('highest_degree') + ' ' + (maxDeg ? labelOf(maxDeg[0]) + ' (' + maxDeg[1].total + ')' : I18N.t('na'));
   }
   function density(){ const n=state.nodes.length; if(n<2) return '0'; return (state.edges.length / (n*(n-1))).toFixed(3); }
   function labelOf(id){ return nodeById(id)?.label || id; }

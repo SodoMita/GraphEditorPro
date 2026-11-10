@@ -1053,7 +1053,7 @@
                   <label class="field" for="edgeLabelSize"><span data-i18n="label_size">Label size</span>
                     <input id="edgeLabelSize" type="number" min="4" max="72" step="1" value="12" inputmode="decimal" />
                   </label>
-                  <label class="chk field" for="edgeDirected" style="align-self:end"><input id="edgeDirected" type="checkbox" checked /> <span data-i18n="directed_edge">Directed edge</span></label>
+                  <label class="field" for="edgeDirected" style="align-self:end"><span data-i18n="direction">Direction</span><select id="edgeDirected"><option value="directed" data-i18n="directed_edge_short">Directed</option><option value="mutual" data-i18n="mutual_edge_short">Mutual</option><option value="undirected" data-i18n="undirected_edge_short">Undirected</option></select></label>
                 </div>
               </div>
             </details>
@@ -1874,7 +1874,9 @@ const I18N = {
         'order': { en: 'Order', ru: 'Порядок' },
         'keep': { en: '(keep)', ru: '(сохранить)' },
         'directed': { en: 'Directed', ru: 'Направленное' },
+        'direction': { en: 'Direction', ru: 'Направление' },
         'directed_edge_short': { en: 'Directed', ru: 'Направленное' },
+        'mutual_edge_short': { en: 'Mutual', ru: 'Взаимное' },
         'undirected_edge_short': { en: 'Undirected', ru: 'Ненаправленное' },
         'reset_style_title': { en: 'Clear all per-item style overrides', ru: 'Очистить все переопределения стиля элемента' },
         'reset_edge_style_title': { en: 'Clear all per-edge style overrides', ru: 'Очистить все переопределения стиля ребра' },
@@ -2770,7 +2772,43 @@ const NODE_SHAPES = ['circle', 'square', 'diamond', 'triangleUp', 'triangleDown'
 const STROKE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot', 'dashdotdot', 'none'];
 const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
 const LABEL_POLICIES = ['auto', 'on', 'off'];
-const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label', 'nodeId', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize', 'labelPosition', 'weight', 'edgeLabel', 'edgeType', 'edgeColor', 'edgeStrokeSize', 'edgeStrokeStyle', 'edgeLabelColor', 'edgeLabelFont', 'edgeLabelSize', 'directed', 'labelsPolicy', 'edgeWeightMode', 'edgeWeightMin', 'edgeWeightMax', 'edgeWeightCorr', 'edgeWidthMin', 'edgeWidthMax', 'edgeWeightColorLow', 'edgeWeightColorHigh', 'canvasBgColor', 'gridMinorColor', 'gridMajorColor', 'gridMinorAlpha', 'gridMajorAlpha']);
+const EDGE_DIRECTIONS = ['directed', 'mutual', 'undirected'];
+function normalizeDirection(raw) {
+    if (raw === true || raw === 'true' || raw === 1 || raw === '1')
+        return 'directed';
+    if (raw === false || raw === 'false' || raw === 0 || raw === '0')
+        return 'undirected';
+    const s = String(raw ?? '').trim().toLowerCase();
+    if (!s)
+        return 'directed';
+    if (s === 'directed' || s === 'forward' || s === 'true' || s === '1' || s === 'directed (one end)')
+        return 'directed';
+    if (s === 'mutual' || s === 'both' || s === 'bidirected' || s === 'bidirectional' || s === 'mutual (both ends)')
+        return 'mutual';
+    if (s === 'undirected' || s === 'none' || s === 'false' || s === '0' || s === 'undirected (no ends)')
+        return 'undirected';
+    if (['directed', 'mutual', 'undirected'].includes(s))
+        return s;
+    if (s.startsWith('bi'))
+        return 'mutual';
+    return 'directed';
+}
+function edgeDirection(e) {
+    // Canonical field is e.direction, legacy is e.directed (boolean or string)
+    const raw = (e && (e.direction ?? e.directed));
+    return normalizeDirection(raw);
+}
+function edgeHasEndArrow(e) {
+    const d = edgeDirection(e);
+    return d === 'directed' || d === 'mutual';
+}
+function edgeHasStartArrow(e) {
+    return edgeDirection(e) === 'mutual';
+}
+function edgeIsUndirected(e) {
+    return edgeDirection(e) === 'undirected';
+}
+const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label', 'nodeId', 'order', 'x', 'y', 'type', 'shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize', 'labelPosition', 'weight', 'edgeLabel', 'edgeType', 'edgeColor', 'edgeStrokeSize', 'edgeStrokeStyle', 'edgeLabelColor', 'edgeLabelFont', 'edgeLabelSize', 'directed', 'direction', 'labelsPolicy', 'edgeWeightMode', 'edgeWeightMin', 'edgeWeightMax', 'edgeWeightCorr', 'edgeWidthMin', 'edgeWidthMax', 'edgeWeightColorLow', 'edgeWeightColorHigh', 'canvasBgColor', 'gridMinorColor', 'gridMajorColor', 'gridMinorAlpha', 'gridMajorAlpha']);
 const FONT_FAMILIES = ['Inter', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New'];
 const defaultState = () => ({
     title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
@@ -2782,8 +2820,8 @@ const defaultState = () => ({
         nodeWidth: 50, nodeHeight: 50,
         nodeStrokeColor: '#e2e8f0', nodeStrokeSize: 2.2, nodeStrokeStyle: 'solid',
         nodeType: '', nodeLabelColor: '#f8fafc', nodeLabelFont: 'Inter', nodeLabelSize: 13, nodeLabelPosition: 'center',
-        // Edit-tab edge defaults (primary for newly added edges)
-        directed: true, edgeWeight: '1', edgeLabel: '',
+        // Edit-tab edge defaults (primary for newly added edges) — QVGE uses direction string
+        directed: true, direction: 'directed', edgeWeight: '1', edgeLabel: '',
         edgeType: '', edgeColor: '#94a3b8', edgeStrokeSize: 2.4, edgeStrokeStyle: 'solid',
         edgeLabelColor: '#dbeafe', edgeLabelFont: 'Inter', edgeLabelSize: 12,
         snap: false, snapX: false, snapY: false, gridSize: 40, gridSizeX: 40, gridSizeY: 40,
@@ -2985,7 +3023,7 @@ function redo() { flushPendingHistory(); if (appHistoryIndex >= appHistory.lengt
 function updateCommandStates() {
     const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
     $('#btnDelete').disabled = !hasSelection;
-    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => edgeById(id)?.directed);
+    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => { const e = edgeById(id); return e && edgeDirection(e) !== 'undirected'; });
     $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
     $('#btnMatrixClear').disabled = !state.edges.length;
     const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
@@ -3068,13 +3106,17 @@ function sanitizeState(input) {
         const to = nodeReferences.get(String(e.to)) || (nodeIds.has(String(e.to)) ? String(e.to) : '');
         if (!from || !to)
             return; // Drop dangling edges before they reach render/algorithm code.
+        const dir = normalizeDirection(e.direction ?? e.directed);
         const edge = {
             id: uniqueSafeId(e.id || ('e' + (i + 1)), 'e', usedEdgeIds),
             from, to,
             label: String(e.label ?? '').slice(0, 80),
-            directed: Boolean(e.directed),
+            directed: dir, // legacy boolean compat: keep truthy for directed/mutual
+            direction: dir,
             type: String(e.type || '').slice(0, 40)
         };
+        // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
+        edge.directed = dir !== 'undirected';
         if (e.weight != null && e.weight !== '')
             edge.weight = String(e.weight).slice(0, 50);
         if (e.color)
@@ -3246,7 +3288,11 @@ function sanitizeState(input) {
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension, 10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter, 10) || 80, 10, 400);
-    settings.directed = Boolean(settings.directed);
+    // QVGE: edge direction default is directed/mutual/undirected (string); keep boolean legacy
+    const dirRaw = settings.direction ?? settings.directed;
+    const dirNorm = normalizeDirection(dirRaw);
+    settings.direction = dirNorm;
+    settings.directed = dirNorm !== 'undirected';
     settings.snap = Boolean(settings.snap);
     settings.snapX = Boolean(settings.snapX);
     settings.snapY = Boolean(settings.snapY);
@@ -3962,7 +4008,10 @@ function edgeArrowPoints(d, scale = 1) {
         `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
 }
 function hasEdgeTip(e, d) {
-    return Boolean(e && e.directed && d && d.tipX != null && d.arrowAngle != null);
+    return Boolean(e && edgeHasEndArrow(e) && d && d.tipX != null && d.arrowAngle != null);
+}
+function hasEdgeStartTip(e, d) {
+    return Boolean(e && edgeHasStartArrow(e) && d && d.startTipX != null && d.startArrowAngle != null);
 }
 // === Edge selection ring ===
 // Like nodes, a selected edge gets an accent placed BEHIND itself, so the
@@ -4168,7 +4217,13 @@ function syncControls() {
     $('#edgeLabelColor').value = state.settings.edgeLabelColor;
     $('#edgeLabelFont').value = state.settings.edgeLabelFont;
     $('#edgeLabelSize').value = state.settings.edgeLabelSize;
-    $('#edgeDirected').checked = state.settings.directed;
+    const edEl = $('#edgeDirected');
+    if (edEl) {
+        if (edEl.tagName === 'SELECT')
+            edEl.value = normalizeDirection(state.settings.direction ?? state.settings.directed);
+        else
+            edEl.checked = edgeDirection({ direction: state.settings.direction ?? state.settings.directed }) !== 'undirected';
+    }
     $('#optAutosave').checked = state.settings.autosave;
     $('#optSnap').checked = state.settings.snap;
     $('#optSnapX').checked = state.settings.snapX;
@@ -5028,7 +5083,7 @@ function renderEdges() {
         // 2,500-edge layer was pure overhead — and the result would be identical.
         const edgeStyleKey = e.type + '\u0001' + e.color + '\u0001' + e.strokeSize + '\u0001' + e.strokeStyle
             + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
-            + '\u0001' + e.weight + '\u0001' + e.directed;
+            + '\u0001' + e.weight + '\u0001' + edgeDirection(e);
         let v = (!stylePass && ent && ent.el.__styleKey === edgeStyleKey) ? ent.el.__style : null;
         if (!v) {
             v = edgeRenderStyleC(e);
@@ -5105,7 +5160,7 @@ function renderEdges() {
         // Include the floating origin: absolute world endpoints unchanged by a
         // camera move still produce different SVG numbers after a rebase, so the
         // geometry cache must not hand back a path from the previous origin.
-        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}|${renderOriginX},${renderOriginY}|${renderScale}`;
+        const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${renderOriginX},${renderOriginY}|${renderScale}`;
         let d = g.__geoSig === geoSig ? g.__geoData : null;
         if (!d) {
             d = edgePath(a, b, e, passVisuals);
@@ -5159,7 +5214,7 @@ function renderEdges() {
         // Selection accent: a wide line behind the path and a bigger copy of the
         // tip behind the arrowhead. Neither repaints the edge itself.
         syncEdgeAccent(g, e, v, d, selected && edgeVisible, bulkAccents);
-        // Update or create arrow — the tip always keeps the edge's own colour
+        // Update or create arrows — QVGE has directed (end only), mutual (both), undirected (none)
         let arrow = g.__arrow || null;
         if (hasEdgeTip(e, d)) {
             if (!arrow) {
@@ -5175,6 +5230,22 @@ function renderEdges() {
             arrow.remove();
             g.__arrow = null;
             arrow = null;
+        }
+        let arrowStart = g.__arrowStart || null;
+        if (hasEdgeStartTip(e, d)) {
+            if (!arrowStart) {
+                arrowStart = document.createElementNS(NS, 'polygon');
+                arrowStart.setAttribute('class', 'edge-arrow-start');
+                g.appendChild(arrowStart);
+                g.__arrowStart = arrowStart;
+            }
+            setAttr(arrowStart, 'points', edgeArrowPoints({ tipX: d.startTipX, tipY: d.startTipY, arrowAngle: d.startArrowAngle }));
+            setAttr(arrowStart, 'fill', v.color);
+        }
+        else if (arrowStart) {
+            arrowStart.remove();
+            g.__arrowStart = null;
+            arrowStart = null;
         }
         // Labels/weights are created whenever the edge has a visible path, then
         // hidden (not removed) when the ORIGINAL midpoint is off-screen. A camera
@@ -5304,8 +5375,10 @@ function edgePath(a, b, e, vc = null) {
     const rc = clampRenderCoord;
     const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
     const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
-    const arrowGap = e.directed ? ARROW_LEN : 2; // world units
-    const empty = () => ({ path: '', labelX: 0, labelY: 0, tx: 0, ty: 0, tipX: null, tipY: null, arrowAngle: null });
+    const hasEnd = edgeHasEndArrow(e), hasStart = edgeHasStartArrow(e);
+    const arrowGapEnd = hasEnd ? ARROW_LEN : 2;
+    const arrowGapStart = hasStart ? ARROW_LEN : 2;
+    const empty = () => ({ path: '', labelX: 0, labelY: 0, tx: 0, ty: 0, tipX: null, tipY: null, arrowAngle: null, startTipX: null, startTipY: null, startArrowAngle: null });
     // A self-loop lives entirely around one node: if that node is outside the
     // safe render window the loop cannot have a visible segment.
     if (a.id === b.id) {
@@ -5317,10 +5390,10 @@ function edgePath(a, b, e, vc = null) {
         const spread = 0.72;
         const loop = 78 + Math.abs(step) * 10;
         // All geometry stays in raw world units until the final rc() writes.
-        const sxRaw = rawAx + Math.cos(angle - spread) * (ra + 2);
-        const syRaw = rawAy + Math.sin(angle - spread) * (ra + 2);
-        const txRaw = rawAx + Math.cos(angle + spread) * (ra + arrowGap);
-        const tyRaw = rawAy + Math.sin(angle + spread) * (ra + arrowGap);
+        const sxRaw = rawAx + Math.cos(angle - spread) * (ra + arrowGapStart);
+        const syRaw = rawAy + Math.sin(angle - spread) * (ra + arrowGapStart);
+        const txRaw = rawAx + Math.cos(angle + spread) * (ra + arrowGapEnd);
+        const tyRaw = rawAy + Math.sin(angle + spread) * (ra + arrowGapEnd);
         const c1xRaw = rawAx + Math.cos(angle - spread * 0.45) * (ra + loop);
         const c1yRaw = rawAy + Math.sin(angle - spread * 0.45) * (ra + loop);
         const c2xRaw = rawAx + Math.cos(angle + spread * 0.45) * (ra + loop);
@@ -5332,8 +5405,18 @@ function edgePath(a, b, e, vc = null) {
         const labelX = rc(labelRawX), labelY = rc(labelRawY);
         const arrowAngle = Math.atan2(ty - c2y, tx - c2x);
         const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-        const tipX = rc(txRaw + ac * arrowGap), tipY = rc(tyRaw + as * arrowGap);
-        return { path: `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle };
+        const tipX = hasEnd ? rc(txRaw + ac * arrowGapEnd) : null;
+        const tipY = hasEnd ? rc(tyRaw + as * arrowGapEnd) : null;
+        // For mutual self-loop, also compute start arrow opposite direction
+        let startTipX = null, startTipY = null, startArrowAngle = null;
+        if (hasStart) {
+            const startAngle = Math.atan2(sy - c1y, sx - c1x);
+            const sac = Math.cos(startAngle), sas = Math.sin(startAngle);
+            startTipX = rc(sxRaw + sac * arrowGapStart);
+            startTipY = rc(syRaw + sas * arrowGapStart);
+            startArrowAngle = startAngle;
+        }
+        return { path: `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle };
     }
     const clip = clipEdgeSegment(rawAx, rawAy, rawBx, rawBy);
     if (!clip)
@@ -5345,24 +5428,31 @@ function edgePath(a, b, e, vc = null) {
     const midRawX = (rawAx + rawBx) / 2, midRawY = (rawAy + rawBy) / 2;
     // A clipped endpoint is an intersection with the safe window, not a node
     // boundary: do not reserve a radius or arrow gap there.
-    const sxRaw = clip.startClipped ? clip.x0 : clip.x0 + ux * (ra + 2);
-    const syRaw = clip.startClipped ? clip.y0 : clip.y0 + uy * (ra + 2);
-    const txRaw = clip.endClipped ? clip.x1 : clip.x1 - ux * (rb + arrowGap);
-    const tyRaw = clip.endClipped ? clip.y1 : clip.y1 - uy * (rb + arrowGap);
+    const sxRaw = clip.startClipped ? clip.x0 : clip.x0 + ux * (ra + arrowGapStart);
+    const syRaw = clip.startClipped ? clip.y0 : clip.y0 + uy * (ra + arrowGapStart);
+    const txRaw = clip.endClipped ? clip.x1 : clip.x1 - ux * (rb + arrowGapEnd);
+    const tyRaw = clip.endClipped ? clip.y1 : clip.y1 - uy * (rb + arrowGapEnd);
     const sx = rc(sxRaw), sy = rc(syRaw), tx = rc(txRaw), ty = rc(tyRaw);
     if (Math.abs(offset) > 1) {
         const mxRaw = midRawX - uy * offset, myRaw = midRawY + ux * offset;
         const mx = rc(mxRaw), my = rc(myRaw);
         const arrowAngle = Math.atan2(tyRaw - myRaw, txRaw - mxRaw);
         const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-        const tipX = clip.endClipped ? null : rc(txRaw + ac * arrowGap);
-        const tipY = clip.endClipped ? null : rc(tyRaw + as * arrowGap);
-        return { path: `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX: mx, labelY: my, tx, ty, tipX, tipY, arrowAngle };
+        const startArrowAngle = Math.atan2(syRaw - myRaw, sxRaw - mxRaw);
+        const sac = Math.cos(startArrowAngle), sas = Math.sin(startArrowAngle);
+        const tipX = clip.endClipped || !hasEnd ? null : rc(txRaw + ac * arrowGapEnd);
+        const tipY = clip.endClipped || !hasEnd ? null : rc(tyRaw + as * arrowGapEnd);
+        const startTipX = clip.startClipped || !hasStart ? null : rc(sxRaw + sac * arrowGapStart);
+        const startTipY = clip.startClipped || !hasStart ? null : rc(syRaw + sas * arrowGapStart);
+        return { path: `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX: mx, labelY: my, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle };
     }
     const arrowAngle = Math.atan2(uy, ux);
-    const tipX = clip.endClipped ? null : rc(clip.x1 - ux * rb);
-    const tipY = clip.endClipped ? null : rc(clip.y1 - uy * rb);
-    return { path: `M ${sx} ${sy} L ${tx} ${ty}`, labelX: rc(midRawX), labelY: rc(midRawY), tx, ty, tipX, tipY, arrowAngle };
+    const startArrowAngle = Math.atan2(-uy, -ux);
+    const tipX = clip.endClipped || !hasEnd ? null : rc(clip.x1 - ux * rb);
+    const tipY = clip.endClipped || !hasEnd ? null : rc(clip.y1 - uy * rb);
+    const startTipX = clip.startClipped || !hasStart ? null : rc(clip.x0 + ux * ra);
+    const startTipY = clip.startClipped || !hasStart ? null : rc(clip.y0 + uy * ra);
+    return { path: `M ${sx} ${sy} L ${tx} ${ty}`, labelX: rc(midRawX), labelY: rc(midRawY), tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle };
 }
 // A 50-unit node becomes sub-pixel when Fit spans millions of units, so
 // Chromium cannot hit-test the visible shape. Keep a transparent circular
@@ -5737,7 +5827,7 @@ function renderSelectionPanel() {
             <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-            <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
+            <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
             <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
             <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
             <label class="field" for="mulEdgeStrokeStyle">${I18N.t('stroke_style')} <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
@@ -5889,10 +5979,12 @@ function renderSelectionPanel() {
                 }
             } invalidateGraphIndex(); pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
             $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if (v === '')
-                return; const dir = v === 'true'; for (const id of edgeIds) {
+                return; for (const id of edgeIds) {
                 const ed = edgeById(id);
-                if (ed)
-                    ed.directed = dir;
+                if (ed) {
+                    ed.direction = v;
+                    ed.directed = v !== 'undirected';
+                }
             } pushHistory('multi edge directed'); queueRender(true); });
             $('#mulEdgeColor').addEventListener('input', e => { for (const id of edgeIds) {
                 const ed = edgeById(id);
@@ -6076,7 +6168,7 @@ function renderSelectionPanel() {
           <label class="field" for="selEdgeLabel">${I18N.t('label')} <input id="selEdgeLabel" value="${esc(e.label)}"></label>
         </div>
         <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList">${typeList.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-        <label class="row tiny muted" style="margin:8px 0"><input id="selEdgeDirected" type="checkbox" ${e.directed ? 'checked' : ''}> ${I18N.t('directed_edge')}</label>
+        <label class="field" for="selEdgeDirected">${I18N.t('direction')} <select id="selEdgeDirected"><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
         <div class="section-title">${I18N.t('style_blank_inherit')} <span class="tiny muted">${I18N.t('blank_inherit')}</span></div>
         <div class="grid2">
           <label class="field" for="selEdgeColor">${I18N.t('color')} <input id="selEdgeColor" type="color" value="${esc(v.color)}"></label>
@@ -6097,7 +6189,8 @@ function renderSelectionPanel() {
             e.weight = v; pushHistory(); queueRender(true); });
         $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0, 80); pushHistory(); queueRender(true); });
         $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0, 40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edge type'); queueRender(false); renderSelectionPanel(); });
-        $('#selEdgeDirected').addEventListener('change', ev => { e.directed = ev.target.checked; pushHistory(); queueRender(true); });
+        $('#selEdgeDirected').value = edgeDirection(e);
+        $('#selEdgeDirected').addEventListener('change', ev => { e.direction = ev.target.value; e.directed = ev.target.value !== 'undirected'; pushHistory(); queueRender(true); });
         $('#selEdgeColor').addEventListener('input', ev => { e.color = ev.target.value; queueRender(false); saveSoon(); });
         $('#selEdgeColor').addEventListener('change', () => pushHistory());
         $('#selEdgeStrokeSize').addEventListener('change', ev => { e.strokeSize = clamp(finite(ev.target.value, 2.4), 0, 20); ev.target.value = e.strokeSize; pushHistory(); queueRender(false); });
@@ -6222,7 +6315,7 @@ function adjacencyMatrixData(nodes = state.nodes, includeEdgeIds = true) {
         cellAt(values[from] || (values[from] = []), to).push(weight);
         if (edgeIds)
             cellAt(edgeIds[from] || (edgeIds[from] = []), to).push(edge.id);
-        if (!edge.directed && from !== to) {
+        if (edgeIsUndirected(edge) || edgeDirection(edge) === 'mutual' && from !== to) {
             cellAt(values[to] || (values[to] = []), from).push(weight);
             if (edgeIds)
                 cellAt(edgeIds[to] || (edgeIds[to] = []), from).push(edge.id);
@@ -6233,7 +6326,7 @@ function adjacencyMatrixData(nodes = state.nodes, includeEdgeIds = true) {
 function adjacencyMatrix(nodes = state.nodes) { return adjacencyMatrixData(nodes, false).values; }
 function matrixCellEdgeIds(from, to) {
     return state.edges
-        .filter(e => (e.from === from && e.to === to) || (!e.directed && e.from === to && e.to === from))
+        .filter(e => (e.from === from && e.to === to) || ((edgeIsUndirected(e) || edgeDirection(e) === 'mutual') && e.from === to && e.to === from))
         .map(e => e.id);
 }
 const emptyCell = [];
@@ -6323,7 +6416,7 @@ function edgeListHtml() {
         <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" aria-label="${esc(I18N.t('weight'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_weight'))}" style="width:52px"></td>
         <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" aria-label="${esc(I18N.t('label'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_label'))}" style="width:72px"></td>
         <td><input class="matrix-input edge-type" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="none" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
-        <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed ? 'checked' : ''} aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"></td>
+        <td><select class="edge-directed" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"><option value="directed" ${edgeDirection(e) === 'directed' ? 'selected' : ''}>→</option><option value="mutual" ${edgeDirection(e) === 'mutual' ? 'selected' : ''}>↔</option><option value="undirected" ${edgeDirection(e) === 'undirected' ? 'selected' : ''}>—</option></select></td>
         <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
       </tr>`);
@@ -6655,12 +6748,14 @@ function expandSelection(directedOnly = false) {
     }
     const nodes = new Set(seeds), edges = new Set(selectedEdgeIds());
     for (const e of state.edges) {
+        const dir = edgeDirection(e);
+        const isUndirectedOrMutual = dir === 'undirected' || dir === 'mutual';
         if (directedOnly) {
             if (seeds.has(e.from)) {
                 nodes.add(e.to);
                 edges.add(e.id);
             }
-            else if (!e.directed && seeds.has(e.to)) {
+            else if (isUndirectedOrMutual && seeds.has(e.to)) {
                 nodes.add(e.from);
                 edges.add(e.id);
             }
@@ -6863,7 +6958,8 @@ function addEdge(from, to) {
     const s = state.settings;
     const defEdgeType = s.edgeDefaults?.type || '';
     const effectiveType = s.edgeType || defEdgeType;
-    const e = { id: 'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0, 80), directed: Boolean(s.directed), type: effectiveType };
+    const dir = normalizeDirection(s.direction ?? s.directed);
+    const e = { id: 'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0, 80), directed: dir !== 'undirected', direction: dir, type: effectiveType };
     if (s.edgeWeight !== '')
         e.weight = String(s.edgeWeight).slice(0, 50);
     if (effectiveType) {
@@ -6914,7 +7010,7 @@ function flipSelectedEdges() {
     const flipped = [];
     for (const id of selectedEdgeIds()) {
         const e = edgeById(id);
-        if (!e?.directed || e.from === e.to)
+        if (!e || edgeIsUndirected(e) || e.from === e.to)
             continue;
         [e.from, e.to] = [e.to, e.from];
         flipped.push(e);
@@ -7059,8 +7155,8 @@ function setMatrixCell(from, to, raw) {
     if (!nodeById(from) || !nodeById(to))
         return;
     const values = String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
-    // Find existing edges for this cell (directed: from→to; undirected: either direction)
-    const existing = state.edges.filter(e => (e.from === from && e.to === to) || (!e.directed && e.from === to && e.to === from));
+    // Find existing edges for this cell (directed: from→to; undirected/mutual: either direction)
+    const existing = state.edges.filter(e => (e.from === from && e.to === to) || ((edgeIsUndirected(e) || edgeDirection(e) === 'mutual') && e.from === to && e.to === from));
     const s = state.settings;
     if (values.length === 0) {
         // No new values — remove all existing edges for this cell
@@ -7101,7 +7197,8 @@ function setMatrixCell(from, to, raw) {
     else {
         // No existing edges — create new ones with default settings
         for (const weight of values) {
-            const e = { id: 'e' + state.nextEdge++, from, to, weight: weight.slice(0, 50), label: '', directed: Boolean(s.directed), type: '' };
+            const dir = normalizeDirection(s.direction ?? s.directed);
+            const e = { id: 'e' + state.nextEdge++, from, to, weight: weight.slice(0, 50), label: '', directed: dir !== 'undirected', direction: dir, type: '' };
             if (s.edgeType)
                 e.type = s.edgeType;
             const ts = e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
@@ -9469,7 +9566,7 @@ function edgeCsv() {
     const rows = [['id', 'source_id', 'source_label', 'target_id', 'target_label', 'weight', 'directed', 'label', 'type', 'color', 'stroke_size', 'stroke_style', 'label_color', 'label_size']];
     for (const e of state.edges) {
         const a = nodeById(e.from), b = nodeById(e.to);
-        rows.push([e.id, e.from, a?.label || '', e.to, b?.label || '', e.weight, e.directed ? 'true' : 'false', e.label, e.type || '', e.color || '', e.strokeSize ?? '', e.strokeStyle || '', e.labelColor || '', e.labelSize ?? '']);
+        rows.push([e.id, e.from, a?.label || '', e.to, b?.label || '', e.weight, edgeDirection(e), e.label, e.type || '', e.color || '', e.strokeSize ?? '', e.strokeStyle || '', e.labelColor || '', e.labelSize ?? '']);
     }
     return rowsToCsv(rows);
 }
@@ -9489,7 +9586,7 @@ function matrixCsv() {
         if (!sparseRows[from].has(to))
             sparseRows[from].set(to, []);
         sparseRows[from].get(to).push(weight);
-        if (!edge.directed && from !== to) {
+        if ((edgeIsUndirected(edge) || edgeDirection(edge) === 'mutual') && from !== to) {
             if (!sparseRows[to].has(from))
                 sparseRows[to].set(from, []);
             sparseRows[to].get(from).push(weight);
@@ -9670,9 +9767,8 @@ function dotStrokeStyle(style) {
     return style;
 }
 function exportDotText() {
-    const allDirected = state.edges.every(e => e.directed);
+    const allDirected = state.edges.every(e => edgeDirection(e) === 'directed');
     const header = `${allDirected ? 'digraph' : 'graph'} ${dotId(fileBase())} {`;
-    const connector = allDirected ? '->' : '--';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
         const v = nodeVisual(n);
@@ -9710,24 +9806,26 @@ function exportDotText() {
     }
     for (const e of state.edges) {
         const v = edgeVisual(e);
-        const op = e.directed ? '->' : connector;
+        const dir = edgeDirection(e);
+        const op = dir === 'undirected' ? '--' : '->';
         const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
         if (e.label)
             attrs.push(`label=${dotString(e.label)}`);
         else if (e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number')
             attrs.push(`label=${dotString(e.weight)}`);
-        if (!allDirected && e.directed)
-            attrs.push('directed=true');
+        // QVGE: store direction explicitly via dir for DOT
         // QVGE DOT: color, penwidth, style, dir
         attrs.push(`color=${dotString(v.color)}`);
         attrs.push(`penwidth=${v.strokeSize}`);
         const es = v.strokeStyle;
         if (es)
             attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
-        if (e.directed)
-            attrs.push(`dir=${dotString('forward')}`);
-        else
+        if (dir === 'mutual')
+            attrs.push(`dir=${dotString('both')}`);
+        else if (dir === 'undirected')
             attrs.push(`dir=${dotString('none')}`);
+        else
+            attrs.push(`dir=${dotString('forward')}`);
         lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -9765,6 +9863,7 @@ function exportGraphmlText() {
         `  <key id="edgeLabelFont" for="edge" attr.name="label.font" attr.type="string"/>`,
         `  <key id="edgeLabelSize" for="edge" attr.name="label.size" attr.type="double"/>`,
         `  <key id="directed" for="edge" attr.name="directed" attr.type="boolean"/>`,
+        `  <key id="direction" for="edge" attr.name="direction" attr.type="string"/>`,
         `  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>`,
         `  <key id="edgeWeightMode" for="graph" attr.name="edge.weight.mode" attr.type="string"/>`,
         `  <key id="edgeWeightMin" for="graph" attr.name="edge.weight.min" attr.type="double"/>`,
@@ -9827,7 +9926,9 @@ function exportGraphmlText() {
     }
     for (const e of state.edges) {
         const v = edgeVisual(e);
-        const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${e.directed ? 'true' : 'false'}">`];
+        const dir = edgeDirection(e);
+        const directedBool = dir !== 'undirected';
+        const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${directedBool ? 'true' : 'false'}">`];
         parts.push(`      <data key="weight">${xmlEsc(e.weight)}</data>`);
         parts.push(`      <data key="edgeLabel">${xmlEsc(e.label)}</data>`);
         if (e.type)
@@ -9838,7 +9939,8 @@ function exportGraphmlText() {
         parts.push(`      <data key="edgeLabelColor">${xmlEsc(v.labelColor)}</data>`);
         parts.push(`      <data key="edgeLabelFont">${xmlEsc(v.labelFont)}</data>`);
         parts.push(`      <data key="edgeLabelSize">${xmlEsc(v.labelSize)}</data>`);
-        parts.push(`      <data key="directed">${e.directed ? 'true' : 'false'}</data>`);
+        parts.push(`      <data key="directed">${directedBool ? 'true' : 'false'}</data>`);
+        parts.push(`      <data key="direction">${xmlEsc(dir)}</data>`);
         parts.push(`    </edge>`);
         lines.push(parts.join('\n'));
     }
@@ -10093,7 +10195,8 @@ function importEdgesCsv(text, append) {
             from, to,
             weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0, 50) : '',
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
-            directed: iDirected >= 0 ? (row[iDirected] === 'true' || row[iDirected] === '1') : state.settings.directed,
+            direction: iDirected >= 0 ? normalizeDirection(row[iDirected]) : normalizeDirection(state.settings.direction ?? state.settings.directed),
+            directed: ((iDirected >= 0 ? normalizeDirection(row[iDirected]) : normalizeDirection(state.settings.direction ?? state.settings.directed)) !== 'undirected'),
             type: (iType >= 0 ? row[iType] : '') || ''
         };
         if (iColor >= 0 && row[iColor])
@@ -10156,7 +10259,8 @@ function importMatrixCsv(text, append) {
             }
             const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
             for (const w of weights) {
-                edges.push({ id: 'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0, 50), label: '', directed: state.settings.directed, type: '' });
+                const dir = normalizeDirection(state.settings.direction ?? state.settings.directed);
+                edges.push({ id: 'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0, 50), label: '', directed: (dir !== 'undirected'), direction: dir, type: '' });
                 parsed++;
             }
         }
@@ -10322,7 +10426,13 @@ function parseDot(text) {
         const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
         const a = ensureNode(fromOrig), b = ensureNode(toOrig);
         const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
-        const e = { id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: m[2] === '->' || attrs.directed === 'true' || directedGraph };
+        const initDir = m[2] === '->' || directedGraph ? 'directed' : 'undirected';
+        const e = { id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: (initDir !== 'undirected'), direction: initDir };
+        if (attrs.directed) {
+            const dd = normalizeDirection(attrs.directed);
+            e.direction = dd;
+            e.directed = dd !== 'undirected';
+        }
         // QVGE DOT edge: color, penwidth->strokeSize, style->strokeStyle, dir controls directed flag
         const ec = parseColor(attrs.color);
         if (ec)
@@ -10334,13 +10444,21 @@ function parseDot(text) {
             if (ss)
                 e.strokeStyle = ss;
         }
-        // dir attribute (QVGE uses dir=forward/none) can override directed flag
+        // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
         if (attrs.dir) {
             const dir = String(attrs.dir).toLowerCase();
-            if (dir === 'none' || dir === 'undirected')
+            if (dir === 'none' || dir === 'undirected') {
+                e.direction = 'undirected';
                 e.directed = false;
-            else if (dir === 'forward' || dir === 'directed' || dir === 'both')
+            }
+            else if (dir === 'both' || dir === 'mutual') {
+                e.direction = 'mutual';
                 e.directed = true;
+            }
+            else if (dir === 'forward' || dir === 'directed' || dir === 'true') {
+                e.direction = 'directed';
+                e.directed = true;
+            }
         }
         edges.push(e);
     }
@@ -10523,11 +10641,14 @@ function parseLabelsPolicy(raw) {
     return '';
 }
 function parseDirection(raw) {
-    const s = String(raw || '').toLowerCase();
-    // QVGE: "directed" = one-way, "undirected" = no arrows, "mutual" = bidirectional (rendered as undirected)
-    if (s === 'undirected' || s === 'false' || s === '0' || s === 'mutual')
-        return false;
-    return true; // "directed", "true", "1", or default
+    const s = String(raw || '').toLowerCase().trim();
+    // QVGE: "directed" = one-way, "undirected" = no arrows, "mutual" = bidirectional (both arrows)
+    if (s === 'undirected' || s === 'none' || s === 'false' || s === '0')
+        return 'undirected';
+    if (s === 'mutual' || s === 'both' || s === 'bidirected')
+        return 'mutual';
+    // "directed", "true", "1", "forward", or edgedefault="directed" (default)
+    return 'directed';
 }
 function parseGraphml(text) {
     const doc = new DOMParser().parseFromString(text, 'application/xml');
@@ -10739,16 +10860,17 @@ function parseGraphml(text) {
         const d = graphmlDataMap(el, keyNames);
         const directedAttr = el.getAttribute('directed');
         // QVGE: edge direction can come from data "direction" field or the XML attribute
-        let directed = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
+        let dirStr = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
         if (d.direction != null)
-            directed = parseDirection(d.direction);
+            dirStr = parseDirection(d.direction);
         else if (directedAttr == null && edgeDirectionDefault != null)
-            directed = edgeDirectionDefault;
+            dirStr = edgeDirectionDefault;
         const edge = {
             id: safeId(el.getAttribute('id') || ('e' + (i + 1)), 'e'), from, to,
             weight: String(d.weight ?? d.value ?? ''),
             label: String(d.label || d.edgelabel || ''),
-            directed,
+            directed: dirStr !== 'undirected',
+            direction: dirStr,
             type: String(d.type || '')
         };
         const ec = parseColor(d.color || d.edgecolor);
@@ -10840,7 +10962,7 @@ function adjacency(directedMode = true) {
         const w = (e.weight === '' || e.weight == null) ? 1 : Number(e.weight);
         const wt = Number.isFinite(w) ? w : 1;
         adj.get(e.from).push({ to: e.to, weight: wt, edge: e });
-        if (!e.directed || !directedMode)
+        if (edgeIsUndirected(e) || edgeDirection(e) === 'mutual' || !directedMode)
             adj.get(e.to).push({ to: e.from, weight: wt, edge: e });
     }
     for (const arr of adj.values())
@@ -10914,9 +11036,9 @@ function runComponents() {
 function runTopo() {
     const adj = adjacency(true), indeg = new Map(state.nodes.map(n => [n.id, 0]));
     for (const e of state.edges) {
-        if (e.directed && indeg.has(e.to))
+        if (!edgeIsUndirected(e) && indeg.has(e.to))
             indeg.set(e.to, indeg.get(e.to) + 1);
-        if (!e.directed)
+        if (edgeIsUndirected(e))
             return out(I18N.t('topo_undirected'));
     }
     const q = state.nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id), order = [];
@@ -10936,7 +11058,7 @@ function runTopo() {
 }
 function runStats() { out(graphStats()); }
 function graphStats() {
-    const directed = state.edges.filter(e => e.directed).length, undirected = state.edges.length - directed;
+    const directed = state.edges.filter(e => edgeDirection(e) === 'directed').length, mutual = state.edges.filter(e => edgeDirection(e) === 'mutual').length, undirected = state.edges.filter(e => edgeIsUndirected(e)).length;
     const deg = new Map(state.nodes.map(n => [n.id, { in: 0, out: 0, total: 0 }]));
     for (const e of state.edges) {
         const a = deg.get(e.from), b = deg.get(e.to);
@@ -10946,13 +11068,13 @@ function graphStats() {
         b.in++;
         a.total++;
         b.total++;
-        if (!e.directed) {
+        if (edgeIsUndirected(e) || edgeDirection(e) === 'mutual') {
             a.in++;
             b.out++;
         }
     }
     const maxDeg = [...deg.entries()].sort((a, b) => b[1].total - a[1].total)[0];
-    return I18N.t('graph_statistics') + '\n' + I18N.t('nodes_label') + ' ' + state.nodes.length + '\n' + I18N.t('edges_label') + ' ' + state.edges.length + ' (' + directed + ' ' + (I18N.current === 'ru' ? 'направленных' : 'directed') + ', ' + undirected + ' ' + (I18N.current === 'ru' ? 'ненаправленных' : 'undirected') + ')\n' + I18N.t('density') + ' ' + density() + '\n' + I18N.t('highest_degree') + ' ' + (maxDeg ? labelOf(maxDeg[0]) + ' (' + maxDeg[1].total + ')' : I18N.t('na'));
+    return I18N.t('graph_statistics') + '\n' + I18N.t('nodes_label') + ' ' + state.nodes.length + '\n' + I18N.t('edges_label') + ' ' + state.edges.length + ' (' + directed + ' ' + (I18N.current === 'ru' ? 'направленных' : 'directed') + ', ' + mutual + ' mutual, ' + undirected + ' ' + (I18N.current === 'ru' ? 'ненаправленных' : 'undirected') + ')\n' + I18N.t('density') + ' ' + density() + '\n' + I18N.t('highest_degree') + ' ' + (maxDeg ? labelOf(maxDeg[0]) + ' (' + maxDeg[1].total + ')' : I18N.t('na'));
 }
 function density() { const n = state.nodes.length; if (n < 2)
     return '0'; return (state.edges.length / (n * (n - 1))).toFixed(3); }
@@ -12346,7 +12468,7 @@ function wireUi() {
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0, 60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value, 12), 4, 72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
-    $('#edgeDirected').addEventListener('change', e => { state.settings.directed = e.target.checked; saveSoon(); });
+    $('#edgeDirected').addEventListener('change', e => { const v = e.target.value || e.target.checked; const dir = normalizeDirection(v); state.settings.direction = dir; state.settings.directed = dir !== 'undirected'; saveSoon(); });
     $('#optAutosave').addEventListener('change', e => {
         state.settings.autosave = e.target.checked;
         persistAutosavePreference(e.target.checked);
@@ -12534,9 +12656,12 @@ function wireUi() {
                 saveSoon();
             }
             else if (t.matches('.edge-directed')) {
-                e.directed = t.checked;
+                const v = t.value || t.checked;
+                const dir = normalizeDirection(v);
+                e.direction = dir;
+                e.directed = dir !== 'undirected';
                 pushHistory('edit edge directed');
-                queueRender(false);
+                queueRender(true);
                 saveSoon();
             }
             else if (t.matches('.edge-color')) {

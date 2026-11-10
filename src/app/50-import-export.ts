@@ -47,7 +47,7 @@
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
   function edgeCsv(){
     const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','label_color','label_size']];
-    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,e.directed?'true':'false',e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.labelColor||'',e.labelSize??'']); }
+    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.labelColor||'',e.labelSize??'']); }
     return rowsToCsv(rows);
   }
   function nodeCsv(){
@@ -63,7 +63,7 @@
       const weight = (edge.weight != null && edge.weight !== '') ? edge.weight : '';
       if(!sparseRows[from].has(to)) sparseRows[from].set(to, []);
       sparseRows[from].get(to).push(weight);
-      if(!edge.directed && from !== to){
+      if((edgeIsUndirected(edge) || edgeDirection(edge)==='mutual') && from !== to){
         if(!sparseRows[to].has(from)) sparseRows[to].set(from, []);
         sparseRows[to].get(from).push(weight);
       }
@@ -198,9 +198,8 @@
     return style;
   }
   function exportDotText(){
-    const allDirected = state.edges.every(e => e.directed);
+    const allDirected = state.edges.every(e => edgeDirection(e) === 'directed');
     const header = `${allDirected ? 'digraph' : 'graph'} ${dotId(fileBase())} {`;
-    const connector = allDirected ? '->' : '--';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
       const v = nodeVisual(n);
@@ -233,17 +232,19 @@
     }
     for(const e of state.edges){
       const v = edgeVisual(e);
-      const op = e.directed ? '->' : connector;
+      const dir = edgeDirection(e);
+      const op = dir === 'undirected' ? '--' : '->';
       const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
       if(e.label) attrs.push(`label=${dotString(e.label)}`); else if(e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number') attrs.push(`label=${dotString(e.weight)}`);
-      if(!allDirected && e.directed) attrs.push('directed=true');
+      // QVGE: store direction explicitly via dir for DOT
       // QVGE DOT: color, penwidth, style, dir
       attrs.push(`color=${dotString(v.color)}`);
       attrs.push(`penwidth=${v.strokeSize}`);
       const es = v.strokeStyle;
       if(es) attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
-      if(e.directed) attrs.push(`dir=${dotString('forward')}`);
-      else attrs.push(`dir=${dotString('none')}`);
+      if(dir === 'mutual') attrs.push(`dir=${dotString('both')}`);
+      else if(dir === 'undirected') attrs.push(`dir=${dotString('none')}`);
+      else attrs.push(`dir=${dotString('forward')}`);
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -281,6 +282,7 @@
       `  <key id="edgeLabelFont" for="edge" attr.name="label.font" attr.type="string"/>`,
       `  <key id="edgeLabelSize" for="edge" attr.name="label.size" attr.type="double"/>`,
       `  <key id="directed" for="edge" attr.name="directed" attr.type="boolean"/>`,
+      `  <key id="direction" for="edge" attr.name="direction" attr.type="string"/>`,
       `  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>`,
       `  <key id="edgeWeightMode" for="graph" attr.name="edge.weight.mode" attr.type="string"/>`,
       `  <key id="edgeWeightMin" for="graph" attr.name="edge.weight.min" attr.type="double"/>`,
@@ -342,7 +344,9 @@
     }
     for(const e of state.edges){
       const v = edgeVisual(e);
-      const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${e.directed ? 'true' : 'false'}">`];
+      const dir = edgeDirection(e);
+      const directedBool = dir !== 'undirected';
+      const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${directedBool ? 'true' : 'false'}">`];
       parts.push(`      <data key="weight">${xmlEsc(e.weight)}</data>`);
       parts.push(`      <data key="edgeLabel">${xmlEsc(e.label)}</data>`);
       if(e.type) parts.push(`      <data key="edgeType">${xmlEsc(e.type)}</data>`);
@@ -352,7 +356,8 @@
       parts.push(`      <data key="edgeLabelColor">${xmlEsc(v.labelColor)}</data>`);
       parts.push(`      <data key="edgeLabelFont">${xmlEsc(v.labelFont)}</data>`);
       parts.push(`      <data key="edgeLabelSize">${xmlEsc(v.labelSize)}</data>`);
-      parts.push(`      <data key="directed">${e.directed ? 'true' : 'false'}</data>`);
+      parts.push(`      <data key="directed">${directedBool ? 'true' : 'false'}</data>`);
+      parts.push(`      <data key="direction">${xmlEsc(dir)}</data>`);
       parts.push(`    </edge>`);
       lines.push(parts.join('\n'));
     }
@@ -538,7 +543,8 @@
         from, to,
         weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0,50) : '',
         label: (iLabel >= 0 ? row[iLabel] : '') || '',
-        directed: iDirected >= 0 ? (row[iDirected] === 'true' || row[iDirected] === '1') : state.settings.directed,
+        direction: iDirected >= 0 ? normalizeDirection(row[iDirected]) : normalizeDirection((state.settings as any).direction ?? state.settings.directed),
+        directed: ((iDirected >= 0 ? normalizeDirection(row[iDirected]) : normalizeDirection((state.settings as any).direction ?? state.settings.directed)) !== 'undirected' as any),
         type: (iType >= 0 ? row[iType] : '') || ''
       };
       if(iColor >= 0 && row[iColor]) e.color = row[iColor];
@@ -581,7 +587,8 @@
         if(!toId){ skipped++; continue; }
         const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
         for(const w of weights){
-          edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: state.settings.directed, type:'' });
+          const dir = normalizeDirection((state.settings as any).direction ?? state.settings.directed);
+          edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: (dir !== 'undirected') as any, direction: dir as any, type:'' });
           parsed++;
         }
       }
@@ -712,7 +719,9 @@
       const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
       const a = ensureNode(fromOrig), b = ensureNode(toOrig);
       const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
-      const e = { id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed:m[2] === '->' || attrs.directed === 'true' || directedGraph } as any;
+      const initDir = m[2] === '->' || directedGraph ? 'directed' : 'undirected';
+      const e = { id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: (initDir !== 'undirected') as any, direction: initDir as any } as any;
+      if(attrs.directed){ const dd = normalizeDirection(attrs.directed); (e as any).direction = dd; (e as any).directed = dd !== 'undirected'; }
       // QVGE DOT edge: color, penwidth->strokeSize, style->strokeStyle, dir controls directed flag
       const ec = parseColor(attrs.color);
       if(ec) (e as any).color = ec;
@@ -721,11 +730,12 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
-      // dir attribute (QVGE uses dir=forward/none) can override directed flag
+      // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
       if(attrs.dir){
         const dir = String(attrs.dir).toLowerCase();
-        if(dir === 'none' || dir === 'undirected') e.directed = false;
-        else if(dir === 'forward' || dir === 'directed' || dir === 'both') e.directed = true;
+        if(dir === 'none' || dir === 'undirected'){ (e as any).direction = 'undirected'; (e as any).directed = false; }
+        else if(dir === 'both' || dir === 'mutual'){ (e as any).direction = 'mutual'; (e as any).directed = true; }
+        else if(dir === 'forward' || dir === 'directed' || dir === 'true'){ (e as any).direction = 'directed'; (e as any).directed = true; }
       }
       edges.push(e as any);
     }
@@ -861,10 +871,12 @@
     return '';
   }
   function parseDirection(raw){
-    const s = String(raw || '').toLowerCase();
-    // QVGE: "directed" = one-way, "undirected" = no arrows, "mutual" = bidirectional (rendered as undirected)
-    if(s === 'undirected' || s === 'false' || s === '0' || s === 'mutual') return false;
-    return true; // "directed", "true", "1", or default
+    const s = String(raw || '').toLowerCase().trim();
+    // QVGE: "directed" = one-way, "undirected" = no arrows, "mutual" = bidirectional (both arrows)
+    if(s === 'undirected' || s === 'none' || s === 'false' || s === '0') return 'undirected';
+    if(s === 'mutual' || s === 'both' || s === 'bidirected') return 'mutual';
+    // "directed", "true", "1", "forward", or edgedefault="directed" (default)
+    return 'directed';
   }
   function parseGraphml(text){
     const doc = new DOMParser().parseFromString(text, 'application/xml');
@@ -1003,14 +1015,15 @@
       const d = graphmlDataMap(el, keyNames);
       const directedAttr = el.getAttribute('directed');
       // QVGE: edge direction can come from data "direction" field or the XML attribute
-      let directed = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
-      if(d.direction != null) directed = parseDirection(d.direction);
-      else if(directedAttr == null && edgeDirectionDefault != null) directed = edgeDirectionDefault;
+      let dirStr = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
+      if(d.direction != null) dirStr = parseDirection(d.direction);
+      else if(directedAttr == null && edgeDirectionDefault != null) dirStr = edgeDirectionDefault;
       const edge: GraphEdge = {
         id: safeId(el.getAttribute('id') || ('e' + (i+1)), 'e'), from, to,
         weight: String(d.weight ?? d.value ?? ''),
         label: String(d.label || d.edgelabel || ''),
-        directed,
+        directed: dirStr !== 'undirected' as any,
+        direction: dirStr as any,
         type: String(d.type || '')
       };
       const ec = parseColor(d.color || d.edgecolor); if(ec) edge.color = ec;

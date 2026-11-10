@@ -357,7 +357,35 @@
   const STROKE_STYLES = ['solid','dashed','dotted','dashdot','dashdotdot','none'];
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
-  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
+  const EDGE_DIRECTIONS = ['directed','mutual','undirected'];
+  function normalizeDirection(raw: any): string {
+    if(raw === true || raw === 'true' || raw === 1 || raw === '1') return 'directed';
+    if(raw === false || raw === 'false' || raw === 0 || raw === '0') return 'undirected';
+    const s = String(raw ?? '').trim().toLowerCase();
+    if(!s) return 'directed';
+    if(s === 'directed' || s === 'forward' || s === 'true' || s === '1' || s === 'directed (one end)') return 'directed';
+    if(s === 'mutual' || s === 'both' || s === 'bidirected' || s === 'bidirectional' || s === 'mutual (both ends)') return 'mutual';
+    if(s === 'undirected' || s === 'none' || s === 'false' || s === '0' || s === 'undirected (no ends)') return 'undirected';
+    if(['directed','mutual','undirected'].includes(s)) return s;
+    if(s.startsWith('bi')) return 'mutual';
+    return 'directed';
+  }
+  function edgeDirection(e: any): string {
+    // Canonical field is e.direction, legacy is e.directed (boolean or string)
+    const raw = (e && (e.direction ?? e.directed));
+    return normalizeDirection(raw);
+  }
+  function edgeHasEndArrow(e: any): boolean {
+    const d = edgeDirection(e);
+    return d === 'directed' || d === 'mutual';
+  }
+  function edgeHasStartArrow(e: any): boolean {
+    return edgeDirection(e) === 'mutual';
+  }
+  function edgeIsUndirected(e: any): boolean {
+    return edgeDirection(e) === 'undirected';
+  }
+  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','direction','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
@@ -370,8 +398,8 @@
       nodeWidth:50, nodeHeight:50,
       nodeStrokeColor:'#e2e8f0', nodeStrokeSize:2.2, nodeStrokeStyle:'solid',
       nodeType:'', nodeLabelColor:'#f8fafc', nodeLabelFont:'Inter', nodeLabelSize:13, nodeLabelPosition:'center',
-      // Edit-tab edge defaults (primary for newly added edges)
-      directed:true, edgeWeight:'1', edgeLabel:'',
+      // Edit-tab edge defaults (primary for newly added edges) — QVGE uses direction string
+      directed:true, direction:'directed', edgeWeight:'1', edgeLabel:'',
       edgeType:'', edgeColor:'#94a3b8', edgeStrokeSize:2.4, edgeStrokeStyle:'solid',
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
       snap:false, snapX:false, snapY:false, gridSize:40, gridSizeX:40, gridSizeY:40,
@@ -550,7 +578,7 @@
   function updateCommandStates(){
     const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
     $('#btnDelete').disabled = !hasSelection;
-    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => edgeById(id)?.directed);
+    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => { const e=edgeById(id); return e && edgeDirection(e) !== 'undirected'; });
     $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
     $('#btnMatrixClear').disabled = !state.edges.length;
     const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
@@ -619,13 +647,17 @@
       const from = nodeReferences.get(String(e.from)) || (nodeIds.has(String(e.from)) ? String(e.from) : '');
       const to = nodeReferences.get(String(e.to)) || (nodeIds.has(String(e.to)) ? String(e.to) : '');
       if(!from || !to) return; // Drop dangling edges before they reach render/algorithm code.
+      const dir = normalizeDirection((e as any).direction ?? (e as any).directed);
       const edge: GraphEdge = {
         id: uniqueSafeId(e.id || ('e' + (i + 1)), 'e', usedEdgeIds),
         from, to,
         label: String(e.label ?? '').slice(0,80),
-        directed: Boolean(e.directed),
+        directed: dir as any, // legacy boolean compat: keep truthy for directed/mutual
+        direction: dir,
         type: String(e.type || '').slice(0,40)
       };
+      // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
+      (edge as any).directed = dir !== 'undirected';
       if(e.weight != null && e.weight !== '') edge.weight = String(e.weight).slice(0,50);
       if(e.color) edge.color = validColor(e.color) || '';
       if(e.strokeSize != null) edge.strokeSize = clamp(finite(e.strokeSize, 2.4), 0, 20);
@@ -764,7 +796,12 @@
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
-    settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
+    // QVGE: edge direction default is directed/mutual/undirected (string); keep boolean legacy
+    const dirRaw = (settings as any).direction ?? settings.directed;
+    const dirNorm = normalizeDirection(dirRaw);
+    settings.direction = dirNorm;
+    settings.directed = dirNorm !== 'undirected';
+    settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
     settings.copyPreserveExternal = settings.copyPreserveExternal !== false;
     // Gizmo tool/visibility migrated to a local UI preference (45-gizmo.ts);
     // strip the legacy document field so imports/exports cannot resurrect it.

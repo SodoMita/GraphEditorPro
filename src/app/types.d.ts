@@ -41,12 +41,14 @@ interface GraphNode extends Point {
   [key: string]: any;
 }
 
+type EdgeDirection = 'directed' | 'mutual' | 'undirected';
 interface GraphEdge {
   id: string;
   from: string;
   to: string;
   label: string;
-  directed: boolean;
+  directed?: boolean | string; // legacy boolean, now string enum via direction
+  direction?: EdgeDirection | string;
   type?: string;
   weight?: string;
   color?: string;

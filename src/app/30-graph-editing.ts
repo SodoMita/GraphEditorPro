@@ -262,9 +262,11 @@
     if(!seeds.size){ toast(I18N.t('select_at_least_one')); return; }
     const nodes = new Set(seeds), edges = new Set(selectedEdgeIds());
     for(const e of state.edges){
+      const dir = edgeDirection(e);
+      const isUndirectedOrMutual = dir === 'undirected' || dir === 'mutual';
       if(directedOnly){
         if(seeds.has(e.from)){ nodes.add(e.to); edges.add(e.id); }
-        else if(!e.directed && seeds.has(e.to)){ nodes.add(e.from); edges.add(e.id); }
+        else if(isUndirectedOrMutual && seeds.has(e.to)){ nodes.add(e.from); edges.add(e.id); }
       } else if(seeds.has(e.from) || seeds.has(e.to)){
         nodes.add(e.from); nodes.add(e.to); edges.add(e.id);
       }
@@ -426,7 +428,8 @@
     const s = state.settings;
     const defEdgeType = s.edgeDefaults?.type || '';
     const effectiveType = s.edgeType || defEdgeType;
-    const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: Boolean(s.directed), type: effectiveType };
+    const dir = normalizeDirection((s as any).direction ?? s.directed);
+    const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: dir !== 'undirected' as any, direction: dir as any, type: effectiveType };
     if(s.edgeWeight !== '') e.weight = String(s.edgeWeight).slice(0,50);
     if(effectiveType){
       const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[effectiveType];
@@ -451,7 +454,7 @@
     const flipped = [];
     for(const id of selectedEdgeIds()){
       const e = edgeById(id);
-      if(!e?.directed || e.from === e.to) continue;
+      if(!e || edgeIsUndirected(e) || e.from === e.to) continue;
       [e.from, e.to] = [e.to, e.from];
       flipped.push(e);
     }
@@ -578,8 +581,8 @@
   function setMatrixCell(from, to, raw){
     if(!nodeById(from) || !nodeById(to)) return;
     const values = String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
-    // Find existing edges for this cell (directed: from→to; undirected: either direction)
-    const existing = state.edges.filter(e => (e.from === from && e.to === to) || (!e.directed && e.from === to && e.to === from));
+    // Find existing edges for this cell (directed: from→to; undirected/mutual: either direction)
+    const existing = state.edges.filter(e => (e.from === from && e.to === to) || ((edgeIsUndirected(e) || edgeDirection(e)==='mutual') && e.from === to && e.to === from));
     const s = state.settings;
     if(values.length === 0){
       // No new values — remove all existing edges for this cell
@@ -617,7 +620,8 @@
     } else {
       // No existing edges — create new ones with default settings
       for(const weight of values){
-        const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, weight:weight.slice(0,50), label:'', directed:Boolean(s.directed), type:'' };
+        const dir = normalizeDirection((s as any).direction ?? s.directed);
+        const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, weight:weight.slice(0,50), label:'', directed: dir !== 'undirected' as any, direction: dir as any, type:'' };
         if(s.edgeType) e.type = s.edgeType;
         const ts = e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
         if(ts){
