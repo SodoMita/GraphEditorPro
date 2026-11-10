@@ -724,8 +724,25 @@
     host.innerHTML = customPropsSectionHtml('graph', ['graph'], false);
     wireCustomProps(host, 'graph', ['graph'], false);
   }
+  // Custom property editors for the two new-element default sections. The
+  // chosen values apply to nodes/edges created afterwards and are stored on
+  // settings (nodeCustom/edgeCustom) so they ride history, autosave and the
+  // sanitizer like every other new-element default.
+  function renderNewElementCustomProps(){
+    const nodeHost = $('#newNodeCustomProps');
+    if(nodeHost){
+      nodeHost.innerHTML = customPropsSectionHtml('node', ['node-defaults'], false);
+      wireCustomProps(nodeHost, 'node', ['node-defaults'], false);
+    }
+    const edgeHost = $('#newEdgeCustomProps');
+    if(edgeHost){
+      edgeHost.innerHTML = customPropsSectionHtml('edge', ['edge-defaults'], false);
+      wireCustomProps(edgeHost, 'edge', ['edge-defaults'], false);
+    }
+  }
   function renderCustomAttributes(){
     renderGraphCustomProps();
+    renderNewElementCustomProps();
     const host = $('#customAttributesList');
     if(!host) return;
     if(!state.customAttributes.length){

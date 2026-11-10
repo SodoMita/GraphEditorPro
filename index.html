@@ -927,6 +927,18 @@
           <!-- ================= EDIT ================= -->
           <section id="panel-edit" class="tab-panel" role="tabpanel" aria-labelledby="tab-edit" aria-hidden="true">
 
+            <div class="section flat">
+              <div class="section-title" data-i18n="selection">Selection</div>
+              <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
+              <div class="clipboard-controls" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+                <button id="btnCopy2" class="btn small" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg> <span data-i18n="copy_selected">Copy</span></button>
+                <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
+                <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
+                <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
+              </div>
+              <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
+            </div>
+
             <details class="section" open>
               <summary class="section-title">
                 <span data-i18n="node_placement">Node placement</span>
@@ -992,6 +1004,8 @@
                     </select>
                   </label>
                 </div>
+                <div class="section-title" style="margin-top:10px"><span data-i18n="custom_properties">Custom properties</span> <span class="tiny muted" data-i18n="custom_props_new_nodes">(applied to new nodes)</span></div>
+                <div id="newNodeCustomProps" class="custom-props"></div>
               </div>
             </details>
 
@@ -1057,6 +1071,8 @@
                   </label>
                   <label class="chk field" for="edgeDirected" style="align-self:end"><input id="edgeDirected" type="checkbox" checked /> <span data-i18n="directed_edge">Directed edge</span></label>
                 </div>
+                <div class="section-title" style="margin-top:10px"><span data-i18n="custom_properties">Custom properties</span> <span class="tiny muted" data-i18n="custom_props_new_edges">(applied to new edges)</span></div>
+                <div id="newEdgeCustomProps" class="custom-props"></div>
               </div>
             </details>
 
@@ -1102,17 +1118,6 @@
               </div>
             </details>
 
-            <div class="section flat">
-              <div class="section-title" data-i18n="selection">Selection</div>
-              <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
-              <div class="clipboard-controls" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
-                <button id="btnCopy2" class="btn small" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg> <span data-i18n="copy_selected">Copy</span></button>
-                <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
-                <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
-                <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
-              </div>
-              <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
-            </div>
           </section>
 
           <!-- ================= STYLE ================= -->
@@ -1971,6 +1976,8 @@ const I18N = {
         'custom_prop_unset': { en: '(unset)', ru: '(не задано)' },
         'custom_prop_title': { en: 'Custom property. An empty field clears the value.', ru: 'Пользовательское свойство. Пустое поле удаляет значение.' },
         'custom_prop_none': { en: 'No custom properties. Define them in the Data tab (Custom attributes).', ru: 'Пользовательских свойств нет. Задайте их на вкладке «Данные» (Пользовательские атрибуты).' },
+        'custom_props_new_nodes': { en: '(applied to new nodes)', ru: '(применяются к новым узлам)' },
+        'custom_props_new_edges': { en: '(applied to new edges)', ru: '(применяются к новым рёбрам)' },
         'graph_values': { en: 'Graph values', ru: 'Значения графа' },
         'graph_values_help': { en: 'Values of graph-scope attributes. They apply to the whole document.', ru: 'Значения атрибутов, заданных для графа. Действуют на весь документ.' },
         'graph_values_none': { en: 'No graph-scope attributes defined yet. Add one above with scope “Graph”.', ru: 'Атрибуты для графа ещё не заданы. Добавьте их выше с областью «Граф».' },
@@ -2796,6 +2803,9 @@ const defaultState = () => ({
         directed: true, edgeWeight: '1', edgeLabel: '',
         edgeType: '', edgeColor: '#94a3b8', edgeStrokeSize: 2.4, edgeStrokeStyle: 'solid',
         edgeLabelColor: '#dbeafe', edgeLabelFont: 'Inter', edgeLabelSize: 12,
+        // Pending custom property values applied to newly created nodes/edges
+        // (Edit-tab "Node placement" / "New edge defaults" sections).
+        nodeCustom: {}, edgeCustom: {},
         snap: false, snapX: false, snapY: false, gridSize: 40, gridSizeX: 40, gridSizeY: 40,
         autosave: true, matrixLimit: 90, edgeListPageSize: 250, matrixDimension: 0, brushDiameter: 80,
         // Hit-testing for selection: 'any' selects nodes/edges by any part of
@@ -3020,7 +3030,18 @@ function updateUndoRedo() {
     $('#btnRedo').disabled = appHistoryIndex >= appHistory.length - 1;
     updateCommandStates();
 }
-// === Custom property values (values of user-defined custom attributes) ===
+function customStoreOf(target) {
+    if (target === 'graph')
+        return state.graphCustom;
+    if (target === 'node-defaults')
+        return isRecord(state.settings) ? state.settings.nodeCustom : undefined;
+    if (target === 'edge-defaults')
+        return isRecord(state.settings) ? state.settings.edgeCustom : undefined;
+    return target.custom;
+}
+function isPendingDefaultsTarget(target) {
+    return target === 'node-defaults' || target === 'edge-defaults';
+}
 // Definitions live in state.customAttributes; values live next to the entity
 // they describe: state.graphCustom for scope 'graph', node.custom / edge.custom
 // (flat id -> scalar maps) otherwise. Values are only kept while their
@@ -3093,7 +3114,7 @@ function definedCustomAttributes(scope) {
     return state.customAttributes.filter(attribute => attribute.scope === scope);
 }
 function customValueOf(target, id) {
-    const store = target === 'graph' ? state.graphCustom : target.custom;
+    const store = customStoreOf(target);
     return isRecord(store) ? store[id] : undefined;
 }
 function setCustomValue(target, id, value) {
@@ -3103,15 +3124,26 @@ function setCustomValue(target, id, value) {
         state.graphCustom[id] = value;
         return;
     }
+    if (isPendingDefaultsTarget(target)) {
+        const key = target === 'node-defaults' ? 'nodeCustom' : 'edgeCustom';
+        if (!isRecord(state.settings))
+            state.settings = {};
+        if (!isRecord(state.settings[key]))
+            state.settings[key] = Object.create(null);
+        state.settings[key][id] = value;
+        return;
+    }
     if (!isRecord(target.custom))
         target.custom = Object.create(null);
     target.custom[id] = value;
 }
 function unsetCustomValue(target, id) {
-    const store = target === 'graph' ? state.graphCustom : target.custom;
+    const store = customStoreOf(target);
     if (isRecord(store)) {
         delete store[id];
-        if (target !== 'graph' && !Object.keys(store).length)
+        // Entities drop their empty map so exported documents stay clean; the
+        // graph and the pending-defaults maps keep their (possibly empty) shape.
+        if (!isPendingDefaultsTarget(target) && target !== 'graph' && !Object.keys(store).length)
             delete target.custom;
     }
 }
@@ -3119,6 +3151,8 @@ function unsetCustomValue(target, id) {
 // meaning, and no UI to show them, without the definition). Undo restores both.
 function stripCustomAttributeValues(id) {
     unsetCustomValue('graph', id);
+    unsetCustomValue('node-defaults', id);
+    unsetCustomValue('edge-defaults', id);
     for (const node of state.nodes)
         unsetCustomValue(node, id);
     for (const edge of state.edges)
@@ -3127,7 +3161,8 @@ function stripCustomAttributeValues(id) {
 // Renaming an attribute id moves its values with it, so the user does not
 // silently lose what they already typed.
 function renameCustomAttributeValues(oldId, newId) {
-    const stores = [state.graphCustom, ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
+    const settingsCustom = isRecord(state.settings) ? [state.settings.nodeCustom, state.settings.edgeCustom] : [];
+    const stores = [state.graphCustom, ...settingsCustom, ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
     for (const store of stores) {
         if (!isRecord(store))
             continue;
@@ -3257,6 +3292,7 @@ function wireCustomProps(host, scope, targets, multi) {
 // edits re-render the data panel.
 function renderCustomPropHosts() {
     renderGraphCustomProps();
+    renderNewElementCustomProps();
     renderSelectionPanel();
 }
 function sanitizeState(input) {
@@ -3282,6 +3318,9 @@ function sanitizeState(input) {
         return { id, scope, type };
     }).filter(Boolean);
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
+    // New-element defaults sanitize against their own scope's definitions only.
+    const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'node'));
+    const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'edge'));
     const usedNodeIds = new Set();
     const nodeReferences = new Map();
     const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, 3000).filter(isRecord) : [];
@@ -3590,6 +3629,8 @@ function sanitizeState(input) {
         settings.stylePresets = [];
     }
     const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
+    settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
+    settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(...nodes.map(n => Number((n.id.match(/\d+$/) || [0])[0])), finite(source.nextNode, 1) - 1, nodes.length);
     const maxE = Math.max(...edges.map(e => Number((e.id.match(/\d+$/) || [0])[0])), finite(source.nextEdge, 1) - 1, edges.length);
@@ -7034,6 +7075,11 @@ function findFreeNodePosition(x, y, ignoreIds = new Set()) {
 }
 function applyNewNodeDefaults(n) {
     const s = state.settings;
+    // Pending custom property values from "Node placement" apply to every new
+    // node (they are data, so the inherit-mode early return does not skip them).
+    const pendingCustom = s.nodeCustom && typeof s.nodeCustom === 'object' ? cloneCustomMap(s.nodeCustom) : undefined;
+    if (pendingCustom)
+        n.custom = pendingCustom;
     if (s.nodeType)
         n.type = s.nodeType;
     else if (s.nodeDefaults?.type)
@@ -7093,6 +7139,10 @@ function addEdge(from, to) {
     const defEdgeType = s.edgeDefaults?.type || '';
     const effectiveType = s.edgeType || defEdgeType;
     const e = { id: 'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0, 80), directed: Boolean(s.directed), type: effectiveType };
+    // Pending custom property values from "New edge defaults".
+    const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
+    if (pendingCustom)
+        e.custom = pendingCustom;
     if (s.edgeWeight !== '')
         e.weight = String(s.edgeWeight).slice(0, 50);
     if (effectiveType) {
@@ -12337,8 +12387,25 @@ function renderGraphCustomProps() {
     host.innerHTML = customPropsSectionHtml('graph', ['graph'], false);
     wireCustomProps(host, 'graph', ['graph'], false);
 }
+// Custom property editors for the two new-element default sections. The
+// chosen values apply to nodes/edges created afterwards and are stored on
+// settings (nodeCustom/edgeCustom) so they ride history, autosave and the
+// sanitizer like every other new-element default.
+function renderNewElementCustomProps() {
+    const nodeHost = $('#newNodeCustomProps');
+    if (nodeHost) {
+        nodeHost.innerHTML = customPropsSectionHtml('node', ['node-defaults'], false);
+        wireCustomProps(nodeHost, 'node', ['node-defaults'], false);
+    }
+    const edgeHost = $('#newEdgeCustomProps');
+    if (edgeHost) {
+        edgeHost.innerHTML = customPropsSectionHtml('edge', ['edge-defaults'], false);
+        wireCustomProps(edgeHost, 'edge', ['edge-defaults'], false);
+    }
+}
 function renderCustomAttributes() {
     renderGraphCustomProps();
+    renderNewElementCustomProps();
     const host = $('#customAttributesList');
     if (!host)
         return;

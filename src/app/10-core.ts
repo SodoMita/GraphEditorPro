@@ -372,6 +372,9 @@
       directed:true, edgeWeight:'1', edgeLabel:'',
       edgeType:'', edgeColor:'#94a3b8', edgeStrokeSize:2.4, edgeStrokeStyle:'solid',
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
+      // Pending custom property values applied to newly created nodes/edges
+      // (Edit-tab "Node placement" / "New edge defaults" sections).
+      nodeCustom: {}, edgeCustom: {},
       snap:false, snapX:false, snapY:false, gridSize:40, gridSizeX:40, gridSizeY:40,
       autosave:true, matrixLimit:90, edgeListPageSize:250, matrixDimension:0, brushDiameter:80,
       // Hit-testing for selection: 'any' selects nodes/edges by any part of
@@ -571,6 +574,20 @@
 
 
   // === Custom property values (values of user-defined custom attributes) ===
+  // A custom property target is the graph, a node/edge, or one of the two
+  // pseudo-targets for values pending application to newly created nodes/edges
+  // (kept in settings so they ride defaults/undo like every other new-element
+  // default). The pseudo-targets share the same set/unset plumbing.
+  type CustomPropTarget = 'graph' | GraphNode | GraphEdge | 'node-defaults' | 'edge-defaults';
+  function customStoreOf(target: CustomPropTarget): AnyRecord | undefined {
+    if(target === 'graph') return state.graphCustom;
+    if(target === 'node-defaults') return isRecord(state.settings) ? state.settings.nodeCustom : undefined;
+    if(target === 'edge-defaults') return isRecord(state.settings) ? state.settings.edgeCustom : undefined;
+    return target.custom;
+  }
+  function isPendingDefaultsTarget(target: CustomPropTarget): target is 'node-defaults' | 'edge-defaults' {
+    return target === 'node-defaults' || target === 'edge-defaults';
+  }
   // Definitions live in state.customAttributes; values live next to the entity
   // they describe: state.graphCustom for scope 'graph', node.custom / edge.custom
   // (flat id -> scalar maps) otherwise. Values are only kept while their
@@ -632,37 +649,49 @@
   function definedCustomAttributes(scope: 'graph' | 'node' | 'edge'){
     return state.customAttributes.filter(attribute => attribute.scope === scope);
   }
-  function customValueOf(target: 'graph' | GraphNode | GraphEdge, id: string): CustomAttributeValue | undefined {
-    const store = target === 'graph' ? state.graphCustom : target.custom;
+  function customValueOf(target: CustomPropTarget, id: string): CustomAttributeValue | undefined {
+    const store = customStoreOf(target);
     return isRecord(store) ? store[id] : undefined;
   }
-  function setCustomValue(target: 'graph' | GraphNode | GraphEdge, id: string, value: CustomAttributeValue): void {
+  function setCustomValue(target: CustomPropTarget, id: string, value: CustomAttributeValue): void {
     if(target === 'graph'){
       if(!isRecord(state.graphCustom)) state.graphCustom = Object.create(null);
       state.graphCustom[id] = value;
       return;
     }
+    if(isPendingDefaultsTarget(target)){
+      const key = target === 'node-defaults' ? 'nodeCustom' : 'edgeCustom';
+      if(!isRecord(state.settings)) state.settings = {};
+      if(!isRecord(state.settings[key])) state.settings[key] = Object.create(null);
+      state.settings[key][id] = value;
+      return;
+    }
     if(!isRecord(target.custom)) target.custom = Object.create(null);
     target.custom[id] = value;
   }
-  function unsetCustomValue(target: 'graph' | GraphNode | GraphEdge, id: string): void {
-    const store = target === 'graph' ? state.graphCustom : target.custom;
+  function unsetCustomValue(target: CustomPropTarget, id: string): void {
+    const store = customStoreOf(target);
     if(isRecord(store)){
       delete store[id];
-      if(target !== 'graph' && !Object.keys(store).length) delete target.custom;
+      // Entities drop their empty map so exported documents stay clean; the
+      // graph and the pending-defaults maps keep their (possibly empty) shape.
+      if(!isPendingDefaultsTarget(target) && target !== 'graph' && !Object.keys(store).length) delete target.custom;
     }
   }
   // Removing an attribute definition drops its values everywhere (they have no
   // meaning, and no UI to show them, without the definition). Undo restores both.
   function stripCustomAttributeValues(id: string): void {
     unsetCustomValue('graph', id);
+    unsetCustomValue('node-defaults', id);
+    unsetCustomValue('edge-defaults', id);
     for(const node of state.nodes) unsetCustomValue(node, id);
     for(const edge of state.edges) unsetCustomValue(edge, id);
   }
   // Renaming an attribute id moves its values with it, so the user does not
   // silently lose what they already typed.
   function renameCustomAttributeValues(oldId: string, newId: string): void {
-    const stores = [state.graphCustom, ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
+    const settingsCustom = isRecord(state.settings) ? [state.settings.nodeCustom, state.settings.edgeCustom] : [];
+    const stores = [state.graphCustom, ...settingsCustom, ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
     for(const store of stores){
       if(!isRecord(store)) continue;
       if(!Object.prototype.hasOwnProperty.call(store, oldId)) continue;
@@ -674,7 +703,7 @@
   // target. Returns 'ok' | 'noop' | 'invalid'. Empty text/number input unsets in
   // single mode and is a no-op in multi mode (so a blanked field cannot wipe a
   // whole selection); the boolean '__unset__' option unsets in multi mode.
-  function applyCustomPropValue(def: { id: string; type: string }, targets: ('graph' | GraphNode | GraphEdge)[], raw: string, multi: boolean): 'ok' | 'noop' | 'invalid' {
+  function applyCustomPropValue(def: { id: string; type: string }, targets: CustomPropTarget[], raw: string, multi: boolean): 'ok' | 'noop' | 'invalid' {
     const unsetAll = () => { for(const target of targets) unsetCustomValue(target, def.id); };
     const setAll = (value: CustomAttributeValue) => { for(const target of targets) setCustomValue(target, def.id, value); };
     if(def.type === 'boolean'){
@@ -696,7 +725,7 @@
   }
   // Whether every target holds the identical value (used to prefill single
   // controls and to detect "mixed" multi selections).
-  function sharedCustomPropValue(targets: ('graph' | GraphNode | GraphEdge)[], id: string): { value?: CustomAttributeValue; mixed: boolean } {
+  function sharedCustomPropValue(targets: CustomPropTarget[], id: string): { value?: CustomAttributeValue; mixed: boolean } {
     const first = targets.length ? customValueOf(targets[0], id) : undefined;
     for(let i = 1; i < targets.length; i++){
       if(customValueOf(targets[i], id) !== first) return { value: undefined, mixed: true };
@@ -706,7 +735,7 @@
   // One row per attribute: an escaped label (id + type badge) and the typed
   // control. All user-visible text goes through esc()/I18N — attribute ids are
   // user input.
-  function customPropControlHtml(attr: { id: string; type: string }, targets: ('graph' | GraphNode | GraphEdge)[], multi: boolean): string {
+  function customPropControlHtml(attr: { id: string; type: string }, targets: CustomPropTarget[], multi: boolean): string {
     const { value, mixed } = sharedCustomPropValue(targets, attr.id);
     const safeId = esc(attr.id);
     const common = `class="custom-prop-input" data-custom-attribute="${safeId}" data-custom-type="${esc(attr.type)}" title="${esc(I18N.t('custom_prop_title'))}"`;
@@ -729,7 +758,7 @@
     const maxlength = isNumeric ? ' maxlength="32"' : ` maxlength="${CUSTOM_VALUE_MAX}"`;
     return `<input type="text"${maxlength} ${common} value="${shown}" ${placeholder} inputmode="${integer ? 'numeric' : isNumeric ? 'decimal' : 'text'}" autocomplete="off" spellcheck="false">`;
   }
-  function customPropsSectionHtml(scope: 'graph' | 'node' | 'edge', targets: ('graph' | GraphNode | GraphEdge)[], multi: boolean): string {
+  function customPropsSectionHtml(scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): string {
     const defs = definedCustomAttributes(scope);
     if(!defs.length){
       return `<div class="custom-props custom-props-empty tiny muted" data-scope="${scope}">${esc(I18N.t('custom_prop_none'))}</div>`;
@@ -740,7 +769,7 @@
   }
   // Wires the freshly built custom property controls (both the selection panel
   // and the graph values block rebuild their inputs before calling this).
-  function wireCustomProps(host: ParentNode, scope: 'graph' | 'node' | 'edge', targets: ('graph' | GraphNode | GraphEdge)[], multi: boolean){
+  function wireCustomProps(host: ParentNode, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean){
     host.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`.custom-props[data-scope="${scope}"] .custom-prop-input`).forEach(input => {
       input.addEventListener('change', () => {
         const id = input.getAttribute('data-custom-attribute') || '';
@@ -758,6 +787,7 @@
   // edits re-render the data panel.
   function renderCustomPropHosts(){
     renderGraphCustomProps();
+    renderNewElementCustomProps();
     renderSelectionPanel();
   }
 
@@ -783,6 +813,9 @@
         return {id, scope, type};
       }).filter(Boolean) as GraphState['customAttributes'];
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
+    // New-element defaults sanitize against their own scope's definitions only.
+    const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'node'));
+    const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'edge'));
 
     const usedNodeIds = new Set<string>();
     const nodeReferences = new Map<string, string>();
@@ -1022,6 +1055,8 @@
       }).filter(Boolean);
     } else { settings.stylePresets = []; }
     const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
+    settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
+    settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),

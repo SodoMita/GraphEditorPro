@@ -386,3 +386,116 @@ test('GraphML import tolerates externally authored mixed-case keys and round-tri
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('new node defaults apply pending custom values and keep them as one undo step per edit', async () => {
+  const seed = customPropertiesGraph();
+  const graph = { ...seed, nodes: [], edges: [], settings: {} };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const input = document.querySelector('#newNodeCustomProps [data-scope="node"] [data-custom-attribute="capacity"]');
+  assert.ok(input, 'the Node placement section renders pending node custom property editors');
+  changeValue(window, input, '33');
+  await nextFrame(window);
+
+  // Create a node via the canvas in node mode.
+  document.querySelector('[data-mode="node"]').click();
+  const canvas = document.querySelector('#graphCanvas');
+  setCanvasRect(canvas);
+  dispatchPointer(window, canvas, 'pointerdown', { pointerId: 1, clientX: 300, clientY: 300 });
+  dispatchPointer(window, canvas, 'pointerup', { pointerId: 1, clientX: 300, clientY: 300 });
+  await nextFrame(window); await settle(window, 40);
+
+  let exported = exportGraph(document);
+  assert.equal(exported.nodes.length, 1, 'one node created');
+  assert.equal(exported.nodes[0].custom.capacity, 33, 'pending value applied to the new node');
+  assert.equal(exported.settings.nodeCustom.capacity, 33, 'pending value persists on settings');
+
+  // One history entry for the creation, one for the earlier property edit.
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 40);
+  exported = exportGraph(document);
+  assert.equal(exported.nodes.length, 0, 'undo removes the created node');
+  assert.equal(exported.settings.nodeCustom.capacity, 33, 'the pending value edit is a separate history entry');
+
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 40);
+  exported = exportGraph(document);
+  assert.equal(exported.settings.nodeCustom.capacity, undefined, 'a second undo reverts the pending value edit');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('new edge defaults apply pending custom values to edges created via connect', async () => {
+  const graph = {
+    title: 'pending-edge', mode: 'edge', nextNode: 3, nextEdge: 1,
+    nodes: [
+      { id: 'n1', label: 'A', x: 100, y: 100, order: 0 },
+      { id: 'n2', label: 'B', x: 400, y: 100, order: 1 },
+    ],
+    edges: [],
+    customAttributes: [{ id: 'enabled', scope: 'edge', type: 'boolean' }],
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const enabled = document.querySelector('#newEdgeCustomProps [data-scope="edge"] [data-custom-attribute="enabled"]');
+  assert.ok(enabled, 'the New edge defaults section renders pending edge custom property editors');
+  changeValue(window, enabled, 'true');
+  await nextFrame(window);
+
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  document.elementFromPoint = () => document.querySelector('#node-n2');
+  dispatchPointer(window, document.querySelector('#node-n1'), 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
+  dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 400, clientY: 100 });
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 400, clientY: 100 });
+  await nextFrame(window); await settle(window, 40);
+
+  const exported = exportGraph(document);
+  assert.equal(exported.edges.length, 1, 'one edge created via connect');
+  assert.equal(exported.edges[0].from, 'n1');
+  assert.equal(exported.edges[0].to, 'n2');
+  assert.equal(exported.edges[0].custom.enabled, true, 'pending value applied to the new edge');
+  assert.equal(exported.settings.edgeCustom.enabled, true, 'pending value persists on settings');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('renaming and deleting a definition migrates and strips pending new-element values', async () => {
+  const graph = {
+    title: 'pending-rename', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [], edges: [],
+    customAttributes: [{ id: 'capacity', scope: 'node', type: 'int' }],
+    settings: { nodeCustom: { capacity: 5 } },
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  // The pending value survived sanitize at load time.
+  const input = document.querySelector('#newNodeCustomProps [data-custom-attribute="capacity"]');
+  assert.equal(input?.value, '5');
+
+  // Rename the definition; the pending value follows the new id.
+  const row = document.querySelector('.custom-attribute-row');
+  row.querySelector('[data-attribute-field="id"]').value = 'maxCapacity';
+  row.querySelector('[data-attribute-action="save"]').click();
+  await nextFrame(window);
+  let exported = exportGraph(document);
+  assert.deepEqual(exported.settings.nodeCustom, { maxCapacity: 5 }, 'pending value migrated to the new id');
+  assert.equal(document.querySelector('#newNodeCustomProps [data-custom-attribute="maxCapacity"]')?.value, '5');
+
+  // Delete the definition; the pending value is stripped.
+  document.querySelector('.custom-attribute-row [data-attribute-action="delete"]').click();
+  await nextFrame(window);
+  exported = exportGraph(document);
+  assert.deepEqual(exported.settings.nodeCustom, {}, 'pending value stripped with the definition');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

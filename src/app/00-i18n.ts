@@ -306,6 +306,8 @@ const I18N: I18nService = {
     'custom_prop_unset': { en: '(unset)', ru: '(не задано)' },
     'custom_prop_title': { en: 'Custom property. An empty field clears the value.', ru: 'Пользовательское свойство. Пустое поле удаляет значение.' },
     'custom_prop_none': { en: 'No custom properties. Define them in the Data tab (Custom attributes).', ru: 'Пользовательских свойств нет. Задайте их на вкладке «Данные» (Пользовательские атрибуты).' },
+    'custom_props_new_nodes': { en: '(applied to new nodes)', ru: '(применяются к новым узлам)' },
+    'custom_props_new_edges': { en: '(applied to new edges)', ru: '(применяются к новым рёбрам)' },
     'graph_values': { en: 'Graph values', ru: 'Значения графа' },
     'graph_values_help': { en: 'Values of graph-scope attributes. They apply to the whole document.', ru: 'Значения атрибутов, заданных для графа. Действуют на весь документ.' },
     'graph_values_none': { en: 'No graph-scope attributes defined yet. Add one above with scope “Graph”.', ru: 'Атрибуты для графа ещё не заданы. Добавьте их выше с областью «Граф».' },

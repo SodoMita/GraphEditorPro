@@ -119,6 +119,18 @@
           <!-- ================= EDIT ================= -->
           <section id="panel-edit" class="tab-panel" role="tabpanel" aria-labelledby="tab-edit" aria-hidden="true">
 
+            <div class="section flat">
+              <div class="section-title" data-i18n="selection">Selection</div>
+              <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
+              <div class="clipboard-controls" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+                <button id="btnCopy2" class="btn small" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg> <span data-i18n="copy_selected">Copy</span></button>
+                <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
+                <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
+                <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
+              </div>
+              <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
+            </div>
+
             <details class="section" open>
               <summary class="section-title">
                 <span data-i18n="node_placement">Node placement</span>
@@ -184,6 +196,8 @@
                     </select>
                   </label>
                 </div>
+                <div class="section-title" style="margin-top:10px"><span data-i18n="custom_properties">Custom properties</span> <span class="tiny muted" data-i18n="custom_props_new_nodes">(applied to new nodes)</span></div>
+                <div id="newNodeCustomProps" class="custom-props"></div>
               </div>
             </details>
 
@@ -249,6 +263,8 @@
                   </label>
                   <label class="chk field" for="edgeDirected" style="align-self:end"><input id="edgeDirected" type="checkbox" checked /> <span data-i18n="directed_edge">Directed edge</span></label>
                 </div>
+                <div class="section-title" style="margin-top:10px"><span data-i18n="custom_properties">Custom properties</span> <span class="tiny muted" data-i18n="custom_props_new_edges">(applied to new edges)</span></div>
+                <div id="newEdgeCustomProps" class="custom-props"></div>
               </div>
             </details>
 
@@ -294,17 +310,6 @@
               </div>
             </details>
 
-            <div class="section flat">
-              <div class="section-title" data-i18n="selection">Selection</div>
-              <div id="selectionPanel" class="tiny muted" data-i18n="nothing_selected">Nothing selected.</div>
-              <div class="clipboard-controls" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
-                <button id="btnCopy2" class="btn small" title="Copy selected nodes and internal edges (Ctrl+C)" data-i18n-title="copy_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg> <span data-i18n="copy_selected">Copy</span></button>
-                <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
-                <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
-                <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
-              </div>
-              <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
-            </div>
           </section>
 
           <!-- ================= STYLE ================= -->

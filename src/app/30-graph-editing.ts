@@ -376,6 +376,10 @@
 
   function applyNewNodeDefaults(n: GraphNode){
     const s = state.settings;
+    // Pending custom property values from "Node placement" apply to every new
+    // node (they are data, so the inherit-mode early return does not skip them).
+    const pendingCustom = s.nodeCustom && typeof s.nodeCustom === 'object' ? cloneCustomMap(s.nodeCustom) : undefined;
+    if(pendingCustom) n.custom = pendingCustom;
     if(s.nodeType) n.type = s.nodeType;
     else if(s.nodeDefaults?.type) n.type = s.nodeDefaults.type;
     // Inherit mode deliberately leaves visual properties unset so later
@@ -427,6 +431,9 @@
     const defEdgeType = s.edgeDefaults?.type || '';
     const effectiveType = s.edgeType || defEdgeType;
     const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: Boolean(s.directed), type: effectiveType };
+    // Pending custom property values from "New edge defaults".
+    const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
+    if(pendingCustom) e.custom = pendingCustom;
     if(s.edgeWeight !== '') e.weight = String(s.edgeWeight).slice(0,50);
     if(effectiveType){
       const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[effectiveType];

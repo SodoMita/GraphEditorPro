@@ -66,8 +66,10 @@ User-defined **custom attributes** (the Data tab → *Custom attributes* section
 | Scope | Where values are set and viewed |
 | --- | --- |
 | `graph` | Data tab, **Graph values** block under the definitions |
-| `node` | Selection panel in the Edit tab (single selection, or applied to all selected nodes) |
-| `edge` | Selection panel in the Edit tab (single selection, or applied to all selected edges) |
+| `node` | Selection panel in the Edit tab (single selection, or applied to all selected nodes); **Node placement** section for values pending application to new nodes |
+| `edge` | Selection panel in the Edit tab (single selection, or applied to all selected edges); **New edge defaults** section for values pending application to new edges |
+
+New nodes/edges created afterwards inherit the pending values from **Node placement** / **New edge defaults**; the pending values are stored on settings (`nodeCustom` / `edgeCustom`), so they ride history (one undo step per edit), autosave and the sanitizer like every other new-element default. The Selection section is the first section of the Edit tab, so the property grid of the current selection is always one click away.
 
 Values follow the definition's type: a tri-state select for `boolean` (unset / true / false), a free-text numeric field for the numeric types (rejected with a toast and reverted to the stored value if it is not a number — text inputs with `inputmode`, not `type="number"`, so garbage can never masquerade as "empty"), and a plain text field capped at 1000 characters for `string`. An empty field unsets the value (except multi-select text/number fields, where empty means *keep*, matching the other multi-edit inputs); values for a definition that is deleted are stripped, and renaming an ID moves the values with it. Setting a value is one undo step.
 
@@ -77,6 +79,7 @@ Persistence and interop:
 - **DOT** and the three CSV exporters intentionally carry only their documented subsets and skip custom properties.
 - Append-mode imports merge the imported definitions with the current ones (current wins on ID conflicts) so imported values are not pruned, and graph-scope values merge with the imported values taking precedence. History snapshots, autosave and the sanitizer all round-trip the values; unknown attribute IDs and anything but `string|number|boolean` scalars are dropped/coerced at the door.
 - Copy/paste/duplicate deep-copies the value maps, so a pasted selection never shares custom property state with the original.
+- Pending **new-element** defaults (`settings.nodeCustom` / `edgeCustom`) are sanitized against their own scope's definitions, stripped when a definition is deleted and migrated when it is renamed — same rules as stored values.
 
 ## Build and safety guarantees
 
