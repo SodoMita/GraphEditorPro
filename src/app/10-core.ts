@@ -352,7 +352,9 @@
   const gizmoLayer = $('#gizmoLayer');
 
   const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
-  const STROKE_STYLES = ['solid','dashed','dotted'];
+  // QVGE-compatible stroke styles: must match CUtils::textToPenStyle mapping
+  // none=NoPen, solid=SolidLine, dashed=DashLine, dotted=DotLine, dashdot=DashDotLine, dashdotdot=DashDotDotLine
+  const STROKE_STYLES = ['solid','dashed','dotted','dashdot','dashdotdot','none'];
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
   const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
