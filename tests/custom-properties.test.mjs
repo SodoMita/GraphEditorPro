@@ -759,3 +759,231 @@ test('adding a definition refreshes an open selection panel; append import repai
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('GraphML keys with QVGE built-in attr.name (name/posx/posy) import as built-ins, not custom', async () => {
+  const qvge = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="kName" for="node" attr.name="name" attr.type="string"/>
+  <key id="kPosX" for="node" attr.name="posx" attr.type="double"/>
+  <key id="kPosY" for="node" attr.name="posy" attr.type="double"/>
+  <key id="kNote" for="node" attr.name="note" attr.type="string"/>
+  <graph id="g" edgedefault="directed">
+    <node id="a"><data key="kName">Alpha</data><data key="kPosX">123</data><data key="kPosY">456</data><data key="kNote">hello</data></node>
+  </graph>
+</graphml>`;
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = qvge;
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  const graph = exportGraph(document);
+  const node = graph.nodes.find(n => n.id === 'a');
+  assert.equal(node.label, 'Alpha', 'the name key feeds the built-in label');
+  assert.equal(node.x, 123);
+  assert.equal(node.y, 456);
+  assert.deepEqual(graph.customAttributes.map(a => a.id), ['kNote'],
+    'built-in keys are not re-created as custom definitions');
+  assert.equal(node.custom.kNote, 'hello', 'genuinely custom keys still import');
+  // The add form likewise refuses built-in names going forward.
+  document.querySelector('#customAttributeId').value = 'posx';
+  document.querySelector('#customAttributeScope').value = 'node';
+  document.querySelector('#customAttributeType').value = 'string';
+  document.querySelector('#btnAddCustomAttribute').click();
+  await nextFrame(window);
+  assert.equal(exportGraph(document).customAttributes.some(a => a.id === 'posx'), false,
+    'built-in attr.name values cannot become custom ids');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a legacy custom id colliding with a built-in name round-trips without touching the node stroke', async () => {
+  // Documents created before the reserved-name rules: custom attribute
+  // "stroke.color" with a value, plus an unrelated built-in stroke color.
+  const legacy = {
+    title: 'legacy-stroke', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, strokeColor: '#123456', custom: { 'stroke.color': '#ff0000' } }],
+    edges: [],
+    customAttributes: [{ id: 'stroke.color', scope: 'node', type: 'string' }],
+    graphCustom: {},
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(legacy);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  // The load migrates the legacy definition to a unique safe id, keeping the value.
+  let graph = exportGraph(document);
+  assert.deepEqual(graph.customAttributes.map(a => a.id), ['stroke.color_1']);
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom['stroke.color_1'], '#ff0000');
+
+  // Round-trip through the GraphML export and back.
+  const graphml = exportGraphml(document);
+  assert.match(graphml, /<key id="stroke\.color_1" /);
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = graphml;
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  graph = exportGraph(document);
+  const node = graph.nodes.find(n => n.id === 'a');
+  assert.equal(node.strokeColor, '#123456', 'the built-in stroke keeps its own value');
+  assert.deepEqual(graph.customAttributes.map(a => a.id), ['stroke.color_1'], 'the custom definition survives the round-trip');
+  assert.equal(node.custom['stroke.color_1'], '#ff0000');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('previously allowed case-variant definitions are migrated, not discarded, on load', async () => {
+  const legacy = {
+    title: 'legacy-case', mode: 'select', nextNode: 2, nextEdge: 2,
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, custom: { FillColor: 'red' } }],
+    edges: [{ id: 'e1', from: 'a', to: 'a', directed: true, weight: '1', label: '', type: '', custom: { Direction: 9 } }],
+    customAttributes: [
+      { id: 'Label', scope: 'graph', type: 'int' },
+      { id: 'FillColor', scope: 'node', type: 'string' },
+      { id: 'Direction', scope: 'edge', type: 'int' },
+    ],
+    graphCustom: { Label: 5 },
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(legacy);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const graph = exportGraph(document);
+  assert.deepEqual(graph.customAttributes.map(a => a.id).sort(), ['Direction_1', 'FillColor_1', 'Label_1'],
+    'legacy ids are renamed to unique safe ids');
+  assert.equal(graph.graphCustom.Label_1, 5, 'the graph value moved with its definition');
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom.FillColor_1, 'red');
+  assert.equal(graph.edges.find(e => e.id === 'e1').custom.Direction_1, 9);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('changing a definition from string to long keeps a 64-bit value the number line cannot hold', async () => {
+  const graph = { ...customPropertiesGraph(),
+    nodes: [], edges: [],
+    customAttributes: [{ id: 'big', scope: 'graph', type: 'string' }],
+    graphCustom: { big: '9223372036854775807' },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const row = [...document.querySelectorAll('.custom-attribute-row')]
+    .find(r => r.querySelector('[data-attribute-field="id"]').value === 'big');
+  row.querySelector('[data-attribute-field="type"]').value = 'long';
+  row.querySelector('[data-attribute-action="save"]').click();
+  await nextFrame(window);
+
+  const exported = exportGraph(document);
+  assert.equal(exported.graphCustom.big, '9223372036854775807', 'the exact 64-bit value survives the type change');
+  const input = document.querySelector('#graphCustomProps [data-custom-attribute="big"]');
+  assert.equal(input.value, '9223372036854775807', 'the field shows the exact value');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('the editor refuses a 501st definition instead of letting it vanish on reload', async () => {
+  const customAttributes = Array.from({ length: 500 }, (_, i) => ({
+    id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
+  }));
+  const graph = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes, graphCustom: {} };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  document.querySelector('#customAttributeId').value = 'overflow';
+  document.querySelector('#customAttributeScope').value = 'node';
+  document.querySelector('#customAttributeType').value = 'string';
+  document.querySelector('#btnAddCustomAttribute').click();
+  await nextFrame(window);
+
+  const exported = exportGraph(document);
+  assert.equal(exported.customAttributes.length, 500, 'the cap holds; nothing silently disappears on reload');
+  assert.equal(exported.customAttributes.some(a => a.id === 'overflow'), false);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append-import past the definition cap skips the extra definitions with a toast', async () => {
+  const customAttributes = Array.from({ length: 500 }, (_, i) => ({
+    id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
+  }));
+  const graph = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes, graphCustom: {} };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const imported = {
+    title: 'imported', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [{ id: 'app1', label: 'App', x: 100, y: 100, order: 0 }],
+    edges: [],
+    customAttributes: [{ id: 'extra1', scope: 'node', type: 'string' }, { id: 'extra2', scope: 'graph', type: 'string' }],
+    graphCustom: { extra2: 'value' },
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = JSON.stringify(imported);
+  modal.querySelector('#expAppendChk').click();
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  const exported = exportGraph(document);
+  assert.equal(exported.customAttributes.length, 500, 'the imported definitions beyond the cap are skipped');
+  assert.equal(exported.customAttributes.some(a => a.id === 'extra1'), false);
+  assert.equal(exported.graphCustom.extra2, undefined, 'values without a definition are dropped, not stored');
+  const toastText = [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ');
+  assert.match(toastText, /Skipped 2/, 'the skip is reported to the user');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a __proto__ custom property works like any other: own-key storage end to end', async () => {
+  // Fresh document: create the definition through the form.
+  const { dom, errors } = createEditorDom();
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  document.querySelector('#customAttributeId').value = '__proto__';
+  document.querySelector('#customAttributeScope').value = 'graph';
+  document.querySelector('#customAttributeType').value = 'string';
+  document.querySelector('#btnAddCustomAttribute').click();
+  await nextFrame(window);
+
+  const input = document.querySelector('#graphCustomProps [data-custom-attribute="__proto__"]');
+  assert.ok(input, 'the graph values block renders the new property');
+  assert.equal(input.value, '', 'a fresh property renders empty, not [object Object]');
+  changeValue(window, input, 'hello');
+  await nextFrame(window);
+
+  const exported = exportGraph(document);
+  assert.equal(Object.prototype.hasOwnProperty.call(exported.graphCustom, '__proto__'), true,
+    'the value is stored as an own key');
+  assert.equal(exported.graphCustom['__proto__'], 'hello');
+  assert.equal(Object.getPrototypeOf(exported.graphCustom), Object.prototype,
+    'JSON round-trip keeps the own key without polluting prototypes');
+  dom.window.close();
+
+  // Seeded document: an own "__proto__" key stored in the file loads intact.
+  const seeded = JSON.parse('{"title":"proto","mode":"select","nextNode":2,"nextEdge":1,"nodes":[{"id":"a","label":"A","x":0,"y":0,"order":0}],"edges":[],"customAttributes":[{"id":"__proto__","scope":"graph","type":"string"}],"graphCustom":{"__proto__":"hello"},"settings":{},"viewBox":{"x":-500,"y":-330,"w":1000,"h":660}}');
+  const seededDom = createEditorDom(seeded);
+  const seededWindow = seededDom.dom.window; const seededDocument = seededWindow.document;
+  await nextFrame(seededWindow);
+  const loaded = seededDocument.querySelector('#graphCustomProps [data-custom-attribute="__proto__"]');
+  assert.equal(loaded.value, 'hello', 'the stored own key survives the load, not the prototype');
+  const roundTripped = exportGraph(seededDocument);
+  assert.equal(roundTripped.graphCustom['__proto__'], 'hello');
+  assert.deepEqual(seededDom.errors.map(error => error.message), []);
+  seededDom.dom.window.close();
+});

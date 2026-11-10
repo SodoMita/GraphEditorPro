@@ -301,6 +301,8 @@ const I18N: I18nService = {
     'attribute_id_duplicate': { en: 'An attribute with this ID already exists.', ru: 'Атрибут с таким ID уже существует.' },
     'attribute_id_reserved': { en: 'This ID is reserved for a built-in GraphML attribute.', ru: 'Этот ID зарезервирован встроенным атрибутом GraphML.' },
     'attribute_added': { en: 'Custom attribute added', ru: 'Пользовательский атрибут добавлен' },
+    'attribute_limit_reached': { en: 'Custom attribute limit (500) reached. Delete one before adding another.', ru: 'Достигнут предел пользовательских атрибутов (500). Удалите один перед добавлением нового.' },
+    'attribute_import_skipped': { en: 'Skipped {n} custom attribute definition(s) beyond the 500 limit.', ru: 'Пропущено определений пользовательских атрибутов сверх лимита 500: {n}.' },
     'attribute_updated': { en: 'Custom attribute updated', ru: 'Пользовательский атрибут изменён' },
     'custom_properties': { en: 'Custom properties', ru: 'Пользовательские свойства' },
     'custom_prop_unset': { en: '(unset)', ru: '(не задано)' },

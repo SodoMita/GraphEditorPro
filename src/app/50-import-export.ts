@@ -277,6 +277,7 @@
     const customEdgeDefs = state.customAttributes.filter(a => a.scope === 'edge');
     if(isRecord(state.graphCustom)){
       for(const attr of customGraphDefs){
+        if(!Object.prototype.hasOwnProperty.call(state.graphCustom, attr.id)) continue;
         const value = state.graphCustom[attr.id];
         if(value === undefined || value === '') continue;
         lines.push(`    <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
@@ -309,6 +310,7 @@
       parts.push(`      <data key="labelPosition">${xmlEsc(v.labelPosition)}</data>`);
       if(n.custom){
         for(const attr of customNodeDefs){
+          if(!Object.prototype.hasOwnProperty.call(n.custom, attr.id)) continue;
           const value = n.custom[attr.id];
           if(value === undefined || value === '') continue;
           parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
@@ -332,6 +334,7 @@
       parts.push(`      <data key="directed">${e.directed ? 'true' : 'false'}</data>`);
       if(e.custom){
         for(const attr of customEdgeDefs){
+          if(!Object.prototype.hasOwnProperty.call(e.custom, attr.id)) continue;
           const value = e.custom[attr.id];
           if(value === undefined || value === '') continue;
           parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
@@ -431,6 +434,15 @@
       : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
   }
   function importGraphData(data, label, append){
+    // Enforce the definition cap at the door: definitions beyond the budget
+    // are skipped (with a toast) instead of silently vanishing on reload.
+    if(isRecord(data) && Array.isArray(data.customAttributes)){
+      const budget = append ? Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length) : CUSTOM_DEFINITIONS_MAX;
+      if(data.customAttributes.length > budget){
+        toast(I18N.t('attribute_import_skipped', { n: data.customAttributes.length - budget }));
+        data = { ...data, customAttributes: data.customAttributes.slice(0, budget) };
+      }
+    }
     if(append){ appendImportedGraph(data, label); }
     else { replaceWithImportedGraph(data, label); }
   }
@@ -755,7 +767,7 @@
   // key ids with well-known attr.name values). Custom keys are excluded, so a
   // custom key can never shadow a built-in attribute (e.g. attr.name="Label").
   function graphmlDataMap(el, keyNames, customKeyIds): AnyRecord {
-    const map: AnyRecord = {};
+    const map: AnyRecord = Object.create(null);
     for(const { key, text } of graphmlChildData(el)){
       if(customKeyIds.has(key)) continue;
       const name = (keyNames[key] || key).toLowerCase();
@@ -767,7 +779,7 @@
   // attribute, never the (case-normalised) attr.name, so case-distinct custom
   // ids and custom ids that merely look like built-in names round-trip as-is.
   function graphmlDataMapById(el): AnyRecord {
-    const map: AnyRecord = {};
+    const map: AnyRecord = Object.create(null);
     for(const { key, text } of graphmlChildData(el)) map[key] = text;
     return map;
   }
@@ -855,11 +867,15 @@
     const doc = new DOMParser().parseFromString(text, 'application/xml');
     if(doc.querySelector('parsererror')) throw new Error(I18N.t('err_invalid_graphml'));
     // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
-    const keyNames: Record<string, string> = {};
-    const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
+    const keyNames: Record<string, string> = Object.create(null);
+    const keyDefaultsByFor: Record<string, AnyRecord> = { graph: Object.create(null), node: Object.create(null), edge: Object.create(null) };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
-    const reservedKeyIds = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER;
-    const reservedAttrNames = new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','label.color','label.font','label.size','label.position','weight','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
+    // Built-in keys are recognized by attr.name (any key id) — QVGE writes
+    // arbitrary ids with well-known names. A name collision always means
+    // "built-in". Id-only collisions with built-ins are still handled as
+    // custom here; sanitizeState renames those defs to a safe unique id when
+    // loading, preserving legacy documents.
+    const reservedAttrNames = RESERVED_GRAPHML_ATTR_NAMES_LOWER;
     const customAttributes: GraphState['customAttributes'] = [];
     const customKeyIds = new Set<string>();
     const customKeyDataName: { id: string; scope: string; type: string; dataKey: string; defaultValue?: CustomAttributeValue }[] = [];
@@ -872,7 +888,7 @@
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
       const defEl = k.querySelector('default');
       const defVal = defEl ? defEl.textContent.trim() : '';
-      const isCustom = !reservedKeyIds.has(id.toLowerCase()) && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom);
+      const isCustom = !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom);
       if(isCustom){
         const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
         customAttributes.push({id, scope: forWhom as 'graph' | 'node' | 'edge', type: normalizedType});

@@ -356,16 +356,55 @@
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
   const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
-  // The built-in GraphML keys our reader recognizes are matched
-  // case-insensitively (GraphML ids compare exactly, but attribute lookups in
-  // imported files normalize case for QVGE compatibility), so a custom id may
-  // never collide with a built-in name even by letter case.
-  const RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER = new Set([...RESERVED_CUSTOM_ATTRIBUTE_IDS].map(id => id.toLowerCase()));
+  // Lowercased attr.name values the built-in GraphML reader can consume.
+  // QVGE writes data under arbitrary key ids with these well-known names, so a
+  // definition may not collide with any of them either (not just by id but by
+  // name): on import, a name collision always means "built-in".
+  const RESERVED_GRAPHML_ATTR_NAMES_LOWER = new Set([
+    'label','name','id','order','x','y','type','shape','color','fillcolor','width','height',
+    'posx','posy','position.x','position.y',
+    'strokecolor','stroke.color','strokesize','stroke.size','strokestyle','stroke.style',
+    'labelcolor','label.color','labelfont','label.font','labelsize','label.size','labelposition','label.position',
+    'edgelabel','edgecolor','weight','value','direction','style',
+    'labels.policy',
+    'edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr',
+    'edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh',
+    'canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha'
+  ]);
+  // A custom id may never collide with a built-in name even by letter case
+  // (built-in attribute lookups in imported files normalize case for QVGE
+  // compatibility). Legacy ids that were legal when saved are renamed on load
+  // instead of dropped — see sanitizeState.
+  const RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER = new Set([
+    ...[...RESERVED_CUSTOM_ATTRIBUTE_IDS].map(id => id.toLowerCase()),
+    ...RESERVED_GRAPHML_ATTR_NAMES_LOWER,
+  ]);
+  // Maximum number of custom attribute definitions the editor will hold.
+  const CUSTOM_DEFINITIONS_MAX = 500;
+  // Finds the first free "<base>_<n>" id for a migrated legacy id. The result
+  // never matches the reserved sets above, so migrated defs round-trip cleanly.
+  function uniqueCustomAttributeId(base: string, taken: Set<string>): string {
+    for(let n = 1; n < 1000; n++){
+      const candidate = `${base.slice(0, 120)}_${n}`;
+      if(!taken.has(candidate) && !RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(candidate.toLowerCase())) return candidate;
+    }
+    return `${base.slice(0, 110)}_${Math.floor(Math.random() * 1e6)}`;
+  }
+  // Custom-value maps must carry their keys as OWN properties: a user-chosen
+  // id like "__proto__" must never mutate a prototype or shadow inherited
+  // members. Everything the app creates is already null-prototyped; this copies
+  // legacy ordinary objects (e.g. from JSON.parse) into safe maps.
+  function ownKeyRecord(value: unknown): AnyRecord {
+    if(isRecord(value) && Object.getPrototypeOf(value) === null) return value;
+    const out: AnyRecord = Object.create(null);
+    if(isRecord(value)) for(const key of Object.keys(value)) out[key] = value[key];
+    return out;
+  }
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
     title: 'untitled', mode: 'select', selectTool: 'single', selectCombine: 'replace', nextNode: 1, nextEdge: 1,
-    nodes: [], edges: [], customAttributes: [], graphCustom: {},
+    nodes: [], edges: [], customAttributes: [], graphCustom: Object.create(null),
     selected: null, selection: {nodes: [], edges: []},
     settings: {
       // Edit-tab node placement (primary for newly added nodes)
@@ -379,7 +418,7 @@
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
       // Pending custom property values applied to newly created nodes/edges
       // (Edit-tab "Node placement" / "New edge defaults" sections).
-      nodeCustom: {}, edgeCustom: {},
+      nodeCustom: Object.create(null), edgeCustom: Object.create(null),
       snap:false, snapX:false, snapY:false, gridSize:40, gridSizeX:40, gridSizeY:40,
       autosave:true, matrixLimit:90, edgeListPageSize:250, matrixDimension:0, brushDiameter:80,
       // Hit-testing for selection: 'any' selects nodes/edges by any part of
@@ -601,7 +640,7 @@
   // hand-edited file cannot smuggle objects, prototype pollution or huge blobs
   // into the document.
   const CUSTOM_VALUE_MAX = 1000;
-  const CUSTOM_VALUE_KEYS_MAX = 500; // matches the 500-definition cap in sanitizeState
+  const CUSTOM_VALUE_KEYS_MAX = CUSTOM_DEFINITIONS_MAX; // one value per definition, never more
   function customAttributeTypeMap(definitions: readonly { id: string; type: string }[]): Map<string, string> {
     const map = new Map<string, string>();
     for(const attribute of definitions) map.set(attribute.id, attribute.type);
@@ -655,8 +694,11 @@
       const numeric = Number(text);
       if(!Number.isFinite(numeric)) return undefined;
       const truncated = Math.trunc(numeric);
-      if(type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) return undefined;
-      if(type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) return undefined;
+      // Out-of-range values are preserved as the exact text, mirroring the
+      // input and import paths — a 64-bit long the JS number line cannot hold
+      // is stored as text, never dropped or clamped.
+      if(type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
+      if(type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
       return truncated;
     }
     if(type === 'float' || type === 'double'){
@@ -671,17 +713,14 @@
   // restores the pre-migration state as one history entry.
   function migrateCustomValuesForType(id: string, newType: string): number {
     let dropped = 0;
-    const stores = [state.graphCustom,
-      isRecord(state.settings) ? state.settings.nodeCustom : undefined,
-      isRecord(state.settings) ? state.settings.edgeCustom : undefined,
-      ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
-    for(const store of stores){
+    for(const { store, write } of customValueStoreRefs()){
       if(!isRecord(store)) continue;
-      const raw = store[id];
-      if(raw === undefined) continue;
-      const migrated = coerceCustomValueForType(raw, newType);
-      if(migrated === undefined){ delete store[id]; dropped++; }
-      else store[id] = migrated;
+      if(!Object.prototype.hasOwnProperty.call(store, id)) continue;
+      const safe = ownKeyRecord(store);
+      if(safe !== store) write(safe);
+      const migrated = coerceCustomValueForType(safe[id], newType);
+      if(migrated === undefined){ delete safe[id]; dropped++; }
+      else safe[id] = migrated;
     }
     return dropped;
   }
@@ -695,7 +734,7 @@
       if(!key) continue;
       const type = typeById.get(key);
       if(type === undefined) continue; // value without a definition is dropped, not trusted
-      const raw = input[rawKey];
+      const raw = Object.prototype.hasOwnProperty.call(input, rawKey) ? input[rawKey] : undefined;
       if(raw == null) continue;
       if(typeof raw === 'string' && raw.trim() === '') continue; // empty means unset
       out[key] = coerceCustomValue(raw, type);
@@ -711,22 +750,22 @@
   }
   function customValueOf(target: CustomPropTarget, id: string): CustomAttributeValue | undefined {
     const store = customStoreOf(target);
-    return isRecord(store) ? store[id] : undefined;
+    return isRecord(store) && Object.prototype.hasOwnProperty.call(store, id) ? store[id] : undefined;
   }
   function setCustomValue(target: CustomPropTarget, id: string, value: CustomAttributeValue): void {
     if(target === 'graph'){
-      if(!isRecord(state.graphCustom)) state.graphCustom = Object.create(null);
+      state.graphCustom = ownKeyRecord(state.graphCustom);
       state.graphCustom[id] = value;
       return;
     }
     if(isPendingDefaultsTarget(target)){
       const key = target === 'node-defaults' ? 'nodeCustom' : 'edgeCustom';
       if(!isRecord(state.settings)) state.settings = {};
-      if(!isRecord(state.settings[key])) state.settings[key] = Object.create(null);
+      state.settings[key] = ownKeyRecord(state.settings[key]);
       state.settings[key][id] = value;
       return;
     }
-    if(!isRecord(target.custom)) target.custom = Object.create(null);
+    target.custom = ownKeyRecord(target.custom);
     target.custom[id] = value;
   }
   function unsetCustomValue(target: CustomPropTarget, id: string): void {
@@ -747,16 +786,28 @@
     for(const node of state.nodes) unsetCustomValue(node, id);
     for(const edge of state.edges) unsetCustomValue(edge, id);
   }
+  // Enumerates every map that can hold custom-property values together with a
+  // write-back for when it must be replaced by a safe (null-prototype) copy.
+  function customValueStoreRefs(): { store: unknown; write: (safe: AnyRecord) => void }[] {
+    const refs: { store: unknown; write: (safe: AnyRecord) => void }[] = [
+      { store: state.graphCustom, write: safe => { state.graphCustom = safe; } },
+      { store: isRecord(state.settings) ? state.settings.nodeCustom : undefined, write: safe => { if(isRecord(state.settings)) state.settings.nodeCustom = safe; } },
+      { store: isRecord(state.settings) ? state.settings.edgeCustom : undefined, write: safe => { if(isRecord(state.settings)) state.settings.edgeCustom = safe; } },
+    ];
+    for(const n of state.nodes) refs.push({ store: n.custom, write: safe => { n.custom = Object.keys(safe).length ? safe : undefined; } });
+    for(const e of state.edges) refs.push({ store: e.custom, write: safe => { e.custom = Object.keys(safe).length ? safe : undefined; } });
+    return refs;
+  }
   // Renaming an attribute id moves its values with it, so the user does not
   // silently lose what they already typed.
   function renameCustomAttributeValues(oldId: string, newId: string): void {
-    const settingsCustom = isRecord(state.settings) ? [state.settings.nodeCustom, state.settings.edgeCustom] : [];
-    const stores = [state.graphCustom, ...settingsCustom, ...state.nodes.map(n => n.custom), ...state.edges.map(e => e.custom)];
-    for(const store of stores){
+    for(const { store, write } of customValueStoreRefs()){
       if(!isRecord(store)) continue;
       if(!Object.prototype.hasOwnProperty.call(store, oldId)) continue;
-      store[newId] = store[oldId];
-      delete store[oldId];
+      const safe = ownKeyRecord(store);
+      if(safe !== store) write(safe);
+      safe[newId] = safe[oldId];
+      delete safe[oldId];
     }
   }
   // Reads one entity-or-graph target and applies a raw control value to every
@@ -867,15 +918,34 @@
 
     const customAttributeTypes = ['boolean','int','long','float','double','string'];
     const customAttributeIds = new Set<string>();
+    // Legacy documents may contain ids that were legal when they were saved
+    // but collide with built-ins today (e.g. "Label" or "stroke.color"). Their
+    // definitions — and their values everywhere — are migrated to a fresh
+    // unique id instead of being silently dropped.
+    const customIdRenames = new Map<string, string>();
     const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
-      .slice(0, 500).filter(isRecord).map(attribute => {
-        const id = String(attribute.id ?? '').trim().slice(0, 128);
+      .slice(0, CUSTOM_DEFINITIONS_MAX).filter(isRecord).map(attribute => {
+        let id = String(attribute.id ?? '').trim().slice(0, 128);
         const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()) || customAttributeIds.has(id)) return null;
+        if(!id || !scope || customAttributeIds.has(id)) return null;
+        if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){
+          if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)) return null; // always-reserved ids stay rejected
+          const renamed = uniqueCustomAttributeId(id, customAttributeIds);
+          customIdRenames.set(id, renamed);
+          id = renamed;
+        }
         customAttributeIds.add(id);
         return {id, scope, type};
       }).filter(Boolean) as GraphState['customAttributes'];
+    // Rewrites the keys of a value map with the renames collected above, so
+    // values stored under a migrated legacy id move to the new id.
+    const renameLegacyCustomValues = (input: unknown): unknown => {
+      if(!customIdRenames.size || !isRecord(input)) return input;
+      const out: AnyRecord = Object.create(null);
+      for(const key of Object.keys(input)) out[customIdRenames.get(key) || key] = input[key];
+      return out;
+    };
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
     // New-element defaults sanitize against their own scope's definitions only.
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'node'));
@@ -908,7 +978,7 @@
       if(n.labelSize != null) node.labelSize = clamp(finite(n.labelSize, 13), 4, 72);
       if(n.labelPosition) node.labelPosition = validLabelPos(n.labelPosition);
       if(n.labelFont) node.labelFont = String(n.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(n.custom, customAttributeTypeById);
+      const customValues = sanitizeCustomValues(renameLegacyCustomValues(n.custom), customAttributeTypeById);
       if(customValues) node.custom = customValues;
       return node;
     });
@@ -935,7 +1005,7 @@
       if(e.labelColor) edge.labelColor = validColor(e.labelColor) || '';
       if(e.labelSize != null) edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(e.custom, customAttributeTypeById);
+      const customValues = sanitizeCustomValues(renameLegacyCustomValues(e.custom), customAttributeTypeById);
       if(customValues) edge.custom = customValues;
       edges.push(edge);
     });
@@ -1118,9 +1188,9 @@
         return out;
       }).filter(Boolean);
     } else { settings.stylePresets = []; }
-    const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
-    settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
-    settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
+    const graphCustom = sanitizeCustomValues(renameLegacyCustomValues(source.graphCustom), customAttributeTypeById) || Object.create(null);
+    settings.nodeCustom = sanitizeCustomValues(renameLegacyCustomValues(inputSettings.nodeCustom), nodeDefaultTypeById) || Object.create(null);
+    settings.edgeCustom = sanitizeCustomValues(renameLegacyCustomValues(inputSettings.edgeCustom), edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),

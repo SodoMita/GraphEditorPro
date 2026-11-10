@@ -7,6 +7,7 @@
       idInput.setCustomValidity('');
       if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){ toast(I18N.t('attribute_id_reserved')); return; }
       if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
+      if(state.customAttributes.length >= CUSTOM_DEFINITIONS_MAX){ toast(I18N.t('attribute_limit_reached')); return; }
       state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
       idInput.value = '';
       renderCustomAttributes(); renderCustomPropHosts(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
