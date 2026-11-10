@@ -209,14 +209,22 @@
       // QVGE DOT: fillcolor=fill, color=stroke.color, penwidth=stroke.size, style=stroke.style
       attrs.push(`fillcolor=${dotString(v.color)}`);
       attrs.push(`color=${dotString(v.strokeColor)}`);
-      attrs.push(`penwidth=${v.strokeSize}`);
       const ss = v.strokeStyle;
-      if(ss && ss !== 'solid' && ss !== 'none'){
-        attrs.push(`style=${dotString(`filled,${dotStrokeStyle(ss)}`)}`);
-      } else if(ss === 'none'){
-        attrs.push(`style=${dotString('filled')}`);
+      if(ss === 'none'){
+        // QVGE NoPen: penwidth 0 + style invis so QVGE CUtils::textToPenStyle("none")/invis matches
+        // GraphViz will not draw border when penwidth 0
+        attrs.push(`penwidth=0`);
+        attrs.push(`style=${dotString('invis')}`);
       } else {
-        attrs.push(`style=${dotString('filled')}`);
+        attrs.push(`penwidth=${v.strokeSize}`);
+        if(ss && ss !== 'solid'){
+          attrs.push(`style=${dotString(`filled,${dotStrokeStyle(ss)}`)}`);
+        } else if(ss === 'solid'){
+          // Explicit solid so round-trip preserves it (GraphViz default is solid anyway)
+          attrs.push(`style=${dotString('filled,solid')}`);
+        } else {
+          attrs.push(`style=${dotString('filled')}`);
+        }
       }
       attrs.push(`width=${(v.width/72).toFixed(4)}`, `height=${(v.height/72).toFixed(4)}`);
       attrs.push(`order=${n.order ?? 0}`);
@@ -787,7 +795,7 @@
     // QVGE/CUtils exact mapping: none, solid, dotted, dashed, dashdot, dashdotdot
     // Also handle GraphViz DOT style values (dashed/dotted/solid/bold/invis) and
     // common hyphen variants. Order matters: longest first.
-    if(s === 'none' || s === 'nopen' || s === 'transparent' || s === 'invis' || s === 'invisible') return 'none';
+    if(s === 'none' || s === 'nopen' || s === 'transparent' || s === 'invis' || s === 'invisible' || s.includes('invis')) return 'none';
     if(s.includes('dashdotdot') || s.includes('dash-dot-dot') || s.includes('dash_dot_dot')) return 'dashdotdot';
     if(s.includes('dashdot') || s.includes('dash-dot') || s.includes('dash_dot')) return 'dashdot';
     if(s.includes('dash')) return 'dashed';
