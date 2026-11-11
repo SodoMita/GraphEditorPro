@@ -902,11 +902,14 @@
       if(!id || !scope) return null;
       // The definition's own attribute name, when the importer recorded one.
       const name = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128).toLowerCase();
-      // Prefer the definition's own attr.name: an external key that happens to
-      // reuse one of the app's key ids (id="x" attr.name="externalTag") is a
-      // real attribute, not the built-in, and should keep the meaningful name.
-      // Fall back to the id when the name is a built-in one.
-      const base = name && !BUILTIN_GRAPHML_ATTR_NAMES.has(name) ? name : id;
+      // A usable id is kept as-is, so editing a definition survives save/reload
+      // and export/import without the id drifting. Only when the id itself
+      // cannot be used — reserved, or already claimed — does the definition's
+      // own attr.name become the base: an external key that reuses one of the
+      // app's key ids (id="x" attr.name="externalTag") is a real attribute and
+      // should be named after what it means, not after the collision.
+      const idUsable = !RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) && !customAttributeIds.has(id);
+      const base = idUsable ? id : (name && !BUILTIN_GRAPHML_ATTR_NAMES.has(name) ? name : id);
       const claimedByOther = (declaredCounts.get(base) || 0) - (base === id ? 1 : 0) > 0;
       const usable = !RESERVED_CUSTOM_ATTRIBUTE_IDS.has(base) && !customAttributeIds.has(base) && !claimedByOther;
       // `direction`, `arrowSize` and `edgeArrowSize` became built-ins after
@@ -917,7 +920,11 @@
       const resolved = usable ? base : migrateLegacyAttributeId(base, customAttributeIds, declaredCounts, base);
       if(!resolved || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(resolved) || customAttributeIds.has(resolved)) return null;
       customAttributeIds.add(resolved);
-      return {id: resolved, scope, type};
+      // Keep the external attribute name when it is neither the id nor a
+      // built-in one, so the definition exports under the name it was read with.
+      const out: AnyRecord = {id: resolved, scope, type};
+      if(name && name !== resolved && !BUILTIN_GRAPHML_ATTR_NAMES.has(name)) out.name = name;
+      return out as GraphState['customAttributes'][number];
     }).filter(Boolean) as GraphState['customAttributes'];
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(

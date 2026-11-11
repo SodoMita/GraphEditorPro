@@ -187,3 +187,41 @@ test('GraphML export keeps definitions that collide past the whole short suffix 
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('editing a custom definition keeps its id, and migrated names survive reload', async () => {
+  // Resolution must not reshape an id that is already usable, or editing a
+  // definition would silently move it (capacity -> capacity2) and the same
+  // document would import differently on every load.
+  {
+    const {dom} = createEditorDom();
+    const {document} = dom.window;
+    document.querySelector('#customAttributeId').value = 'capacity';
+    document.querySelector('#btnAddCustomAttribute').click();
+    const row = document.querySelector('.custom-attribute-row');
+    row.querySelector('[data-attribute-field="scope"]').value = 'graph';
+    row.querySelector('[data-attribute-field="type"]').value = 'double';
+    row.querySelector('[data-attribute-action="save"]').click();
+    const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+    assert.deepEqual(ids, ['capacity'], 'the id is unchanged by an unrelated edit');
+    assert.equal(document.querySelector('[data-attribute-field="scope"]').value, 'graph');
+    assert.equal(document.querySelector('[data-attribute-field="type"]').value, 'double');
+    dom.window.close();
+  }
+
+  // A definition renamed away from a reserved id keeps its external attr.name
+  // through autosave and the next load, so exporting it again is lossless.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}], edges: [],
+    customAttributes: [{id:'externaltag', scope:'node', type:'string', name:'externaltag'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids, ['externaltag'], 'a migrated definition keeps its id across reloads');
+  document.querySelector('#btnExportGraphml').click();
+  const graphml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(graphml, /<key id="externaltag"[^>]*attr\.name="externaltag"/, 'and still exports its own attr.name');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
