@@ -998,3 +998,55 @@ test('every custom definition id survives an export/import cycle, however it is 
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a name spelled differently on one scope does not shadow another scope', async () => {
+  // The canonical-spelling map is keyed by scope as well as name. Keyed by name
+  // alone, a node key spelled attr.name="LABEL" decided that the edge key spelled
+  // attr.name="label" was a duplicate, and the edge's label was discarded.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="LABEL" attr.type="string"/>',
+    '  <key id="el" for="edge" attr.name="label" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="el">Relation</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges[0].label, 'Relation', 'the edge label survives a node key on another scope');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a cross-scope case collision does not drop a definition either', async () => {
+  // Same shape through the definition path, and the node key must be canonical
+  // for shadowing to engage at all — otherwise the test proves nothing. The edge
+  // key here is the canonical *edge* key spelled "label" while the node key is
+  // spelled "Label": a name-only map shadows the edge one and its value is lost.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="Label" attr.type="string"/>',
+    '  <key id="edgeLabel" for="edge" attr.name="label" attr.type="string"/>',
+    '  <key id="et" for="edge" attr.name="tag" attr.type="string"/>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/><edge id="e1" source="n1" target="n2"><data key="edgeLabel">E</data></edge></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => ({
+    id: row.querySelector('[data-attribute-field="id"]').value,
+    scope: row.querySelector('[data-attribute-field="scope"]').value,
+  }));
+  assert.deepEqual(rows, [{id:'et', scope:'edge'}], 'the edge definition survives');
+  // And the canonical node key still provides its value under its own spelling.
+  assert.equal(exportedGraph(document).edges[0].label, 'E', 'the edge value reaches the edge label');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

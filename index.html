@@ -10994,14 +10994,19 @@ function parseGraphml(text) {
     // one would silently win — a stray attr.name="LABEL" rewriting the label.
     // A differently-spelled alias of the same field (id="k" attr.name=
     // "arrow.size") is not a collision: it feeds the same field by design.
+    // Keyed by *scope and* name. A node key spelled attr.name="LABEL" must not
+    // decide anything about an edge key spelled attr.name="label": the two feed
+    // different readers, and shadowing across scopes threw away a valid edge label.
     const canonicalSpelling = new Map();
     for (const k of keyEls) {
-        const key = `${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}|${String(k.getAttribute('attr.name') || '').toLowerCase()}`;
+        const forWhom = k.getAttribute('for') || 'all';
+        const key = `${k.getAttribute('id') || ''}|${forWhom}|${String(k.getAttribute('attr.name') || '').toLowerCase()}`;
         if (!ourKeys.has(key))
             continue;
         const lower = String(k.getAttribute('attr.name') || '').toLowerCase();
-        if (!canonicalSpelling.has(lower))
-            canonicalSpelling.set(lower, String(k.getAttribute('attr.name') || ''));
+        const slot = `${forWhom}|${lower}`;
+        if (!canonicalSpelling.has(slot))
+            canonicalSpelling.set(slot, String(k.getAttribute('attr.name') || ''));
     }
     keyEls.forEach(k => {
         const rawId = k.getAttribute('id') || '';
@@ -11049,8 +11054,13 @@ function parseGraphml(text) {
         // fallback bind `data key="label"` to the node label.
         // Only a *differently spelled* name that lowercases onto a canonical one is
         // shadowed; a legitimate alias of the same field still feeds it.
-        const canonical = canonicalSpelling.get(name);
-        const shadowsCanonical = !isDefinition && canonical !== undefined && canonical !== rawName;
+        // A key declared for "all" collides with a canonical key on any scope, so
+        // it has to be checked against every scope it could apply to.
+        const scopesChecked = forWhom === 'all' ? ['graph', 'node', 'edge'] : [forWhom];
+        const shadowsCanonical = !isDefinition && scopesChecked.some(candidateScope => {
+            const canonical = canonicalSpelling.get(`${candidateScope}|${name}`);
+            return canonical !== undefined && canonical !== rawName;
+        });
         keyNames[rawId] = (isDefinition || shadowsCanonical) ? '' : name;
         if (isDefinition && rawId && ['graph', 'node', 'edge'].includes(scope)) {
             // A marked key may record the definition's own id, used when the exported
