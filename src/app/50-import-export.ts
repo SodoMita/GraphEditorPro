@@ -313,11 +313,9 @@
     ['gridMajorAlpha', 'graph', 'grid.major.alpha', 'double'],
   ];
   const GRAPHML_BUILTIN_KEY_IDS = new Set(GRAPHML_BUILTIN_KEYS.map(([id]) => id));
-  // Core's built-in-key test needs these ids to tell the app's own
-  // <key id="edgeStrokeStyle" attr.name="style"> apart from a user's
-  // <key id="style" attr.name="style"> definition. Passed as a thunk so the
-  // classification cannot depend on module evaluation order.
-  registerGraphmlBuiltinKeyIds(() => GRAPHML_BUILTIN_KEYS.map(([id]) => id));
+  // The one rule core needs: a key is built-in iff it is one of these. Passed as
+  // a thunk so classification cannot depend on module evaluation order.
+  registerGraphmlBuiltinKeys(() => GRAPHML_BUILTIN_KEYS);
   // <key> lines for the user's custom definitions. An id that collides with a
   // built-in one gets a numbered suffix (arrowSize -> arrowSize2) instead of
   // being emitted twice or dropped, so a definition is never lost in export.
@@ -974,12 +972,10 @@
       const forWhom = k.getAttribute('for') || 'all';
       keyNames[id] = name;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      // Built-in is decided by id *and* name: a user definition may legitimately
-      // be called `style` on an edge (a name the exporter also writes), and only
-      // its own id shows it is not the app's key. Everything that is not a
-      // built-in key is a real definition, even when its id collides with a
-      // reserved one — the sanitizer renames that, so dropping it here would
-      // lose the attribute.
+      // One rule: a key is ours iff the exporter writes this exact (id, name,
+      // scope). Anything else is the user's definition and is kept — including
+      // ids and names we happen to read as aliases, because we never emit those
+      // keys ourselves, so such a document came from elsewhere.
       if(id && !isBuiltinGraphmlKey(id, name, forWhom) && ['graph','node','edge'].includes(forWhom)){
         customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
       }

@@ -492,317 +492,141 @@ test('GraphML export never repeats a built-in key id, even when a custom definit
   dom.window.close();
 });
 
-test('GraphML keys that reuse a built-in id for an unrelated attr.name become custom definitions', async () => {
-  // The attribute NAME is what makes a key built-in — the engine reads those
-  // values positionally by name. An external document may reuse a now-reserved
-  // id for something else entirely; filtering on the id alone discarded it.
-  const graphml = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
-    '  <key id="direction" for="node" attr.name="externalTag" attr.type="string"/>',
-    '  <key id="arrowSize" for="edge" attr.name="packetCount" attr.type="int"/>',
-    '  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>',
-    '  <graph edgedefault="directed">',
-    '    <node id="n1"><data key="direction">alpha</data></node>',
-    '    <node id="n2"/>',
-    '    <edge id="e1" source="n1" target="n2"><data key="weight">3</data><data key="arrowSize">9</data></edge>',
-    '  </graph>',
-    '</graphml>',
-  ].join('\n');
-  const {dom, errors} = createEditorDom();
-  const {document} = dom.window;
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
-
-  const rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => ({
-    id: row.querySelector('[data-attribute-field="id"]').value,
-    scope: row.querySelector('[data-attribute-field="scope"]').value,
-    type: row.querySelector('[data-attribute-field="type"]').value,
-  }));
-  assert.equal(rows.length, 2, 'both external definitions are kept');
-  assert.ok(!rows.some(row => row.id === 'weight'), 'a genuine built-in name is not a custom definition');
-  // Definitions are named after their own attr.name (lowercased, as the
-  // importer has always done), not after the built-in id they collided with.
-  assert.equal(rows.find(row => row.id === 'packetcount').type, 'int', 'the definition type survives');
-  assert.equal(rows.find(row => row.id === 'externaltag').scope, 'node', 'the definition scope survives');
-
-  // The graph itself still imports, and the unrelated data does not leak into
-  // the built-in fields it happens to share an id with.
-  const graph = exportedGraph(document);
-  assert.equal(graph.nodes.length, 2);
-  assert.equal(graph.edges.length, 1);
-  assert.equal(graph.edges[0].weight, '3', 'the real built-in weight is parsed');
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
-
-test('GraphML import keeps built-in-only documents free of custom definitions', async () => {
+test('GraphML key classification follows one rule: could the exporter have written it?', async () => {
+  // Built-in: an exact (id, name, scope) match with one of the exporter's own
+  // keys, or one of its field names under a foreign id (another tool's spelling
+  // of it). Everything else is the user's definition and is preserved.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    // our own keys -> built-in, never definitions
     '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
     '  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>',
-    '  <key id="direction" for="edge" attr.name="direction" attr.type="string"/>',
+    '  <key id="edgeStrokeStyle" for="edge" attr.name="style" attr.type="string"/>',
     '  <key id="arrowSize" for="edge" attr.name="arrow.size" attr.type="double"/>',
+    // our field names under a foreign id -> still built-in
+    '  <key id="k" for="edge" attr.name="arrow.size" attr.type="double"/>',
+    '  <key id="k2" for="edge" attr.name="style" attr.type="string"/>',
+    '  <key id="k3" for="edge" attr.name="stroke.size" attr.type="double"/>',
+    '  <key id="k4" for="node" attr.name="stroke.color" attr.type="string"/>',
+    // names we never write -> the user's definitions, kept
+    '  <key id="style" for="edge" attr.name="style" attr.type="string"/>',
+    '  <key id="name" for="node" attr.name="name" attr.type="string"/>',
+    '  <key id="fillcolor" for="node" attr.name="fillcolor" attr.type="string"/>',
+    '  <key id="value" for="edge" attr.name="value" attr.type="string"/>',
+    '  <key id="arrowsize" for="edge" attr.name="arrowsize" attr.type="double"/>',
+    '  <key id="score" for="node" attr.name="score" attr.type="double"/>',
     '  <graph edgedefault="directed">',
     '    <node id="n1"><data key="label">A</data></node>',
-    '    <node id="n2"><data key="label">B</data></node>',
-    '    <edge id="e1" source="n1" target="n2"><data key="weight">2</data><data key="direction">mutual</data><data key="arrowSize">30</data></edge>',
+    '    <node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="weight">4</data><data key="edgeStrokeStyle">dashed</data><data key="k">30</data></edge>',
     '  </graph>',
     '</graphml>',
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
-  assert.equal(document.querySelectorAll('.custom-attribute-row').length, 0, 'no built-in comes back as a custom definition');
+
+  const rows = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  // `style` (edge), `name`, `fillcolor`, `value`, `arrowsize`, `score` are kept;
+  // `arrowsize` is kept because the exporter never writes that spelling.
+  assert.deepEqual(rows.sort(), ['arrowsize', 'fillcolor', 'name', 'score', 'style', 'value'].sort(),
+    'only keys the exporter could have written become built-in');
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].label, 'A', 'label still binds');
+  assert.equal(graph.edges[0].weight, '4', 'weight still binds');
+  assert.equal(graph.edges[0].strokeStyle, 'dashed', 'the app style key still binds');
+  assert.equal(graph.edges[0].arrowSize, 30, 'a foreign id spelling arrow.size still binds');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a user definition named after a built-in field survives its own round-trip', async () => {
+  // The editor permits these ids and the exporter writes them as
+  // <key id="D" attr.name="D">, which the rule above keeps.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'directed'}],
+    customAttributes: [
+      {id:'name', scope:'node', type:'string'},
+      {id:'fillcolor', scope:'node', type:'string'},
+      {id:'value', scope:'edge', type:'string'},
+      {id:'style', scope:'edge', type:'string'},
+    ],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportGraphml').click();
+  const graphml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids.sort(), ['fillcolor', 'name', 'style', 'value'], 'all four definitions come back');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('the app\'s own export re-imports without inventing definitions', async () => {
+  // The strongest guard on the rule: every key our exporter writes must be
+  // classified built-in, or the app would spawn definitions from its own files.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'mutual', arrowSize:20, strokeStyle:'dotted'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportGraphml').click();
+  const graphml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok([...graphml.matchAll(/<key /g)].length > 40, 'the exporter emits its full schema');
+
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const rows = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(rows, [], 'no key from our own export becomes a definition');
   const graph = exportedGraph(document);
   assert.equal(graph.edges[0].direction, 'mutual');
-  assert.equal(graph.edges[0].arrowSize, 30);
+  assert.equal(graph.edges[0].arrowSize, 20);
+  assert.equal(graph.edges[0].strokeStyle, 'dotted');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('built-in keys are identified by id and name together, aliases included', async () => {
-  // A name alone cannot decide this. `style` is the exporter's own edge
-  // stroke-style name AND a legal user definition; only the key id shows which
-  // is which. Aliases the parser reads (arrowsize, fillcolor, posx, `name`,
-  // `value`) bind to built-in fields, so they must never surface as definitions.
+test('a key that only half-matches a built-in stays a definition and survives a round-trip', async () => {
+  // A name of ours on the wrong scope, and a foreign name under one of our ids:
+  // neither could have come out of our exporter, so both belong to the user.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
-    // the app's own keys -> built-in
-    '  <key id="edgeStrokeStyle" for="edge" attr.name="style" attr.type="string"/>',
-    '  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>',
-    '  <key id="arrowSize" for="edge" attr.name="arrow.size" attr.type="double"/>',
-    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
-    // aliases the parser reads -> still built-in, never definitions
-    '  <key id="as" for="edge" attr.name="arrowsize" attr.type="double"/>',
-    '  <key id="vv" for="edge" attr.name="value" attr.type="string"/>',
-    '  <key id="px" for="node" attr.name="posx" attr.type="double"/>',
-    '  <key id="fc" for="node" attr.name="fillcolor" attr.type="string"/>',
-    '  <key id="nn" for="node" attr.name="name" attr.type="string"/>',
-    // a user definition reusing the schema name `style` under its own id
-    '  <key id="style" for="edge" attr.name="style" attr.type="string"/>',
-    '  <key id="nStyle" for="node" attr.name="style" attr.type="string"/>',
+    '  <key id="weight" for="node" attr.name="weight" attr.type="string"/>',
+    '  <key id="arrowSize" for="edge" attr.name="score" attr.type="double"/>',
     '  <graph edgedefault="directed">',
-    '    <node id="n1"><data key="label">A</data><data key="px">7</data><data key="fc">#ff0000</data></node>',
+    '    <node id="n1"><data key="weight">heavy</data></node>',
     '    <node id="n2"/>',
-    '    <edge id="e1" source="n1" target="n2"><data key="edgeStrokeStyle">dashed</data><data key="weight">4</data><data key="as">24</data></edge>',
+    '    <edge id="e1" source="n1" target="n2"><data key="arrowSize">3</data></edge>',
     '  </graph>',
     '</graphml>',
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
-
-  const rows = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(rows.sort(), ['nStyle', 'style'], 'only the user-authored keys become definitions');
-
-  const graph = exportedGraph(document);
-  assert.equal(graph.edges[0].strokeStyle, 'dashed', 'the app key still drives stroke style');
-  assert.equal(graph.edges[0].weight, '4', 'weight still drives weight');
-  assert.equal(graph.edges[0].arrowSize, 24, 'the arrowsize alias still sets the built-in size');
-  assert.equal(graph.nodes[0].x, 7, 'the posx alias still sets the position');
-  assert.equal(graph.nodes[0].color, '#ff0000', 'the fillcolor alias still sets the colour');
-  assert.equal(graph.nodes[0].label, 'A');
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
-
-test('a user definition may reuse a schema name on a scope that has no such field', async () => {
-  // Nodes have no `style` property, so an edge-schema name on a node is the
-  // user's definition and must survive its own export/import. `name` and
-  // `value` are label/weight aliases, so they are built-in and never surface.
-  const saved = {
-    nodes: [{id:'n1', label:'A', x:0, y:0}], edges: [],
-    customAttributes: [{id:'style', scope:'node', type:'string'}],
-  };
-  const {dom, errors} = createEditorDom(saved);
-  const {document} = dom.window;
-  document.querySelector('#btnExportGraphml').click();
-  const graphml = document.querySelector('.export-modal textarea').value;
-  document.querySelector('#expCloseBtn').click();
-  assert.match(graphml, /<key id="style" for="node" attr\.name="style"/);
-
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(ids, ['style'], 'the node definition comes back');
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
+  assert.deepEqual(ids.sort(), ['arrowSize', 'weight'], 'both half-matches are definitions');
 
-test('an edge definition named style survives its own round-trip', async () => {
-  // The editor allows an edge definition called `style`; the exporter writes it
-  // under its own id, which is what distinguishes it from the built-in key.
-  const saved = {
-    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
-    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'directed'}],
-    customAttributes: [{id:'style', scope:'edge', type:'string'}],
-  };
-  const {dom, errors} = createEditorDom(saved);
-  const {document} = dom.window;
   document.querySelector('#btnExportGraphml').click();
-  const graphml = document.querySelector('.export-modal textarea').value;
+  const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
-  assert.match(graphml, /<key id="style" for="edge" attr\.name="style"/);
+  assert.match(exported, /<key id="weight2" for="node" attr\.name="weight"/, 'the colliding id is renamed, not dropped');
+  // The definition's own name is what it is: the foreign name rides along with
+  // the renamed id instead of being flattened onto ours.
+  assert.match(exported, /<key id="arrowSize2" for="edge" attr\.name="score"/, 'the foreign name is kept');
 
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
-  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(ids, ['style'], 'the edge definition comes back');
-  const graph = exportedGraph(document);
-  assert.equal(graph.edges.length, 1, 'the graph is intact');
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
-
-test('node definitions keep working while parser aliases stay built-in', async () => {
-  // `name` backs up a missing node label and `value` backs up an edge weight,
-  // so keys spelled that way are built-in fields and must not surface as
-  // definitions. A node definition that reuses an edge-schema name (`style`) is
-  // the user's, though — nodes have no such property.
-  const saved = {
-    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}], edges: [],
-    customAttributes: [{id:'style', scope:'node', type:'string'}],
-  };
-  const {dom, errors} = createEditorDom(saved);
-  const {document} = dom.window;
-  document.querySelector('#btnExportGraphml').click();
-  const graphml = document.querySelector('.export-modal textarea').value;
-  document.querySelector('#expCloseBtn').click();
-  assert.match(graphml, /<key id="style" for="node" attr\.name="style"/);
-
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
-  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(ids, ['style'], 'the node definition comes back');
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
-
-test('external GraphML keys reusing older reserved ids keep their definitions', async () => {
-  // The importer has always accepted an external key such as id="x" with an
-  // unrelated attr.name. Once ids became reserved, the sanitizer dropped them;
-  // they must be renamed instead, named after their own attr.name.
-  const graphml = [
-    '<?xml version="1.0"?>',
-    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
-    '  <key id="x" for="node" attr.name="externalTag" attr.type="string"/>',
-    '  <key id="y" for="edge" attr.name="priority" attr.type="int"/>',
-    '  <key id="color" for="graph" attr.name="palette" attr.type="string"/>',
-    '  <key id="x2" for="node" attr.name="x" attr.type="double"/>',
-    '  <graph edgedefault="directed">',
-    '    <node id="n1"/>',
-    '    <node id="n2"/>',
-    '    <edge id="e1" source="n1" target="n2"/>',
-    '  </graph>',
-    '</graphml>',
-  ].join('\n');
-  const {dom, errors} = createEditorDom();
-  const {document} = dom.window;
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
-
-  const rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => ({
-    id: row.querySelector('[data-attribute-field="id"]').value,
-    scope: row.querySelector('[data-attribute-field="scope"]').value,
-    type: row.querySelector('[data-attribute-field="type"]').value,
-  }));
-  assert.equal(rows.length, 3, 'every external definition survives');
-  assert.deepEqual(rows.find(row => row.id === 'externaltag'), {id:'externaltag', scope:'node', type:'string'});
-  assert.deepEqual(rows.find(row => row.id === 'priority'), {id:'priority', scope:'edge', type:'int'});
-  assert.deepEqual(rows.find(row => row.id === 'palette'), {id:'palette', scope:'graph', type:'string'});
-
-  // The real built-ins sharing those ids still parse, and the next import of the
-  // exported document keeps the same three definitions.
-  const graph = exportedGraph(document);
-  assert.equal(graph.nodes.length, 2);
-  assert.equal(graph.edges.length, 1);
-  const roundTripped = [];
-  document.querySelector('#btnExportGraphml').click();
-  roundTripped.push(document.querySelector('.export-modal textarea').value);
-  document.querySelector('#expCloseBtn').click();
-  await paste(document, dom.window, '#btnPasteGraphml', roundTripped[0]);
+  await paste(document, dom.window, '#btnPasteGraphml', exported);
   const again = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(again.sort(), ['externaltag', 'palette', 'priority'], 'definitions survive a round-trip');
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
-
-test('every attr.name the GraphML exporter writes is classed built-in for its scope', async () => {
-  // The built-in name sets and the exporter's key list have to agree: a name
-  // the exporter writes but the sets miss re-opens the phantom-definition bug
-  // on the app's own documents; a name the sets include but the app never
-  // writes silently discards a user's definition. This caught a real mismatch
-  // (attr.name="edge.weight.colorLow" vs a lowercased set entry).
-  const saved = {
-    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
-    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'directed'}],
-  };
-  const {dom, errors} = createEditorDom(saved);
-  const {document} = dom.window;
-  document.querySelector('#btnExportGraphml').click();
-  const graphml = document.querySelector('.export-modal textarea').value;
-  document.querySelector('#expCloseBtn').click();
-
-  const keys = [...graphml.matchAll(/<key id="([^"]+)" for="([^"]+)" attr\.name="([^"]+)"/g)]
-    .map(([, id, scope, name]) => ({id, scope, name}));
-  assert.ok(keys.length > 40, 'the exporter emits its full schema');
-
-  // Re-importing our own export must yield no custom definitions at all: every
-  // key it carries is part of the schema, not the user's.
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
-  const rows = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(rows, [], 'no key from the app\'s own export becomes a custom definition');
-
-  const graph = exportedGraph(document);
-  assert.equal(graph.nodes.length, 2);
-  assert.equal(graph.edges.length, 1);
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
-
-test('a user style definition coexists with the built-in edge style key', async () => {
-  // Both appear in one document: our <key id="edgeStrokeStyle" attr.name="style">
-  // and the user's <key id="style" attr.name="style">. Only the id separates
-  // them, so both the stroke style and the definition must survive.
-  const saved = {
-    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
-    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'directed', strokeStyle:'dashed'}],
-    customAttributes: [{id:'style', scope:'edge', type:'string'}],
-  };
-  const {dom, errors} = createEditorDom(saved);
-  const {document} = dom.window;
-  document.querySelector('#btnExportGraphml').click();
-  const graphml = document.querySelector('.export-modal textarea').value;
-  document.querySelector('#expCloseBtn').click();
-
-  const keyIds = [...graphml.matchAll(/<key id="([^"]+)"/g)].map(match => match[1]);
-  assert.equal(new Set(keyIds).size, keyIds.length, 'key ids stay unique');
-  assert.equal(keyIds.filter(id => id === 'style').length, 1, 'one user style key');
-  assert.ok(keyIds.includes('edgeStrokeStyle'), 'and the built-in one');
-
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
-  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(ids, ['style'], 'the definition survives');
-  const graph = exportedGraph(document);
-  assert.equal(graph.edges[0].strokeStyle, 'dashed', 'and the built-in stroke style still round-trips');
-  assert.deepEqual(errors.map(error => error.message), []);
-  dom.window.close();
-});
-
-test('a foreign name under one of the app key ids stays a definition', async () => {
-  // id="weight" attr.name="score" is not the built-in weight: the name decides.
-  const graphml = [
-    '<?xml version="1.0"?>',
-    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
-    '  <key id="weight" for="node" attr.name="score" attr.type="double"/>',
-    '  <key id="label" for="node" attr.name="title" attr.type="string"/>',
-    '  <key id="arrowSize" for="node" attr.name="rank" attr.type="int"/>',
-    '  <graph edgedefault="directed"><node id="n1"/></graph>',
-    '</graphml>',
-  ].join('\n');
-  const {dom, errors} = createEditorDom();
-  const {document} = dom.window;
-  await paste(document, dom.window, '#btnPasteGraphml', graphml);
-  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(ids.sort(), ['rank', 'score', 'title'], 'all three foreign definitions are kept');
+  // The renamed ids are stable from here on: neither collides any more, so a
+  // second export writes them unchanged.
+  assert.deepEqual(again.sort(), ['arrowSize2', 'weight2'], 'and it comes back, under its renamed id');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

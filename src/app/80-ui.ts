@@ -5,9 +5,10 @@
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)){ toast(I18N.t('attribute_id_reserved')); return; }
+      const newScope = $('#customAttributeScope').value;
+      if(isReservedCustomAttributeId(id, newScope)){ toast(I18N.t('attribute_id_reserved')); return; }
       if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
-      state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
+      state.customAttributes.push({id, scope: newScope, type: $('#customAttributeType').value});
       idInput.value = '';
       renderCustomAttributes(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
     });
@@ -25,9 +26,9 @@
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id)){ toast(I18N.t('attribute_id_reserved')); return; }
-      if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
+      if(isReservedCustomAttributeId(id, scope)){ toast(I18N.t('attribute_id_reserved')); return; }
+      if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const type = row.querySelector('[data-attribute-field="type"]').value;
       const previous = state.customAttributes[index];
       const next = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'} as AnyRecord;
