@@ -1366,3 +1366,56 @@ test('appending an import that carries score and score_1 keeps both properties d
   dom2ctx.dom.window.close();
   dom.window.close();
 });
+
+test('a migrated key reused for two incoming properties never overwrites the other', async () => {
+  // Step 1: a graph-scoped score exists; appending a node-scoped score mints
+  // score_1 for it. Step 2: a file with DISTINCT node keys score and score_1
+  // is appended. The first key resolves to the migrated score_1; the second
+  // must get its own definition — never silently binding over the first
+  // key's value. The file must arrive lossless in both key orders.
+  const saved = { title: 'keep-claim',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id:'score', scope:'graph', type:'string' }],
+    graphCustom: { score: 'graph-value' } };
+  const file1 = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="n2"><data key="score">42</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const step2For = keys => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    ...keys.map(k => `  <key id="${k}" for="node" attr.name="${k}" attr.type="string"/>`),
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="m"><data key="score">73</data><data key="score_1">99</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  for(const keys of [['score', 'score_1'], ['score_1', 'score']]){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    document.querySelector('#optImportAppend').checked = true;
+    await paste(document, dom.window, '#btnPasteGraphml', file1);
+    const after1 = exportedGraph(document);
+    const migrated = after1.customAttributes.find(d => d.scope === 'node');
+    assert.equal(migrated.id, 'score_1', `migrated definition id (key order: ${keys.join(',')})`);
+    await paste(document, dom.window, '#btnPasteGraphml', step2For(keys));
+    const after2 = exportedGraph(document);
+    assert.equal(after2.customAttributes.length, 3, `both properties survive (key order: ${keys.join(',')})`);
+    const m = after2.nodes.find(n => n.custom && Object.values(n.custom).some(v => v === '73' || v === '99'));
+    const bound = Object.entries(m.custom ?? {});
+    assert.equal(bound.length, 2, `no value overwritten (key order: ${keys.join(',')})`);
+    assert.deepEqual(new Set(Object.values(Object.fromEntries(bound))), new Set(['73', '99']), `both values present (key order: ${keys.join(',')})`);
+    assert.equal(m.custom?.[migrated.id], keys[0] === 'score' ? '73' : '99', `the file's score_1 key or the migrated property holds its value (key order: ${keys.join(',')})`);
+    assert.equal(after2.graphCustom?.score, 'graph-value', 'the graph-scope property is untouched');
+    document.querySelector('#btnExportGraphml').click();
+    const exported = document.querySelector('.export-modal textarea').value;
+    assert.ok(exported.includes('73') && exported.includes('99'), 'the export carries both values');
+    document.querySelector('#expCloseBtn').click();
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});

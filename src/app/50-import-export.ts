@@ -997,6 +997,12 @@
     // GraphML exports, so the round-trip keeps the same identity.
     const fileKeyIds = new Set<string>();
     doc.querySelectorAll('key').forEach(k => { const kid = k.getAttribute('id'); if(kid) fileKeyIds.add(kid); });
+    // Definition ids handed out by THIS FILE, claiming exactly once: a prior
+    // reuse, a raw id kept as-is, an expansion id — every consumer of an id
+    // takes it through the claim below or gets a fresh mint instead. Without
+    // this, one file's reuse can hand the same id to two distinct properties
+    // and the second overwrites the first's values at bind time.
+    const resolvedDefIds = new Set<string>();
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
       if(!id) return;
@@ -1044,6 +1050,7 @@
                 attribute.dataKey === id
                 && attribute.scope === scope
                 && String(attribute.dataName ?? '') === name
+                && !resolvedDefIds.has(attribute.id)
                 && !(migrated && forWhom !== 'all' && fileKeyIds.has(attribute.id)))
             : undefined;
           if(prior){
@@ -1076,6 +1083,19 @@
             // this definition instead of minting a second one each time.
             markers = { dataKey: id, dataName: name };
           }
+          if(resolvedDefIds.has(defId)){
+            // This file already handed the id to an earlier definition (an
+            // earlier key's raw id or a prior reuse from the document). The
+            // key that resolves here keeps its property under a fresh id
+            // instead of silently overwriting the earlier definition's values.
+            const taken = new Set(fileKeyIds);
+            if(Array.isArray(state.customAttributes)) for(const attribute of state.customAttributes) taken.add(attribute.id);
+            for(const attribute of customAttributes) taken.add(attribute.id);
+            for(const claimed of resolvedDefIds) taken.add(claimed);
+            defId = uniqueCustomAttributeId(defId, taken);
+            if(!markers.dataKey) markers = { dataKey: id, ...markers };
+          }
+          resolvedDefIds.add(defId);
           customAttributes.push({id: defId, scope: scope as 'graph' | 'node' | 'edge', type: normalizedType, ...markers});
           customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
           customKeyDataName.push({id: defId, scope, type: normalizedType, dataKey: id, defaultValue});
