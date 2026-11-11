@@ -1159,25 +1159,45 @@
     // but empty means "declared, and deliberately not a built-in field" — the data
     // map must not fall back to the raw key id (`||` used to defeat this).
     const fieldFor: Record<string, string> = {};
-    const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
-    for(let index = 0; index < keyInfos.length; index++){
-      const info = keyInfos[index];
+    // How strongly a declaration speaks for a field: a canonical one is
+    // authoritative, an alias is a fallback. Shadowed, definition and ignored
+    // declarations feed no field at all, so they cannot reach either reader.
+    const ROLE_STRENGTH: Partial<Record<KeyRole, number>> = {canonical: 0, alias: 1};
+    for(const info of keyInfos){
       const name = info.rawName.toLowerCase();
       for(const dataScope of appliesTo(info.forWhom)){
         const role = info.roles[dataScope];
-        // canonical and alias feed the field; shadowed, definition and ignored do not.
         fieldFor[`${info.keyId}|${dataScope}`] = (role === 'canonical' || role === 'alias') ? name : '';
       }
       if(info.isDefinition && info.keyId && appliesTo(info.forWhom).includes(info.scope)){
         customAttributes.push({id: info.definitionId, name: info.rawName, scope: info.scope, type: info.type});
       }
-      // A definition's <default> is not a built-in default: a custom `shape`
-      // default would otherwise change the node default for the whole document.
-      const defEl = keyEls[index].querySelector('default');
-      if(defEl && !info.isDefinition){
-        const val = defEl.textContent.trim();
-        keyDefaultsByFor[info.forWhom] = keyDefaultsByFor[info.forWhom] || {};
-        keyDefaultsByFor[info.forWhom][name] = val;
+    }
+    // <default> values resolve through fieldFor — the same mapping the data values
+    // use — so the two readers cannot disagree about what a key means. Collecting
+    // them into a bucket keyed by `for` instead meant a key for "all" wrote to a
+    // scope nobody reads, and every role reached the map, so a shadowed spelling
+    // (declared later, or not) could replace a canonical default. A definition's
+    // default never lands here either, which is what stops a custom `shape` from
+    // changing the node default for the whole document.
+    const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
+    const defaultStrength: Record<string, Record<string, number>> = { graph: {}, node: {}, edge: {} };
+    for(const dataScope of KEY_SCOPES){
+      for(let index = 0; index < keyInfos.length; index++){
+        const info = keyInfos[index];
+        if(!appliesTo(info.forWhom).includes(dataScope)) continue;
+        const field = fieldFor[`${info.keyId}|${dataScope}`];
+        if(!field) continue;
+        const strength = ROLE_STRENGTH[info.roles[dataScope] as KeyRole];
+        if(strength === undefined) continue;
+        const defEl = keyEls[index].querySelector('default');
+        if(!defEl) continue;
+        const held = defaultStrength[dataScope][field];
+        // A weaker declaration never displaces a stronger one; among equals the
+        // later <key> wins, as it would for data values.
+        if(held !== undefined && held < strength) continue;
+        keyDefaultsByFor[dataScope][field] = defEl.textContent.trim();
+        defaultStrength[dataScope][field] = strength;
       }
     }
 

@@ -1206,3 +1206,101 @@ test('an undeclared key id cannot act as a field name', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a shadowed default cannot override a canonical one', async () => {
+  // The role model governs data values and defaults alike: a key that is shadowed
+  // on a scope feeds no field there, so its <default> cannot speak for that field
+  // either. Declared after the canonical key, as in the report.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="shape" for="node" attr.name="shape" attr.type="string"><default>circle</default></key>',
+    '  <key id="s2" for="node" attr.name="SHAPE" attr.type="string"><default>square</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).settings.nodeDefaults.shape, 'circle', 'the canonical default wins');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('shadowed defaults lose regardless of declaration order', async () => {
+  // Precedence must be a property of the roles, not of document order: the same
+  // two keys declared the other way round give the same result.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="s2" for="node" attr.name="SHAPE" attr.type="string"><default>square</default></key>',
+    '  <key id="shape" for="node" attr.name="shape" attr.type="string"><default>circle</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).settings.nodeDefaults.shape, 'circle', 'order does not decide it');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a canonical default outranks an alias default', async () => {
+  // Same precedence mechanism, one step weaker: an alias is a legitimate second
+  // source but must not displace the canonical spelling of the same field. The
+  // canonical key is declared *first* here on purpose — written the other way
+  // round, "last key wins" would produce the right answer for the wrong reason.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="shape" for="node" attr.name="shape" attr.type="string"><default>circle</default></key>',
+    '  <key id="k" for="node" attr.name="shape" attr.type="string"><default>square</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).settings.nodeDefaults.shape, 'circle', 'canonical beats alias');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a lone shadowed spelling still supplies its default', async () => {
+  // Shadowing only exists to protect a canonical key. With no canonical key
+  // present there is nothing to protect, so the value is the only source and must
+  // be used — otherwise "fixing" precedence would drop legitimate documents.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="s2" for="node" attr.name="SHAPE" attr.type="string"><default>square</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).settings.nodeDefaults.shape, 'square', 'nothing to shadow, so it applies');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a for="all" default reaches the scopes it applies to', async () => {
+  // The default reader used to bucket by the raw `for` attribute, so a key
+  // declared for "all" wrote its default to a scope the readers never consult and
+  // the value was silently lost.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="s3" attr.name="shape" attr.type="string"><default>diamond</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).settings.nodeDefaults.shape, 'diamond', 'an all-scope default still lands');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
