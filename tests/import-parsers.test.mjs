@@ -483,9 +483,10 @@ test('GraphML export never repeats a built-in key id, even when a custom definit
   assert.equal(keyIds.filter(id => id === 'arrowSize').length, 1, 'exactly one arrowSize key');
   // Definitions live in their own namespace, so a definition called `arrowSize`
   // and the built-in key of that name no longer fight over the same id.
-  assert.ok(keyIds.includes('qvge.custom.arrowSize'), 'the colliding definition keeps its own id');
-  assert.ok(keyIds.includes('qvge.custom.capacity'), 'and so does the non-colliding one');
-
+  // Definitions keep their own id and are marked, so the built-in key and the
+  // definition of the same name coexist without sharing an id.
+  assert.ok(keyIds.includes('arrowSize'), 'the definition keeps its id');
+  assert.ok(keyIds.includes('capacity'), 'and so does the non-colliding one');
   // The built-in key still carries the value, and the import restores it.
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const graph = exportedGraph(document);
@@ -550,7 +551,7 @@ test('an unmarked key that binds to a built-in field never becomes a definition'
 test('a user definition named after a built-in field survives its own round-trip', async () => {
   // These names all bind to built-in fields when a foreign file uses them, so
   // they could never survive as definitions there. The exporter marks its own
-  // definitions instead (<key id="qvge.custom.D">), which is what makes them
+  // definitions instead (<key id="D" qvge:kind="custom-attribute">), which is what
   // distinguishable — and this round-trip exact.
   const saved = {
     nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
@@ -601,9 +602,9 @@ test('the app\'s own export re-imports without inventing definitions', async () 
 });
 
 test('a definition keeps its id through export and re-import, even when it looks built-in', async () => {
-  // Ids are no longer reshaped to dodge the built-in key block: a definition is
-  // written in its own namespace, so `weight`/`arrowSize` come back unchanged
-  // instead of being renamed to weight2/arrowSize2 on the way out.
+  // A definition that would collide with a built-in key id is written under a
+  // numbered key id, but records its own id in qvge:id, so it comes back
+  // unchanged instead of drifting to weight2 on every save.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
@@ -625,12 +626,101 @@ test('a definition keeps its id through export and re-import, even when it looks
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
-  assert.match(exported, /<key id="qvge\.custom\.weight" for="node" attr\.name="weight"/, 'the id is kept, not renamed');
-  assert.match(exported, /<key id="qvge\.custom\.arrowSize" for="edge" attr\.name="score"/, 'and the foreign name rides along');
+  assert.match(exported, /<key id="weight2" for="node" attr\.name="weight"[^>]*qvge:id="weight"/, 'the key id is unique and the definition id is recorded');
+  assert.match(exported, /<key id="arrowSize2" for="edge" attr\.name="score"[^>]*qvge:id="arrowSize"/, 'and the foreign name rides along');
 
   await paste(document, dom.window, '#btnPasteGraphml', exported);
   const again = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.deepEqual(again.sort(), ['arrowSize', 'weight'], 'a second round-trip is a no-op');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a GraphML export from the previous build keeps its definitions', async () => {
+  // The build before this one marked nothing and named definitions with a
+  // leading `qvge.custom.`. Both forms have to survive: the key block is
+  // complete, which is what attributes the document to us rather than to a
+  // third-party tool that happens to use the same names.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'mutual'}],
+    customAttributes: [
+      {id:'name', scope:'node', type:'string'},
+      {id:'value', scope:'edge', type:'string'},
+      {id:'style', scope:'edge', type:'string'},
+    ],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportGraphml').click();
+  const current = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  // (a) the pre-marker export: plain ids, no qvge:kind, no writer attribute.
+  const unmarked = current.replace(/ qvge:writer="graph-editor-pro" qvge:keys="\d+"/, '').replace(/ qvge:kind="custom-attribute"/g, '');
+  await paste(document, dom.window, '#btnPasteGraphml', unmarked);
+  let ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids.sort(), ['name', 'style', 'value'], 'unmarked definitions survive');
+  assert.equal(exportedGraph(document).nodes[0].label, 'A', 'and the label still binds to its own key');
+
+  // (b) the namespaced export written by the previous head.
+  const prefixed = unmarked
+    .replace('<key id="name" for="node"', '<key id="qvge.custom.name" for="node"')
+    .replace('<key id="style" for="edge"', '<key id="qvge.custom.style" for="edge"');
+  await paste(document, dom.window, '#btnPasteGraphml', prefixed);
+  ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids.sort(), ['name', 'style', 'value'], 'namespaced definitions are un-prefixed once, not dropped');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a foreign key that looks namespaced keeps its own id instead of collapsing', async () => {
+  // `qvge.custom.score` from another tool is that tool's key. Stripping the
+  // prefix here would make it collide with the genuine `score` definition and
+  // one of the two would be silently dropped.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="double"/>',
+    '  <key id="qvge.custom.score" for="node" attr.name="other" attr.type="string"/>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  let ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids.sort(), ['qvge.custom.score', 'score'], 'both keys survive as distinct definitions');
+
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(document, dom.window, '#btnPasteGraphml', exported);
+  ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids.sort(), ['qvge.custom.score', 'score'], 'and neither is lost on the next round-trip');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a definition\'s data never feeds the built-in field of the same name', async () => {
+  // A definition called `label` is legal, and its <data> must stay in the custom
+  // namespace. If it entered the built-in name map it would overwrite the node
+  // label — which is exactly what a marked key is there to prevent.
+  const saved = {
+    nodes: [{id:'n1', label:'Alice', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'directed'}],
+    customAttributes: [{id:'label', scope:'node', type:'string'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  await paste(document, dom.window, '#btnPasteGraphml', exported);
+  const rows = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(rows, ['label'], 'the definition survives');
+  assert.equal(exportedGraph(document).nodes[0].label, 'Alice', 'and the label is not overwritten by it');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

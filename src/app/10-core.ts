@@ -404,7 +404,15 @@
     graphmlSchemaSource = source;
   }
   function graphmlSchema(): GraphmlSchema {
-    return graphmlSchemaSource ? graphmlSchemaSource() : {readNames: []};
+    return graphmlSchemaSource ? graphmlSchemaSource() : {readNames: [], builtinKeys: []};
+  }
+  // The exporter's exact key: this (id, name, scope) is one it writes. Used to
+  // classify keys in documents written by a build that did not mark definitions.
+  function isExactBuiltinGraphmlKey(id: string, name: string, scope: string): boolean {
+    if(!graphmlSchemaSource) return false;
+    const wanted = String(name || '').toLowerCase();
+    return graphmlSchema().builtinKeys.some(([keyId, keyScope, keyName]) =>
+      keyId === id && keyScope === scope && String(keyName).toLowerCase() === wanted);
   }
   // Could an unmarked key bind to one of our built-in fields?
   function isBuiltinGraphmlKey(name: string, scope: string): boolean {

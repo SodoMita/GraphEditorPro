@@ -53,7 +53,7 @@ test('custom GraphML attributes support add, edit, delete, undo and GraphML roun
 
   document.querySelector('#btnExportGraphml').click();
   const graphml = document.querySelector('.export-modal textarea').value;
-  assert.match(graphml, /<key id="qvge\.custom\.max capacity" for="graph" attr\.name="max capacity" attr\.type="double"\/>/);
+  assert.match(graphml, /<key id="max capacity" for="graph" attr\.name="max capacity" attr\.type="double" qvge:kind="custom-attribute"\/>/);
   document.querySelector('#expCloseBtn').click();
 
   // Import the generated GraphML and ensure the definition is retained.
@@ -142,7 +142,7 @@ test('a definition may use any id, because it is exported in its own key namespa
   // The built-in block and the definitions coexist: distinct key ids, so every
   // <data key="..."> reference stays unambiguous.
   assert.match(graphml, /<key id="direction" for="edge" attr\.name="direction"/, 'the built-in key is still there');
-  assert.match(graphml, /<key id="qvge\.custom\.direction" for="edge" attr\.name="direction"/, 'and the definition has its own');
+  assert.match(graphml, /<key id="direction2" for="edge" attr\.name="direction"[^>]*qvge:kind="custom-attribute"[^>]*qvge:id="direction"/, 'the definition is marked and keeps its own id');
   dom.window.close();
 });
 
@@ -179,7 +179,7 @@ test('editing a custom definition keeps its id, and migrated names survive reloa
   document.querySelector('#btnExportGraphml').click();
   const graphml = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
-  assert.match(graphml, /<key id="qvge.custom.externaltag"[^>]*attr\.name="externaltag"/, 'and still exports its own attr.name');
+  assert.match(graphml, /<key id="externaltag"[^>]*attr\.name="externaltag"/, 'and still exports its own attr.name');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
@@ -197,7 +197,7 @@ test('editing a migrated definition keeps the GraphML attr.name it came with', a
   document.querySelector('#btnExportGraphml').click();
   const graphml = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
-  assert.match(graphml, /<key id="qvge.custom.externaltag"[^>]*attr\.name="externalTag" attr\.type="double"/,
+  assert.match(graphml, /<key id="externaltag"[^>]*attr\.name="externalTag" attr\.type="double"/,
     'an unrelated edit does not rename the key back to its custom id');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
@@ -215,7 +215,7 @@ test('renaming a definition drops the attr.name that belonged to the old key', a
   row.querySelector('[data-attribute-action="save"]').click();
   document.querySelector('#btnExportGraphml').click();
   const graphml = document.querySelector('.export-modal textarea').value;
-  assert.match(graphml, /<key id="qvge.custom.renamed"[^>]*attr\.name="renamed"/, 'the new id is the key name');
+  assert.match(graphml, /<key id="renamed"[^>]*attr\.name="renamed"/, 'the new id is the key name');
   assert.ok(!graphml.includes('externalTag'), 'the stale name is gone');
   dom.window.close();
 });
@@ -242,7 +242,7 @@ test('a preserved GraphML attr.name keeps its original case through export', asy
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
-  assert.match(exported, /<key id="qvge.custom.k"[^>]*attr\.name="MiXeDCase"/, 'the exact spelling is re-emitted');
+  assert.match(exported, /<key id="k"[^>]*attr\.name="MiXeDCase"/, 'the exact spelling is re-emitted');
   assert.ok(!/attr\.name="mixedcase"/.test(exported), 'the name is not lowercased');
 
   assert.deepEqual(errors.map(error => error.message), []);

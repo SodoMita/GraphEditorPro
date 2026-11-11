@@ -340,27 +340,64 @@
   // one of our fields, so an unmarked key with that name is not a definition.
   const GRAPHML_BUILTIN_NAMES = new Map<string, string[]>(['graph','node','edge'].map(scope => [scope, []]));
   for(const [, forWhom, attrName] of GRAPHML_BUILTIN_KEYS) GRAPHML_BUILTIN_NAMES.get(forWhom)!.push(String(attrName).toLowerCase());
-  registerGraphmlSchema(() => ({readNames: [
+  registerGraphmlSchema(() => ({builtinKeys: GRAPHML_BUILTIN_KEYS, readNames: [
     ...GRAPHML_READ_NAMES,
     ...[...GRAPHML_BUILTIN_NAMES].flatMap(([scope, names]) => names.map(readName => [readName, scope] as const)),
   ]}));
-  // Our own definitions carry a prefixed key id. GraphML ids are document-unique
-  // and QVGE-built-ins own their spellings, so a separate namespace is what lets
-  // a definition survive export/import unchanged instead of being renamed around
-  // the built-in block and then re-classified by guesswork.
+  // Provenance, stated rather than inferred.
+  //
+  // Three rounds of review asked for opposite answers on identical bytes:
+  //   * <key id="name" attr.name="name"> in our own export is the user's
+  //     definition and must come back;
+  //   * <key id="name" attr.name="name"> in a foreign file feeds the node label
+  //     and must not appear as a definition;
+  //   * <key id="qvge.custom.score"> from a third-party tool is that tool's key,
+  //     not ours, so it must not be silently un-prefixed into `score`.
+  // Identity cannot decide any of that, so the exporter states it:
+  //   - every definition key carries QVGE_CUSTOM_MARKER, and keeps the
+  //     definition's own id (no namespacing: an external `qvge.custom.score`
+  //     stays distinct from our `score`);
+  //   - the document declares a marker on <graphml> so a file is attributable
+  //     as a whole, which is what lets older exports (written before markers
+  //     existed) still be recognised.
+  const QVGE_CUSTOM_MARKER = 'custom-attribute';
+  // Prefix used by the previous export format to namespace definitions. Still
+  // read, for documents written by that build.
   const CUSTOM_KEY_PREFIX = 'qvge.custom.';
   // <key> lines for the user's custom definitions.
+  //
+  // GraphML ids are document-unique, and a definition may legitimately share a
+  // name with a built-in field (`arrowSize`, `weight`). The marker is what says
+  // "this is a definition"; the id only has to be unique, so one that would
+  // collide with a built-in key takes a numbered suffix. The original id stays in
+  // attr.name? No — plain ids are kept exactly, so a definition that does not
+  // collide is written and read back byte-identical.
   function graphmlCustomKeyLines(): string[]{
+    const builtinIds = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId]) => keyId));
+    const taken = new Set(builtinIds);
+    for(const attribute of state.customAttributes) taken.add(attribute.id);
+    const emitted = new Set<string>();
     return state.customAttributes.map(attribute => {
-      // The definition's own name is what it is; the id only has to be unique,
-      // which the prefix guarantees.
+      let id = attribute.id;
+      if(builtinIds.has(id)){
+        // Only the colliding case is rewritten, and deterministically: the first
+        // free numbered suffix that no other definition claims.
+        for(let suffix = 2; ; suffix++){
+          const candidate = `${attribute.id}${suffix}`;
+          if(!builtinIds.has(candidate) && !taken.has(candidate) && !emitted.has(candidate)){ id = candidate; break; }
+        }
+      }
+      emitted.add(id);
       const attrName = (attribute as AnyRecord).name || attribute.id;
-      return `  <key id="${xmlEsc(CUSTOM_KEY_PREFIX + attribute.id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}"/>`;
+      // The definition's own id, when the exported key id had to differ. Without
+      // it a de-collided `arrowSize` would come back as `arrowSize2` and drift.
+      const idAttr = id === attribute.id ? '' : ` qvge:id="${xmlEsc(attribute.id)}"`;
+      return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}/>`;
     });
   }
   function exportGraphmlText(){
     const gd = state.settings.graphDefaults;
-    const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">`,
+    const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml" qvge:writer="graph-editor-pro" qvge:keys="${GRAPHML_BUILTIN_KEYS.length}">`,
       ...GRAPHML_BUILTIN_KEYS.map(([id, forWhom, attrName, type]) => `  <key id="${id}" for="${forWhom}" attr.name="${attrName}" attr.type="${type}"/>`),
       // Custom definitions come after the built-ins, so a custom id that matches
       // one of them would emit a second <key> with the same id and make every
@@ -968,16 +1005,24 @@
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
     const customAttributes: GraphState['customAttributes'] = [];
-    // Two kinds of <key>, and no guessing between them:
-    //   1. ids in our own definition namespace — the user's definitions, kept
-    //      verbatim (id minus the prefix, name in its original case);
-    //   2. anything else, which is built-in iff the importer below reads that
-    //      attr.name for that scope. If it does, the <data> feeds one of our
-    //      fields and a definition would be one the app can never round-trip.
-    // `qvge.custom.` is what makes case (#1) and cross-scope (#4) definitions
-    // round-trip: their ids and names are written and read back unchanged,
-    // never compared against, or renamed around, a built-in key.
-    doc.querySelectorAll('key').forEach(k => {
+    // Provenance first, identity second.
+    //
+    // A document is attributable to us in two ways:
+    //   * it says so — qvge:writer, written by the current exporter;
+    //   * it carries the complete built-in key block — every export we have ever
+    //     written emitted all of GRAPHML_BUILTIN_KEYS, so a file with all of them
+    //     came from us, while a foreign file lists only the handful it uses.
+    // That is what separates our older exports from a third-party file with the
+    // same key in it, which no per-key rule can do.
+    const graphEl = doc.querySelector('graphml');
+    const keyEls = [...doc.querySelectorAll('key')];
+    const declaredOurs = graphEl?.getAttribute('qvge:writer') === 'graph-editor-pro';
+    const builtinPairs = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId, forWhom]) => `${keyId}|${forWhom}`));
+    const legacyOurs = keyEls.filter(k => builtinPairs.has(`${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}`)).length >= GRAPHML_BUILTIN_KEYS.length;
+    // The previous format namespaced definitions instead of marking them, so a
+    // prefix is only stripped when we know the document is ours.
+    const documentIsOurs = declaredOurs || legacyOurs;
+    keyEls.forEach(k => {
       const rawId = k.getAttribute('id') || '';
       // `name` is the lowercased form the data map is keyed by; `rawName` keeps
       // the original spelling so a definition exports under the exact attr.name
@@ -986,18 +1031,31 @@
       const name = rawName.toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      const isOurDefinition = rawId.startsWith(CUSTOM_KEY_PREFIX) && rawId.length > CUSTOM_KEY_PREFIX.length;
-      const id = isOurDefinition ? rawId.slice(CUSTOM_KEY_PREFIX.length) : rawId;
-      keyNames[rawId] = name;
-      if(['graph','node','edge'].includes(forWhom)){
-        if(isOurDefinition){
-          customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
-        } else if(rawId && !isBuiltinGraphmlKey(name, forWhom)){
-          // A foreign key. Keep its own id and the exact spelling of its name:
-          // GraphML names are case-sensitive, and comparing a lowercased name
-          // against a case-preserving id is what dropped mixed-case ids.
-          customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
-        }
+      const marked = k.getAttribute('qvge:kind') === QVGE_CUSTOM_MARKER;
+      // The prefix is a *legacy* way of naming a definition, used by the build
+      // before marks existed. A marked key's id is literal even when it happens
+      // to start with those characters, which is what keeps an external
+      // `qvge.custom.score` distinct from a definition genuinely called `score`.
+      const prefixed = !marked && documentIsOurs && rawId.startsWith(CUSTOM_KEY_PREFIX) && rawId.length > CUSTOM_KEY_PREFIX.length;
+      // A marked key may record the definition's own id, used when the exported
+      // key id had to differ to stay unique.
+      const recordedId = k.getAttribute('qvge:id') || '';
+      const id = prefixed ? rawId.slice(CUSTOM_KEY_PREFIX.length) : (marked && recordedId ? recordedId : rawId);
+      // Three provenances, three rules:
+      //   * a marked (or, from the previous build, prefixed) key is a definition;
+      //   * in one of our older, unmarked documents a definition was written with
+      //     a name we do not emit, so an exact built-in match is the only built-in;
+      //   * in a foreign document nothing is attributable, so any name we read as
+      //     a field for that scope is built-in and must not become a definition.
+      const isDefinition = marked || prefixed ? true
+        : documentIsOurs ? !isExactBuiltinGraphmlKey(id, name, forWhom)
+        : !isBuiltinGraphmlKey(name, forWhom);
+      // A definition's data must never feed a built-in field: that is how data
+      // written under a definition called `label` would overwrite the label.
+      if(!marked && !prefixed) keyNames[rawId] = name;
+      if(isDefinition && id && ['graph','node','edge'].includes(forWhom)){
+        // Keep the definition's own id and the exact spelling of its name.
+        customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
       }
       const defEl = k.querySelector('default');
       if(defEl){
