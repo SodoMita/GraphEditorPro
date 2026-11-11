@@ -340,7 +340,7 @@
   // one of our fields, so an unmarked key with that name is not a definition.
   const GRAPHML_BUILTIN_NAMES = new Map<string, string[]>(['graph','node','edge'].map(scope => [scope, []]));
   for(const [, forWhom, attrName] of GRAPHML_BUILTIN_KEYS) GRAPHML_BUILTIN_NAMES.get(forWhom)!.push(String(attrName).toLowerCase());
-  registerGraphmlSchema(() => ({builtinKeys: GRAPHML_BUILTIN_KEYS, readNames: [
+  registerGraphmlSchema(() => ({readNames: [
     ...GRAPHML_READ_NAMES,
     ...[...GRAPHML_BUILTIN_NAMES].flatMap(([scope, names]) => names.map(readName => [readName, scope] as const)),
   ]}));
@@ -360,6 +360,8 @@
   //   - the document declares a marker on <graphml> so a file is attributable
   //     as a whole, which is what lets older exports (written before markers
   //     existed) still be recognised.
+  const GRAPHML_BUILTIN_KEY_IDS = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId]) => keyId));
+  const QVGE_NS = 'http://qvge.github.io/graphml';
   const QVGE_CUSTOM_MARKER = 'custom-attribute';
   // Prefix used by the previous export format to namespace definitions. Still
   // read, for documents written by that build.
@@ -1016,11 +1018,24 @@
     // same key in it, which no per-key rule can do.
     const graphEl = doc.querySelector('graphml');
     const keyEls = [...doc.querySelectorAll('key')];
-    const declaredOurs = graphEl?.getAttribute('qvge:writer') === 'graph-editor-pro';
-    const builtinPairs = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId, forWhom]) => `${keyId}|${forWhom}`));
-    const legacyOurs = keyEls.filter(k => builtinPairs.has(`${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}`)).length >= GRAPHML_BUILTIN_KEYS.length;
-    // The previous format namespaced definitions instead of marking them, so a
-    // prefix is only stripped when we know the document is ours.
+    // By namespace URI: a document re-serialised by another tool may bind a
+    // different prefix to the same URI.
+    const declaredOurs = graphEl?.getAttributeNS(QVGE_NS, 'writer') === 'graph-editor-pro';
+    // A document written by an earlier build is still ours, but its built-in
+    // block is a *subset* of the current table: this PR only ever adds keys
+    // (main wrote 41, we write 43), so demanding the current count rejected
+    // every export made before it. What identifies us is that the document
+    // carries the bulk of our built-in key block — we always write all of it,
+    // while a foreign file declares only the handful of keys it uses. A majority
+    // is the safe threshold: it survives the table growing (41 of today's 43 is
+    // still a majority) and no third-party file declares 22 of our exact
+    // (id, scope) pairs by accident.
+    //
+    // Deliberately not keyed on xmlns:qvge: that URI names the QVGE format, so
+    // a genuine QVGE export may declare it too.
+    const ourPairs = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId, forWhom]) => `${keyId}|${forWhom}`));
+    const matchedBuiltins = keyEls.filter(k => ourPairs.has(`${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}`)).length;
+    const legacyOurs = matchedBuiltins >= GRAPHML_BUILTIN_KEYS.length / 2;
     const documentIsOurs = declaredOurs || legacyOurs;
     keyEls.forEach(k => {
       const rawId = k.getAttribute('id') || '';
@@ -1031,37 +1046,53 @@
       const name = rawName.toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      const marked = k.getAttribute('qvge:kind') === QVGE_CUSTOM_MARKER;
+      // Read by namespace URI, not by the literal prefix: `xmlns:q=...` bound to
+      // the same URI is the same attribute, and an export re-serialised by
+      // another tool may well rename the prefix.
+      const marked = k.getAttributeNS(QVGE_NS, 'kind') === QVGE_CUSTOM_MARKER;
+      const recordedId = k.getAttributeNS(QVGE_NS, 'id') || '';
       // The prefix is a *legacy* way of naming a definition, used by the build
       // before marks existed. A marked key's id is literal even when it happens
       // to start with those characters, which is what keeps an external
       // `qvge.custom.score` distinct from a definition genuinely called `score`.
       const prefixed = !marked && documentIsOurs && rawId.startsWith(CUSTOM_KEY_PREFIX) && rawId.length > CUSTOM_KEY_PREFIX.length;
-      // A marked key may record the definition's own id, used when the exported
-      // key id had to differ to stay unique.
-      const recordedId = k.getAttribute('qvge:id') || '';
-      const id = prefixed ? rawId.slice(CUSTOM_KEY_PREFIX.length) : (marked && recordedId ? recordedId : rawId);
       // Three provenances, three rules:
       //   * a marked (or, from the previous build, prefixed) key is a definition;
       //   * in one of our older, unmarked documents a definition was written with
       //     a name we do not emit, so an exact built-in match is the only built-in;
       //   * in a foreign document nothing is attributable, so any name we read as
       //     a field for that scope is built-in and must not become a definition.
+      // In one of our older documents an unmarked key is a definition unless we
+      // reserve that *id*: every export has written definitions under the user's
+      // own id, never under one of our key ids, so the id alone decides. Testing
+      // the whole (id, name, scope) triple instead would turn a key such as
+      // id="nodeId" attr.name="nodeId" into a definition, which is how a file
+      // that merely reuses our ids would sprout phantom definitions.
       const isDefinition = marked || prefixed ? true
-        : documentIsOurs ? !isExactBuiltinGraphmlKey(id, name, forWhom)
+        : documentIsOurs ? !GRAPHML_BUILTIN_KEY_IDS.has(rawId)
         : !isBuiltinGraphmlKey(name, forWhom);
-      // A definition's data must never feed a built-in field: that is how data
-      // written under a definition called `label` would overwrite the label.
-      if(!marked && !prefixed) keyNames[rawId] = name;
-      if(isDefinition && id && ['graph','node','edge'].includes(forWhom)){
+      // A definition's id and name must never reach a built-in map. The data map
+      // falls back to the raw key when it is absent here, so omitting the entry
+      // would still bind `data key="label"` to the node label; an explicit empty
+      // name makes that fallback land on a name no reader looks up.
+      keyNames[rawId] = isDefinition ? '' : name;
+      if(isDefinition && rawId && ['graph','node','edge'].includes(forWhom)){
+        // A marked key may record the definition's own id, used when the exported
+        // key id had to differ to stay unique.
+        const id = prefixed ? rawId.slice(CUSTOM_KEY_PREFIX.length) : (marked && recordedId ? recordedId : rawId);
         // Keep the definition's own id and the exact spelling of its name.
         customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
       }
-      const defEl = k.querySelector('default');
-      if(defEl){
-        const val = defEl.textContent.trim();
-        keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
-        keyDefaultsByFor[forWhom][name] = val;
+      // A definition's default belongs to the definition, so it must not land in
+      // the built-in defaults map: a custom `shape` default would otherwise
+      // change the node default for the whole document.
+      if(!isDefinition){
+        const defEl = k.querySelector('default');
+        if(defEl){
+          const val = defEl.textContent.trim();
+          keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
+          keyDefaultsByFor[forWhom][name] = val;
+        }
       }
     });
     const graph = doc.querySelector('graph');

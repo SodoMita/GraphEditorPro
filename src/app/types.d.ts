@@ -68,10 +68,7 @@ interface GraphSelection {
 
 // Every attr.name the importer reads as a built-in, per scope. A <key> whose
 // name is in here feeds one of our fields, so it cannot be a definition.
-type GraphmlSchema = {
-  readNames: readonly (readonly [string, string])[];
-  builtinKeys: readonly (readonly string[])[];
-};
+type GraphmlSchema = { readNames: readonly (readonly [string, string])[] };
 interface GraphState {
   title: string;
   mode: GraphMode;

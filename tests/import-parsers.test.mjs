@@ -724,3 +724,103 @@ test('a definition\'s data never feeds the built-in field of the same name', asy
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('an export from main (41 keys, no marker) keeps its custom definitions', async () => {
+  // main wrote a smaller built-in block than we do, so requiring the current key
+  // count rejected every export made before this PR. The bulk of our block is
+  // what identifies us, and 41 of today's 43 is still the bulk of it.
+  const mainKeys = [
+    ['label','node','label'],['nodeId','node','id'],['order','node','order'],['x','node','x'],['y','node','y'],
+    ['type','node','type'],['shape','node','shape'],['color','node','color'],['width','node','width'],
+    ['height','node','height'],['strokeColor','node','stroke.color'],['strokeSize','node','stroke.size'],
+    ['strokeStyle','node','stroke.style'],['labelColor','node','label.color'],['labelFont','node','label.font'],
+    ['labelSize','node','label.size'],['labelPosition','node','label.position'],
+    ['weight','edge','weight'],['edgeLabel','edge','label'],['edgeType','edge','type'],['edgeColor','edge','color'],
+    ['edgeStrokeSize','edge','stroke.size'],['edgeStrokeStyle','edge','style'],['edgeLabelColor','edge','label.color'],
+    ['edgeLabelFont','edge','label.font'],['edgeLabelSize','edge','label.size'],['directed','edge','directed'],
+    ['labelsPolicy','graph','labels.policy'],['edgeWeightMode','graph','edge.weight.mode'],
+    ['edgeWeightMin','graph','edge.weight.min'],['edgeWeightMax','graph','edge.weight.max'],
+    ['edgeWeightCorr','graph','edge.weight.corr'],['edgeWidthMin','graph','edge.width.min'],
+    ['edgeWidthMax','graph','edge.width.max'],['edgeWeightColorLow','graph','edge.weight.colorLow'],
+    ['edgeWeightColorHigh','graph','edge.weight.colorHigh'],['canvasBgColor','graph','canvas.bg.color'],
+    ['gridMinorColor','graph','grid.minor.color'],['gridMajorColor','graph','grid.major.color'],
+    ['gridMinorAlpha','graph','grid.minor.alpha'],['gridMajorAlpha','graph','grid.major.alpha'],
+  ];
+  const graphml = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    ...mainKeys.map(([id, scope, name]) => `  <key id="${id}" for="${scope}" attr.name="${name}" attr.type="string"/>`),
+    '  <key id="name" for="node" attr.name="name" attr.type="string"/>',
+    '  <key id="value" for="edge" attr.name="value" attr.type="string"/>',
+    '  <key id="style" for="edge" attr.name="style" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="label">A</data></node><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids.sort(), ['name', 'style', 'value'], 'all three definitions survive');
+  assert.equal(exportedGraph(document).nodes[0].label, 'A', 'and the built-in label still binds');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a definition cannot capture a built-in value or default', async () => {
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml" qvge:writer="graph-editor-pro">',
+    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+    '  <key id="label2" for="node" attr.name="label" attr.type="string" qvge:kind="custom-attribute" qvge:id="label"/>',
+    '  <key id="shape" for="node" attr.name="shape" attr.type="string"/>',
+    '  <key id="shape2" for="node" attr.name="shape" attr.type="string" qvge:kind="custom-attribute" qvge:id="shape"><default>square</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"><data key="label2">secret</data></node><node id="n2"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids.sort(), ['label', 'shape'], 'both definitions survive');
+
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  // Data under the marked key must not reach the node label: the data map falls
+  // back to the raw key when it is unknown, so "unknown" has to mean empty.
+  const node = exported.match(/<node id="n1"[\s\S]*?<\/node>/)[0];
+  assert.ok(!/secret/.test(node), 'the definition value does not become the node label');
+  // And a definition's <default> must not become the built-in default.
+  assert.ok(!/<key id="shape" [^>]*>\s*<default>/.test(exported), 'the custom shape default stays out of the node defaults');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('definitions survive a re-serialised namespace prefix', async () => {
+  // qvge: is a prefix, not part of the name. Another tool that binds the same
+  // URI to a different prefix must still be read as our marker.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'mutual'}],
+    customAttributes: [{id:'direction', scope:'edge', type:'string'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  const renamed = exported
+    .replace('xmlns:qvge="http://qvge.github.io/graphml"', 'xmlns:q="http://qvge.github.io/graphml"')
+    .replace(/qvge:/g, 'q:');
+  await paste(document, dom.window, '#btnPasteGraphml', renamed);
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids, ['direction'], 'the definition keeps its id, not direction2');
+  assert.equal(exportedGraph(document).edges[0].direction, 'mutual', 'and the edge direction is untouched');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
