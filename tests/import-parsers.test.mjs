@@ -1159,3 +1159,87 @@ test('whitespace-separated attribute lists still reject malformed items', async 
     dom.window.close();
   }
 });
+
+test('trailing garbage or unbalanced braces fail the import of an empty digraph', async () => {
+  const saved = { title: 'keep-me-r15a', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { } garbage }',
+    'digraph G { } garbage',
+    'digraph G { } }',
+    'digraph G { subgraph child { } } trailing }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 1, `${JSON.stringify(text)} must not import as an empty document`);
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('multiple attribute lists per statement import as empty documents', async () => {
+  const saved = { title: 'keep-me-r15b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { graph [label=x][rankdir=LR]; }',
+    'digraph G { graph [label=x] [rankdir=LR]; }',
+    'digraph G { node [shape=box][style=filled][color=red]; }',
+    'digraph G { dpi=96; graph [a=1][b=2][c=3]; }',
+    'digraph G { graph [a=1][][b=2]; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 0, `${JSON.stringify(text)} imports as a valid empty document`);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('a malformed later attribute list still rejects the statement', async () => {
+  const saved = { title: 'keep-me-r15c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { graph [label=x][rankdir=]; }',
+    'digraph G { graph [label=x][=rankdir]; }',
+    'digraph G { node [shape=box][][style=]; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 1, `${JSON.stringify(text)} must not import as an empty document`);
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('an empty digraph followed only by a comment still imports', async () => {
+  const saved = { title: 'keep-me-r15d', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', 'digraph G { dpi=96; } /* trailing comment */\n');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'a trailing comment does not block a valid empty import');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

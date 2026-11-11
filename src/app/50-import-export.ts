@@ -885,16 +885,22 @@
       while(true){
         i = skipWs(s, i);
         if(i >= s.length) return needClose ? { ok: false, next: i } : { ok: true, next: i };
-        if(s[i] === '}') return { ok: true, next: i + 1 };
+        if(s[i] === '}') return needClose ? { ok: true, next: i + 1 } : { ok: false, next: i };
         // Attribute statement: graph|node|edge [ ... ] — list must be well-formed
         const kw = /^(graph|node|edge)\b/i.exec(s.slice(i));
         if(kw){
-          const afterKw = skipWs(s, i + kw[0].length);
+          let afterKw = skipWs(s, i + kw[0].length);
           if(s[afterKw] !== '[') return { ok: false, next: afterKw };
-          const end = matchPair(s, afterKw, '[', ']');
-          if(end < 0) return { ok: false, next: afterKw };
-          if(!attrListOk(s.slice(afterKw + 1, end - 1))) return { ok: false, next: afterKw };
-          i = skipWs(s, end);
+          // DOT allows a statement to carry several attribute lists in a row:
+          // 'graph [label=x][rankdir=LR];' — validate every one of them.
+          while(s[skipWs(s, afterKw)] === '['){
+            afterKw = skipWs(s, afterKw);
+            const end = matchPair(s, afterKw, '[', ']');
+            if(end < 0) return { ok: false, next: afterKw };
+            if(!attrListOk(s.slice(afterKw + 1, end - 1))) return { ok: false, next: afterKw };
+            afterKw = end;
+          }
+          i = skipWs(s, afterKw);
           if(s[i] === ';') i++;
           continue;
         }
@@ -1019,7 +1025,8 @@
     // else ("digraph G { a -> }", "graph [label=];") is real input the
     // parser could not use, not an empty graph — reject it.
     if(!arr.length){
-      return (hasStructure && isWellFormedDotBody(body)) ? { title:'imported-dot', nodes: [], edges: [] } : null;
+      const after = stripped.slice(stripped.lastIndexOf('}') + 1);
+      return (hasStructure && /^\s*$/.test(after) && isWellFormedDotBody(body)) ? { title:'imported-dot', nodes: [], edges: [] } : null;
     }
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
       const r = Math.max(120, arr.length * 24);
