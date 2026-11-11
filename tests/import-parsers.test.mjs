@@ -970,3 +970,25 @@ test('the editor’s own empty matrix export imports in replace mode and clears 
   document.querySelector('#expCloseBtn').click();
   dom.window.close();
 });
+
+test('a matrix whose columns do not resolve preserves the document', async () => {
+  // Audit repro: label,Unknown / A,5 has a row whose endpoint resolves but
+  // no column that can hold one. Committing zero edges from it would clear
+  // the existing edge — the import must be refused as unrecognizable.
+  const saved = { title: 'keep-matrix-unknown-cols', nodes: [
+    {id:'n1', label:'A', x:0, y:0, order:0},
+    {id:'n2', label:'B', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  for(const text of ['label,Unknown\nA,5\n', 'label,Unknown\nA,\n']){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteMatrixCsv', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `${JSON.stringify(text)} keeps the nodes`);
+    assert.equal(graph.edges.length, 1, `${JSON.stringify(text)} keeps the existing edge`);
+    assert.match(toasts(document), /nothing could be imported/i, `${JSON.stringify(text)} reports the refusal`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});

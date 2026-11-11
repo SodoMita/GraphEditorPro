@@ -677,6 +677,12 @@
       if(labelToId.has(val)) return labelToId.get(val);
       return null;
     };
+    // A matrix is recognizable for this document only when at least one
+    // data row's endpoint AND at least one column's endpoint resolve to a
+    // node — the shape of the editor's own export, all-empty cells included.
+    // A header of unknown columns cannot be this document's adjacency
+    // matrix; committing zero edges from it would clear the existing ones.
+    const resolvableColumns = labels.reduce((n, l) => n + (resolveNode(l) != null ? 1 : 0), 0);
     const initialEdges = append ? state.edges.length : 0;
     const edges: GraphEdge[] = append ? state.edges.slice() : [];
     let parsed = 0, skipped = 0, validRows = 0;
@@ -700,11 +706,12 @@
         }
       }
     }
-    // Refuse only input with no recognizable matrix at all: nothing parsed
-    // and not a single data row whose endpoint resolves. A zero-edge matrix
-    // of live nodes is a valid empty graph and must replace the document's
+    // Refuse only input with no recognizable matrix at all: nothing parsed,
+    // not a single data row whose endpoint resolves, or not a single column
+    // that could hold an endpoint. A zero-edge matrix of live nodes and
+    // live columns is a valid empty graph and must replace the document's
     // edges like any other replace import.
-    if(parsed === 0 && !append && validRows === 0){ toast(I18N.t('csv_nothing_parsed')); return; }
+    if(parsed === 0 && !append && !(validRows > 0 && resolvableColumns > 0)){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }
