@@ -824,3 +824,62 @@ test('definitions survive a re-serialised namespace prefix', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a marked key whose id is a bare field name cannot set a built-in value', async () => {
+  // The definition's key id here is `name`, which is also something the node
+  // reader looks up. An empty mapping has to survive the data map's fallback to
+  // the raw key, or the definition's value becomes the node label.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml" qvge:writer="graph-editor-pro">',
+    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+    '  <key id="name" for="node" attr.name="name" attr.type="string" qvge:kind="custom-attribute"/>',
+    '  <graph edgedefault="directed">',
+    // No <data key="label"> here: the node reader does `d.label || d.name`, so a
+    // real label would mask the leak. The definition's value must be the only
+    // candidate and still not become the label.
+    '    <node id="n1"><data key="name">secret</data></node><node id="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  const node = exported.match(/<node id="n1"[\s\S]*?<\/node>/)[0];
+  assert.ok(!/secret/.test(node), 'the definition value does not become any built-in field');
+  assert.equal((node.match(/<data key="label">([^<]*)<\/data>/) || [])[1], '',
+    'the label is untouched');
+  const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.deepEqual(ids, ['name'], 'and the definition itself survives');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a foreign file reusing our key ids for other attributes keeps its definitions', async () => {
+  // An id alone does not identify our built-in keys: the exporter always pairs
+  // each id with a specific attr.name. Matching only (id, scope) made this file
+  // look like an old export of ours, and every definition in it was dropped.
+  const ids = ['label','nodeId','order','x','y','type','shape','color','width','height',
+    'strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition'];
+  const edgeIds = ['weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize'];
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    ...ids.map((id, i) => `  <key id="${id}" for="node" attr.name="foreign_${i}" attr.type="string"/>`),
+    ...edgeIds.map((id, i) => `  <key id="${id}" for="edge" attr.name="also_foreign_${i}" attr.type="string"/>`),
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const defs = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
+  assert.equal(defs.length, ids.length + edgeIds.length, 'every definition is kept');
+  assert.deepEqual(defs.sort(), [...ids, ...edgeIds].sort(), 'the ids are the ones the file declared');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

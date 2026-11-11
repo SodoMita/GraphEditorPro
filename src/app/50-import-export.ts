@@ -904,7 +904,17 @@
   }
   function graphmlDataMap(el, keyNames): AnyRecord {
     const map: AnyRecord = {};
-    el.querySelectorAll('data').forEach(d => { const key=d.getAttribute('key') || ''; const name=(keyNames[key] || key).toLowerCase(); map[name] = d.textContent.trim(); });
+    el.querySelectorAll('data').forEach(d => {
+      const key = d.getAttribute('key') || '';
+      // `hasOwnProperty`, not `||`: a declared key may map to the empty string,
+      // which is how a custom definition's key says "this data is not a built-in
+      // value". With `||` that empty name fell back to the raw key, so data under
+      // a definition called `label` still became the node label.
+      const declared = Object.prototype.hasOwnProperty.call(keyNames, key);
+      const name = (declared ? keyNames[key] : key).toLowerCase();
+      if(!name) return; // a definition's value: it belongs to no built-in field
+      map[name] = d.textContent.trim();
+    });
     return map;
   }
   function parseShape(raw){
@@ -1033,8 +1043,14 @@
     //
     // Deliberately not keyed on xmlns:qvge: that URI names the QVGE format, so
     // a genuine QVGE export may declare it too.
-    const ourPairs = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId, forWhom]) => `${keyId}|${forWhom}`));
-    const matchedBuiltins = keyEls.filter(k => ourPairs.has(`${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}`)).length;
+    // Match the whole triple the exporter writes, not just the id. A foreign
+    // file can reuse our key ids for unrelated attributes; what it cannot do by
+    // accident is pair each id with the attr.name we pair it with.
+    const ourKeys = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId, forWhom, attrName]) =>
+      `${keyId}|${forWhom}|${String(attrName).toLowerCase()}`));
+    const matchedBuiltins = keyEls.filter(k => ourKeys.has(
+      `${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}|${String(k.getAttribute('attr.name') || '').toLowerCase()}`
+    )).length;
     const legacyOurs = matchedBuiltins >= GRAPHML_BUILTIN_KEYS.length / 2;
     const documentIsOurs = declaredOurs || legacyOurs;
     keyEls.forEach(k => {
@@ -1071,10 +1087,10 @@
       const isDefinition = marked || prefixed ? true
         : documentIsOurs ? !GRAPHML_BUILTIN_KEY_IDS.has(rawId)
         : !isBuiltinGraphmlKey(name, forWhom);
-      // A definition's id and name must never reach a built-in map. The data map
-      // falls back to the raw key when it is absent here, so omitting the entry
-      // would still bind `data key="label"` to the node label; an explicit empty
-      // name makes that fallback land on a name no reader looks up.
+      // A definition's id and name must never reach a built-in map. The entry is
+      // present but empty, and the data map treats an empty name as "declared,
+      // but not a built-in field" — omitting the entry would let the raw-key
+      // fallback bind `data key="label"` to the node label.
       keyNames[rawId] = isDefinition ? '' : name;
       if(isDefinition && rawId && ['graph','node','edge'].includes(forWhom)){
         // A marked key may record the definition's own id, used when the exported
