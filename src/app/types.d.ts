@@ -75,7 +75,9 @@ interface GraphState {
   nextEdge: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string }[];
+  /** `name` carries the original GraphML attr.name when it differs from the id
+   *  (a definition migrated away from a now-reserved key id). */
+  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }[];
   selected: { type: 'node' | 'edge'; id: string } | null;
   selection: GraphSelection;
   settings: AnyRecord;

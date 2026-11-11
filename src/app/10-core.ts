@@ -388,21 +388,24 @@
     return edgeDirection(e) === 'undirected';
   }
   const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','arrowSize','edgeArrowSize','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','direction','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
-  // Subset of the reserved IDs that was NOT reserved before the QVGE edge
-  // tristate and the configurable arrow tip size landed. Saved documents may
-  // legitimately hold custom attributes under these names, so they are
-  // migrated on load instead of being discarded (see sanitizeState).
-  const LEGACY_CUSTOM_ATTRIBUTE_IDS = new Set(['direction','arrowSize','edgeArrowSize']);
-  // Rename a legacy custom-attribute id to a free one. `declared` holds every id
-  // the document itself declares, so migration cannot steal a name that a later
-  // entry is about to claim (a file with both `direction` and `direction2` keeps
-  // both, instead of the migrated one swallowing the explicit one). The search
-  // is unbounded: a legal document may already use direction2 … direction99,
-  // and stopping at a fixed suffix would silently drop the legacy definition.
-  function migrateLegacyAttributeId(id: string, taken: Set<string>, declared: Set<string>): string | null {
+  // Every GraphML attr.name the app itself reads or writes, including the
+  // historical aliases it accepts (style, arrowsize, fillcolor, position.x, …).
+  // The importer uses this instead of the ID list: a key is built-in only when
+  // its attr.name is one of these, whatever its id happens to be, so a built-in
+  // alias can never come back as a phantom custom definition — and an external
+  // id that merely collides with a reserved id is still an ordinary attribute.
+  const BUILTIN_GRAPHML_ATTR_NAMES = new Set(['label','name','id','nodeid','order','x','y','posx','posy','position.x','position.y','type','shape','color','fillcolor','width','height','stroke.color','stroke.size','stroke.style','strokecolor','strokesize','strokestyle','style','label.color','label.font','label.size','label.position','labelcolor','labelfont','labelsize','labelposition','weight','value','edgecolor','edgelabel','arrow.size','arrowsize','directed','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
+  // Rename a custom attribute id that collides with a built-in one to a free
+  // id, based on `base` (the definition's own name when it has one). `selfId`
+  // is the entry's own declared id, subtracted from `declared` so an entry is
+  // not treated as claiming the name it already owns. The search is unbounded:
+  // a legal document may already use direction2 … direction99, and stopping at
+  // a fixed suffix would silently drop the legacy definition.
+  function migrateLegacyAttributeId(base: string, taken: Set<string>, declared: Map<string, number>, selfId: string): string | null {
     for(let suffix = 2; ; suffix++){
-      const candidate = `${id}${suffix}`;
-      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(candidate) || taken.has(candidate) || declared.has(candidate)) continue;
+      const candidate = `${base}${suffix}`;
+      if(RESERVED_CUSTOM_ATTRIBUTE_IDS.has(candidate) || taken.has(candidate)) continue;
+      if((declared.get(candidate) || 0) - (candidate === selfId ? 1 : 0) > 0) continue;
       return candidate;
     }
   }
@@ -884,23 +887,37 @@
     const customAttributeTypes = ['boolean','int','long','float','double','string'];
     const customAttributeIds = new Set<string>();
     const rawCustomAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : []).slice(0, 500).filter(isRecord);
-    // Every id the document declares, used so a migration never takes a name a
-    // later entry claims for itself.
-    const declaredAttributeIds = new Set(rawCustomAttributes.map(attribute => String(attribute.id ?? '').trim().slice(0, 128)));
+    // How many entries declare each id, so a migration never takes a name that
+    // a *different* entry claims for itself (a file with both `direction` and
+    // `direction2` keeps direction2 where it is).
+    const declaredCounts = new Map<string, number>();
+    for(const attribute of rawCustomAttributes){
+      const declared = String(attribute.id ?? '').trim().slice(0, 128);
+      if(declared) declaredCounts.set(declared, (declaredCounts.get(declared) || 0) + 1);
+    }
     const customAttributes = rawCustomAttributes.map(attribute => {
       const id = String(attribute.id ?? '').trim().slice(0, 128);
       const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
       const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
+      if(!id || !scope) return null;
+      // The definition's own attribute name, when the importer recorded one.
+      const name = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128).toLowerCase();
+      // Prefer the definition's own attr.name: an external key that happens to
+      // reuse one of the app's key ids (id="x" attr.name="externalTag") is a
+      // real attribute, not the built-in, and should keep the meaningful name.
+      // Fall back to the id when the name is a built-in one.
+      const base = name && !BUILTIN_GRAPHML_ATTR_NAMES.has(name) ? name : id;
+      const claimedByOther = (declaredCounts.get(base) || 0) - (base === id ? 1 : 0) > 0;
+      const usable = !RESERVED_CUSTOM_ATTRIBUTE_IDS.has(base) && !customAttributeIds.has(base) && !claimedByOther;
       // `direction`, `arrowSize` and `edgeArrowSize` became built-ins after
-      // custom attributes shipped, so a file written by an older version can
-      // hold a definition under one of those IDs. Dropping it silently lost
-      // data: migrate the definition to a free ID derived from the original
-      // instead of returning null. IDs that were reserved from the start keep
-      // being rejected outright, so a built-in can never be shadowed.
-      const migrated = LEGACY_CUSTOM_ATTRIBUTE_IDS.has(id) ? migrateLegacyAttributeId(id, customAttributeIds, declaredAttributeIds) : id;
-      if(!migrated || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(migrated) || customAttributeIds.has(migrated)) return null;
-      customAttributeIds.add(migrated);
-      return {id: migrated, scope, type};
+      // custom attributes shipped, and an external file may reuse *any* reserved
+      // id for an unrelated attribute — the importer has always accepted the
+      // latter, so neither may become a silent loss. Both are migrated to a free
+      // id instead of being dropped, and a built-in name can never be taken.
+      const resolved = usable ? base : migrateLegacyAttributeId(base, customAttributeIds, declaredCounts, base);
+      if(!resolved || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(resolved) || customAttributeIds.has(resolved)) return null;
+      customAttributeIds.add(resolved);
+      return {id: resolved, scope, type};
     }).filter(Boolean) as GraphState['customAttributes'];
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
