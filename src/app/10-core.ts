@@ -991,7 +991,11 @@
     if(isRecord(source.settings)){ collectCustomKeys(source.settings.nodeCustom); collectCustomKeys(source.settings.edgeCustom); }
     if(Array.isArray(source.nodes)) for(const n of source.nodes) if(isRecord(n)) collectCustomKeys(n.custom);
     if(Array.isArray(source.edges)) for(const e of source.edges) if(isRecord(e)) collectCustomKeys(e.custom);
-    const customAttributeIds = new Set<string>();
+    // Scope-aware renames for cross-scope id conflicts: a definition sharing
+    // its id with a definition of a DIFFERENT scope is a different property,
+    // so it is renamed to a fresh unique id and this scope's values move to
+    // it — instead of being dropped and leaving values bound to no
+    // scope-aware reader. Same id AND scope stays first-wins (current wins).
     // Legacy documents may contain ids that collide with built-ins (e.g.
     // "Label", "stroke.color" or "x"), whether user-created back then or
     // authored in an external GraphML file. Their definitions — and their
@@ -999,18 +1003,34 @@
     // silently dropped. Ids already present in the input are reserved up
     // front, so the migration target can never overwrite existing data.
     const customIdRenames = new Map<string, string>();
+    const scopeCustomRenames = new Map<string, string>(); // 'scope|id' -> newId
+    const seenCustomDefScopes = new Map<string, Set<string>>();
     const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
       .slice(0, CUSTOM_DEFINITIONS_MAX).filter(isRecord).map(attribute => {
         let id = String(attribute.id ?? '').trim().slice(0, 128);
         const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if(!id || !scope || customAttributeIds.has(id)) return null;
+        if(!id || !scope) return null;
         if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){
           const renamed = uniqueCustomAttributeId(id, usedCustomIds);
           customIdRenames.set(id, renamed);
           id = renamed;
         }
-        customAttributeIds.add(id);
+        // Cross-scope id conflict (legacy reserved rename already applied
+        // above — reserved mints are unique by construction, so this only
+        // fires on plain ids shared across scopes).
+        const seenScopes = seenCustomDefScopes.get(id);
+        if(seenScopes?.has(scope)) return null; // same id AND scope — first wins, as before
+        // The original id claims this scope either way, so an exact duplicate
+        // later in the list is dropped rather than minted twice.
+        seenCustomDefScopes.set(id, new Set([...(seenScopes || []), scope]));
+        if(seenScopes){
+          // A different scope claimed this id first — a different property,
+          // renamed to a fresh unique id (the mint grows usedCustomIds).
+          const renamed = uniqueCustomAttributeId(id, usedCustomIds);
+          scopeCustomRenames.set(scope + '|' + id, renamed);
+          id = renamed;
+        }
         // Keep the importer's migration marker (raw GraphML key id) so
         // re-appending the same external file lands on the same definition.
         const dataKey = String((attribute as AnyRecord).dataKey ?? '').trim().slice(0, 128);
@@ -1019,10 +1039,16 @@
       }).filter(Boolean) as GraphState['customAttributes'];
     // Rewrites the keys of a value map with the renames collected above, so
     // values stored under a migrated legacy id move to the new id.
-    const renameLegacyCustomValues = (input: unknown): unknown => {
-      if(!customIdRenames.size || !isRecord(input)) return input;
+    // Rewrites the keys of a value map with the renames collected above:
+    // scope-aware for cross-scope id conflicts, scope-agnostic for the
+    // legacy built-in-id migration, so values move with their definition.
+    const renameCustomValues = (input: unknown, scope: 'graph' | 'node' | 'edge'): unknown => {
+      if(!isRecord(input)) return input;
+      if(!customIdRenames.size && !scopeCustomRenames.size) return input;
       const out: AnyRecord = Object.create(null);
-      for(const key of Object.keys(input)) out[customIdRenames.get(key) || key] = input[key];
+      for(const key of Object.keys(input)){
+        out[scopeCustomRenames.get(scope + '|' + key) || customIdRenames.get(key) || key] = input[key];
+      }
       return out;
     };
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
@@ -1057,7 +1083,7 @@
       if(n.labelSize != null) node.labelSize = clamp(finite(n.labelSize, 13), 4, 72);
       if(n.labelPosition) node.labelPosition = validLabelPos(n.labelPosition);
       if(n.labelFont) node.labelFont = String(n.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(renameLegacyCustomValues(n.custom), customAttributeTypeById);
+      const customValues = sanitizeCustomValues(renameCustomValues(n.custom, 'node'), customAttributeTypeById);
       if(customValues) node.custom = customValues;
       return node;
     });
@@ -1084,7 +1110,7 @@
       if(e.labelColor) edge.labelColor = validColor(e.labelColor) || '';
       if(e.labelSize != null) edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(renameLegacyCustomValues(e.custom), customAttributeTypeById);
+      const customValues = sanitizeCustomValues(renameCustomValues(e.custom, 'edge'), customAttributeTypeById);
       if(customValues) edge.custom = customValues;
       edges.push(edge);
     });
@@ -1267,9 +1293,9 @@
         return out;
       }).filter(Boolean);
     } else { settings.stylePresets = []; }
-    const graphCustom = sanitizeCustomValues(renameLegacyCustomValues(source.graphCustom), customAttributeTypeById) || Object.create(null);
-    settings.nodeCustom = sanitizeCustomValues(renameLegacyCustomValues(inputSettings.nodeCustom), nodeDefaultTypeById) || Object.create(null);
-    settings.edgeCustom = sanitizeCustomValues(renameLegacyCustomValues(inputSettings.edgeCustom), edgeDefaultTypeById) || Object.create(null);
+    const graphCustom = sanitizeCustomValues(renameCustomValues(source.graphCustom, 'graph'), customAttributeTypeById) || Object.create(null);
+    settings.nodeCustom = sanitizeCustomValues(renameCustomValues(inputSettings.nodeCustom, 'node'), nodeDefaultTypeById) || Object.create(null);
+    settings.edgeCustom = sanitizeCustomValues(renameCustomValues(inputSettings.edgeCustom, 'edge'), edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),

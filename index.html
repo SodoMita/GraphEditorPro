@@ -3572,7 +3572,11 @@ function sanitizeState(input) {
         for (const e of source.edges)
             if (isRecord(e))
                 collectCustomKeys(e.custom);
-    const customAttributeIds = new Set();
+    // Scope-aware renames for cross-scope id conflicts: a definition sharing
+    // its id with a definition of a DIFFERENT scope is a different property,
+    // so it is renamed to a fresh unique id and this scope's values move to
+    // it — instead of being dropped and leaving values bound to no
+    // scope-aware reader. Same id AND scope stays first-wins (current wins).
     // Legacy documents may contain ids that collide with built-ins (e.g.
     // "Label", "stroke.color" or "x"), whether user-created back then or
     // authored in an external GraphML file. Their definitions — and their
@@ -3580,19 +3584,36 @@ function sanitizeState(input) {
     // silently dropped. Ids already present in the input are reserved up
     // front, so the migration target can never overwrite existing data.
     const customIdRenames = new Map();
+    const scopeCustomRenames = new Map(); // 'scope|id' -> newId
+    const seenCustomDefScopes = new Map();
     const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
         .slice(0, CUSTOM_DEFINITIONS_MAX).filter(isRecord).map(attribute => {
         let id = String(attribute.id ?? '').trim().slice(0, 128);
         const scope = ['graph', 'node', 'edge'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if (!id || !scope || customAttributeIds.has(id))
+        if (!id || !scope)
             return null;
         if (RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())) {
             const renamed = uniqueCustomAttributeId(id, usedCustomIds);
             customIdRenames.set(id, renamed);
             id = renamed;
         }
-        customAttributeIds.add(id);
+        // Cross-scope id conflict (legacy reserved rename already applied
+        // above — reserved mints are unique by construction, so this only
+        // fires on plain ids shared across scopes).
+        const seenScopes = seenCustomDefScopes.get(id);
+        if (seenScopes?.has(scope))
+            return null; // same id AND scope — first wins, as before
+        // The original id claims this scope either way, so an exact duplicate
+        // later in the list is dropped rather than minted twice.
+        seenCustomDefScopes.set(id, new Set([...(seenScopes || []), scope]));
+        if (seenScopes) {
+            // A different scope claimed this id first — a different property,
+            // renamed to a fresh unique id (the mint grows usedCustomIds).
+            const renamed = uniqueCustomAttributeId(id, usedCustomIds);
+            scopeCustomRenames.set(scope + '|' + id, renamed);
+            id = renamed;
+        }
         // Keep the importer's migration marker (raw GraphML key id) so
         // re-appending the same external file lands on the same definition.
         const dataKey = String(attribute.dataKey ?? '').trim().slice(0, 128);
@@ -3601,12 +3622,18 @@ function sanitizeState(input) {
     }).filter(Boolean);
     // Rewrites the keys of a value map with the renames collected above, so
     // values stored under a migrated legacy id move to the new id.
-    const renameLegacyCustomValues = (input) => {
-        if (!customIdRenames.size || !isRecord(input))
+    // Rewrites the keys of a value map with the renames collected above:
+    // scope-aware for cross-scope id conflicts, scope-agnostic for the
+    // legacy built-in-id migration, so values move with their definition.
+    const renameCustomValues = (input, scope) => {
+        if (!isRecord(input))
+            return input;
+        if (!customIdRenames.size && !scopeCustomRenames.size)
             return input;
         const out = Object.create(null);
-        for (const key of Object.keys(input))
-            out[customIdRenames.get(key) || key] = input[key];
+        for (const key of Object.keys(input)) {
+            out[scopeCustomRenames.get(scope + '|' + key) || customIdRenames.get(key) || key] = input[key];
+        }
         return out;
     };
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
@@ -3650,7 +3677,7 @@ function sanitizeState(input) {
             node.labelPosition = validLabelPos(n.labelPosition);
         if (n.labelFont)
             node.labelFont = String(n.labelFont).slice(0, 60);
-        const customValues = sanitizeCustomValues(renameLegacyCustomValues(n.custom), customAttributeTypeById);
+        const customValues = sanitizeCustomValues(renameCustomValues(n.custom, 'node'), customAttributeTypeById);
         if (customValues)
             node.custom = customValues;
         return node;
@@ -3685,7 +3712,7 @@ function sanitizeState(input) {
             edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
         if (e.labelFont)
             edge.labelFont = String(e.labelFont).slice(0, 60);
-        const customValues = sanitizeCustomValues(renameLegacyCustomValues(e.custom), customAttributeTypeById);
+        const customValues = sanitizeCustomValues(renameCustomValues(e.custom, 'edge'), customAttributeTypeById);
         if (customValues)
             edge.custom = customValues;
         edges.push(edge);
@@ -3920,9 +3947,9 @@ function sanitizeState(input) {
     else {
         settings.stylePresets = [];
     }
-    const graphCustom = sanitizeCustomValues(renameLegacyCustomValues(source.graphCustom), customAttributeTypeById) || Object.create(null);
-    settings.nodeCustom = sanitizeCustomValues(renameLegacyCustomValues(inputSettings.nodeCustom), nodeDefaultTypeById) || Object.create(null);
-    settings.edgeCustom = sanitizeCustomValues(renameLegacyCustomValues(inputSettings.edgeCustom), edgeDefaultTypeById) || Object.create(null);
+    const graphCustom = sanitizeCustomValues(renameCustomValues(source.graphCustom, 'graph'), customAttributeTypeById) || Object.create(null);
+    settings.nodeCustom = sanitizeCustomValues(renameCustomValues(inputSettings.nodeCustom, 'node'), nodeDefaultTypeById) || Object.create(null);
+    settings.edgeCustom = sanitizeCustomValues(renameCustomValues(inputSettings.edgeCustom, 'edge'), edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(...nodes.map(n => Number((n.id.match(/\d+$/) || [0])[0])), finite(source.nextNode, 1) - 1, nodes.length);
     const maxE = Math.max(...edges.map(e => Number((e.id.match(/\d+$/) || [0])[0])), finite(source.nextEdge, 1) - 1, edges.length);
@@ -11429,10 +11456,10 @@ function appendImportedGraph(data, label = 'graph') {
     // and pruning against the merged set drops nothing legitimate. Document-wide
     // (graph-scope) values merge with the imported ones taking precedence.
     // Imported definitions that fit the remaining capacity are merged; the
-    // rest are skipped with a toast. Duplicates of existing ids are dropped
-    // here (the current definition wins) and consume no capacity.
-    const existingCustomIds = new Set(state.customAttributes.map(attribute => attribute.id));
-    const { defs: cappedDefs, skipped: defsSkipped } = capCustomDefinitions(data.customAttributes, existingCustomIds);
+    // rest are skipped with a toast. Same id AND scope: the current definition
+    // wins (duplicates are dropped here and consume no capacity). Same id in
+    // different scopes: the incoming definition gets a fresh id downstream.
+    const { defs: cappedDefs, skipped: defsSkipped } = capCustomDefinitions(data.customAttributes, state.customAttributes);
     if (defsSkipped)
         toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
@@ -11490,8 +11517,12 @@ function appendImportedGraph(data, label = 'graph') {
     }
     state.nodes.push(...sane.nodes);
     state.edges.push(...validEdges);
-    const customIds = new Set(state.customAttributes.map(attribute => attribute.id));
-    state.customAttributes.push(...sane.customAttributes.filter(attribute => !customIds.has(attribute.id)));
+    // sanitizeState(merged) is the authoritative definition list: current
+    // definitions first (they win on same-id-and-scope conflicts), imported
+    // definitions after, with scope-aware renames already applied and values
+    // rebound. Assign it wholesale — pushing only the non-cross-scope
+    // remainder would keep a pre-rename straggler in the document.
+    state.customAttributes = sane.customAttributes;
     if (isRecord(sane.graphCustom))
         state.graphCustom = sane.graphCustom;
     state.nextNode = Math.max(state.nextNode, counter);
@@ -11509,13 +11540,16 @@ function appendImportedGraph(data, label = 'graph') {
         : I18N.t('appended_n_m', { label, n: sane.nodes.length, m: validEdges.length }));
 }
 // Keeps the first CUSTOM_DEFINITIONS_MAX unique definitions and reports how
-// many unique definitions did not fit. Definitions whose id is already
-// defined — in the current document or earlier in the imported list — merge
-// for free and consume no capacity, so appending into a nearly full
-// document never discards a new property that still fits.
-function capCustomDefinitions(defs, existingIds) {
-    const budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existingIds.size);
-    const seen = new Set(existingIds);
+// many unique definitions did not fit. A definition merges for free only
+// when an identical id AND scope already exists — in the current document
+// or earlier in the imported list — so appending into a nearly full
+// document never discards a new property that still fits. A same-id
+// definition of a DIFFERENT scope is a different property: it stays, and
+// the sanitizer mints it a fresh unique id and rebinds its values.
+function capCustomDefinitions(defs, existingDefs) {
+    const existing = Array.isArray(existingDefs) ? existingDefs : [];
+    const budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
+    const seen = new Set(existing.map(attribute => attribute.id + '|' + attribute.scope));
     const kept = [];
     let skipped = 0;
     for (const def of Array.isArray(defs) ? defs : []) {
@@ -11524,13 +11558,14 @@ function capCustomDefinitions(defs, existingIds) {
         const id = String(def.id ?? '').trim().slice(0, 128);
         if (!id)
             continue; // no id: sanitize drops it too
-        if (seen.has(id))
+        const scope = ['graph', 'node', 'edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
+        if (seen.has(id + '|' + scope))
             continue; // already defined — merges without capacity
         if (kept.length >= budget) {
             skipped++;
             continue;
         }
-        seen.add(id);
+        seen.add(id + '|' + scope);
         kept.push(def);
     }
     return { defs: kept, skipped };
@@ -11570,7 +11605,7 @@ function importGraphData(data, label, append) {
     if (!append && isRecord(graph)) {
         const customAttributes = graph.customAttributes;
         if (Array.isArray(customAttributes)) {
-            const { defs, skipped } = capCustomDefinitions(customAttributes, new Set());
+            const { defs, skipped } = capCustomDefinitions(customAttributes, []);
             if (skipped)
                 toast(I18N.t('attribute_import_skipped', { n: skipped }));
             graph.customAttributes = defs;
@@ -12007,7 +12042,7 @@ function parseGraphml(text) {
     // LEVEL, deterministically. Appending the same external GraphML file twice
     // re-resolves to the same migrated id instead of minting x_1, x_2, ... —
     // the migration consumes no extra capacity on repeated imports. A prior
-    // migration is reused only when the raw key id, the key's lowered
+    // A prior migration is reused only when the raw key id, the key's lowered
     // attr.name AND the scope all match, and never when the candidate id is
     // itself a key in the incoming file — so distinct properties sharing a
     // raw key id (e.g. two files both defining key "x") never share a
@@ -12022,51 +12057,90 @@ function parseGraphml(text) {
         if (!id)
             return;
         const name = (k.getAttribute('attr.name') || id).toLowerCase();
-        const forWhom = k.getAttribute('for') || 'all';
+        const forWhom = (k.getAttribute('for') || 'all').trim().toLowerCase();
         keyNames[id] = name;
         const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
         const defEl = k.querySelector('default');
         const defVal = defEl ? defEl.textContent.trim() : '';
-        const isCustom = !reservedAttrNames.has(name) && ['graph', 'node', 'edge'].includes(forWhom);
+        // The GraphML spec makes for="all" the default: the key applies to
+        // graph, node AND edge. Such keys (and keys with no for attribute) are
+        // expanded into one definition per scope — graph keeps the bare id
+        // when free, the others get fresh unique ids — with provenance
+        // markers, so re-imports and round-trips resolve to the same
+        // definitions instead of growing them without bound. Dropping them
+        // silently loses the definition, the explicit values AND the default.
+        const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
+        const defaultValue = defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType);
+        // Provenance markers written by our own GraphML export (namespaced
+        // attributes on <key>), read back on import.
+        const geAttr = (k, local) => (k.getAttribute('grapheditor:' + local) || k.getAttributeNS('https://grapheditor.pro/ns', local) || '').trim().slice(0, 128);
+        const importedDataKey = geAttr(k, 'dataKey');
+        const importedDataName = geAttr(k, 'dataName').toLowerCase();
+        const scopes = forWhom === 'all' ? ['graph', 'node', 'edge'] : (['graph', 'node', 'edge'].includes(forWhom) ? [forWhom] : []);
+        const isCustom = !reservedAttrNames.has(name) && scopes.length > 0;
         if (isCustom) {
-            const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
             const migrated = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase());
-            // Provenance markers written by our own GraphML export (namespaced
-            // attributes on <key>), read back on import.
-            const geAttr = (k, local) => (k.getAttribute('grapheditor:' + local) || k.getAttributeNS('https://grapheditor.pro/ns', local) || '').trim().slice(0, 128);
-            let defId = id;
-            let markers = {};
-            if (migrated) {
+            // An earlier import of this exact key is reused (same provenance
+            // markers, same scope) so repeated re-imports never mint duplicates.
+            // The candidate id must not be claimed by another key of the incoming
+            // file — except for expansions, where re-using the provenance of a
+            // definition minted from THIS key is exactly what keeps round-trips
+            // stable.
+            const takenNow = () => {
+                const taken = new Set(fileKeyIds);
+                if (Array.isArray(state.customAttributes))
+                    for (const attribute of state.customAttributes)
+                        taken.add(attribute.id);
+                for (const attribute of customAttributes)
+                    taken.add(attribute.id);
+                return taken;
+            };
+            for (const scope of scopes) {
+                let defId = id;
+                let markers = {};
                 const prior = Array.isArray(state.customAttributes)
                     ? state.customAttributes.find(attribute => attribute.dataKey === id
-                        && attribute.scope === forWhom
+                        && attribute.scope === scope
                         && String(attribute.dataName ?? '') === name
-                        && !fileKeyIds.has(attribute.id))
+                        && !(migrated && forWhom !== 'all' && fileKeyIds.has(attribute.id)))
                     : undefined;
                 if (prior) {
                     defId = prior.id;
                 }
-                else {
-                    const taken = new Set(fileKeyIds);
-                    for (const attribute of state.customAttributes)
-                        taken.add(attribute.id);
-                    defId = uniqueCustomAttributeId(id, taken);
+                else if (forWhom === 'all' && !migrated) {
+                    const taken = takenNow();
+                    // The graph scope may keep the bare key id — the file's own key
+                    // id is only excluded when another file found a home for it,
+                    // i.e. when the document already defines it.
+                    taken.delete(id);
+                    defId = (scope === 'graph' && !taken.has(id) && !RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()))
+                        ? id
+                        : uniqueCustomAttributeId(id, taken);
+                    markers = { dataKey: id, dataName: name };
                 }
-                markers = { dataKey: id, dataName: name };
-            }
-            else {
-                const importedDataKey = geAttr(k, 'dataKey');
-                const importedDataName = geAttr(k, 'dataName').toLowerCase();
-                if (importedDataKey)
+                else if (migrated) {
+                    defId = uniqueCustomAttributeId(id, takenNow());
+                    markers = { dataKey: id, dataName: name };
+                }
+                else if (importedDataKey) {
                     markers = { dataKey: importedDataKey, ...(importedDataName ? { dataName: importedDataName } : {}) };
+                }
+                customAttributes.push({ id: defId, scope: scope, type: normalizedType, ...markers });
+                customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
+                customKeyDataName.push({ id: defId, scope, type: normalizedType, dataKey: id, defaultValue });
             }
-            customAttributes.push({ id: defId, scope: forWhom, type: normalizedType, ...markers });
-            customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
-            customKeyDataName.push({ id: defId, scope: forWhom, type: normalizedType, dataKey: id, defaultValue: defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType) });
         }
         if (defEl) {
-            keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
-            keyDefaultsByFor[forWhom][name] = defVal;
+            if (forWhom === 'all') {
+                for (const s of ['graph', 'node', 'edge']) {
+                    keyDefaultsByFor[s] = keyDefaultsByFor[s] || {};
+                    keyDefaultsByFor[s][name] = defVal;
+                }
+            }
+            else {
+                keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
+                keyDefaultsByFor[forWhom][name] = defVal;
+            }
         }
     });
     const graph = doc.querySelector('graph');
