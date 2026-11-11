@@ -822,6 +822,32 @@
   // usable empty graph and must not replace the document. EOF is only legal
   // where no closing brace is pending, a bare '}' only where one is — so a
   // truncated or padded file can never come back as "empty".
+  // Walks a comment-free DOT source and reports its outline without interpreting
+  // values: the index of the first '{' and the last '}' OUTSIDE any quoted string
+  // (or -1 when absent), plus the same source with every quoted string blanked to
+  // `""` (for keyword tests). An unterminated string swallows the rest of the
+  // input — text inside it can neither build structure nor pass for a keyword.
+  function scanDotOutline(src: string): { open: number, close: number, unquoted: string } {
+    let open = -1, close = -1, unquoted = '';
+    for(let i = 0; i < src.length;){
+      const c = src[i];
+      if(c === '"'){
+        unquoted += '""';
+        let j = i + 1;
+        while(j < src.length){
+          if(src[j] === '\\'){ j += 2; continue; }
+          if(src[j] === '"'){ j += 1; break; }
+          j++;
+        }
+        i = j; // unterminated: j === src.length — the tail is one big string
+        continue;
+      }
+      if(c === '{'){ if(open < 0) open = i; unquoted += c; i++; continue; }
+      if(c === '}'){ close = i; unquoted += c; i++; continue; }
+      unquoted += c; i++;
+    }
+    return { open, close, unquoted };
+  }
   function scanDotStructure(src: string): boolean {
     const NUM_SRC = '[+-]?(?:\\d+(\\.\\d*)?|\\.\\d+)';
     const numRe = new RegExp('^' + NUM_SRC);
@@ -834,12 +860,6 @@
       if(m && m[0].length) return { end: i + m[0].length };
       return null;
     };
-    // One definition of a DOT value: an ID, a quoted string, or a signed number.
-    const matchValue = (s: string, i: number): { end: number } | null => {
-      const id = matchId(s, i); if(id) return id;
-      const num = numRe.exec(s.slice(i)); if(num) return { end: i + num[0].length };
-      return null;
-    };
     // Index just after the closing quote of a string starting at i (or s.length if unterminated).
     const skipString = (s: string, i: number): number => {
       let j = i + 1;
@@ -850,11 +870,31 @@
       }
       return s.length;
     };
-    // Index just after the matching close of the delimiter pair starting at i.
+    // Index just after an HTML-like string (<...>), tracking nesting depth and
+    // skipping quoted strings inside it. Returns -1 when unterminated.
+    const skipHtml = (s: string, i: number): number => {
+      let j = i + 1, depth = 1;
+      while(j < s.length && depth > 0){
+        const c = s[j];
+        if(c === '"'){ const end = skipString(s, j); if(end >= s.length && s[s.length - 1] !== '"') return -1; j = end; continue; }
+        if(c === '<'){ depth++; j++; continue; }
+        if(c === '>'){ depth--; j++; continue; }
+        j++;
+      }
+      return depth === 0 ? j : -1;
+    };
+    // One definition of a DOT value: an HTML-like string, an ID, a quoted string, or a signed number.
+    const matchValue = (s: string, i: number): { end: number } | null => {
+      if(s[i] === '<'){ const end = skipHtml(s, i); return end >= 0 ? { end } : null; }
+      const id = matchId(s, i); if(id) return id;
+      const num = numRe.exec(s.slice(i)); if(num) return { end: i + num[0].length };
+      return null;
+    };    // Index just after the matching close of the delimiter pair starting at i.
     const matchPair = (s: string, i: number, open: string, close: string): number => {
       let depth = 0;
       for(let j = i; j < s.length; j++){
         const c = s[j];
+        if(c === '<'){ const end = skipHtml(s, j); if(end < 0) return -1; j = end - 1; continue; }
         if(c === '"'){ j = skipString(s, j) - 1; continue; }
         if(c === open) depth++;
         else if(c === close){ depth--; if(!depth) return j + 1; }
@@ -888,6 +928,13 @@
         i = skipWs(s, i);
         if(i >= s.length) return needClose ? { ok: false, next: i } : { ok: true, next: i };
         if(s[i] === '}') return needClose ? { ok: true, next: i + 1 } : { ok: false, next: i };
+        // Anonymous subgraph block: '{ ... }'
+        if(s[i] === '{'){
+          const inner = walk(s, i + 1, true);
+          if(!inner.ok) return inner;
+          i = inner.next;
+          continue;
+        }
         // Attribute statement: graph|node|edge, then one or more [list]
         // ('graph [label=x][rankdir=LR];' — every list is validated).
         const kw = /^(graph|node|edge)\b/i.exec(s.slice(i));
@@ -939,14 +986,17 @@
     // directed-graph default both derive from the comment-free source, so a
     // keyword hiding inside a comment can never rescue garbage input.
     const stripped = stripDotComments(text);
-    const directedGraph = /\bdigraph\b/i.test(stripped);
+    // Braces and keywords are located quote-aware: a quoted string may hold
+    // '}' or the word 'graph' without granting structure to garbage input.
+    const { open, close, unquoted } = scanDotOutline(stripped);
+    const directedGraph = /\bdigraph\b/i.test(unquoted);
     let body = stripped;
-    const open = body.indexOf('{'), close = body.lastIndexOf('}'); if(open >= 0 && close > open) body = body.slice(open+1, close);
+    if(open >= 0 && close > open) body = stripped.slice(open + 1, close);
     // A structurally recognized DOT graph document needs BOTH the graph
     // keyword and a balanced braces block (strict DOT grammar). Prose is not
     // a graph — the node matcher below would otherwise invent a node out of
     // it. A keyword without braces (truncated file) is likewise not usable.
-    const hasStructure = (open >= 0 && close > open) && (directedGraph || /\bgraph\b/i.test(stripped));
+    const hasStructure = (open >= 0 && close > open) && /\b(?:di)?graph\b/i.test(unquoted);
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
     // A bare token must contain at least one word-ish character: a run of
@@ -977,7 +1027,7 @@
       edges.push(e as any);
     }
     const withoutEdges = body.replace(edgeRe, '');
-    const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
+    const nodeRe = new RegExp('(?:^|;|[\\r\\n]|\\{)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|}|$)', 'g');
     if(hasStructure || edges.length)
     while((m = nodeRe.exec(withoutEdges))){
       const name = cleanDotToken(m[1]);
@@ -1019,7 +1069,7 @@
     // a -> }", "graph [label=];") is real input the parser could not use,
     // not an empty graph — reject it.
     if(!arr.length){
-      const after = stripped.slice(stripped.lastIndexOf('}') + 1);
+      const after = close >= 0 ? stripped.slice(close + 1) : '';
       return (hasStructure && /^\s*$/.test(after) && scanDotStructure(body)) ? { title:'imported-dot', nodes: [], edges: [] } : null;
     }
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){

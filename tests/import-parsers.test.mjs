@@ -1290,3 +1290,124 @@ test('node-ish garbage with no extractable nodes is rejected', async () => {
   }
 });
 
+
+test('non-DOT text cannot win structure from inside a quoted string', async () => {
+  const saved = { title: 'keep-me-r17a', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'banana "graph" {}',
+    'banana "digraph" {}',
+    'banana "graph" { } x',
+    'banana "unterminated { }',
+    '{ }',
+    '"graph"',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 1, `${JSON.stringify(text)} must not import as an empty document`);
+    assert.equal(graph.nodes[0].id, 'n1', 'the seeded document is untouched');
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('anonymous subgraph blocks import as valid empty documents', async () => {
+  const saved = { title: 'keep-me-r17b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { { } }',
+    'digraph G { { { } } }',
+    'digraph G { { dpi=96; } }',
+    'digraph G { {} }',
+    'digraph G { strict subgraph { } { } }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 0, `${JSON.stringify(text)} imports as a valid empty document`);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('an anonymous block with a node statement imports the node', async () => {
+  const saved = { title: 'keep-me-r17c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', 'digraph G { { a } }');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1);
+  assert.equal(graph.nodes[0].id, 'a');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('HTML-like labels import as valid empty documents', async () => {
+  const saved = { title: 'keep-me-r17d', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'graph [label=<hello>]'.replace('graph', 'graph G { graph') + ' }',
+    'digraph G { graph [label=<hello>]; }',
+    'digraph G { graph [label=<<a href="u">hello</a>>]; }',
+    'digraph G { graph [label=<<TABLE><TR><TD>cell</TD></TR></TABLE>>]; }',
+    'digraph G { label=<hello>; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 0, `${JSON.stringify(text)} imports as a valid empty document`);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('an unterminated HTML label rejects the import', async () => {
+  const saved = { title: 'keep-me-r17e', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', 'digraph G { graph [label=<hello]; }');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1);
+  assert.equal(graph.nodes[0].id, 'n1');
+  assert.match(toasts(document), /fail|no graph/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a closing brace inside a quoted string does not end the graph body', async () => {
+  const saved = { title: 'keep-me-r17f', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', 'digraph G { label="}" }');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'the assignment imports as a valid empty document');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
