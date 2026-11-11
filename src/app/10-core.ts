@@ -357,7 +357,66 @@
   const STROKE_STYLES = ['solid','dashed','dotted','dashdot','dashdotdot','none'];
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
-  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
+  const EDGE_DIRECTIONS = ['directed','mutual','undirected'];
+  const DEFAULT_ARROW_SIZE = 12;
+  const ARROW_SIZE_MIN = 4, ARROW_SIZE_MAX = 40;
+  function normalizeDirection(raw: any): string {
+    if(raw === true || raw === 'true' || raw === 1 || raw === '1') return 'directed';
+    if(raw === false || raw === 'false' || raw === 0 || raw === '0') return 'undirected';
+    const s = String(raw ?? '').trim().toLowerCase();
+    if(!s) return 'directed';
+    if(s === 'directed' || s === 'forward' || s === 'true' || s === '1' || s === 'directed (one end)') return 'directed';
+    if(s === 'mutual' || s === 'both' || s === 'bidirected' || s === 'bidirectional' || s === 'mutual (both ends)') return 'mutual';
+    if(s === 'undirected' || s === 'none' || s === 'false' || s === '0' || s === 'undirected (no ends)') return 'undirected';
+    if(['directed','mutual','undirected'].includes(s)) return s;
+    if(s.startsWith('bi')) return 'mutual';
+    return 'directed';
+  }
+  function edgeDirection(e: any): string {
+    // Canonical field is e.direction, legacy is e.directed (boolean or string)
+    const raw = (e && (e.direction ?? e.directed));
+    return normalizeDirection(raw);
+  }
+  function edgeHasEndArrow(e: any): boolean {
+    const d = edgeDirection(e);
+    return d === 'directed' || d === 'mutual';
+  }
+  function edgeHasStartArrow(e: any): boolean {
+    return edgeDirection(e) === 'mutual';
+  }
+  function edgeIsUndirected(e: any): boolean {
+    return edgeDirection(e) === 'undirected';
+  }
+  // ---- GraphML keys: the importer's own read surface ----
+  //
+  // Two rounds of review asked for opposite answers on the same <key>
+  // (id="fillcolor" attr.name="fillcolor" for="node"):
+  //   * a definition the user made, exported by us, must come back;
+  //   * a foreign key with that name must not appear as a definition, because
+  //     the importer reads `fillcolor` as the node colour.
+  // The bytes are identical, so no rule over (id, name, scope) can decide it.
+  // Only the writer knows, so the exporter marks its own definitions
+  // (qvge:custom) and everything unmarked is classified by the one question
+  // left: does the importer read this attr.name as a built-in for this scope?
+  // If it does, the key feeds a built-in field and cannot be a definition.
+  let graphmlSchemaSource: (() => GraphmlSchema) | null = null;
+  function registerGraphmlSchema(source: () => GraphmlSchema): void {
+    graphmlSchemaSource = source;
+  }
+  function graphmlSchema(): GraphmlSchema {
+    return graphmlSchemaSource ? graphmlSchemaSource() : {readNames: []};
+  }
+  // Could an unmarked key bind to one of our built-in fields? A key declared
+  // without `for` (GraphML's default is "all") may apply to any scope, so it is
+  // built-in when the name is read on *any* scope — otherwise a foreign key
+  // named `label` would be reported as a definition while still setting labels.
+  function isBuiltinGraphmlKey(name: string, scope: string): boolean {
+    const wanted = String(name || '').toLowerCase();
+    const anyScope = scope === 'all';
+    return graphmlSchema().readNames.some(([readName, readScope]) =>
+      readName === wanted && (anyScope || readScope === scope));
+  }
+
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
@@ -370,9 +429,10 @@
       nodeWidth:50, nodeHeight:50,
       nodeStrokeColor:'#e2e8f0', nodeStrokeSize:2.2, nodeStrokeStyle:'solid',
       nodeType:'', nodeLabelColor:'#f8fafc', nodeLabelFont:'Inter', nodeLabelSize:13, nodeLabelPosition:'center',
-      // Edit-tab edge defaults (primary for newly added edges)
-      directed:true, edgeWeight:'1', edgeLabel:'',
+      // Edit-tab edge defaults (primary for newly added edges) — QVGE uses direction string
+      directed:true, direction:'directed', edgeWeight:'1', edgeLabel:'',
       edgeType:'', edgeColor:'#94a3b8', edgeStrokeSize:2.4, edgeStrokeStyle:'solid',
+      edgeArrowSize: DEFAULT_ARROW_SIZE,
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
       snap:false, snapX:false, snapY:false, gridSize:40, gridSizeX:40, gridSizeY:40,
       autosave:true, matrixLimit:90, edgeListPageSize:250, matrixDimension:0, brushDiameter:80,
@@ -408,7 +468,7 @@
       },
       edgeDefaults: {
         type:'', color:'#94a3b8', labelColor:'#dbeafe', labelFont:'Inter', labelSize:12,
-        strokeSize:2.4, strokeStyle:'solid'
+        strokeSize:2.4, strokeStyle:'solid', arrowSize: DEFAULT_ARROW_SIZE
       },
       // Per-type style overrides: { 'typeName': { color, shape, width, height, ... }, ... }
       nodeTypeStyles: {},
@@ -550,7 +610,7 @@
   function updateCommandStates(){
     const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
     $('#btnDelete').disabled = !hasSelection;
-    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => edgeById(id)?.directed);
+    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => { const e=edgeById(id); return e && edgeDirection(e) !== 'undirected'; });
     $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
     $('#btnMatrixClear').disabled = !state.edges.length;
     const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
@@ -619,17 +679,22 @@
       const from = nodeReferences.get(String(e.from)) || (nodeIds.has(String(e.from)) ? String(e.from) : '');
       const to = nodeReferences.get(String(e.to)) || (nodeIds.has(String(e.to)) ? String(e.to) : '');
       if(!from || !to) return; // Drop dangling edges before they reach render/algorithm code.
+      const dir = normalizeDirection((e as any).direction ?? (e as any).directed);
       const edge: GraphEdge = {
         id: uniqueSafeId(e.id || ('e' + (i + 1)), 'e', usedEdgeIds),
         from, to,
         label: String(e.label ?? '').slice(0,80),
-        directed: Boolean(e.directed),
+        directed: dir as any, // legacy boolean compat: keep truthy for directed/mutual
+        direction: dir,
         type: String(e.type || '').slice(0,40)
       };
+      // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
+      (edge as any).directed = dir !== 'undirected';
       if(e.weight != null && e.weight !== '') edge.weight = String(e.weight).slice(0,50);
       if(e.color) edge.color = validColor(e.color) || '';
       if(e.strokeSize != null) edge.strokeSize = clamp(finite(e.strokeSize, 2.4), 0, 20);
       if(e.strokeStyle) edge.strokeStyle = validStroke(e.strokeStyle);
+      if(e.arrowSize != null) edge.arrowSize = clamp(finite(e.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       if(e.labelColor) edge.labelColor = validColor(e.labelColor) || '';
       if(e.labelSize != null) edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
@@ -655,6 +720,7 @@
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
     settings.edgeLabelColor = validColor(settings.edgeLabelColor) || '#dbeafe';
+    settings.edgeArrowSize = clamp(finite(settings.edgeArrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     settings.edgeLabelFont = String(settings.edgeLabelFont || 'Inter').slice(0, 60);
     settings.edgeLabelSize = clamp(finite(settings.edgeLabelSize, 12), 4, 72);
     settings.hitTestMode = ['any','center'].includes(settings.hitTestMode) ? settings.hitTestMode : 'any';
@@ -710,6 +776,7 @@
     ed.labelColor = validColor(ed.labelColor) || '#dbeafe';
     ed.strokeStyle = validStroke(ed.strokeStyle) || 'solid';
     ed.strokeSize = clamp(finite(ed.strokeSize, 2.4), 0, 20);
+    ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
     ed.type = String(ed.type || '').slice(0, 40);
@@ -734,6 +801,7 @@
       } else {
         if(ts.strokeSize != null) out.strokeSize = clamp(finite(ts.strokeSize, 2.4), 0, 20);
         if(ts.strokeStyle && STROKE_STYLES.includes(ts.strokeStyle)) out.strokeStyle = ts.strokeStyle;
+        if(ts.arrowSize != null) out.arrowSize = clamp(finite(ts.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         if(validColor(ts.labelColor)) out.labelColor = ts.labelColor;
         if(ts.labelSize != null) out.labelSize = clamp(finite(ts.labelSize, 12), 4, 72);
         if(ts.labelFont) out.labelFont = String(ts.labelFont).slice(0, 60);
@@ -764,7 +832,16 @@
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
-    settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
+    // QVGE: edge direction default is directed/mutual/undirected (string); keep boolean legacy
+    // Prefer explicit inputSettings values over merged defaults so legacy
+    // documents like { directed:false } (without direction) are not masked by
+    // the base default direction='directed'.
+    const dirRawInput = (inputSettings as any).direction ?? (inputSettings as any).directed;
+    const dirRaw = dirRawInput !== undefined ? dirRawInput : ((settings as any).direction ?? settings.directed);
+    const dirNorm = normalizeDirection(dirRaw);
+    settings.direction = dirNorm;
+    settings.directed = dirNorm !== 'undirected';
+    settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
     settings.copyPreserveExternal = settings.copyPreserveExternal !== false;
     // Gizmo tool/visibility migrated to a local UI preference (45-gizmo.ts);
     // strip the legacy document field so imports/exports cannot resurrect it.
@@ -807,6 +884,7 @@
           if(validColor(se.color)) out.edge.color = se.color;
           if(se.strokeSize != null) out.edge.strokeSize = clamp(finite(se.strokeSize, 2.4), 0, 20);
           if(se.strokeStyle && STROKE_STYLES.includes(se.strokeStyle)) out.edge.strokeStyle = se.strokeStyle;
+          if(se.arrowSize != null) out.edge.arrowSize = clamp(finite(se.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
           if(validColor(se.labelColor)) out.edge.labelColor = se.labelColor;
           if(se.labelSize != null) out.edge.labelSize = clamp(finite(se.labelSize, 12), 4, 72);
           if(se.labelFont) out.edge.labelFont = String(se.labelFont).slice(0, 60);
@@ -816,15 +894,30 @@
     } else { settings.stylePresets = []; }
     const customAttributeTypes = ['boolean','int','long','float','double','string'];
     const customAttributeIds = new Set<string>();
-    const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
-      .slice(0, 500).filter(isRecord).map(attribute => {
-        const id = String(attribute.id ?? '').trim().slice(0, 128);
-        const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
-        const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
-        if(!id || !scope || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) || customAttributeIds.has(id)) return null;
-        customAttributeIds.add(id);
-        return {id, scope, type};
-      }).filter(Boolean) as GraphState['customAttributes'];
+    const rawCustomAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : []).slice(0, 500).filter(isRecord);
+    const customAttributes = rawCustomAttributes.map(attribute => {
+      const id = String(attribute.id ?? '').trim().slice(0, 128);
+      const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
+      const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
+      if(!id || !scope) return null;
+      // The definition's own attribute name, when the importer recorded one.
+      // Kept in its original spelling: lowercasing it would change the property
+      // name for case-sensitive GraphML consumers on the next export.
+      const rawName = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128);
+      // Keep the id the definition came with. The editor refuses to create a
+      // reserved id, so a document carrying one was either hand-written or
+      // written by an older build: keep it rather than silently renaming the
+      // user's property to `weight2`, which would change what it means to any
+      // consumer reading the export. Duplicates are still collapsed, since two
+      // definitions cannot share an id.
+      if(customAttributeIds.has(id)) return null;
+      customAttributeIds.add(id);
+      const out: AnyRecord = {id, scope, type};
+      // Carry the exact attr.name (original spelling) so an id the exporter has
+      // to rename still exports under the property name it was read with.
+      if(rawName && rawName !== id) out.name = rawName;
+      return out as GraphState['customAttributes'][number];
+    }).filter(Boolean) as GraphState['customAttributes'];
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),

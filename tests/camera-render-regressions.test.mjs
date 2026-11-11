@@ -842,7 +842,8 @@ test('a long edge crossing the viewport is clipped, not discarded', async () => 
   const graph = {
     title: 'long-edge',
     nodes: [{ id: 'a', label: 'A', x: 0, y: 0 }, { id: 'b', label: 'B', x: 11000000, y: 0 }],
-    edges: [{ id: 'e', from: 'a', to: 'b', directed: true }],
+    // QVGE-correct document uses direction string and optional arrowSize
+    edges: [{ id: 'e', from: 'a', to: 'b', directed: true, direction: 'directed', arrowSize: 12 }],
     viewBox: { x: -500, y: -330, w: 1000, h: 660 },
   };
   const { dom, errors } = createEditorDom(graph);
@@ -854,7 +855,14 @@ test('a long edge crossing the viewport is clipped, not discarded', async () => 
   const line = document.querySelector('#edgesLayer .edge-line');
   assert.ok(line, 'the long edge is rendered');
   const d = line.getAttribute('d') || '';
-  assert.match(d, /^M\s+27\s+0\s+L\s+10999957\s+0$/, `visible edge segment is drawn: ${d}`);
+  // Arrow size is customizable (Style attributes), so clipped coordinates vary
+  // with gap = arrowSize (+ node radius). Check shape and that coordinates are
+  // near the expected clipped viewport, not an exact hard-coded value.
+  assert.match(d, /^M\s+\d+\s+0\s+L\s+\d+\s+0$/, `visible edge segment is drawn: ${d}`);
+  const nums = (d.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  assert.equal(nums.length, 4, `expected 4 numbers in path: ${d}`);
+  assert.ok(nums[0] >= 20 && nums[0] <= 50, `start x ${nums[0]} near node radius + arrow gap`);
+  assert.ok(nums[2] >= 10999950 && nums[2] <= 11000000, `end x ${nums[2]} near clipped viewport`);
   assert.equal(document.querySelector('#edgesLayer .edge-hit')?.getAttribute('d'), d,
     'the hit path uses the same clipped geometry');
   for (const raw of d.match(/-?\d+(?:\.\d+)?/g) || []) {

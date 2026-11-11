@@ -232,13 +232,15 @@ for (const pointerType of ['mouse', 'touch']) {
 
 test('drop coordinates follow a panned and zoomed camera, and undirected creation stays undirected', async t => {
   const { window, document, svg, drag } = await setup(t, {
-    ...baseGraph, edges: [], viewBox: { x: -200, y: 50, w: 500, h: 330 }, settings: { directed: false },
+    ...baseGraph, edges: [], viewBox: { x: -200, y: 50, w: 500, h: 330 }, settings: { directed: false, direction: 'undirected' },
   });
   drag(svg, 'pointerup', 'mouse', 800, 600);
   await nextFrame(window);
   const graph = exported(document);
   assert.deepEqual([graph.nodes.at(-1).x, graph.nodes.at(-1).y], [200, 350]);
+  // QVGE-correct document uses direction string; legacy directed boolean kept for compat
   assert.equal(graph.edges[0].directed, false);
+  assert.equal(graph.edges[0].direction, 'undirected');
 });
 
 test('existing-node and self-loop connections do not create extra nodes', async t => {

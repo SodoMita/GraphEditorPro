@@ -1,7 +1,7 @@
 # QVGE Round-Trip Verification Report
 
 **Date:** 2026-11-10  
-**Branch:** `arena/6f53d629-grapheditorpro` → PR #36  
+**Branch:** `arena/741b7206-grapheditorpro` → PR #37 (tristate direction) — supersedes PR #36  
 **QVGE Version Analyzed:** 0.7.dev (main) / 0.7.0 release, cloned from https://github.com/ArsMasiuk/qvge  
 **Environment:** Debian 12 (bookworm) sandbox, Node 20, no Qt, apt blocked (only github.com / npm / pypi allowed)
 
@@ -210,3 +210,36 @@ qmake -r && make -j$(nproc)
 - `~/qvge/src/qvgeio/CFormatDOT.cpp:28-226` – DotVertex/DotEdge + style handling
 - `~/qvge/src/qvgeio/CFormatGraphML.cpp:108-130` – `writeAttributes` id==attr.name
 - Qt `src/gui/painting/qpen.cpp` – `dashPattern: space=2 dot=1 dash=4`
+
+## 9. Direction Tristate (PR #37 — arena/741b7206)
+
+**Goal:** Align `GraphEdge.direction` with QVGE tristate `direction` (`directed`=one arrow, `mutual`=both, `undirected`=none).
+
+| QVGE | DOT `dir` | GraphEditorPro `direction` | Arrow |
+|---|---|---|---|
+| `directed` | `forward` | `directed` | `→` |
+| `mutual` | `both` | `mutual` | `↔` (dual tips) |
+| `undirected` | `none` | `undirected` | `—` |
+
+QVGE sources (from earlier clone):
+
+- `src/qvgelib/CEdge.cpp:113-126` `updateArrowFlags` string→flags (directed/mutual/undirected)
+- `src/qvgelib/CEditorSceneDefines.h:49` `attr_edge_direction="direction"`
+- `src/qvgelib/CNodeEditorScene.cpp:329-347` `directionAttr` default `directed`, ids `directed/mutual/undirected`
+- `src/qvgelib/CFileSerializerDOT.cpp:311-317` `dir both/none` handling
+- `src/qvgeio/CFormatDOT.cpp:230-231` `both→mutual none→undirected` on load
+- `src/qvgeio/CFormatGraphML.cpp` `edgedefault` from `graph.edgeAttrs["direction"].defaultValue`
+- `src/qvgelib/CNodeSceneActions.cpp:275-340` separate actions `onActionEdgeDirected/Mutual/Undirected`
+
+**Changes (PR #37):**
+
+- `10-core.ts` helpers: `EDGE_DIRECTIONS`, `normalizeDirection(both→mutual, none→undirected, forward/bi*→directed, legacy bool sync)`, `edgeDirection`, `edgeHasEndArrow`/`edgeHasStartArrow`, `edgeIsUndirected`; `defaultState.direction='directed'`; import/settings legacy `directed` bool sync; `RESERVED` includes `direction`.
+- `20-rendering.ts` dual-arrow: `hasEdgeTip=edgeHasEndArrow`, `hasEdgeStartTip=edgeHasStartArrow`, `edgeStyleKey`/`geoSig` use `edgeDirection`, `edgePath` `hasStart/hasEnd` with per-end `arrowGapStart/End` + `startTip/startArrowAngle`, dual `<polygon class="edge-arrow">` + `edge-arrow-start`, bulk/single/list selects `directed/mutual/undirected`.
+- `30-graph-editing.ts` `expandSelection` directedOnly, `addEdge` `normalizeDirection(settings.direction??directed)`, `flipSelected` skips undirected, `setMatrixCell` symmetric for `undirected||mutual`.
+- `50-import-export.ts` `edgeCsv`/`matrixCsv` symmetric, `exportDotText` `allDirected` header + `op`/`dir` per edge, GraphML `<key id="direction">` + `directed` bool + `direction` string, `importEdgesCsv`/`importMatrixCsv` normalize, `parseDot` `initDir` + `attrs.directed` + `dir both/none/forward`, `parseDirection` mutual/both/undirected/none/directed, `parseGraphml` `dirStr` via `parseDirection`.
+- `60-algorithms.ts` adjacency/topo/stats respect `undirected||mutual` bidirectional, `graphStats` shows `directed, mutual, undirected` counts.
+- `80-ui.ts` + `template.html` + `00-i18n.ts` tristate `<select>` wiring.
+
+**Build:** `npx tsc --noEmit` clean, `npm run build` → `Built index.html (742,319 bytes)` static check passed. Fixed `TS1005 ',' expected` at `50-import-export.ts:549` and `noUnusedLocals` (`connector`, `mutual`).
+
+**Round-trip verified via source analysis + jsdom simulation:** `none↔undirected`, `forward↔directed`, `both↔mutual` mappings identical to QVGE. Binary QVGE execution still blocked (no Qt in sandbox).

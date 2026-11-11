@@ -41,17 +41,20 @@ interface GraphNode extends Point {
   [key: string]: any;
 }
 
+type EdgeDirection = 'directed' | 'mutual' | 'undirected';
 interface GraphEdge {
   id: string;
   from: string;
   to: string;
   label: string;
-  directed: boolean;
+  directed?: boolean | string; // legacy boolean, now string enum via direction
+  direction?: EdgeDirection | string;
   type?: string;
   weight?: string;
   color?: string;
   strokeSize?: number;
   strokeStyle?: string;
+  arrowSize?: number;
   labelColor?: string;
   labelSize?: number;
   labelFont?: string;
@@ -63,6 +66,9 @@ interface GraphSelection {
   edges: string[];
 }
 
+// Every attr.name the importer reads as a built-in, per scope. A <key> whose
+// name is in here feeds one of our fields, so it cannot be a definition.
+type GraphmlSchema = { readNames: readonly (readonly [string, string])[] };
 interface GraphState {
   title: string;
   mode: GraphMode;
@@ -72,7 +78,9 @@ interface GraphState {
   nextEdge: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string }[];
+  /** `name` carries the original GraphML attr.name when it differs from the id
+   *  (a definition migrated away from a now-reserved key id). */
+  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }[];
   selected: { type: 'node' | 'edge'; id: string } | null;
   selection: GraphSelection;
   settings: AnyRecord;
