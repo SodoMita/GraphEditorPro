@@ -809,17 +809,24 @@
     return out;
   }
   function parseDot(text){
-    const directedGraph = /\bdigraph\b/i.test(text);
-    let body = stripDotComments(text);
+    // Strip comments once, up front: the structure test and the
+    // directed-graph default both derive from the comment-free source, so a
+    // keyword hiding inside a comment can never rescue garbage input.
+    const stripped = stripDotComments(text);
+    const directedGraph = /\bdigraph\b/i.test(stripped);
+    let body = stripped;
     const open = body.indexOf('{'), close = body.lastIndexOf('}'); if(open >= 0 && close > open) body = body.slice(open+1, close);
     // A structurally recognized DOT graph document needs BOTH the graph
     // keyword and a balanced braces block (strict DOT grammar). Prose is not
     // a graph — the node matcher below would otherwise invent a node out of
     // it. A keyword without braces (truncated file) is likewise not usable.
-    const hasStructure = (open >= 0 && close > open) && (directedGraph || /\bgraph\b/i.test(text));
+    const hasStructure = (open >= 0 && close > open) && (directedGraph || /\bgraph\b/i.test(stripped));
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
-    const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]+)';
+    // A bare token must contain at least one word-ish character: a run of
+    // pure punctuation ('--', ':.') is never a node reference or endpoint —
+    // it is the arrow operator or noise, and must not invent a node.
+    const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*)';
     const edgeRe = new RegExp(id + '\\s*(--|->)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?', 'g');
     let m;
     while((m = edgeRe.exec(body))){
@@ -880,10 +887,16 @@
       if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
     }
     const arr = [...nodes.values()];
-    // A structurally recognized DOT graph with zero nodes — e.g. the
-    // editor's own empty export — is a valid empty document and round-trips.
+    // A structurally recognized DOT graph with zero nodes is a valid empty
+    // document ONLY when its body carries nothing the parser failed to use —
+    // e.g. the editor's own empty export (graph/node attribute statements,
+    // semicolons). Any leftover token ("digraph G { a -> }") is real input,
+    // not an empty graph — reject it rather than wipe the document.
     if(!arr.length){
-      return hasStructure ? { title:'imported-dot', nodes: [], edges: [] } : null;
+      const leftover = body
+        .replace(/\b(?:graph|node|edge)\s*\[[^\]]*\]\s*;?/gi, '')
+        .replace(/[\s;]/g, '');
+      return (hasStructure && !leftover) ? { title:'imported-dot', nodes: [], edges: [] } : null;
     }
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
       const r = Math.max(120, arr.length * 24);

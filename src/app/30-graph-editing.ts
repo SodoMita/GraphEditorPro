@@ -943,14 +943,22 @@
       // document — otherwise repeated pastes drop the value under the
       // graph-scoped id, where export omits it entirely.
       if(createdIds.has(id)){
-        // A previous paste already re-created this exact conflict under a fresh
-        // id (marked with dataKey = the carried id) — reuse it so repeated
-        // pastes never split one property into tag_1, tag_2, ... GraphML
-        // migrations always carry a non-empty dataName, so they never match here.
-        const prior = state.customAttributes.find(attribute => attribute.dataKey === id
-          && attribute.scope === scope
-          && String(attribute.dataName ?? '') === ''
-          && !carriedTypeById.has(attribute.id));
+        // A previous paste already re-created this exact conflict under a
+        // fresh id — reuse it so repeated pastes never split one property
+        // into tag_1, tag_2, .... Two marker shapes exist: a carried
+        // definition with original GraphML provenance (minted the same way:
+        // dataKey+dataName of the source key), or a plain carried definition
+        // (no markers: dataKey = the carried id, no dataName).
+        const carriedDataKey = carriedPair?.dataKey;
+        const carriedDataName = carriedPair?.dataName ?? '';
+        const prior = state.customAttributes.find(attribute => {
+          if(attribute.scope !== scope) return false;
+          if(carriedTypeById.has(attribute.id)) return false;
+          const attributeKey = String(attribute.dataKey ?? '');
+          const attributeName = String(attribute.dataName ?? '');
+          if(carriedDataKey) return attributeKey === carriedDataKey && attributeName === carriedDataName;
+          return attributeKey === id && attributeName === '';
+        });
         if(prior){
           renameByPair.set(key, prior.id);
           return;
@@ -965,7 +973,14 @@
       const newId = uniqueCustomAttributeId(id, mintTaken);
       remaining--;
       renamed++;
-      addDef(newId, scope, type, { dataKey: id });
+      // Keep the carried definition's original provenance when it has one (a
+      // migrated GraphML id), so appending the source file — or a round-trip
+      // of an export of it — reuses THIS definition instead of minting a
+      // second one for the same property. Plain carried definitions fall
+      // back to dataKey = the carried id with no dataName.
+      addDef(newId, scope, type, carriedPair?.dataKey
+        ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) }
+        : { dataKey: id });
       renameByPair.set(key, newId);
     };
     const ensureEntityPairs = (entities: AnyRecord[], scope: 'node' | 'edge') => {

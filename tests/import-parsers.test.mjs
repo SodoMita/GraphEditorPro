@@ -811,3 +811,96 @@ test('zero-node GraphML with an edge whose endpoints are absent is rejected', as
     dom.window.close();
   }
 });
+
+// === Round 11 ===
+test('malformed DOT with unparseable content is rejected, not imported as an empty document', async () => {
+  const saved = { title: 'keep-me-r11', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [] };
+  const cases = [
+    ['#btnPasteDot', 'digraph G { a -> }'],
+    ['#btnPasteDot', '// graph\n{}'],
+    ['#btnPasteDot', 'digraph G { // graph keyword in a comment\n  a ->\n}'],
+    ['#btnPasteDot', 'graph { -- }'],
+  ];
+  for(const [button, text] of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, button, text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 3, `document survives ${JSON.stringify(text)}`);
+    assert.match(toasts(document), /fail|no graph/i, `a failure is reported for ${JSON.stringify(text)}`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+  // A genuinely empty graph with only no-op statements still imports.
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', 'digraph empty {\n  graph [layout="neato"];\n  node [style="filled"];\n}');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'a valid empty digraph with no-op statements imports');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a conflicting paste keeps GraphML provenance so re-paste and import-append reuse the definition', async () => {
+  // Target document: graph-scope x_1 already exists, forcing a mint when the
+  // carried node-scope x_1 (migrated from reserved key "x") is pasted.
+  const saved = { title: 'cap-provenance', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'x_1', scope: 'graph', type: 'string' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 30, y: 30, order: 0, custom: { x_1: 'red' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', dataKey: 'x', dataName: 'fill color' }] });
+  const originalGraphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="x" for="node" attr.name="fill color" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="m2"><data key="x">blue</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const clip = () => Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+
+  clip(); document.querySelector('#btnPaste2').click(); await settle(dom.window, 80);
+  let graph = exportedGraph(document);
+  const minted = graph.customAttributes.find(d => d.id === 'x_1_1');
+  assert.equal(minted?.scope, 'node', 'the conflicting paste minted x_1_1');
+  assert.equal(minted?.dataKey, 'x', 'the minted definition keeps the ORIGINAL key id as provenance');
+  assert.equal(minted?.dataName, 'fill color', 'the minted definition keeps the original key name as provenance');
+
+  // A second identical paste must reuse x_1_1, never mint x_1_2.
+  clip(); document.querySelector('#btnPaste2').click(); await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 2, 're-pasting creates no new definition');
+  assert.equal(graph.customAttributes.some(d => d.id === 'x_1_2'), false, 'no x_1_2 is minted');
+
+  // Appending the original GraphML must find x_1_1 via its provenance and
+  // reuse it — never create x_2.
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => originalGraphml } });
+  const appendChk = document.querySelector('#optImportAppend');
+  assert.ok(appendChk, 'the append option exists');
+  appendChk.checked = true;
+  document.querySelector('#btnPasteGraphml').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 2, 'appending the source file reuses the definition, no x_2 is created');
+  assert.equal(graph.customAttributes.some(d => d.id === 'x_2'), false, 'x_2 is never minted');
+  const carrieds = graph.nodes.filter(n => n.label === 'Carried');
+  assert.equal(carrieds.length, 2);
+  for(const n of carrieds) assert.equal(n.custom?.x_1_1, 'red', 'carried values stay bound to x_1_1');
+  const imported = graph.nodes.find(n => n.id === 'm2' || n.id.startsWith('n'));
+  assert.equal(graph.customAttributes.filter(d => d.id === 'x_1_1').length, 1);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
