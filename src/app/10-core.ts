@@ -388,13 +388,34 @@
     return edgeDirection(e) === 'undirected';
   }
   const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','arrowSize','edgeArrowSize','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','direction','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
-  // Every GraphML attr.name the app itself reads or writes, including the
-  // historical aliases it accepts (style, arrowsize, fillcolor, position.x, …).
-  // The importer uses this instead of the ID list: a key is built-in only when
-  // its attr.name is one of these, whatever its id happens to be, so a built-in
-  // alias can never come back as a phantom custom definition — and an external
-  // id that merely collides with a reserved id is still an ordinary attribute.
-  const BUILTIN_GRAPHML_ATTR_NAMES = new Set(['label','name','id','nodeid','order','x','y','posx','posy','position.x','position.y','type','shape','color','fillcolor','width','height','stroke.color','stroke.size','stroke.style','strokecolor','strokesize','strokestyle','style','label.color','label.font','label.size','label.position','labelcolor','labelfont','labelsize','labelposition','weight','value','edgecolor','edgelabel','arrow.size','arrowsize','directed','direction','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']);
+  // GraphML attr.names that belong to the app's own schema, per element type:
+  // exactly the names its exporter writes for that scope. A key using one of
+  // them describes a property the app already owns, so it must never surface as
+  // a custom definition (that is what turned an edge `attr.name="style"` into a
+  // phantom arrowSize2).
+  // Names the importer merely *accepts* are deliberately absent: they are
+  // read-only aliases and fallbacks (position.x, fillcolor, strokecolor, and
+  // `name`/`value`, which only back up a missing label or weight). The data
+  // binds the same either way, so listing a definition for them costs nothing
+  // and reserving them would silently discard a legitimate one.
+  const BUILTIN_ATTR_NAMES_BY_SCOPE: Record<string, Set<string>> = {
+    node: new Set(['label','id','order','x','y','type','shape','color','width','height','stroke.color','stroke.size','stroke.style','label.color','label.font','label.size','label.position']),
+    edge: new Set(['id','weight','label','type','color','stroke.size','style','label.color','label.font','label.size','directed','direction','arrow.size']),
+    // Names are stored lowercased (the importer lowercases attr.name before
+    // matching), even where the exporter writes camelCase such as
+    // attr.name="edge.weight.colorLow".
+    graph: new Set(['id','labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr','edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh','canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']),
+  };
+  // The key reference itself: `id` may never be a custom name in any scope.
+  const BUILTIN_ATTR_NAMES_ANY_SCOPE = new Set(['id']);
+  function isBuiltinGraphmlName(name: string, scope: string): boolean {
+    if(BUILTIN_ATTR_NAMES_ANY_SCOPE.has(name)) return true;
+    const forScope = BUILTIN_ATTR_NAMES_BY_SCOPE[scope];
+    if(forScope) return forScope.has(name);
+    // An unrecognised `for` keeps the definition: an unknown scope is more
+    // likely a foreign extension than one of the app's own keys.
+    return false;
+  }
   // Rename a custom attribute id that collides with a built-in one to a free
   // id, based on `base` (the definition's own name when it has one). `selfId`
   // is the entry's own declared id, subtracted from `declared` so an entry is
@@ -901,7 +922,10 @@
       const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
       if(!id || !scope) return null;
       // The definition's own attribute name, when the importer recorded one.
-      const name = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128).toLowerCase();
+      // Kept in its original spelling: lowercasing it would change the property
+      // name for case-sensitive GraphML consumers on the next export.
+      const rawName = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128);
+      const name = rawName.toLowerCase();
       // A usable id is kept as-is, so editing a definition survives save/reload
       // and export/import without the id drifting. Only when the id itself
       // cannot be used — reserved, or already claimed — does the definition's
@@ -909,7 +933,10 @@
       // app's key ids (id="x" attr.name="externalTag") is a real attribute and
       // should be named after what it means, not after the collision.
       const idUsable = !RESERVED_CUSTOM_ATTRIBUTE_IDS.has(id) && !customAttributeIds.has(id);
-      const base = idUsable ? id : (name && !BUILTIN_GRAPHML_ATTR_NAMES.has(name) ? name : id);
+      // A name is only a usable *identifier* when it is not built-in for this
+      // scope; the comparison is case-insensitive because GraphML names are.
+      const nameUsable = Boolean(name) && !isBuiltinGraphmlName(name, scope);
+      const base = idUsable ? id : (nameUsable ? name : id);
       const claimedByOther = (declaredCounts.get(base) || 0) - (base === id ? 1 : 0) > 0;
       const usable = !RESERVED_CUSTOM_ATTRIBUTE_IDS.has(base) && !customAttributeIds.has(base) && !claimedByOther;
       // `direction`, `arrowSize` and `edgeArrowSize` became built-ins after
@@ -921,9 +948,10 @@
       if(!resolved || RESERVED_CUSTOM_ATTRIBUTE_IDS.has(resolved) || customAttributeIds.has(resolved)) return null;
       customAttributeIds.add(resolved);
       // Keep the external attribute name when it is neither the id nor a
-      // built-in one, so the definition exports under the name it was read with.
+      // built-in one, so the definition exports under the exact name (and
+      // spelling) it was read with.
       const out: AnyRecord = {id: resolved, scope, type};
-      if(name && name !== resolved && !BUILTIN_GRAPHML_ATTR_NAMES.has(name)) out.name = name;
+      if(nameUsable && rawName !== resolved) out.name = rawName;
       return out as GraphState['customAttributes'][number];
     }).filter(Boolean) as GraphState['customAttributes'];
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;

@@ -225,3 +225,68 @@ test('editing a custom definition keeps its id, and migrated names survive reloa
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('editing a migrated definition keeps the GraphML attr.name it came with', async () => {
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}], edges: [],
+    customAttributes: [{id:'externaltag', scope:'node', type:'string', name:'externalTag'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const row = document.querySelector('.custom-attribute-row');
+  row.querySelector('[data-attribute-field="type"]').value = 'double';
+  row.querySelector('[data-attribute-action="save"]').click();
+  document.querySelector('#btnExportGraphml').click();
+  const graphml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(graphml, /<key id="externaltag"[^>]*attr\.name="externalTag" attr\.type="double"/,
+    'an unrelated edit does not rename the key back to its custom id');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('renaming a definition drops the attr.name that belonged to the old key', async () => {
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}], edges: [],
+    customAttributes: [{id:'externaltag', scope:'node', type:'string', name:'externalTag'}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  const row = document.querySelector('.custom-attribute-row');
+  row.querySelector('[data-attribute-field="id"]').value = 'renamed';
+  row.querySelector('[data-attribute-action="save"]').click();
+  document.querySelector('#btnExportGraphml').click();
+  const graphml = document.querySelector('.export-modal textarea').value;
+  assert.match(graphml, /<key id="renamed"[^>]*attr\.name="renamed"/, 'the new id is the key name');
+  assert.ok(!graphml.includes('externalTag'), 'the stale name is gone');
+  dom.window.close();
+});
+
+test('a preserved GraphML attr.name keeps its original case through export', async () => {
+  // Case matters to other GraphML consumers, so lowercasing on import would
+  // change the property's meaning on the next export.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="k" for="node" attr.name="MiXeDCase" attr.type="string"/>',
+    '  <graph edgedefault="directed"><node id="n1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await new Promise(resolve => dom.window.setTimeout(resolve, 40));
+  Object.defineProperty(dom.window.navigator, 'clipboard', {
+    configurable: true, value: {writeText: async () => {}, readText: async () => graphml},
+  });
+  document.querySelector('#btnPasteGraphml').click();
+  await new Promise(resolve => dom.window.setTimeout(resolve, 120));
+
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(exported, /<key id="k"[^>]*attr\.name="MiXeDCase"/, 'the exact spelling is re-emitted');
+  assert.ok(!/attr\.name="mixedcase"/.test(exported), 'the name is not lowercased');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

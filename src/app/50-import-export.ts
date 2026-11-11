@@ -952,10 +952,6 @@
     const keyNames: Record<string, string> = {};
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
-    // The shared list of built-in attr.names, aliases included. Using it (rather
-    // than a hand-kept copy) is what stops a built-in alias such as `style`
-    // from coming back as a phantom custom definition.
-    const reservedAttrNames = BUILTIN_GRAPHML_ATTR_NAMES;
     const customAttributes: GraphState['customAttributes'] = [];
     // The attribute NAME is what makes a key built-in: the engine reads those
     // values positionally by name (weight, direction, x, …). An id is only an
@@ -965,19 +961,20 @@
     // migration instead of being dropped here.
     doc.querySelectorAll('key').forEach(k => {
       const id = k.getAttribute('id');
-      const attrName = (k.getAttribute('attr.name') || id || '').toLowerCase();
-      const name = attrName;
+      // `name` is the lowercased form the data map is keyed by; `rawName` keeps
+      // the original spelling so a definition can export under the exact
+      // attr.name it was imported with (case matters to other GraphML tools).
+      const rawName = k.getAttribute('attr.name') || id || '';
+      const name = rawName.toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
       keyNames[id] = name;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      // Only the attr.name decides. A key whose name is built-in is never a
-      // custom definition; a key whose name is not built-in always is, even
-      // when it reuses one of the app's key ids — that collision is renamed by
-      // the sanitizer's migration, so dropping it here would lose the attribute.
-      if(id && !reservedAttrNames.has(name) && ['graph','node','edge'].includes(forWhom)){
-        // Keep the original attr.name: the sanitizer derives the renamed id from
-        // the definition's own name, not from the colliding id.
-        customAttributes.push({id, name: attrName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
+      // Only a name the app reads for this same scope makes a key built-in.
+      // Everything else is a real definition, even when its id collides with a
+      // reserved one — the sanitizer renames that, so dropping it here would
+      // lose the attribute.
+      if(id && !isBuiltinGraphmlName(name, forWhom) && ['graph','node','edge'].includes(forWhom)){
+        customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
       }
       const defEl = k.querySelector('default');
       if(defEl){

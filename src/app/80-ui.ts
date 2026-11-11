@@ -29,7 +29,15 @@
       if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
       const type = row.querySelector('[data-attribute-field="type"]').value;
-      state.customAttributes[index] = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'};
+      const previous = state.customAttributes[index];
+      const next = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'} as AnyRecord;
+      // Editing something else (type, scope) must not drop the GraphML attr.name
+      // a migrated definition carries, or the next export would rename it back
+      // to the custom id. Renaming the definition does drop it: the name
+      // belonged to the old key.
+      const keepName = previous && previous.name && id === previous.id;
+      if(keepName) next.name = previous.name;
+      state.customAttributes[index] = next as GraphState['customAttributes'][number];
       renderCustomAttributes(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
     });
     canvasWrap.addEventListener('selectstart', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
