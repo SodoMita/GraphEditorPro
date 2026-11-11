@@ -1119,3 +1119,90 @@ test('an all-scope key that collides nowhere feeds every scope', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a node property cannot overwrite a graph setting through its key id', async () => {
+  // `querySelectorAll('data')` on <graph> is depth-first, so graph data
+  // collection also picked up every node's <data>. A node definition whose id
+  // happened to look like a graph setting — and which has no mapping on the
+  // graph scope, since it is declared for="node" — then fell back to its raw
+  // id and set the canvas background.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.org/xmlns">',
+    '  <key id="canvas.bg.color" for="node" attr.name="canvas.bg.color" attr.type="string" qvge:kind="custom"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="canvas.bg.color">#ff0000</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const settings = exportedGraph(document).settings;
+  assert.notEqual(settings.canvasBgColor, '#ff0000', 'a node property must not reach a graph setting');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('graph data is read from the graph element only, never from descendants', async () => {
+  // The other half of the rule, isolated: here the key *is* a valid graph field,
+  // so the mapping lookup succeeds and only the traversal decides the outcome.
+  // Reading <graph> with querySelectorAll collected the node's copy of the value.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="cb" for="graph" attr.name="canvas.bg.color" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="cb">#ff0000</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.notEqual(exportedGraph(document).settings.canvasBgColor, '#ff0000', 'node data is not graph data');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a declared graph-scope key still sets the setting it names', async () => {
+  // Positive control for both rules above: <graph><data> under a declared graph
+  // key must keep working, or "fixing" the leak would just break graph settings.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="cb" for="graph" attr.name="canvas.bg.color" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <data key="cb">#00ff00</data>',
+    '    <node id="n1"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).settings.canvasBgColor, '#00ff00', 'a declared graph key still applies');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an undeclared key id cannot act as a field name', async () => {
+  // Rule 2 on its own: there is no <key> at all, so nothing is mapped for any
+  // scope and the old code fell back to the raw key id — turning an arbitrary id
+  // into a setting name. An id is not a field name, declared or not.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph edgedefault="directed">',
+    '    <data key="canvas.bg.color">#ff0000</data>',
+    '    <node id="n1"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.notEqual(exportedGraph(document).settings.canvasBgColor, '#ff0000', 'an undeclared key is not a field');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

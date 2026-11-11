@@ -10808,26 +10808,35 @@ function parseDot(text) {
     }
     return { title: 'imported-dot', nodes: arr.map(({ original, ...n }) => n), edges };
 }
-// A key is resolved *for a scope*: a <key for="all"> applies to graph, node and
-// edge data alike, and whether it feeds a built-in field can differ per scope —
-// it may collide with a canonical key on one scope and not on another. Keying
-// this map by id alone made one collision disable the key everywhere, which
-// silently dropped the value it carried on the other scopes.
-function graphmlDataMap(el, keyNames, forWhom) {
+// Read the data belonging to *one element*, on *one scope*.
+//
+// Two rules, both learned from bugs that silently corrupted settings:
+//
+//  1. Only this element's own <data> children. `querySelectorAll` is
+//     depth-first, so reading a <graph> that way also collected every <node>'s
+//     data; a node property whose key was unknown on the graph scope then fell
+//     through to its raw id and could overwrite a graph setting.
+//  2. A key that is not a built-in field *on this scope* contributes nothing.
+//     There is no fallback to the raw key id: an id is not a field name. The
+//     fallback existed to rescue undeclared keys, but it made every custom
+//     attribute whose id resembled a setting behave like one.
+//
+// `fieldFor` maps `${keyId}|${scope}` to the built-in field it feeds there, or
+// to '' when the declaration feeds none (a definition, or a shadowed spelling).
+// Presence in the map is what matters, so `hasOwnProperty` — never `||`.
+function graphmlDataMap(el, fieldFor, forWhom) {
     const map = {};
-    el.querySelectorAll('data').forEach(d => {
-        const key = d.getAttribute('key') || '';
-        // `hasOwnProperty`, not `||`: a declared key may map to the empty string,
-        // which is how a custom definition's key says "this data is not a built-in
-        // value". With `||` that empty name fell back to the raw key, so data under
-        // a definition called `label` still became the node label.
-        const slot = `${key}|${forWhom}`;
-        const declared = Object.prototype.hasOwnProperty.call(keyNames, slot);
-        const name = (declared ? keyNames[slot] : key).toLowerCase();
+    for (const d of Array.from(el.children)) {
+        if (d.tagName.toLowerCase() !== 'data')
+            continue;
+        const slot = `${d.getAttribute('key') || ''}|${forWhom}`;
+        if (!Object.prototype.hasOwnProperty.call(fieldFor, slot))
+            continue;
+        const name = fieldFor[slot];
         if (!name)
-            return; // not a built-in field on this scope
+            continue; // declared, but not a built-in field on this scope
         map[name] = d.textContent.trim();
-    });
+    }
     return map;
 }
 function parseShape(raw) {
@@ -10956,145 +10965,146 @@ function parseGraphml(text) {
     const doc = new DOMParser().parseFromString(text, 'application/xml');
     if (doc.querySelector('parsererror'))
         throw new Error(I18N.t('err_invalid_graphml'));
-    // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
-    // keyed `${keyId}|${scope}` — see graphmlDataMap
-    const keyNames = {};
-    const KEY_SCOPES = ['graph', 'node', 'edge'];
-    const keyDefaultsByFor = { graph: {}, node: {}, edge: {} };
-    const graphmlTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
-    const customAttributes = [];
-    // Provenance first, identity second.
+    // ---- GraphML keys: one explicit model, then readers ----
     //
-    // A document is attributable to us in two ways:
-    //   * it says so — qvge:writer, written by the current exporter;
-    //   * it carries the complete built-in key block — every export we have ever
-    //     written emitted all of GRAPHML_BUILTIN_KEYS, so a file with all of them
-    //     came from us, while a foreign file lists only the handful it uses.
-    // That is what separates our older exports from a third-party file with the
-    // same key in it, which no per-key rule can do.
+    // Everything about <key> is decided once, here, into `keyRoles`. The readers
+    // below (data values, <default> values, custom definitions) only consult that
+    // model; none of them re-derives a rule. That is deliberate: every defect in
+    // this area came from two places computing the same thing slightly
+    // differently — most often one verdict applied to several scopes, when a key
+    // for="all" genuinely has a different role on each.
+    const KEY_SCOPES = ['graph', 'node', 'edge'];
     const graphEl = doc.querySelector('graphml');
     const keyEls = [...doc.querySelectorAll('key')];
-    // By namespace URI: a document re-serialised by another tool may bind a
-    // different prefix to the same URI.
+    const graphmlTypes = ['boolean', 'int', 'long', 'float', 'double', 'string'];
+    const customAttributes = [];
+    // -- Provenance: is this document one of ours? ------------------------------
+    // Either it says so (qvge:writer, every export since marks were added), or it
+    // carries the bulk of the built-in key block, which every export of ours has
+    // always written in full. Deliberately not keyed on xmlns:qvge: that URI names
+    // the QVGE format, so a genuine QVGE file may declare it too.
     const declaredOurs = graphEl?.getAttributeNS(QVGE_NS, 'writer') === 'graph-editor-pro';
-    // A document written by an earlier build is still ours, but its built-in
-    // block is a *subset* of the current table: this PR only ever adds keys
-    // (main wrote 41, we write 43), so demanding the current count rejected
-    // every export made before it. What identifies us is that the document
-    // carries the bulk of our built-in key block — we always write all of it,
-    // while a foreign file declares only the handful of keys it uses. A majority
-    // is the safe threshold: it survives the table growing (41 of today's 43 is
-    // still a majority) and no third-party file declares 22 of our exact
-    // (id, scope) pairs by accident.
-    //
-    // Deliberately not keyed on xmlns:qvge: that URI names the QVGE format, so
-    // a genuine QVGE export may declare it too.
-    // Match the whole triple the exporter writes, not just the id. A foreign
-    // file can reuse our key ids for unrelated attributes; what it cannot do by
-    // accident is pair each id with the attr.name we pair it with.
+    // A foreign file can reuse our key ids for unrelated attributes; what it
+    // cannot do by accident is pair each id with the attr.name we pair it with.
     const ourKeys = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId, forWhom, attrName]) => `${keyId}|${forWhom}|${String(attrName).toLowerCase()}`));
-    const matchedBuiltins = keyEls.filter(k => ourKeys.has(`${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}|${String(k.getAttribute('attr.name') || '').toLowerCase()}`)).length;
-    const legacyOurs = matchedBuiltins >= GRAPHML_BUILTIN_KEYS.length / 2;
-    const documentIsOurs = declaredOurs || legacyOurs;
-    // A canonical key's name, remembered with the exact spelling that made it
-    // canonical. Two keys can collapse onto one built-in name because the data
-    // map lowercases (`attr.name` itself is case-sensitive), and then the last
-    // one would silently win — a stray attr.name="LABEL" rewriting the label.
-    // A differently-spelled alias of the same field (id="k" attr.name=
-    // "arrow.size") is not a collision: it feeds the same field by design.
-    // Keyed by *scope and* name. A node key spelled attr.name="LABEL" must not
-    // decide anything about an edge key spelled attr.name="label": the two feed
-    // different readers, and shadowing across scopes threw away a valid edge label.
+    const pairOf = (keyId, forWhom, attrName) => `${keyId}|${forWhom}|${attrName.toLowerCase()}`;
+    const isOurKey = (keyId, forWhom, attrName) => ourKeys.has(pairOf(keyId, forWhom, attrName));
+    // A document written by an earlier build is still ours, but its key block is
+    // a subset of the current one — this PR only ever adds keys (main wrote 41, we
+    // write 43), so requiring the current count rejected every older export. The
+    // bulk of the block is the signal: we always write all of it, a foreign file
+    // lists only the handful it uses.
+    const matchedBuiltins = keyEls.filter(k => isOurKey(k.getAttribute('id') || '', k.getAttribute('for') || 'all', String(k.getAttribute('attr.name') || ''))).length;
+    const documentIsOurs = declaredOurs || matchedBuiltins >= GRAPHML_BUILTIN_KEYS.length / 2;
+    // The spelling a canonical key uses for a field on a scope. Read once, so the
+    // shadowing rule below cannot drift from the classification.
     const canonicalSpelling = new Map();
     for (const k of keyEls) {
         const forWhom = k.getAttribute('for') || 'all';
-        const key = `${k.getAttribute('id') || ''}|${forWhom}|${String(k.getAttribute('attr.name') || '').toLowerCase()}`;
-        if (!ourKeys.has(key))
+        const rawName = String(k.getAttribute('attr.name') || '');
+        if (!isOurKey(k.getAttribute('id') || '', forWhom, rawName))
             continue;
-        const lower = String(k.getAttribute('attr.name') || '').toLowerCase();
-        const slot = `${forWhom}|${lower}`;
+        const slot = `${forWhom}|${rawName.toLowerCase()}`;
         if (!canonicalSpelling.has(slot))
-            canonicalSpelling.set(slot, String(k.getAttribute('attr.name') || ''));
+            canonicalSpelling.set(slot, rawName);
     }
-    keyEls.forEach(k => {
-        const rawId = k.getAttribute('id') || '';
-        // `name` is the lowercased form the data map is keyed by; `rawName` keeps
-        // the original spelling so a definition exports under the exact attr.name
-        // it was imported with (case matters to other GraphML tools).
-        const rawName = k.getAttribute('attr.name') || rawId || '';
+    const appliesTo = (forWhom) => (forWhom === 'all' ? KEY_SCOPES : KEY_SCOPES.filter(s => s === forWhom));
+    // -- Classification --------------------------------------------------------
+    const keyInfos = keyEls.map(k => {
+        const keyId = k.getAttribute('id') || '';
+        const rawName = String(k.getAttribute('attr.name') || '') || keyId;
         const name = rawName.toLowerCase();
-        // GraphML's `for` defaults to "all" when omitted, and our editor only has
-        // the three concrete scopes. The default is a key that applies to every
-        // element, so the closest scope we can represent is the widest one; keeping
-        // it is always better than dropping the user's definition on the floor.
-        const forAttr = k.getAttribute('for');
-        const forWhom = forAttr || 'all';
+        const forWhom = k.getAttribute('for') || 'all';
+        // The editor models three scopes; a key for "all" is stored under the widest.
         const scope = forWhom === 'all' ? 'graph' : forWhom;
-        const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-        // Read by namespace URI, not by the literal prefix: `xmlns:q=...` bound to
-        // the same URI is the same attribute, and an export re-serialised by
-        // another tool may well rename the prefix.
+        const type = String(k.getAttribute('attr.type') || 'string').toLowerCase();
+        const type2 = graphmlTypes.includes(type) ? type : 'string';
+        // Read by namespace URI, not by the literal prefix: a document re-serialised
+        // by another tool may bind a different prefix to the same URI.
         const marked = k.getAttributeNS(QVGE_NS, 'kind') === QVGE_CUSTOM_MARKER;
         const recordedId = k.getAttributeNS(QVGE_NS, 'id') || '';
         // The prefix is a *legacy* way of naming a definition, used by the build
-        // before marks existed. A marked key's id is literal even when it happens
-        // to start with those characters, which is what keeps an external
-        // `qvge.custom.score` distinct from a definition genuinely called `score`.
-        const prefixed = !marked && documentIsOurs && rawId.startsWith(CUSTOM_KEY_PREFIX) && rawId.length > CUSTOM_KEY_PREFIX.length;
-        // Three provenances, three rules:
-        //   * a marked (or, from the previous build, prefixed) key is a definition;
-        //   * in one of our older, unmarked documents a definition was written with
-        //     a name we do not emit, so an exact built-in match is the only built-in;
-        //   * in a foreign document nothing is attributable, so any name we read as
-        //     a field for that scope is built-in and must not become a definition.
-        // In one of our older documents an unmarked key is a definition unless we
-        // reserve that *id*: every export has written definitions under the user's
-        // own id, never under one of our key ids, so the id alone decides. Testing
-        // the whole (id, name, scope) triple instead would turn a key such as
-        // id="nodeId" attr.name="nodeId" into a definition, which is how a file
-        // that merely reuses our ids would sprout phantom definitions.
+        // before marks existed. A marked key's id is literal even when it starts
+        // with those characters, which keeps an external `qvge.custom.score`
+        // distinct from a definition genuinely called `score`.
+        const prefixed = !marked && documentIsOurs && keyId.startsWith(CUSTOM_KEY_PREFIX) && keyId.length > CUSTOM_KEY_PREFIX.length;
+        // Membership in the key block is decided by id alone: every export of ours
+        // has written definitions under the user's own id, never under one of our
+        // key ids, so an id we reserve can only be built-in.
         const isDefinition = marked || prefixed ? true
-            : documentIsOurs ? !GRAPHML_BUILTIN_KEY_IDS.has(rawId)
+            : documentIsOurs ? !GRAPHML_BUILTIN_KEY_IDS.has(keyId)
                 : !isBuiltinGraphmlKey(name, forWhom);
-        // A definition's id and name must never reach a built-in map. The entry is
-        // present but empty, and the data map treats an empty name as "declared,
-        // but not a built-in field" — omitting the entry would let the raw-key
-        // fallback bind `data key="label"` to the node label.
-        // Only a *differently spelled* name that lowercases onto a canonical one is
-        // shadowed; a legitimate alias of the same field still feeds it.
-        // A key declared for "all" collides with a canonical key on any scope, so
-        // it has to be checked against every scope it could apply to.
-        for (const dataScope of (forWhom === 'all' ? KEY_SCOPES : [forWhom])) {
-            // Shadowing is decided per scope: a key can collide with a canonical key
-            // on one scope and still be the only source of that field on another.
-            const canonical = canonicalSpelling.get(`${dataScope}|${name}`);
-            const shadowsHere = !isDefinition && canonical !== undefined && canonical !== rawName;
-            keyNames[`${rawId}|${dataScope}`] = (isDefinition || shadowsHere) ? '' : name;
-        }
-        if (isDefinition && rawId && ['graph', 'node', 'edge'].includes(scope)) {
-            // A marked key may record the definition's own id, used when the exported
-            // key id had to differ to stay unique.
-            const id = prefixed ? rawId.slice(CUSTOM_KEY_PREFIX.length) : (marked && recordedId ? recordedId : rawId);
-            // Keep the definition's own id and the exact spelling of its name.
-            customAttributes.push({ id, name: rawName, scope: scope, type: graphmlTypes.includes(attributeType) ? attributeType : 'string' });
-        }
-        // A definition's default belongs to the definition, so it must not land in
-        // the built-in defaults map: a custom `shape` default would otherwise
-        // change the node default for the whole document.
-        if (!isDefinition) {
-            const defEl = k.querySelector('default');
-            if (defEl) {
-                const val = defEl.textContent.trim();
-                keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
-                keyDefaultsByFor[forWhom][name] = val;
+        const roles = {};
+        for (const dataScope of appliesTo(forWhom)) {
+            if (isDefinition) {
+                roles[dataScope] = 'definition';
+                continue;
             }
+            if (!name) {
+                roles[dataScope] = 'ignored';
+                continue;
+            }
+            if (isOurKey(keyId, dataScope, rawName)) {
+                roles[dataScope] = 'canonical';
+                continue;
+            }
+            // A name that only collides with a canonical one after case folding must
+            // not overwrite it. A differently-spelled alias of the same field
+            // (id="k" attr.name="arrow.size") is not a collision: it feeds it.
+            const canonical = canonicalSpelling.get(`${dataScope}|${name}`);
+            if (canonical !== undefined && canonical !== rawName) {
+                roles[dataScope] = 'shadowed';
+                continue;
+            }
+            if (isBuiltinGraphmlKey(name, dataScope)) {
+                roles[dataScope] = 'alias';
+                continue;
+            }
+            // Nothing here reads it on this scope, and the document is not ours: the
+            // key belongs to the user.
+            roles[dataScope] = 'definition';
         }
+        // A definition is stored once, under the scope its `for` names — but only
+        // when the key is not a built-in field on *any* scope it applies to. A
+        // for="all" key named `label` is not a graph field, yet it is still a
+        // built-in for nodes and edges, so it is an alias rather than a definition.
+        const feedsAnyScope = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'canonical' || roles[dataScope] === 'alias');
+        const definitionHere = isDefinition || (!feedsAnyScope && roles[scope] === 'definition');
+        const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
+            : (marked && recordedId ? recordedId : keyId);
+        return { keyId, rawName, forWhom, scope, roles, definitionId, isDefinition: definitionHere, type: type2 };
     });
+    // -- Derived views: the only things the readers touch -----------------------
+    // Field name each (key, scope) supplies, or '' when it supplies none. Present
+    // but empty means "declared, and deliberately not a built-in field" — the data
+    // map must not fall back to the raw key id (`||` used to defeat this).
+    const fieldFor = {};
+    const keyDefaultsByFor = { graph: {}, node: {}, edge: {} };
+    for (let index = 0; index < keyInfos.length; index++) {
+        const info = keyInfos[index];
+        const name = info.rawName.toLowerCase();
+        for (const dataScope of appliesTo(info.forWhom)) {
+            const role = info.roles[dataScope];
+            // canonical and alias feed the field; shadowed, definition and ignored do not.
+            fieldFor[`${info.keyId}|${dataScope}`] = (role === 'canonical' || role === 'alias') ? name : '';
+        }
+        if (info.isDefinition && info.keyId && appliesTo(info.forWhom).includes(info.scope)) {
+            customAttributes.push({ id: info.definitionId, name: info.rawName, scope: info.scope, type: info.type });
+        }
+        // A definition's <default> is not a built-in default: a custom `shape`
+        // default would otherwise change the node default for the whole document.
+        const defEl = keyEls[index].querySelector('default');
+        if (defEl && !info.isDefinition) {
+            const val = defEl.textContent.trim();
+            keyDefaultsByFor[info.forWhom] = keyDefaultsByFor[info.forWhom] || {};
+            keyDefaultsByFor[info.forWhom][name] = val;
+        }
+    }
     const graph = doc.querySelector('graph');
     const edgeDefaultAttr = graph?.getAttribute('edgedefault') || 'directed';
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
-    const graphData = graphmlDataMap(graph || doc, keyNames, 'graph');
+    const graphData = graphmlDataMap(graph || doc, fieldFor, 'graph');
     const graphKeyDefs = keyDefaultsByFor.graph || {};
     // Build settings from QVGE key defaults + graph data
     const settings = {};
@@ -11222,7 +11232,7 @@ function parseGraphml(text) {
         edgeDirectionDefault = parseDirection(edgeKeyDefs.direction);
     const nodes = [], idMap = new Map();
     doc.querySelectorAll('node').forEach((el, i) => {
-        const raw = el.getAttribute('id') || ('n' + (i + 1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames, 'node');
+        const raw = el.getAttribute('id') || ('n' + (i + 1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node');
         // QVGE: nodes are unlabeled by default. Only use label data if present.
         const label = String(d.label || d.name || '');
         let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
@@ -11274,7 +11284,7 @@ function parseGraphml(text) {
         const from = idMap.get(el.getAttribute('source')), to = idMap.get(el.getAttribute('target'));
         if (!from || !to)
             return;
-        const d = graphmlDataMap(el, keyNames, 'edge');
+        const d = graphmlDataMap(el, fieldFor, 'edge');
         const directedAttr = el.getAttribute('directed');
         // QVGE: edge direction can come from data "direction" field or the XML attribute
         let dirStr = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
