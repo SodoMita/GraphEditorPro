@@ -1267,3 +1267,102 @@ test('a persisted reserved-id cross-scope pair migrates to distinct ids with val
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('a JSON replace import binds values to the definitions after a scope rename', async () => {
+  // One document carries "score" as both a graph- and a node-scope definition.
+  // The node definition is re-created under a fresh id on import — its values
+  // must follow onto that id, in the document and in the GraphML export.
+  const payload = { title: 'json-replace',
+    nodes: [{id:'m1', label:'M', x:0, y:0, order:0, custom:{score:'node-value'}}],
+    edges: [],
+    customAttributes: [
+      { id:'score', scope:'graph', type:'string' },
+      { id:'score', scope:'node', type:'string' },
+    ],
+    graphCustom: { score: 'graph-value' } };
+  const saved = { title: 'before', nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteJson', JSON.stringify(payload)); // replace
+  const graph = exportedGraph(document);
+  const graphDef = graph.customAttributes.find(d => d.scope === 'graph');
+  const nodeDef = graph.customAttributes.find(d => d.scope === 'node');
+  assert.equal(graph.customAttributes.length, 2, 'both definitions survive the replace');
+  assert.notEqual(nodeDef.id, graphDef.id, 'the node definition is re-created under a fresh id');
+  assert.equal(graph.graphCustom?.[graphDef.id], 'graph-value', 'the graph value binds the graph definition');
+  const m1 = graph.nodes.find(n => n.label === 'M');
+  assert.equal(m1.custom?.[nodeDef.id], 'node-value', 'the node value binds the renamed definition');
+  assert.equal(m1.custom?.score, undefined, 'no value strands on the carried id');
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  assert.ok(exported.includes(graphDef.id) && exported.includes('graph-value'), 'the export carries the graph property');
+  assert.ok(exported.includes(nodeDef.id) && exported.includes('node-value'), 'the export carries the node property');
+  document.querySelector('#expCloseBtn').click();
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('appending an import that carries score and score_1 keeps both properties distinct', async () => {
+  // With a graph-scope "score" present, appending a node whose custom
+  // properties are "score" and "score_1" must keep both: the minted id for
+  // "score" has to dodge the incoming "score_1", and the two values must not
+  // overwrite each other.
+  const saved = { title: 'keep-mint',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id:'score', scope:'graph', type:'string' }],
+    graphCustom: { score: 'graph-value' } };
+  const payload = { title: 'append-mint',
+    nodes: [{id:'m1', label:'M', x:0, y:0, order:0, custom:{score:'sc', score_1:'sc1'}}],
+    edges: [],
+    customAttributes: [
+      { id:'score', scope:'node', type:'string' },
+      { id:'score_1', scope:'node', type:'string' },
+    ] };
+  // --- JSON append
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteJson', JSON.stringify(payload));
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 3, 'all three definitions survive');
+  const nodeDefs = Object.fromEntries(graph.customAttributes.filter(d => d.scope === 'node').map(d => [d.id, true]));
+  assert.equal(Object.keys(nodeDefs).length, 2, 'two distinct node-scope definitions');
+  assert.ok(!nodeDefs['score'], 'the minted definition did not capture the graph-scope id');
+  const m1 = graph.nodes.find(n => n.label === 'M');
+  const custom = m1.custom ?? {};
+  assert.equal(Object.keys(custom).length, 2, 'both values survive, none overwritten');
+  // The incoming "score_1" definition keeps its id (it was free); the minted
+  // id for "score" had to dodge it, so it is not "score_1".
+  assert.equal(custom['score_1'], 'sc1', 'the score_1 property keeps its definition and value');
+  const mintedId = Object.keys(custom).find(k => k !== 'score_1');
+  assert.ok(mintedId && mintedId !== 'score', 'the score property was re-created under a fresh id');
+  assert.equal(custom[mintedId], 'sc', 'its value followed onto the fresh id');
+  assert.equal(graph.graphCustom?.score, 'graph-value', 'the graph-scope property is untouched');
+  assert.deepEqual(errors.map(e => e.message), []);
+  // --- GraphML append, same expectation
+  const dom2ctx = createEditorDom(saved);
+  const {document: document2} = dom2ctx.dom.window;
+  await settle(dom2ctx.dom.window, 60);
+  document2.querySelector('#optImportAppend').checked = true;
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="string"/>',
+    '  <key id="score_1" for="node" attr.name="score_1" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="m1"><data key="score">sc</data><data key="score_1">sc1</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document2, dom2ctx.dom.window, '#btnPasteGraphml', graphml);
+  const graph2 = exportedGraph(document2);
+  assert.equal(graph2.customAttributes.length, 3, 'all three definitions survive the GraphML append');
+  const m1g = graph2.nodes.find(n => n.label !== 'One');
+  assert.equal(Object.keys(m1g.custom ?? {}).length, 2, 'both values survive the GraphML append');
+  const values = Object.fromEntries(Object.entries(m1g.custom ?? {}));
+  assert.deepEqual(new Set(Object.values(values)), new Set(['sc', 'sc1']), 'neither value is overwritten');
+  assert.deepEqual(dom2ctx.errors.map(e => e.message), []);
+  dom2ctx.dom.window.close();
+  dom.window.close();
+});

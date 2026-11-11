@@ -11480,24 +11480,8 @@ function appendImportedGraph(data, label = 'graph') {
     if (renamed)
         toast(I18N.t('attribute_scope_renamed', { n: renamed }));
     // Definitions re-created under a fresh id (or reused across an earlier
-    // mint) bind their payload's values to the RESOLVED id. Restricted to the
-    // carried payload — the current document's own values keep their keys.
-    if (renameByPair.size) {
-        const remapCustom = (map, scope) => {
-            if (!isRecord(map))
-                return map;
-            const out = Object.create(null);
-            for (const key of Object.keys(map))
-                out[renameByPair.get(scope + '|' + key) || key] = map[key];
-            return out;
-        };
-        const remapEntity = (entity, scope) => isRecord(entity) && isRecord(entity.custom) ? { ...entity, custom: remapCustom(entity.custom, scope) } : entity;
-        data = { ...data,
-            graphCustom: remapCustom(data.graphCustom, 'graph'),
-            nodes: (Array.isArray(data.nodes) ? data.nodes : []).map(node => remapEntity(node, 'node')),
-            edges: (Array.isArray(data.edges) ? data.edges : []).map(edge => remapEntity(edge, 'edge')),
-        };
-    }
+    // mint) bind their payload's values to the RESOLVED id.
+    data = remapImportedCustomValues(data, renameByPair);
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
     const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
     const sane = sanitizeState({ ...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom });
@@ -11593,6 +11577,39 @@ function appendImportedGraph(data, label = 'graph') {
 // { defs, skipped, renameByPair, renamed }; renameByPair maps
 // 'scope|carriedId' -> resolved id for reused/minted definitions, so the
 // caller remaps the carried payload's values to the resolved id.
+// Remaps the custom-value keys of an IMPORTED payload whose definitions
+// were re-created or reused by capCustomDefinitions: every
+// 'scope|carriedId' entry moves the carried values onto the resolved id.
+// Restricted to the payload — the current document's own values keep their
+// keys. Also remaps new-element defaults carried in the payload's settings,
+// which the replace path merges (append ignores them entirely).
+function remapImportedCustomValues(data, renameByPair) {
+    if (!renameByPair || !renameByPair.size || !isRecord(data))
+        return data;
+    const remapCustom = (map, scope) => {
+        if (!isRecord(map))
+            return map;
+        const out = Object.create(null);
+        for (const key of Object.keys(map))
+            out[renameByPair.get(scope + '|' + key) || key] = map[key];
+        return out;
+    };
+    const remapEntity = (entity, scope) => isRecord(entity) && isRecord(entity.custom) ? { ...entity, custom: remapCustom(entity.custom, scope) } : entity;
+    const settings = isRecord(data.settings) ? (() => {
+        const s = { ...data.settings };
+        if (isRecord(s.nodeCustom))
+            s.nodeCustom = remapCustom(s.nodeCustom, 'node');
+        if (isRecord(s.edgeCustom))
+            s.edgeCustom = remapCustom(s.edgeCustom, 'edge');
+        return s;
+    })() : data.settings;
+    return { ...data,
+        graphCustom: remapCustom(data.graphCustom, 'graph'),
+        nodes: (Array.isArray(data.nodes) ? data.nodes : []).map(node => remapEntity(node, 'node')),
+        edges: (Array.isArray(data.edges) ? data.edges : []).map(edge => remapEntity(edge, 'edge')),
+        settings,
+    };
+}
 function capCustomDefinitions(defs, existingDefs) {
     const existing = Array.isArray(existingDefs) ? existingDefs : [];
     let budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
@@ -11609,11 +11626,18 @@ function capCustomDefinitions(defs, existingDefs) {
         const en = String(ex?.dataName ?? '').trim().toLowerCase(), inm = String(inc?.dataName ?? '').trim().toLowerCase();
         return !en || !inm || en === inm;
     };
-    // Every key id used by the incoming file — a reuse candidate whose own id
-    // is one of those keys is never handed out for another property.
+    // Every id the incoming payload itself uses — a mint may never hand one
+    // out to another definition, or a freshly minted id collides with a later
+    // incoming definition that was meant to keep it. Reuse candidates whose id
+    // is one of those keys are likewise never reused.
     const fileKeys = new Set();
     for (const raw of Array.isArray(defs) ? defs : []) {
-        const carriedKey = String(isRecord(raw) ? (raw.dataKey ?? raw.id ?? '') : '').trim();
+        if (!isRecord(raw))
+            continue;
+        const carriedId = String(raw.id ?? '').trim().slice(0, 128);
+        if (carriedId)
+            fileKeys.add(carriedId);
+        const carriedKey = String(raw.dataKey ?? '').trim();
         if (carriedKey)
             fileKeys.add(carriedKey);
     }
@@ -11657,11 +11681,14 @@ function capCustomDefinitions(defs, existingDefs) {
         let finalId = id;
         if (byId.has(id)) {
             // The id is taken in another scope — the carried definition needs its
-            // own. Record the carried id as provenance so the NEXT import of the
-            // same file resolves to this mint instead of minting another one.
+            // own. The mint may not hand out any id used anywhere in the incoming
+            // payload (not just the ones processed so far), and records its
+            // provenance so the NEXT import of the same file resolves to it.
             const taken = new Set(byId);
             for (const a of kept)
                 taken.add(String(a?.id));
+            for (const carried of fileKeys)
+                taken.add(carried);
             finalId = uniqueCustomAttributeId(id, taken);
             renameByPair.set(scope + '|' + id, finalId);
             if (!inc.dataKey)
@@ -11713,9 +11740,19 @@ function importGraphData(data, label, append) {
     if (!append && isRecord(graph)) {
         const customAttributes = graph.customAttributes;
         if (Array.isArray(customAttributes)) {
-            const { defs, skipped } = capCustomDefinitions(customAttributes, []);
+            const { defs, skipped, renameByPair, renamed } = capCustomDefinitions(customAttributes, []);
             if (skipped)
                 toast(I18N.t('attribute_import_skipped', { n: skipped }));
+            if (renamed)
+                toast(I18N.t('attribute_scope_renamed', { n: renamed }));
+            // Same rule as append: re-created definitions bind the payload's
+            // values to the resolved id — otherwise the values strand on the
+            // carried id and are lost.
+            const remapped = remapImportedCustomValues(graph, renameByPair);
+            graph.graphCustom = remapped.graphCustom;
+            graph.nodes = remapped.nodes;
+            graph.edges = remapped.edges;
+            graph.settings = remapped.settings;
             graph.customAttributes = defs;
         }
     }
