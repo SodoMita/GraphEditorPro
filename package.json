@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "build": "node scripts/clean.mjs && tsc && node scripts/build.mjs && node scripts/check-static.mjs",
     "check:static": "node scripts/check-static.mjs",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node scripts/test.mjs",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
