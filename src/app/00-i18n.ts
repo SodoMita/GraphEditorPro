@@ -639,6 +639,7 @@ const I18N: I18nService = {
     'err_not_node_clipboard': { en: 'the clipboard does not contain nodes', ru: 'в буфере обмена нет узлов' },
     'err_invalid_graphml': { en: 'invalid XML/GraphML', ru: 'некорректный XML/GraphML' },
     'err_empty_graph': { en: 'the input contains no graph (zero nodes found)', ru: 'во вводе не найден граф (ноль узлов)' },
+    'err_no_valid_nodes': { en: 'none of the nodes in the input are usable (all entries were empty or malformed)', ru: 'ни один узел во вводе не является корректным (все записи пустые или повреждены)' },
     'camera_readout': { en: 'center ({x}, {y}) · zoom {zoom}%', ru: 'центр ({x}, {y}) · масштаб {zoom}%' },
     'preset_what_nodes': { en: '{n:node}', ru: '{n:node}' },
     'preset_what_edges': { en: '{n:edge}', ru: '{n:edge}' },

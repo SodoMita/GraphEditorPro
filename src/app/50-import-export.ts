@@ -505,20 +505,28 @@
     return { defs: kept, skipped };
   }
   function importGraphData(data: any, label, append){
-    // A blank or non-graph input ({}, [], an empty <graphml>, bare prose as DOT,
+    // A blank or non-graph input ({}, an empty <graphml>, bare prose as DOT,
     // a truncated file) must never reach the document: replacing with zero
     // nodes destroys it silently. Fail loudly, change nothing.
-    if(!isRecord(data) && !Array.isArray(data)){
+    if(!isRecord(data)){
       toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
       return;
     }
-    // The guard above leaves data as a record or an array; read it through a
-    // record-typed local (arrays fail the .nodes check below, as intended).
+    // The editor's own JSON exports are records with a nodes array — an
+    // explicitly empty one is a valid empty document and round-trips.
+    if(!Array.isArray(data.nodes)){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+      return;
+    }
+    // A NON-EMPTY nodes array in which not a single entry is a record can
+    // only sanitize down to nothing — reject it instead of wiping the
+    // document. (sanitizeState keeps exactly the record entries, so this
+    // check matches the sanitized outcome without double work.)
+    if(data.nodes.length > 0 && !data.nodes.some(isRecord)){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_no_valid_nodes') }));
+      return;
+    }
     const graph = data as AnyRecord;
-    if(!Array.isArray(graph.nodes) || graph.nodes.length === 0){
-      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
-      return;
-    }
     if(!append && isRecord(graph)){
       const customAttributes = graph.customAttributes;
       if(Array.isArray(customAttributes)){
@@ -861,6 +869,12 @@
       if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
     }
     const arr = [...nodes.values()];
+    // Blank/garbled DOT (or a structurally empty digraph) parses to zero
+    // nodes — it carries no graph document, so it must be rejected rather
+    // than accepted as a valid empty document. (The JSON and GraphML
+    // zero-node rules differ on purpose: those formats round-trip valid
+    // empty documents.)
+    if(!arr.length) return null;
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
       const r = Math.max(120, arr.length * 24);
       arr.forEach((n,i) => { const a=-Math.PI/2+i*2*Math.PI/arr.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; });
@@ -1221,7 +1235,16 @@
       edges.push(edge);
     });
     if(nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1){ const r=Math.max(120,nodes.length*24); nodes.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/nodes.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r;}); }
-    if(!nodes.length) return null;
+    if(!nodes.length){
+      // A zero-node document still round-trips when it encodes something a
+      // document carries: at least one <key> definition (our exports always
+      // write the built-in set plus any custom defs) or graph-scoped <data>
+      // (graph-scoped custom values, graph defaults). A bare <graph> with
+      // neither is not a document — reject it rather than blank the canvas.
+      const hasGraphData = !!(graph && graph.getElementsByTagName('data').length > 0);
+      const hasKeys = doc.getElementsByTagName('key').length > 0;
+      if(!hasGraphData && !hasKeys) return null;
+    }
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.

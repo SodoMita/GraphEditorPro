@@ -91,6 +91,15 @@
         tab.tabIndex = selected ? 0 : -1;
       });
     };
+    // The sheet is sized by content (up to 60dvh), so its height cannot be
+    // assumed in CSS. Publish the measured height as --sheet-h; the floating
+    // mode switcher and tool rows lift by exactly that while it is open.
+    const syncSheetHeightVar = () => {
+      try{ document.documentElement.style.setProperty('--sheet-h', `${Math.max(0, sidebarEl.offsetHeight)}px`); }catch{}
+    };
+    if(typeof window !== 'undefined' && typeof window.ResizeObserver === 'function'){
+      try{ new window.ResizeObserver(syncSheetHeightVar).observe(sidebarEl); }catch{}
+    }
     const openPanels = (target = activePanelName(), trigger: HTMLElement | null = null) => {
       panelReturnFocus = trigger || document.activeElement as HTMLElement;
       activatePanel(target);
@@ -98,6 +107,7 @@
       sidebarEl.setAttribute('aria-hidden', 'false');
       sidebarEl.classList.add('open');
       canvasWrap.classList.add('sheet-open');
+      syncSheetHeightVar();
       menuBtn.classList.add('active');
       menuBtn.setAttribute('aria-expanded', 'true');
       menuBtn.setAttribute('aria-label', I18N.t('panel_close'));
@@ -109,6 +119,7 @@
       if(!sidebarEl.classList.contains('open')) return;
       sidebarEl.classList.remove('open');
       canvasWrap.classList.remove('sheet-open');
+      try{ document.documentElement.style.setProperty('--sheet-h', '0px'); }catch{}
       sidebarEl.setAttribute('aria-hidden', 'true');
       sidebarEl.inert = true;
       menuBtn.classList.remove('active');

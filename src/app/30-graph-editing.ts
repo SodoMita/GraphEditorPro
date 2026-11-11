@@ -935,24 +935,31 @@
     const ensurePair = (id: string, scope: 'node' | 'edge') => {
       const key = id + '|' + scope;
       if(existingPairs.has(key) || failedPairs.has(key)) return;
-      if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
       const carriedPair = carriedByPair.get(key);
       const type = carriedPair ? carriedPair.type : (carriedTypeById.get(id) || 'string');
+      // A reusable mapping already exists in the document. Resolving it
+      // before the capacity check matters when the definition limit is full:
+      // reuse creates no definition, so it must never be blocked by a full
+      // document — otherwise repeated pastes drop the value under the
+      // graph-scoped id, where export omits it entirely.
+      if(createdIds.has(id)){
+        // A previous paste already re-created this exact conflict under a fresh
+        // id (marked with dataKey = the carried id) — reuse it so repeated
+        // pastes never split one property into tag_1, tag_2, ... GraphML
+        // migrations always carry a non-empty dataName, so they never match here.
+        const prior = state.customAttributes.find(attribute => attribute.dataKey === id
+          && attribute.scope === scope
+          && String(attribute.dataName ?? '') === ''
+          && !carriedTypeById.has(attribute.id));
+        if(prior){
+          renameByPair.set(key, prior.id);
+          return;
+        }
+      }
+      if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
       if(!createdIds.has(id)){
         remaining--;
         addDef(id, scope, type, carriedPair?.dataKey ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) } : undefined);
-        return;
-      }
-      // A previous paste already re-created this exact conflict under a fresh
-      // id (marked with dataKey = the carried id) — reuse it so repeated
-      // pastes never split one property into tag_1, tag_2, ... GraphML
-      // migrations always carry a non-empty dataName, so they never match here.
-      const prior = state.customAttributes.find(attribute => attribute.dataKey === id
-        && attribute.scope === scope
-        && String(attribute.dataName ?? '') === ''
-        && !carriedTypeById.has(attribute.id));
-      if(prior){
-        renameByPair.set(key, prior.id);
         return;
       }
       const newId = uniqueCustomAttributeId(id, mintTaken);

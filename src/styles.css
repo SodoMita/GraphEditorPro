@@ -655,12 +655,16 @@
 
     /* Portrait bottom sheet: ~60dvh, leaving a usable canvas strip. The
        floating mode switcher and tool rows lift above the sheet's top edge
-       while it is open so mode switching never gets covered. */
+       while it is open so mode switching never gets covered. They switch to
+       viewport-relative fixed positioning and lift by --sheet-h (the actual
+       sheet height, published by the app) — NOT by a share of the canvas,
+       which can shrink to almost nothing when the matrix and edge list are
+       both enabled. */
     @media (max-width:950px) and (orientation:portrait){
-      .canvas-wrap.sheet-open .mode-fab{bottom:calc(min(60dvh, calc(100% - 16px)) + 12px); z-index:31}
+      .canvas-wrap.sheet-open .mode-fab{position:fixed; bottom:calc(var(--sheet-h, 0px) + 12px); z-index:31}
       .canvas-wrap.sheet-open .sel-tools,
-      .canvas-wrap.sheet-open .edge-tools{bottom:calc(min(60dvh, calc(100% - 16px)) + 68px); z-index:31}
-      .canvas-wrap.sheet-open .gizmo-tools{bottom:calc(min(60dvh, calc(100% - 16px)) + 122px); z-index:31}
+      .canvas-wrap.sheet-open .edge-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 68px); z-index:31}
+      .canvas-wrap.sheet-open .gizmo-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 122px); z-index:31}
       .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
       .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}

@@ -485,3 +485,141 @@ test('a valid append of malformed DOT content is rejected but an empty graph is 
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// === Round 9 ===
+test('valid empty documents (the editor’s own exports) round-trip instead of being rejected', async () => {
+  // 1) JSON: an explicitly empty nodes array is a valid empty document.
+  const saved = { title: 'keep-me-r9', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const emptyJson = JSON.stringify({ title:'empty-doc', mode:'select', selectTool:'nodes', selectCombine:false,
+    nextNode:1, nextEdge:1, nodes:[], edges:[], customAttributes:[], graphCustom:{}, settings:{}, viewBox:{x:0,y:0,w:100,h:100} });
+  await paste(document, dom.window, '#btnPasteJson', emptyJson);
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'the empty document replaces the canvas');
+  assert.equal(graph.title, 'empty-doc');
+  assert.match(toasts(document), /imported/i);
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'undo restores the replaced document');
+  assert.deepEqual(graph.nodes.map(n => n.label), ['One', 'Two', 'Three']);
+
+  // 2) GraphML: graph-scoped values with zero nodes round-trip too.
+  const {dom: dom2, errors: errors2} = createEditorDom(saved);
+  const {document: document2} = dom2.window;
+  await settle(dom2.window, 60);
+  const emptyGraphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:grapheditor="https://grapheditor.pro/ns">',
+    '  <key id="note" for="graph" attr.name="note" attr.type="string" grapheditor:dataKey="note" grapheditor:dataName="note"/>',
+    '  <graph id="empty-doc" edgedefault="directed">',
+    '    <data key="note">graph-scoped value</data>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document2, dom2.window, '#btnPasteGraphml', emptyGraphml);
+  const graph2 = exportedGraph(document2);
+  assert.equal(graph2.nodes.length, 0, 'a graph-scoped-value GraphML with zero nodes imports');
+  assert.equal(graph2.graphCustom?.note, 'graph-scoped value', 'the graph-scoped custom value survives');
+  assert.match(toasts(document2), /imported/i);
+
+  // 3) GraphML: the plain editor empty export (built-in keys + built-in
+  // graph-level <data>) is a valid empty document, likewise.
+  const {dom: dom3, errors: errors3} = createEditorDom(saved);
+  const {document: document3} = dom3.window;
+  await settle(dom3.window, 60);
+  const plainEmpty = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>',
+    '  <key id="canvasBgColor" for="graph" attr.name="canvas.bg.color" attr.type="string"/>',
+    '  <graph id="empty-doc" edgedefault="directed">',
+    '    <data key="labelsPolicy">auto</data>',
+    '    <data key="canvasBgColor">#020617</data>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document3, dom3.window, '#btnPasteGraphml', plainEmpty);
+  const graph3 = exportedGraph(document3);
+  assert.equal(graph3.nodes.length, 0, 'the plain editor empty GraphML imports');
+  assert.match(toasts(document3), /imported/i);
+
+  assert.deepEqual(errors.map(e => e.message), []);
+  assert.deepEqual(errors2.map(e => e.message), []);
+  assert.deepEqual(errors3.map(e => e.message), []);
+  dom.window.close(); dom2.window.close(); dom3.window.close();
+});
+
+test('a nonempty node array in which every entry is malformed is rejected, not imported', async () => {
+  const saved = { title: 'keep-me-r9b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [] };
+  const cases = [
+    '{"nodes":[null],"edges":[]}',
+    '{"nodes":[null, 42, "x", true, false],"edges":[]}',
+    '{"nodes":[null, "n"],"title":"sneaky"}',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteJson', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `document survives ${text}`);
+    assert.match(toasts(document), /fail|no graph/i, `a failure is reported for ${text}`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+  // A nonempty array with at least one real record imports (the junk entries
+  // are dropped by sanitization, as always).
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteJson',
+    '{"nodes":[null, {"id":"keep1","label":"Kept","x":5,"y":5,"order":0}],"edges":[]}');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1);
+  assert.equal(graph.nodes[0].label, 'Kept');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('at the 500-definition limit, repeated pastes reuse the remapped definition instead of dropping the value', async () => {
+  // 498 filler node-scope definitions + one graph-scoped 'tag' = 499.
+  // The carried clipboard definition 'tag' (node scope) conflicts on paste.
+  const fillers = Array.from({ length: 498 }, (_, i) => ({ id: 'fill_' + i, scope: 'node', type: 'string' }));
+  const saved = { title: 'at-cap', nodes: [{id:'n1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [...fillers, { id: 'tag', scope: 'graph', type: 'string' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { tag: 'hello' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'tag', scope: 'node', type: 'string' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const clip = () => Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  clip();
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  clip();
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 500, 'the limit is still respected exactly');
+  const tag1 = graph.customAttributes.find(d => d.id === 'tag_1');
+  assert.equal(tag1?.dataKey, 'tag', 'the first paste re-created the conflict as tag_1 with provenance');
+  const carrieds = graph.nodes.filter(n => n.label === 'Carried');
+  assert.equal(carrieds.length, 2, 'both pastes landed their nodes');
+  for(const n of carrieds){
+    assert.equal(n.custom?.tag_1, 'hello', 'the carried value is bound to tag_1 on every paste, never under the graph-scoped tag');
+    assert.equal(n.custom?.tag, undefined, 'the value is never left under the graph-scoped id');
+  }
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
