@@ -1008,15 +1008,27 @@
   // `fieldFor` maps `${keyId}|${scope}` to the built-in field it feeds there, or
   // to '' when the declaration feeds none (a definition, or a shadowed spelling).
   // Presence in the map is what matters, so `hasOwnProperty` — never `||`.
-  function graphmlDataMap(el, fieldFor, forWhom): AnyRecord {
+  function graphmlDataMap(el, fieldFor, forWhom, rankFor = {}): AnyRecord {
     const map: AnyRecord = {};
+    // Which declaration currently holds each field, and how strong it is — the
+    // same precedence rule the defaults use, for the same reason: `weight` and
+    // its alias `value` are one property, so two <data> entries stating it must
+    // compete rather than let document order decide.
+    const held: Record<string, number> = {};
     for(const d of Array.from(el.children) as Element[]){
       if(d.tagName.toLowerCase() !== 'data') continue;
       const slot = `${d.getAttribute('key') || ''}|${forWhom}`;
       if(!Object.prototype.hasOwnProperty.call(fieldFor, slot)) continue;
       const name = fieldFor[slot];
       if(!name) continue; // declared, but not a built-in field on this scope
-      map[name] = d.textContent.trim();
+      // Keyed by *field*, not by the spelling that carried it: `fillcolor` and
+      // `color` are one property, and a map keyed by spelling made them two.
+      const entry = fieldForName(forWhom, name);
+      const field = entry ? entry.field : name;
+      const strength = rankFor[slot] ?? 1;
+      if(held[field] !== undefined && held[field] < strength) continue;
+      map[field] = d.textContent.trim();
+      held[field] = strength;
     }
     return map;
   }
@@ -1053,19 +1065,14 @@
   const NODE_PASSTHROUGH = ['type'] as const;
   const EDGE_PASSTHROUGH = ['type'] as const;
 
-  // Read a field out of a <data> map, accepting the canonical attr.name and every
-  // alias declared for it. Returns undefined when the element states nothing, so
-  // callers can tell "absent" from "present but empty".
-  function rawField(record, scope, field){
-    for(const entry of FIELDS_BY_SCOPE[scope]){
-      if(entry.field !== field) continue;
-      for(const name of [entry.name, ...(entry.aliases || [])]){
-        const key = name.toLowerCase();
-        if(Object.prototype.hasOwnProperty.call(record, key)) return record[key];
-      }
-      return undefined;
-    }
-    return undefined;
+  // Read a field out of a map built from <data> or from <default>. Both are keyed
+  // by *field* (graphmlDataMap resolves the spelling through the model), so this
+  // is a plain lookup — and, crucially, a lookup that cannot miss an alias: by
+  // the time a value is here, the alias has already been folded into its field.
+  // Returns undefined when the element states nothing, so callers can tell
+  // "absent" from "present but empty".
+  function rawField(record, _scope, field){
+    return Object.prototype.hasOwnProperty.call(record, field) ? record[field] : undefined;
   }
   function parseShape(raw){
     const s = String(raw || '').toLowerCase();
@@ -1296,15 +1303,26 @@
     // but empty means "declared, and deliberately not a built-in field" — the data
     // map must not fall back to the raw key id (`||` used to defeat this).
     const fieldFor: Record<string, string> = {};
-    // How strongly a declaration speaks for a field: a canonical one is
-    // authoritative, an alias is a fallback. Shadowed, definition and ignored
-    // declarations feed no field at all, so they cannot reach either reader.
-    const ROLE_STRENGTH: Partial<Record<KeyRole, number>> = {canonical: 0, alias: 1};
+    // Precedence per (key, scope): canonical outranks alias. Used by the <data>
+    // reader and the <default> reader alike so the two cannot disagree.
+    const fieldRank: Record<string, number> = {};
     for(const info of keyInfos){
       const name = info.rawName.toLowerCase();
       for(const dataScope of appliesTo(info.forWhom)){
         const role = info.roles[dataScope];
         fieldFor[`${info.keyId}|${dataScope}`] = (role === 'canonical' || role === 'alias') ? name : '';
+        // Precedence has three levels, because two of them genuinely differ:
+        //   0 the model's own key, written by our exporter;
+        //   1 the model's own *spelling* under someone else's key id;
+        //   2 any other alias of the field.
+        // Without the middle level `color` and `fillcolor` under foreign ids tie,
+        // and the later declaration wins on document order alone — which is how a
+        // fillcolor default came to override a color default.
+        const entry = (role === 'canonical' || role === 'alias') ? fieldForName(dataScope, name) : undefined;
+        fieldRank[`${info.keyId}|${dataScope}`] =
+          role === 'canonical' ? 0
+          : entry && entry.name.toLowerCase() === name ? 1
+          : 2;
       }
       if(info.isDefinition && info.keyId && appliesTo(info.forWhom).includes(info.scope)){
         customAttributes.push({id: info.definitionId, name: info.rawName, scope: info.scope, type: info.type});
@@ -1317,24 +1335,37 @@
     // (declared later, or not) could replace a canonical default. A definition's
     // default never lands here either, which is what stops a custom `shape` from
     // changing the node default for the whole document.
+    // Defaults, keyed by *field* rather than by the attr.name that carried them.
+    // Two declarations naming the same field — `color` and its alias `fillcolor` —
+    // must compete for one slot, or the second one silently wins on document
+    // order alone. Resolving the name to a field first is what makes precedence
+    // meaningful; comparing raw names made them look like different properties.
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const defaultStrength: Record<string, Record<string, number>> = { graph: {}, node: {}, edge: {} };
     for(const dataScope of KEY_SCOPES){
       for(let index = 0; index < keyInfos.length; index++){
         const info = keyInfos[index];
         if(!appliesTo(info.forWhom).includes(dataScope)) continue;
-        const field = fieldFor[`${info.keyId}|${dataScope}`];
-        if(!field) continue;
-        const strength = ROLE_STRENGTH[info.roles[dataScope] as KeyRole];
-        if(strength === undefined) continue;
         const defEl = keyEls[index].querySelector('default');
         if(!defEl) continue;
-        const held = defaultStrength[dataScope][field];
+        // Which field does this declaration feed here? The same mapping the
+        // <data> reader uses, so a name that binds a value also binds a default.
+        const name = fieldFor[`${info.keyId}|${dataScope}`];
+        if(!name) continue;
+        const entry = fieldForName(dataScope, name);
+        if(!entry) continue;
+        // One precedence scale, shared with the <data> reader — a second copy is
+        // how a `fillcolor` default came to outrank a `color` one.
+        const strength = fieldRank[`${info.keyId}|${dataScope}`];
+        if(strength === undefined) continue;
+        const held = defaultStrength[dataScope][entry.field];
         // A weaker declaration never displaces a stronger one; among equals the
         // later <key> wins, as it would for data values.
         if(held !== undefined && held < strength) continue;
-        keyDefaultsByFor[dataScope][field] = defEl.textContent.trim();
-        defaultStrength[dataScope][field] = strength;
+        // Keep the spelling that carried the value: a font default carries its
+        // own size, and the parser needs the text as written.
+        keyDefaultsByFor[dataScope][entry.field] = defEl.textContent.trim();
+        defaultStrength[dataScope][entry.field] = strength;
       }
     }
 
@@ -1342,46 +1373,46 @@
     const edgeDefaultAttr = graph?.getAttribute('edgedefault') || 'directed';
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
-    const graphData = graphmlDataMap(graph || doc, fieldFor, 'graph');
+    const graphData = graphmlDataMap(graph || doc, fieldFor, 'graph', fieldRank);
     const graphKeyDefs = keyDefaultsByFor.graph || {};
 
     // Build settings from QVGE key defaults + graph data
     const settings: AnyRecord = {};
     const gd: AnyRecord = {};
     // labels.policy — from graph data first, then key default
-    const lpRaw = graphData['labels.policy'] ?? graphKeyDefs['labels.policy'];
+    const lpRaw = graphData.labelsPolicy ?? graphKeyDefs.labelsPolicy;
     if(lpRaw != null){
       const p = parseLabelsPolicy(lpRaw);
       if(p) gd.labelsPolicy = p;
     }
     // Edge weight visualization settings
-    const ewmRaw = graphData['edge.weight.mode'] ?? graphKeyDefs['edge.weight.mode'];
+    const ewmRaw = graphData.edgeWeightMode ?? graphKeyDefs.edgeWeightMode;
     if(ewmRaw != null && ['none','number','color','width'].includes(String(ewmRaw))) gd.edgeWeightMode = String(ewmRaw);
-    const ewMinRaw = graphData['edge.weight.min'] ?? graphKeyDefs['edge.weight.min'];
+    const ewMinRaw = graphData.edgeWeightMin ?? graphKeyDefs.edgeWeightMin;
     if(ewMinRaw != null && ewMinRaw !== '') gd.edgeWeightMin = Number(ewMinRaw);
-    const ewMaxRaw = graphData['edge.weight.max'] ?? graphKeyDefs['edge.weight.max'];
+    const ewMaxRaw = graphData.edgeWeightMax ?? graphKeyDefs.edgeWeightMax;
     if(ewMaxRaw != null && ewMaxRaw !== '') gd.edgeWeightMax = Number(ewMaxRaw);
-    const ewCorrRaw = graphData['edge.weight.corr'] ?? graphKeyDefs['edge.weight.corr'];
+    const ewCorrRaw = graphData.edgeWeightCorr ?? graphKeyDefs.edgeWeightCorr;
     if(ewCorrRaw != null && ['linear','log','exp','sqrt'].includes(String(ewCorrRaw))) gd.edgeWeightCorr = String(ewCorrRaw);
-    const ewWMinRaw = graphData['edge.width.min'] ?? graphKeyDefs['edge.width.min'];
+    const ewWMinRaw = graphData.edgeWidthMin ?? graphKeyDefs.edgeWidthMin;
     if(ewWMinRaw != null && ewWMinRaw !== '') gd.edgeWidthMin = Number(ewWMinRaw);
-    const ewWMaxRaw = graphData['edge.width.max'] ?? graphKeyDefs['edge.width.max'];
+    const ewWMaxRaw = graphData.edgeWidthMax ?? graphKeyDefs.edgeWidthMax;
     if(ewWMaxRaw != null && ewWMaxRaw !== '') gd.edgeWidthMax = Number(ewWMaxRaw);
-    const ewCLowRaw = graphData['edge.weight.colorlow'] ?? graphKeyDefs['edge.weight.colorlow'];
+    const ewCLowRaw = graphData.edgeWeightColorLow ?? graphKeyDefs.edgeWeightColorLow;
     if(ewCLowRaw != null){ const c = parseColor(ewCLowRaw); if(c) gd.edgeWeightColorLow = c; }
-    const ewCHighRaw = graphData['edge.weight.colorhigh'] ?? graphKeyDefs['edge.weight.colorhigh'];
+    const ewCHighRaw = graphData.edgeWeightColorHigh ?? graphKeyDefs.edgeWeightColorHigh;
     if(ewCHighRaw != null){ const c = parseColor(ewCHighRaw); if(c) gd.edgeWeightColorHigh = c; }
     if(Object.keys(gd).length) settings.graphDefaults = gd;
     // Canvas bg and grid colors — from graph data first, then key defaults
-    const cbRaw = graphData['canvas.bg.color'] ?? graphKeyDefs['canvas.bg.color'];
+    const cbRaw = graphData.canvasBgColor ?? graphKeyDefs.canvasBgColor;
     if(cbRaw != null) settings.canvasBgColor = String(cbRaw);
-    const gmRaw = graphData['grid.minor.color'] ?? graphKeyDefs['grid.minor.color'];
+    const gmRaw = graphData.gridMinorColor ?? graphKeyDefs.gridMinorColor;
     if(gmRaw != null) settings.gridMinorColor = String(gmRaw);
-    const gjRaw = graphData['grid.major.color'] ?? graphKeyDefs['grid.major.color'];
+    const gjRaw = graphData.gridMajorColor ?? graphKeyDefs.gridMajorColor;
     if(gjRaw != null) settings.gridMajorColor = String(gjRaw);
-    const gmaRaw = graphData['grid.minor.alpha'] ?? graphKeyDefs['grid.minor.alpha'];
+    const gmaRaw = graphData.gridMinorAlpha ?? graphKeyDefs.gridMinorAlpha;
     if(gmaRaw != null) settings.gridMinorAlpha = parseFloat(gmaRaw);
-    const gjaRaw = graphData['grid.major.alpha'] ?? graphKeyDefs['grid.major.alpha'];
+    const gjaRaw = graphData.gridMajorAlpha ?? graphKeyDefs.gridMajorAlpha;
     if(gjaRaw != null) settings.gridMajorAlpha = parseFloat(gjaRaw);
 
     // ---- Applying declared defaults -------------------------------------------------
@@ -1419,8 +1450,12 @@
     }
     // Font names carry a size with them ("Inter,12"), so they are handled once
     // for both scopes rather than duplicated per field table.
+    // Fonts carry their own size, so they get one extra step beyond the plain
+    // bindings — but only one, and it keys off the *field*, so every alias the
+    // model declares for it (`label.font`, `labelfont`) arrives here already
+    // resolved. Reading a literal attr.name here is what dropped labelfont.
     const applyFonts = (defs: AnyRecord, out: AnyRecord, fallbackSize: number) => {
-      const raw = defs['label.font'];
+      const raw = defs.labelFont;
       if(!raw) return;
       const f = parseQvgeFont(raw);
       if(!f) return;
@@ -1455,7 +1490,7 @@
 
     const nodes: GraphNode[] = [], idMap = new Map<string, string>();
     doc.querySelectorAll('node').forEach((el,i) => {
-      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node');
+      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node', fieldRank);
       // QVGE: nodes are unlabeled by default. Only use label data if present.
       // A <default> is what an *unset* label resolves to. "Unset" means the
       // element carries no label data at all — an explicit empty
@@ -1472,7 +1507,10 @@
         // '' means unset: rendering falls back to the type style or the defaults.
         shape: (FIELD_PARSERS.shape(rawField(d, 'node', 'shape') ?? '') as string) || '',
         color: (FIELD_PARSERS.color(rawField(d, 'node', 'color') ?? '') as string) || '',
-        type: String(rawField(d, 'node', 'type') ?? '')
+        // `type` is element data like the label, so it takes its declared default
+        // the same way — and must, because the exporter writes the type from the
+        // element, so an unresolved default would vanish on export.
+        type: String(rawField(d, 'node', 'type') ?? keyDefaultsByFor.node.type ?? '')
       };
       // Every remaining field, by the model: one loop, aliases included, so a
       // field cannot be forgotten the way `labelposition` was.
@@ -1491,7 +1529,7 @@
     const edges: GraphEdge[] = [];
     doc.querySelectorAll('edge').forEach((el,i) => {
       const from = idMap.get(el.getAttribute('source')), to = idMap.get(el.getAttribute('target')); if(!from || !to) return;
-      const d = graphmlDataMap(el, fieldFor, 'edge');
+      const d = graphmlDataMap(el, fieldFor, 'edge', fieldRank);
       const directedAttr = el.getAttribute('directed');
       // QVGE: edge direction can come from data "direction" field or the XML attribute
       let dirStr = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
@@ -1513,7 +1551,7 @@
         label: String(rawField(d, 'edge', 'label') ?? rawField(keyDefaultsByFor.edge, 'edge', 'label') ?? ''),
         directed: dirStr !== 'undirected' as any,
         direction: dirStr as any,
-        type: String(rawField(d, 'edge', 'type') ?? '')
+        type: String(rawField(d, 'edge', 'type') ?? keyDefaultsByFor.edge.type ?? '')
       };
       // Every remaining edge field, by the model — the same loop as the node
       // reader, so neither scope can quietly omit a field.

@@ -1720,3 +1720,86 @@ test('every declared alias binds as a key default', async () => {
     dom.window.close();
   }
 });
+
+test('an alias default cannot displace a canonical default', async () => {
+  // `color` and its alias `fillcolor` are one field. Keying defaults by the
+  // attr.name that carried them made them look like two properties, so whichever
+  // was declared last won on document order alone.
+  for(const order of [['color', 'fillcolor'], ['fillcolor', 'color']]){
+    const keys = order.map((name, i) =>
+      `  <key id="k${i}" for="node" attr.name="${name}" attr.type="string"><default>${name === 'color' ? '#ff0000' : '#0000ff'}</default></key>`);
+    const graphml = ['<?xml version="1.0"?>', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+      ...keys, '  <graph edgedefault="directed"><node id="n1"/></graph>', '</graphml>'].join('\n');
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    await paste(document, dom.window, '#btnPasteGraphml', graphml);
+    assert.equal(exportedGraph(document).settings.nodeDefaults.color, '#ff0000',
+      `canonical wins regardless of order (${order.join(' then ')})`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('an alias data value cannot displace a canonical data value', async () => {
+  // The same rule for <data>: the element states the weight twice, once under
+  // the canonical name and once under the alias. The canonical one is stronger.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="w" for="edge" attr.name="weight" attr.type="string"/>',
+    '  <key id="v" for="edge" attr.name="value" attr.type="string"/>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="w">4</data><data key="v">7</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).edges[0].weight, '4', 'canonical beats alias');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a labelfont default is applied like label.font', async () => {
+  // A font default carries its size, and the reader looked for the literal
+  // attr.name "label.font" — so the alias the model declares for the same field
+  // was dropped. Both spellings, both scopes.
+  for(const [scope, family, size] of [['node', 'Arial', 20], ['edge', 'Courier', 15]]){
+    for(const name of ['label.font', 'labelfont']){
+      const graphml = ['<?xml version="1.0"?>', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+        `  <key id="lf" for="${scope}" attr.name="${name}" attr.type="string"><default>${family},${size}</default></key>`,
+        '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/><edge id="e1" source="n1" target="n2"/></graph>',
+        '</graphml>'].join('\n');
+      const {dom, errors} = createEditorDom();
+      const {document} = dom.window;
+      await paste(document, dom.window, '#btnPasteGraphml', graphml);
+      const defaults = scope === 'node' ? exportedGraph(document).settings.nodeDefaults : exportedGraph(document).settings.edgeDefaults;
+      assert.equal(defaults.labelFont, family, `${scope} attr.name="${name}" sets the family`);
+      assert.equal(defaults.labelSize, size, `${scope} attr.name="${name}" carries the size`);
+      assert.deepEqual(errors.map(error => error.message), []);
+      dom.window.close();
+    }
+  }
+});
+
+test('a type default reaches the elements and survives export', async () => {
+  // `type` is element data, so it is written from the element, not from settings.
+  // A type default recorded only in settings therefore disappeared on export.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="nt" for="node" attr.name="type" attr.type="string"><default>server</default></key>',
+    '  <key id="et" for="edge" attr.name="type" attr.type="string"><default>link</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/><edge id="e1" source="n1" target="n2"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].type, 'server', 'the node takes the type default');
+  assert.equal(graph.edges[0].type, 'link', 'and the edge takes its own');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
