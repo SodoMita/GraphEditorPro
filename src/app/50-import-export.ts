@@ -526,6 +526,15 @@
       toast(I18N.t('import_failed', { msg: I18N.t('err_no_valid_nodes') }));
       return;
     }
+    // A document with zero nodes can never carry edges: dangling edges are
+    // dropped on every path in the app, so the editor's own exports won't
+    // have them either. An empty nodes array with a non-empty edge list is
+    // input whose edges are all meaningless — reject it instead of wiping
+    // the document with a success toast.
+    if(data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+      return;
+    }
     const graph = data as AnyRecord;
     if(!append && isRecord(graph)){
       const customAttributes = graph.customAttributes;
@@ -1235,13 +1244,15 @@
       edges.push(edge);
     });
     if(nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1){ const r=Math.max(120,nodes.length*24); nodes.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/nodes.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r;}); }
+    if(!graph) return null; // a GraphML file without a <graph> is not a document
     if(!nodes.length){
       // A zero-node document still round-trips when it encodes something a
       // document carries: at least one <key> definition (our exports always
       // write the built-in set plus any custom defs) or graph-scoped <data>
       // (graph-scoped custom values, graph defaults). A bare <graph> with
       // neither is not a document — reject it rather than blank the canvas.
-      const hasGraphData = !!(graph && graph.getElementsByTagName('data').length > 0);
+      const hasGraphData = Array.from(graph.children)
+        .some(el => (el.localName || el.tagName || '').toLowerCase() === 'data');
       const hasKeys = doc.getElementsByTagName('key').length > 0;
       if(!hasGraphData && !hasKeys) return null;
     }

@@ -623,3 +623,95 @@ test('at the 500-definition limit, repeated pastes reuse the remapped definition
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('empty-nodes JSON with a non-empty edge list is rejected, not imported as an empty document', async () => {
+  // Every edge would dangle and be dropped; the editor can never export
+  // this shape, so it is not a valid empty document.
+  const saved = { title: 'keep-me-r9c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [] };
+  const cases = [
+    '{"nodes":[],"edges":[{"id":"e1","from":"n1","to":"n2","weight":"1","directed":true}]}',
+    '{"nodes":[],"edges":[{"from":"a","to":"b"}]}',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteJson', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `document survives ${text}`);
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('GraphML without a <graph> element is rejected even when it defines keys', async () => {
+  const saved = { title: 'keep-me-r9d', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const noGraph = '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">'
+    + '<key id="note" for="graph" attr.name="note" attr.type="string"/>'
+    + '</graphml>';
+  await paste(document, dom.window, '#btnPasteGraphml', noGraph);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'document survives a GraphML without <graph>');
+  // The explicit rejection (not an accidental TypeError in the parser) must
+  // produce the structured empty-graph error.
+  assert.match(toasts(document), /contains no graph/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('zero-node GraphML carrying only edge-scoped <data> is rejected', async () => {
+  // Edge-scoped values never belong to a document root; every edge dangles.
+  const saved = { title: 'keep-me-r9e', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const edgeDataOnly = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph id="g" edgedefault="directed">',
+    '    <edge id="e1" source="a" target="b">',
+    '      <data key="weight">1</data>',
+    '    </edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteGraphml', edgeDataOnly);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'edge-scoped <data> does not make a zero-node file a valid document');
+  assert.match(toasts(document), /fail|no graph/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('zero-node GraphML with only graph-scoped direct-child <data> still round-trips', async () => {
+  // Positive control for the tightened gate: graph-scoped <data> is document content.
+  const saved = { title: 'keep-me-r9f', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graphDataOnly = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="canvasBgColor">#020617</data>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteGraphml', graphDataOnly);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'graph-scoped <data> makes it a valid empty document');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
