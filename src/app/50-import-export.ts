@@ -756,7 +756,7 @@
   // replacements unescaped in the wrong order: "a\\\\nb" (the literal label a\nb)
   // hit the \n rule first and came back as a backslash plus a newline.
   function dotUnescape(text: string): string {
-    return text.replace(/\\([\\"'n])/g, (_, ch) => ch === 'n' ? '\n' : ch);
+    return unmaskDotSyntax(text.replace(/\\([\\"'n])/g, (_, ch) => ch === 'n' ? '\n' : ch));
   }
   function cleanDotToken(t){
     t = String(t || '').trim();
@@ -822,13 +822,44 @@
   // usable empty graph and must not replace the document. EOF is only legal
   // where no closing brace is pending, a bare '}' only where one is — so a
   // truncated or padded file can never come back as "empty".
+  // Blanks the syntax bytes that live inside quoted strings: braces (which the
+  // matchers would read as block delimiters) and arrows (which the edge matcher
+  // would read as operators). Length is preserved 1:1, so every match offset
+  // still indexes the original, and the placeholders are mapped back out of
+  // extracted attribute values via unmaskDotSyntax.
+  function maskDotSyntax(src: string): string {
+    let out = '';
+    for(let i = 0; i < src.length;){
+      const c = src[i];
+      if(c === '"'){
+        out += '"'; i++;
+        while(i < src.length){
+          const d = src[i];
+          if(d === '\\'){ out += d; if(i + 1 < src.length){ out += src[i + 1]; i += 2; } else i++; continue; }
+          if(d === '"'){ out += '"'; i++; break; }
+          if(d === '{') out += '\u0001';
+          else if(d === '}') out += '\u0002';
+          else if(d === '-' && src[i + 1] === '>'){ out += '-\u0003'; i += 2; continue; }
+          else if(d === '-' && src[i + 1] === '-'){ out += '-\u0004'; i += 2; continue; }
+          else out += d;
+          i++;
+        }
+        continue;
+      }
+      out += c; i++;
+    }
+    return out;
+  }
+  function unmaskDotSyntax(s: string): string {
+    return s.replace(/\u0001/g, '{').replace(/\u0002/g, '}').replace(/\u0003/g, '>').replace(/\u0004/g, '-');
+  }
   // Walks a comment-free DOT source and reports its outline without interpreting
   // values: the index of the first '{' and the last '}' OUTSIDE any quoted string
   // (or -1 when absent), plus the same source with every quoted string blanked to
   // `""` (for keyword tests). An unterminated string swallows the rest of the
   // input — text inside it can neither build structure nor pass for a keyword.
-  function scanDotOutline(src: string): { open: number, close: number, unquoted: string } {
-    let open = -1, close = -1, unquoted = '';
+  function scanDotOutline(src: string): { open: number, close: number, unquoted: string, openUnquoted: number } {
+    let open = -1, close = -1, unquoted = '', openUnquoted = -1;
     for(let i = 0; i < src.length;){
       const c = src[i];
       if(c === '"'){
@@ -842,11 +873,11 @@
         i = j; // unterminated: j === src.length — the tail is one big string
         continue;
       }
-      if(c === '{'){ if(open < 0) open = i; unquoted += c; i++; continue; }
+      if(c === '{'){ if(open < 0){ open = i; openUnquoted = unquoted.length; } unquoted += c; i++; continue; }
       if(c === '}'){ close = i; unquoted += c; i++; continue; }
       unquoted += c; i++;
     }
-    return { open, close, unquoted };
+    return { open, close, unquoted, openUnquoted };
   }
   function scanDotStructure(src: string): boolean {
     const NUM_SRC = '[+-]?(?:\\d+(\\.\\d*)?|\\.\\d+)';
@@ -988,15 +1019,18 @@
     const stripped = stripDotComments(text);
     // Braces and keywords are located quote-aware: a quoted string may hold
     // '}' or the word 'graph' without granting structure to garbage input.
-    const { open, close, unquoted } = scanDotOutline(stripped);
-    const directedGraph = /\bdigraph\b/i.test(unquoted);
+    const { open, close, unquoted, openUnquoted } = scanDotOutline(stripped);
+    // A structurally recognized DOT graph document needs a strict graph header
+    // ([strict] graph|digraph [name]) before its braces block. Prose that
+    // merely mentions the word 'graph' is not a graph; the header is matched
+    // on the string-blanked outline so a quoted keyword cannot grant structure.
+    const headerText = openUnquoted >= 0 ? unquoted.slice(0, openUnquoted) : '';
+    const headerRe = /^\s*(strict\s+)?(di)?graph(\s+("(?:\\.|[^"])*"|[A-Za-z0-9_:.\-]*[A-Za-z0-9_][A-Za-z0-9_:.\-]*))?\s*$/i;
+    const headerOk = open >= 0 && headerRe.test(headerText);
+    const directedGraph = headerOk && /^\s*(strict\s+)?digraph\b/i.test(headerText);
     let body = stripped;
     if(open >= 0 && close > open) body = stripped.slice(open + 1, close);
-    // A structurally recognized DOT graph document needs BOTH the graph
-    // keyword and a balanced braces block (strict DOT grammar). Prose is not
-    // a graph — the node matcher below would otherwise invent a node out of
-    // it. A keyword without braces (truncated file) is likewise not usable.
-    const hasStructure = (open >= 0 && close > open) && /\b(?:di)?graph\b/i.test(unquoted);
+    const hasStructure = (open >= 0 && close > open) && headerOk;
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
     // A bare token must contain at least one word-ish character: a run of
@@ -1004,8 +1038,9 @@
     // it is the arrow operator or noise, and must not invent a node.
     const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*)';
     const edgeRe = new RegExp(id + '\\s*(--|->)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?', 'g');
+    const work = maskDotSyntax(body);
     let m;
-    while((m = edgeRe.exec(body))){
+    while((m = edgeRe.exec(work))){
       const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
       const a = ensureNode(fromOrig), b = ensureNode(toOrig);
       const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
@@ -1026,7 +1061,7 @@
       }
       edges.push(e as any);
     }
-    const withoutEdges = body.replace(edgeRe, '');
+    const withoutEdges = work.replace(edgeRe, '');
     const nodeRe = new RegExp('(?:^|;|[\\r\\n]|\\{)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|}|$)', 'g');
     if(hasStructure || edges.length)
     while((m = nodeRe.exec(withoutEdges))){
