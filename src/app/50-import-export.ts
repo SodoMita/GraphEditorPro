@@ -696,9 +696,17 @@
       // an all-empty one is how the editor exports an edgeless document. It
       // must round-trip in replace mode (zero edges), not be refused.
       validRows++;
-      for(let c = 1; c < row.length && c-1 < labels.length; c++){
+      for(let c = 1; c < row.length; c++){
         const val = (row[c] || '').trim();
         if(!val) continue;
+        if(c - 1 >= labels.length){
+          // A populated cell beyond the header's width: the editor never
+          // writes one, and silently ignoring it would let a malformed
+          // file commit a zero-edge replace over the existing edges.
+          // Count it as skipped like any other unhonorable cell.
+          skipped++;
+          continue;
+        }
         const toId = resolveNode(labels[c-1]);
         if(!toId){ skipped++; continue; }
         const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
@@ -708,9 +716,11 @@
         }
       }
     }
-    // Commit zero edges only for a fully coherent empty matrix: rows of
-    // live nodes over live columns, with nothing populated that could not
-    // be honored (no forced skips). Anything else is refused and the
+    // Commit zero edges only when the file says "empty graph": rows of live
+    // nodes over live columns, and not a single populated cell anywhere
+    // (every populated cell is honored into parsed or counted into skipped,
+    // so parsed === 0 with skipped === 0 means wholly empty cells — the
+    // editor's own edgeless export). Anything else is refused and the
     // document is preserved.
     const recognizable = labels.length > 0 && resolvableColumns === labels.length
       && validRows > 0 && skipped === 0;

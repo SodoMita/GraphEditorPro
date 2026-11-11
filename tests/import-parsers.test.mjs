@@ -990,6 +990,9 @@ test('a matrix whose columns do not resolve preserves the document', async () =>
     'label,A,Unknown\nA,\n',
     'label,X,Unknown\nA,1,2\n',
     'label,A\nX,5\nA,\n',
+    // A populated cell beyond the header width (row wider than the header):
+    // never an empty matrix — refuse.
+    'label,A\nA,,5\n',
   ];
   for(const text of cases){
     const {dom, errors} = createEditorDom(saved);
@@ -1003,4 +1006,24 @@ test('a matrix whose columns do not resolve preserves the document', async () =>
     assert.deepEqual(errors.map(e => e.message), []);
     dom.window.close();
   }
+});
+
+test('a populated cell beyond the header width is reported as skipped, not ignored', async () => {
+  // General accounting, not just the zero-edge guard: the editor never
+  // writes cells past the header width, so such a cell cannot be honored —
+  // it must count in the skipped tally instead of vanishing from the toast.
+  const saved = { title: 'keep-matrix-wide-row', nodes: [
+    {id:'n1', label:'A', x:0, y:0, order:0},
+    {id:'n2', label:'B', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteMatrixCsv', 'label,A\nA,1,5\n');
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges.length, 1, 'the honored cell becomes an edge');
+  assert.equal(graph.edges[0].weight, '1');
+  assert.match(toasts(document), /skipped/i, 'the extra populated cell is counted as skipped');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
 });
