@@ -821,7 +821,6 @@
   // attribute statements) satisfies this, so empty exports round-trip while
   // garbage is rejected.
   function isWellFormedDotBody(src: string): boolean {
-    const ID_SRC = '"(?:\\.|[^"])*"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*';
     const NUM_SRC = '[+-]?(?:\\d+(\\.\\d*)?|\\.\\d+)';
     const skipWs = (s: string, i: number): number => { while(i < s.length && /[\s;]/.test(s[i])) i++; return i; };
     const matchId = (s: string, i: number): { end: number } | null => {
@@ -861,30 +860,31 @@
       }
       return -1;
     };
-    // Split an attribute list on top-level commas or semicolons (quote-aware);
-    // each item must be an ID, optionally ID = ID|number.
+    // Attribute list: whitespace/comma/semicolon-separated items; each item is
+    // ID or ID = value (graphviz accepts whitespace-separated attributes, e.g.
+    // 'graph [label="Hello" rankdir=LR]'). One sequential pass; quoted strings
+    // are consumed whole by matchId/matchValue. Trailing separators are fine.
     const attrListOk = (raw: string): boolean => {
-      const items: string[] = [];
-      let cur = '', j = 0;
+      const wsOnly = (from: number): number => { let k = from; while(k < raw.length && /\s/.test(raw[k])) k++; return k; };
+      let j = wsOnly(0);
       while(j < raw.length){
-        const c = raw[j];
-        if(c === '"'){ const end = skipString(raw, j); cur += raw.slice(j, end); j = end; continue; }
-        if(c === ',' || c === ';'){ items.push(cur); cur = ''; j++; continue; }
-        cur += c; j++;
-      }
-      items.push(cur);
-      const itemRe = new RegExp('^(?:' + ID_SRC + ')(?:\\s*=\\s*(?:' + ID_SRC + '|' + NUM_SRC + '))?$');
-      for(const item of items){
-        const trimmed = item.trim();
-        if(!trimmed) continue; // trailing separator is fine
-        if(!itemRe.test(trimmed)) return false;
+        const id = matchId(raw, j); if(!id) return false; j = id.end;
+        j = wsOnly(j);
+        if(raw[j] === '='){
+          j = wsOnly(j + 1);
+          const val = matchValue(raw, j); if(!val) return false; j = val.end;
+        }
+        // Between items: optional whitespace and at most ONE separator; a run of
+        // separators ('a , , b') is malformed. A single trailing separator is fine.
+        j = wsOnly(j);
+        if(raw[j] === ',' || raw[j] === ';') j = wsOnly(j + 1);
       }
       return true;
     };
-    const parseStatements = (s: string, i: number): { ok: boolean, next: number } => {
+    const parseStatements = (s: string, i: number, needClose: boolean): { ok: boolean, next: number } => {
       while(true){
         i = skipWs(s, i);
-        if(i >= s.length) return { ok: true, next: i };
+        if(i >= s.length) return needClose ? { ok: false, next: i } : { ok: true, next: i };
         if(s[i] === '}') return { ok: true, next: i + 1 };
         // Attribute statement: graph|node|edge [ ... ] — list must be well-formed
         const kw = /^(graph|node|edge)\b/i.exec(s.slice(i));
@@ -910,7 +910,7 @@
             if(s[afterName] !== '{') return { ok: false, next: afterName };
             i = afterName;
           }
-          const inner = parseStatements(s, i + 1);
+          const inner = parseStatements(s, i + 1, true);
           if(!inner.ok) return inner;
           i = inner.next;
           if(s[i] === ';') i++;
@@ -931,7 +931,7 @@
         return { ok: false, next: i };
       }
     };
-    return parseStatements(src, skipWs(src, 0)).ok;
+    return parseStatements(src, skipWs(src, 0), false).ok;
   }
 
   function parseDot(text){

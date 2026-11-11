@@ -1089,3 +1089,73 @@ test('empty quoted values and signed numbers are accepted in empty digraphs', as
     dom.window.close();
   }
 });
+
+test('truncated DOT with an unterminated subgraph is rejected and preserves the document', async () => {
+  const saved = { title: 'keep-me-r14a', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { subgraph child { }',
+    'digraph G { subgraph child { dpi=96; }',
+    'strict digraph G { subgraph { dpi=96; }',
+    'digraph G { dpi=96; subgraph child { }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 1, `${JSON.stringify(text)} must not import as an empty document`);
+    assert.match(toasts(document), /fail|no graph/i, `a failure is reported for ${JSON.stringify(text)}`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('whitespace-separated attribute lists import as empty documents', async () => {
+  const saved = { title: 'keep-me-r14b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { graph [label="Hello" rankdir=LR]; }',
+    'digraph G { graph [dpi=96 rankdir=LR]; }',
+    'digraph G { node [shape=box style=filled color=red]; }',
+    'digraph G { graph [label = "Spaced Out" rankdir = LR]; }',
+    'digraph G { graph [label="Hello" rankdir=LR dpi=96]; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 0, `${JSON.stringify(text)} imports as a valid empty document`);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('whitespace-separated attribute lists still reject malformed items', async () => {
+  const saved = { title: 'keep-me-r14c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { graph [label="Hello" rankdir=]; }',
+    'digraph G { graph [label="Hello" , , ]; }',
+    'digraph G { node [shape=box =fill]; }',
+    'digraph G { graph ["Unterminated]; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 1, `${JSON.stringify(text)} must not import as an empty document`);
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
