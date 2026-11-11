@@ -264,76 +264,120 @@
   }
   function exportDot(){ showExportPreview(`${fileBase()}.dot`, exportDotText(), 'text/vnd.graphviz;charset=utf-8'); }
   function xmlEsc(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&apos;','"':'&quot;'}[c])); }
+  // ---- The GraphML field model ------------------------------------------------
+  //
+  // One table says, for every field this app understands: the attr.name our
+  // exporter writes, the alias attr.names other tools use, and how to parse a
+  // value. Everything GraphML-related is derived from it — which names are
+  // built-in (~so a key is not mistaken for a user definition), which names bind
+  // to which field for <data> values and for <default> values, and the parser for
+  // each. Adding a field in one place used to mean editing three tables, and they
+  // had already drifted: `fillcolor` and `edgecolor` were accepted as <data> but
+  // not as <default>, and `labelposition` silently fed neither.
+  //
+  // `parse` returns undefined for a value it cannot use, leaving the field unset.
+  interface GraphmlField {
+    /** The property on GraphNode/GraphEdge (or the settings default) this fills. */
+    field: string;
+    /** attr.name the exporter writes for this field. */
+    name: string;
+    /** attr.names other tools use for the same field. */
+    aliases?: string[];
+    /** GraphML attr.type the exporter declares. */
+    type?: string;
+    /** The exporter's <key> id; defaults to the field name. */
+    keyId?: string;
+  }
+  const num = (raw: unknown, fallback: number, lo: number, hi: number) => clamp(finite(raw, fallback), lo, hi);
+  const colorOrUndef = (raw: unknown) => parseColor(raw) || undefined;
+  const NODE_FIELDS_MODEL: readonly GraphmlField[] = [
+    {field: 'label', name: 'label', aliases: ['name']},
+    {field: 'id', name: 'id', keyId: 'nodeId'},
+    {field: 'order', name: 'order', type: 'int'},
+    {field: 'x', name: 'x', aliases: ['posx', 'position.x'], type: 'double'},
+    {field: 'y', name: 'y', aliases: ['posy', 'position.y'], type: 'double'},
+    {field: 'type', name: 'type'},
+    {field: 'shape', name: 'shape', aliases: ['graphics']},
+    {field: 'color', name: 'color', aliases: ['fillcolor', 'bgcolor']},
+    {field: 'width', name: 'width', type: 'double'},
+    {field: 'height', name: 'height', type: 'double'},
+    {field: 'strokeColor', name: 'stroke.color', aliases: ['strokecolor']},
+    {field: 'strokeSize', name: 'stroke.size', aliases: ['strokesize'], type: 'double'},
+    {field: 'strokeStyle', name: 'stroke.style', aliases: ['strokestyle']},
+    {field: 'labelColor', name: 'label.color', aliases: ['labelcolor']},
+    {field: 'labelFont', name: 'label.font', aliases: ['labelfont']},
+    {field: 'labelSize', name: 'label.size', aliases: ['labelsize'], type: 'double'},
+    {field: 'labelPosition', name: 'label.position', aliases: ['labelposition']},
+  ];
+  const EDGE_FIELDS_MODEL: readonly GraphmlField[] = [
+    {field: 'weight', name: 'weight', aliases: ['value']},
+    {field: 'label', name: 'label', keyId: 'edgeLabel', aliases: ['edgelabel']},
+    {field: 'type', name: 'type', keyId: 'edgeType'},
+    {field: 'color', name: 'color', keyId: 'edgeColor', aliases: ['edgecolor']},
+    {field: 'strokeSize', name: 'stroke.size', keyId: 'edgeStrokeSize', aliases: ['strokesize'], type: 'double'},
+    {field: 'strokeStyle', name: 'style', keyId: 'edgeStrokeStyle', aliases: ['stroke.style', 'strokestyle']},
+    {field: 'labelColor', name: 'label.color', keyId: 'edgeLabelColor', aliases: ['labelcolor']},
+    {field: 'labelFont', name: 'label.font', keyId: 'edgeLabelFont', aliases: ['labelfont']},
+    {field: 'labelSize', name: 'label.size', keyId: 'edgeLabelSize', aliases: ['labelsize'], type: 'double'},
+    {field: 'directed', name: 'directed', type: 'boolean'},
+    {field: 'direction', name: 'direction'},
+    {field: 'arrowSize', name: 'arrow.size', keyId: 'arrowSize', aliases: ['arrowsize'], type: 'double'},
+  ];
+  const GRAPH_FIELDS_MODEL: readonly GraphmlField[] = [
+    {field: 'labelsPolicy', name: 'labels.policy'},
+    {field: 'edgeWeightMode', name: 'edge.weight.mode'},
+    {field: 'edgeWeightMin', name: 'edge.weight.min', type: 'double'},
+    {field: 'edgeWeightMax', name: 'edge.weight.max', type: 'double'},
+    {field: 'edgeWeightCorr', name: 'edge.weight.corr'},
+    {field: 'edgeWidthMin', name: 'edge.width.min', type: 'double'},
+    {field: 'edgeWidthMax', name: 'edge.width.max', type: 'double'},
+    {field: 'edgeWeightColorLow', name: 'edge.weight.colorLow'},
+    {field: 'edgeWeightColorHigh', name: 'edge.weight.colorHigh'},
+    {field: 'canvasBgColor', name: 'canvas.bg.color'},
+    {field: 'gridMinorColor', name: 'grid.minor.color'},
+    {field: 'gridMajorColor', name: 'grid.major.color'},
+    {field: 'gridMinorAlpha', name: 'grid.minor.alpha', type: 'double'},
+    {field: 'gridMajorAlpha', name: 'grid.major.alpha', type: 'double'},
+  ];
+  const FIELDS_BY_SCOPE = {graph: GRAPH_FIELDS_MODEL, node: NODE_FIELDS_MODEL, edge: EDGE_FIELDS_MODEL} as const;
+  // attr.name (lowercased) -> field, per scope. Every alias resolves here, so a
+  // reader never has to know a second spelling.
+  const FIELD_BY_NAME: Record<string, Map<string, GraphmlField>> = {};
+  for(const [scope, model] of Object.entries(FIELDS_BY_SCOPE)){
+    const map = new Map<string, GraphmlField>();
+    for(const entry of model){
+      for(const name of [entry.name, ...(entry.aliases || [])]) map.set(name.toLowerCase(), entry);
+    }
+    FIELD_BY_NAME[scope] = map;
+  }
+  const fieldForName = (scope: string, name: string) => FIELD_BY_NAME[scope]?.get(String(name).toLowerCase());
+
   // Every <key> the GraphML exporter writes itself, in emission order. Declared
   // once so the custom-definition filter right below can use the same set of
   // reserved ids instead of a hand-copied list that drifts.
-  const GRAPHML_BUILTIN_KEYS: readonly [string, string, string, string][] = [
-    ['label', 'node', 'label', 'string'],
-    ['nodeId', 'node', 'id', 'string'],
-    ['order', 'node', 'order', 'int'],
-    ['x', 'node', 'x', 'double'],
-    ['y', 'node', 'y', 'double'],
-    ['type', 'node', 'type', 'string'],
-    ['shape', 'node', 'shape', 'string'],
-    ['color', 'node', 'color', 'string'],
-    ['width', 'node', 'width', 'double'],
-    ['height', 'node', 'height', 'double'],
-    ['strokeColor', 'node', 'stroke.color', 'string'],
-    ['strokeSize', 'node', 'stroke.size', 'double'],
-    ['strokeStyle', 'node', 'stroke.style', 'string'],
-    ['labelColor', 'node', 'label.color', 'string'],
-    ['labelFont', 'node', 'label.font', 'string'],
-    ['labelSize', 'node', 'label.size', 'double'],
-    ['labelPosition', 'node', 'label.position', 'string'],
-    ['weight', 'edge', 'weight', 'string'],
-    ['edgeLabel', 'edge', 'label', 'string'],
-    ['edgeType', 'edge', 'type', 'string'],
-    ['edgeColor', 'edge', 'color', 'string'],
-    ['edgeStrokeSize', 'edge', 'stroke.size', 'double'],
-    ['edgeStrokeStyle', 'edge', 'style', 'string'],
-    ['edgeLabelColor', 'edge', 'label.color', 'string'],
-    ['edgeLabelFont', 'edge', 'label.font', 'string'],
-    ['edgeLabelSize', 'edge', 'label.size', 'double'],
-    ['directed', 'edge', 'directed', 'boolean'],
-    ['direction', 'edge', 'direction', 'string'],
-    ['arrowSize', 'edge', 'arrow.size', 'double'],
-    ['labelsPolicy', 'graph', 'labels.policy', 'string'],
-    ['edgeWeightMode', 'graph', 'edge.weight.mode', 'string'],
-    ['edgeWeightMin', 'graph', 'edge.weight.min', 'double'],
-    ['edgeWeightMax', 'graph', 'edge.weight.max', 'double'],
-    ['edgeWeightCorr', 'graph', 'edge.weight.corr', 'string'],
-    ['edgeWidthMin', 'graph', 'edge.width.min', 'double'],
-    ['edgeWidthMax', 'graph', 'edge.width.max', 'double'],
-    ['edgeWeightColorLow', 'graph', 'edge.weight.colorLow', 'string'],
-    ['edgeWeightColorHigh', 'graph', 'edge.weight.colorHigh', 'string'],
-    ['canvasBgColor', 'graph', 'canvas.bg.color', 'string'],
-    ['gridMinorColor', 'graph', 'grid.minor.color', 'string'],
-    ['gridMajorColor', 'graph', 'grid.major.color', 'string'],
-    ['gridMinorAlpha', 'graph', 'grid.minor.alpha', 'double'],
-    ['gridMajorAlpha', 'graph', 'grid.major.alpha', 'double'],
-  ];
+  // Derived from the field model above, so the key block and the readers cannot
+  // disagree about what a field is called. Order is the model's order: node,
+  // edge, graph, which is the order the exporter has always written.
+  const GRAPHML_BUILTIN_KEYS: readonly [string, string, string, string][] =
+    (['node', 'edge', 'graph'] as const).flatMap(scope =>
+      FIELDS_BY_SCOPE[scope].map(entry => [
+        entry.keyId || entry.field,
+        scope,
+        entry.name,
+        entry.type || 'string',
+      ] as [string, string, string, string]));
+
   // The one rule core needs: a key is built-in iff it is one of these. Passed as
   // a thunk so classification cannot depend on module evaluation order.
   // The attr.names the importer below reads as built-in, per scope. Kept next to
   // the data map it mirrors so the two cannot drift apart.
-  const GRAPHML_READ_NAMES: readonly (readonly [string, string])[] = [
-    // Every attr.name the node/edge/graph readers below look up. A <key> using
-    // one of these feeds a built-in field, so it cannot also be a definition.
-    ...['label','name','x','posx','y','posy','position.x','position.y','graphics','type','shape',
-        'color','fillcolor','bgcolor','width','height','stroke.color','stroke.size','stroke.style',
-        'strokecolor','strokesize','strokestyle','label.color','label.font','label.size','label.position',
-        'labelcolor','labelfont','labelsize','labelposition']
-      .map(readName => [readName, 'node'] as const),
-    ...['weight','value','label','edgelabel','type','color','edgecolor','style',
-        'stroke.color','stroke.size','stroke.style','strokecolor','strokesize','strokestyle',
-        'arrow.size','arrowsize','directed','direction','order','id',
-        'label.color','label.font','label.size','labelcolor','labelfont','labelsize','labelposition']
-      .map(readName => [readName, 'edge'] as const),
-    ...['labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr',
-        'edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh',
-        'canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']
-      .map(readName => [readName, 'graph'] as const),
-  ];
+  // Every attr.name (canonical and alias) the importer accepts, per scope —
+  // derived from the field model, so a name the reader accepts is always a name
+  // the classifier recognises as built-in.
+  const GRAPHML_READ_NAMES: readonly (readonly [string, string])[] =
+    (['node', 'edge', 'graph'] as const).flatMap(scope =>
+      [...FIELD_BY_NAME[scope].keys()].map(readName => [readName, scope] as const));
+
   // Built-in cover = every attr.name our exporter writes for a scope (from
   // GRAPHML_BUILTIN_KEYS, so it cannot drift from the key block) plus the alias
   // names the importer accepts from other tools. Either way the <data> binds to
@@ -982,6 +1026,47 @@
   function hasAny(record, ...fields){
     return fields.some(field => Object.prototype.hasOwnProperty.call(record, field));
   }
+  // How to turn a raw GraphML string into a property value, per field. One table
+  // for both readers — <data> on an element and <default> on a key — because they
+  // are the same conversion and must not diverge.
+  const FIELD_PARSERS: Record<string, (raw: string) => unknown> = {
+    'shape': raw => parseShape(raw) || undefined,
+    'color': raw => colorOrUndef(raw),
+    'strokeColor': raw => colorOrUndef(raw),
+    'strokeSize': raw => num(raw, 2.2, 0, 20),
+    'strokeStyle': raw => parseStrokeStyle(raw) || undefined,
+    'labelColor': raw => colorOrUndef(raw),
+    'labelSize': raw => num(raw, 13, 4, 72),
+    'labelPosition': raw => parseLabelPosition(raw) || undefined,
+    'width': raw => num(raw, 50, 10, 300),
+    'height': raw => num(raw, 50, 10, 300),
+    // Edge values carry their own fallbacks; one parser serves both scopes
+    // because the ranges are the same shape and the defaults only differ where
+    // the property has a different natural size.
+    'arrowSize': raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX),
+    'weight': raw => String(raw),
+    'type': raw => String(raw),
+    'direction': raw => parseDirection(raw),
+  };
+  // Properties that live directly on GraphNode/GraphEdge and take their value
+  // verbatim. Kept separate from FIELD_PARSERS because there is nothing to parse.
+  const NODE_PASSTHROUGH = ['type'] as const;
+  const EDGE_PASSTHROUGH = ['type'] as const;
+
+  // Read a field out of a <data> map, accepting the canonical attr.name and every
+  // alias declared for it. Returns undefined when the element states nothing, so
+  // callers can tell "absent" from "present but empty".
+  function rawField(record, scope, field){
+    for(const entry of FIELDS_BY_SCOPE[scope]){
+      if(entry.field !== field) continue;
+      for(const name of [entry.name, ...(entry.aliases || [])]){
+        const key = name.toLowerCase();
+        if(Object.prototype.hasOwnProperty.call(record, key)) return record[key];
+      }
+      return undefined;
+    }
+    return undefined;
+  }
   function parseShape(raw){
     const s = String(raw || '').toLowerCase();
     if(s.includes('disc') || s.includes('disk') || s.includes('circle') || s.includes('ellipse') || s.includes('oval')) return 'circle';
@@ -1316,36 +1401,22 @@
       target: string;
       coerce: (raw: string) => unknown;
     }
-    const num = (raw: string, fallback: number, lo: number, hi: number) => clamp(finite(raw, fallback), lo, hi);
-    const colorOf = (raw: string) => parseColor(raw) || undefined;
-    const NODE_FIELD_BINDINGS: Record<string, FieldBinding> = {
-      'shape': {target: 'shape', coerce: raw => parseShape(raw) || undefined},
-      'color': {target: 'color', coerce: colorOf},
-      'stroke.color': {target: 'strokeColor', coerce: colorOf},
-      'stroke.size': {target: 'strokeSize', coerce: raw => num(raw, 2.2, 0, 20)},
-      'stroke.style': {target: 'strokeStyle', coerce: raw => parseStrokeStyle(raw) || undefined},
-      'label.color': {target: 'labelColor', coerce: colorOf},
-      'label.size': {target: 'labelSize', coerce: raw => num(raw, 13, 4, 72)},
-      'label.position': {target: 'labelPosition', coerce: raw => parseLabelPosition(raw) || undefined},
-      'width': {target: 'width', coerce: raw => num(raw, 50, 10, 300)},
-      'height': {target: 'height', coerce: raw => num(raw, 50, 10, 300)},
-    };
-    const EDGE_FIELD_BINDINGS: Record<string, FieldBinding> = {
-      'color': {target: 'color', coerce: colorOf},
-      'label.color': {target: 'labelColor', coerce: colorOf},
-      'stroke.size': {target: 'strokeSize', coerce: raw => num(raw, 2.4, 0, 20)},
-      // The exporter writes the edge style as attr.name "style"; older files and
-      // QVGE use "stroke.style". Both name the same field.
-      'stroke.style': {target: 'strokeStyle', coerce: raw => parseStrokeStyle(raw) || undefined},
-      'style': {target: 'strokeStyle', coerce: raw => parseStrokeStyle(raw) || undefined},
-      'label.size': {target: 'labelSize', coerce: raw => num(raw, 12, 4, 72)},
-      'arrow.size': {target: 'arrowSize', coerce: raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX)},
-      'arrowsize': {target: 'arrowSize', coerce: raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX)},
-      'weight': {target: 'weight', coerce: raw => String(raw)},
-      // `value` is an accepted alias for weight in edge <data> (the reader below
-      // has always taken it), so its <default> must behave the same way.
-      'value': {target: 'weight', coerce: raw => String(raw)},
-    };
+    // Default bindings, derived from the field model: a default is simply the
+    // same field, parsed the same way. Nothing here lists fields by hand any
+    // more, which is what let `fillcolor` and `edgecolor` work as <data> and not
+    // as <default>.
+    const FIELD_BINDINGS: Record<string, FieldBinding> = {};
+    for(const [scope, model] of Object.entries(FIELDS_BY_SCOPE)){
+      for(const entry of model){
+        const parser = FIELD_PARSERS[entry.field];
+        if(!parser) continue; // label/id/order/x/y are handled where elements are built
+        // A key's attr.name maps to a field through the model, aliases included.
+        FIELD_BINDINGS[`${scope}|${entry.name.toLowerCase()}`] = {target: entry.field, coerce: parser};
+        for(const alias of entry.aliases || []){
+          FIELD_BINDINGS[`${scope}|${alias.toLowerCase()}`] = {target: entry.field, coerce: parser};
+        }
+      }
+    }
     // Font names carry a size with them ("Inter,12"), so they are handled once
     // for both scopes rather than duplicated per field table.
     const applyFonts = (defs: AnyRecord, out: AnyRecord, fallbackSize: number) => {
@@ -1356,11 +1427,12 @@
       out.labelFont = f.family;
       if(f.size != null) out.labelSize = clamp(finite(f.size, fallbackSize), 4, 72);
     };
-    const applyBindings = (defs: AnyRecord, bindings: Record<string, FieldBinding>, fallbackFontSize: number) => {
+    const applyBindings = (defs: AnyRecord, scope: string, fallbackFontSize: number) => {
       const out: AnyRecord = {};
-      for(const [field, binding] of Object.entries(bindings)){
-        const raw = defs[field];
+      for(const [field, raw] of Object.entries(defs)){
         if(raw == null) continue;
+        const binding = FIELD_BINDINGS[`${scope}|${String(field).toLowerCase()}`];
+        if(!binding) continue;
         const value = binding.coerce(String(raw));
         if(value !== undefined) out[binding.target] = value;
       }
@@ -1370,11 +1442,11 @@
 
     // Node and edge defaults, applied from the declared bindings above.
     const nodeKeyDefs = keyDefaultsByFor.node || {};
-    const nd = applyBindings(nodeKeyDefs, NODE_FIELD_BINDINGS, 13);
+    const nd = applyBindings(nodeKeyDefs, 'node', 13);
     if(Object.keys(nd).length) settings.nodeDefaults = nd;
 
     const edgeKeyDefs = keyDefaultsByFor.edge || {};
-    const ed = applyBindings(edgeKeyDefs, EDGE_FIELD_BINDINGS, 12);
+    const ed = applyBindings(edgeKeyDefs, 'edge', 12);
     if(Object.keys(ed).length) settings.edgeDefaults = ed;
 
     // Store the edge direction default if present
@@ -1390,28 +1462,29 @@
       // <data key="l"/> is a stated value and must survive as an empty label,
       // or the file's deliberate blank is replaced by a default it overrode.
       // Hence presence (`in`), not truthiness.
-      const label = String(hasAny(d, 'label', 'name') ? (d.label ?? d.name) : (keyDefaultsByFor.node.label ?? ''));
-      let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
+      const rawLabel = rawField(d, 'node', 'label');
+      const label = String(rawLabel !== undefined ? rawLabel : (rawField(keyDefaultsByFor.node, 'node', 'label') ?? ''));
       const geom = el.querySelector('Geometry, geometry');
+      let x = finite(rawField(d, 'node', 'x'), 0), y = finite(rawField(d, 'node', 'y'), 0);
       if(geom){ x = finite(geom.getAttribute('x'), x); y = finite(geom.getAttribute('y'), y); }
       const node: GraphNode = {
         id, label, x, y,
-        shape: d.shape ? parseShape(d.shape) : '',   // '' = unset, falls back to default
-        color: parseColor(d.color || d.fillcolor) || '',  // '' = unset
-        type: String(d.type || '')
+        // '' means unset: rendering falls back to the type style or the defaults.
+        shape: (FIELD_PARSERS.shape(rawField(d, 'node', 'shape') ?? '') as string) || '',
+        color: (FIELD_PARSERS.color(rawField(d, 'node', 'color') ?? '') as string) || '',
+        type: String(rawField(d, 'node', 'type') ?? '')
       };
-      if(d.width != null) node.width = clamp(finite(d.width, 50), 10, 300);
-      if(d.height != null) node.height = clamp(finite(d.height, 50), 10, 300);
-      const sc = parseColor(d.strokecolor || d['stroke.color']); if(sc) node.strokeColor = sc;
-      if(d.strokesize != null || d['stroke.size'] != null) node.strokeSize = clamp(finite(d.strokesize ?? d['stroke.size'], 2.2), 0, 20);
-      if(d.strokestyle || d['stroke.style']) node.strokeStyle = parseStrokeStyle(d.strokestyle || d['stroke.style']);
-      const lc = parseColor(d.labelcolor || d['label.color']); if(lc) node.labelColor = lc;
-      if(d.labelsize != null || d['label.size'] != null) node.labelSize = clamp(finite(d.labelsize ?? d['label.size'], 13), 4, 72);
-      if(d.labelfont || d['label.font']){ const f = parseQvgeFont(d.labelfont || d['label.font']); if(f){ node.labelFont = f.family; if(f.size) node.labelSize = f.size; } }
-      if(d.labelposition != null || d['label.position'] != null){
-        const p = parseLabelPosition(d.labelposition ?? d['label.position']);
-        if(p) node.labelPosition = p;
+      // Every remaining field, by the model: one loop, aliases included, so a
+      // field cannot be forgotten the way `labelposition` was.
+      for(const entry of NODE_FIELDS_MODEL){
+        if(['label', 'id', 'order', 'x', 'y', 'type', 'shape', 'color'].includes(entry.field)) continue;
+        const rawValue = rawField(d, 'node', entry.field);
+        if(rawValue === undefined || rawValue === null) continue;
+        const parsed = FIELD_PARSERS[entry.field]?.(String(rawValue));
+        if(parsed !== undefined) (node as AnyRecord)[entry.field] = parsed;
       }
+      const nlf = rawField(d, 'node', 'labelFont');
+      if(nlf){ const f = parseQvgeFont(nlf); if(f){ node.labelFont = f.family; if(f.size) node.labelSize = f.size; } }
       nodes.push(node);
       idMap.set(raw, id);
     });
@@ -1434,20 +1507,25 @@
         // Consult the *resolved* defaults, not the raw key names: `value` is an
         // accepted alias for weight, and only the binding table knows that. Reading
         // edgeKeyDefs.weight here would miss a <key attr.name="value"> default.
-        weight: String(d.weight ?? d.value ?? ed.weight ?? ''),
+        // `ed` is the resolved edge defaults, so aliases are already folded in.
+        weight: String(rawField(d, 'edge', 'weight') ?? ed.weight ?? ''),
         // Same presence rule as the node label above.
-        label: String(hasAny(d, 'label', 'edgelabel') ? (d.label ?? d.edgelabel) : (keyDefaultsByFor.edge.label ?? '')),
+        label: String(rawField(d, 'edge', 'label') ?? rawField(keyDefaultsByFor.edge, 'edge', 'label') ?? ''),
         directed: dirStr !== 'undirected' as any,
         direction: dirStr as any,
-        type: String(d.type || '')
+        type: String(rawField(d, 'edge', 'type') ?? '')
       };
-      const ec = parseColor(d.color || d.edgecolor); if(ec) edge.color = ec;
-      if(d.strokesize != null || d['stroke.size'] != null) edge.strokeSize = clamp(finite(d.strokesize ?? d['stroke.size'], 2.4), 0, 20);
-      if(d.strokestyle || d['stroke.style'] || d.style) edge.strokeStyle = parseStrokeStyle(d.strokestyle || d['stroke.style'] || d.style);
-      if(d.arrowsize != null || d['arrow.size'] != null) edge.arrowSize = clamp(finite(d.arrowsize ?? d['arrow.size'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
-      const elc = parseColor(d.labelcolor || d['label.color']); if(elc) edge.labelColor = elc;
-      if(d.labelsize != null || d['label.size'] != null) edge.labelSize = clamp(finite(d.labelsize ?? d['label.size'], 12), 4, 72);
-      if(d.labelfont || d['label.font']){ const f = parseQvgeFont(d.labelfont || d['label.font']); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }
+      // Every remaining edge field, by the model — the same loop as the node
+      // reader, so neither scope can quietly omit a field.
+      for(const entry of EDGE_FIELDS_MODEL){
+        if(['weight', 'label', 'type', 'directed', 'direction'].includes(entry.field)) continue;
+        const rawValue = rawField(d, 'edge', entry.field);
+        if(rawValue === undefined || rawValue === null) continue;
+        const parsed = FIELD_PARSERS[entry.field]?.(String(rawValue));
+        if(parsed !== undefined) (edge as AnyRecord)[entry.field] = parsed;
+      }
+      const elf = rawField(d, 'edge', 'labelFont');
+      if(elf){ const f = parseQvgeFont(elf); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }
       edges.push(edge);
     });
     if(nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1){ const r=Math.max(120,nodes.length*24); nodes.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/nodes.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r;}); }

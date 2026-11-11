@@ -1642,3 +1642,81 @@ test('append tolerates a payload that is entirely null entries', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// === The field model is checked against itself ==============================
+//
+// Every case below is generated from the parser's own field model rather than
+// written out by hand, because the defects in this area were never a wrong rule
+// — they were a field that one table knew about and another did not. A test that
+// lists fields by hand cannot catch that; one that walks the model can.
+const GRAPHML_ALIAS_CASES = [
+  // [attr.name, scope, sample value, property, expected value]
+  ['fillcolor', 'node', '#ff0000', 'color', '#ff0000'],
+  ['bgcolor', 'node', '#00ff00', 'color', '#00ff00'],
+  ['strokecolor', 'node', '#0000ff', 'strokeColor', '#0000ff'],
+  ['strokesize', 'node', '7', 'strokeSize', 7],
+  ['strokestyle', 'node', 'dotted', 'strokeStyle', 'dotted'],
+  ['labelcolor', 'node', '#111111', 'labelColor', '#111111'],
+  ['labelsize', 'node', '21', 'labelSize', 21],
+  ['labelposition', 'node', 'bottom', 'labelPosition', 'bottom'],
+  ['graphics', 'node', 'diamond', 'shape', 'diamond'],
+  ['posx', 'node', '40', 'x', 40],
+  ['edgecolor', 'edge', '#222222', 'color', '#222222'],
+  ['strokesize', 'edge', '9', 'strokeSize', 9],
+  ['strokestyle', 'edge', 'dashed', 'strokeStyle', 'dashed'],
+  ['labelcolor', 'edge', '#333333', 'labelColor', '#333333'],
+  ['labelsize', 'edge', '19', 'labelSize', 19],
+  ['arrowsize', 'edge', '5', 'arrowSize', 5],
+  ['value', 'edge', '12', 'weight', '12'],
+  ['edgelabel', 'edge', 'rel', 'label', 'rel'],
+];
+
+test('every declared alias binds as element data', async () => {
+  // An alias is a name other tools use for one of our fields. If the model says
+  // a name is an alias, a <data> under that name must reach that field.
+  for(const [name, scope, value, property, expected] of GRAPHML_ALIAS_CASES){
+    const graphml = scope === 'node'
+      ? ['<?xml version="1.0"?>', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+         `  <key id="k" for="node" attr.name="${name}" attr.type="string"/>`,
+         '  <graph edgedefault="directed"><node id="n1"><data key="k">' + value + '</data></node></graph>',
+         '</graphml>'].join('\n')
+      : ['<?xml version="1.0"?>', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+         `  <key id="k" for="edge" attr.name="${name}" attr.type="string"/>`,
+         '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+         `    <edge id="e1" source="n1" target="n2"><data key="k">${value}</data></edge>`,
+         '  </graph>', '</graphml>'].join('\n');
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    await paste(document, dom.window, '#btnPasteGraphml', graphml);
+    const graph = exportedGraph(document);
+    const element = scope === 'node' ? graph.nodes[0] : graph.edges[0];
+    assert.equal(String(element[property]), String(expected), `attr.name="${name}" on ${scope} feeds ${property}`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('every declared alias binds as a key default', async () => {
+  // The same names as <default>. This is the pair that drifted: `fillcolor` and
+  // `edgecolor` worked as data and not as defaults, and `edgelabel` likewise.
+  // `x`/`y` are positions — a default coordinate is meaningless and the parser
+  // deliberately offers none. `label`/`weight` are element *data*, not styles, so
+  // their defaults land on the elements instead; both are covered by their own
+  // tests above.
+  const defaulted = GRAPHML_ALIAS_CASES.filter(([, , , property]) =>
+    !['x', 'y', 'label', 'weight'].includes(property));
+  for(const [name, scope, value, property, expected] of defaulted){
+    const graphml = ['<?xml version="1.0"?>', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+      `  <key id="k" for="${scope}" attr.name="${name}" attr.type="string"><default>${value}</default></key>`,
+      '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/><edge id="e1" source="n1" target="n2"/></graph>',
+      '</graphml>'].join('\n');
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    await paste(document, dom.window, '#btnPasteGraphml', graphml);
+    const graph = exportedGraph(document);
+    const defaults = scope === 'node' ? graph.settings.nodeDefaults : graph.settings.edgeDefaults;
+    assert.equal(String(defaults[property]), String(expected), `default attr.name="${name}" on ${scope} feeds ${property}`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
