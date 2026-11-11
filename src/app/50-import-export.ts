@@ -808,6 +808,124 @@
     }
     return out;
   }
+  // Recursively validates that `src` — the comment-free text inside a braces
+  // block — consists solely of statements that are well-formed DOT but carry
+  // no graph content:
+  //   graph|node|edge [attr-list];   attribute statement; the attribute list
+  //                                  must be well-formed (each item an ID or
+  //                                  ID = ID|number)
+  //   ID = ID;                       simple assignment (e.g. rankdir=LR)
+  //   [strict] subgraph [name] { ... }   recursively well-formed statements
+  // A stray token, an empty attribute value, or an unterminated string makes
+  // the file not a valid empty graph. The exporter's empty output (graph/node
+  // attribute statements) satisfies this, so empty exports round-trip while
+  // garbage is rejected.
+  function isWellFormedDotBody(src: string): boolean {
+    const ID_SRC = '"(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*';
+    const NUM_SRC = '[+-]?(?:\\d+(\\.\\d*)?|\\.\\d+)';
+    const skipWs = (s: string, i: number): number => { while(i < s.length && /[\s;]/.test(s[i])) i++; return i; };
+    const matchId = (s: string, i: number): { end: number } | null => {
+      const rest = s.slice(i);
+      const quoted = /^"(?:\\.|[^"])+"/.exec(rest);
+      if(quoted) return { end: i + quoted[0].length };
+      const m = /^[A-Za-z0-9_:.\-]*[A-Za-z0-9_][A-Za-z0-9_:.\-]*/.exec(rest);
+      if(m && m[0].length) return { end: i + m[0].length };
+      return null;
+    };
+    // Index just after the closing quote of a string starting at i (or s.length if unterminated).
+    const skipString = (s: string, i: number): number => {
+      let j = i + 1;
+      while(j < s.length){
+        if(s[j] === '\\'){ j += 2; continue; }
+        if(s[j] === '"') return j + 1;
+        j++;
+      }
+      return s.length;
+    };
+    // Index just after the matching close of the delimiter pair starting at i.
+    const matchPair = (s: string, i: number, open: string, close: string): number => {
+      let depth = 0;
+      for(let j = i; j < s.length; j++){
+        const c = s[j];
+        if(c === '"'){ j = skipString(s, j) - 1; continue; }
+        if(c === open) depth++;
+        else if(c === close){ depth--; if(!depth) return j + 1; }
+      }
+      return -1;
+    };
+    // Split an attribute list on top-level commas or semicolons (quote-aware);
+    // each item must be an ID, optionally ID = ID|number.
+    const attrListOk = (raw: string): boolean => {
+      const items: string[] = [];
+      let cur = '', j = 0;
+      while(j < raw.length){
+        const c = raw[j];
+        if(c === '"'){ const end = skipString(raw, j); cur += raw.slice(j, end); j = end; continue; }
+        if(c === ',' || c === ';'){ items.push(cur); cur = ''; j++; continue; }
+        cur += c; j++;
+      }
+      items.push(cur);
+      const itemRe = new RegExp('^(?:' + ID_SRC + ')(?:\\s*=\\s*(?:' + ID_SRC + '|' + NUM_SRC + '))?$');
+      for(const item of items){
+        const trimmed = item.trim();
+        if(!trimmed) continue; // trailing separator is fine
+        if(!itemRe.test(trimmed)) return false;
+      }
+      return true;
+    };
+    const parseStatements = (s: string, i: number): { ok: boolean, next: number } => {
+      while(true){
+        i = skipWs(s, i);
+        if(i >= s.length) return { ok: true, next: i };
+        if(s[i] === '}') return { ok: true, next: i + 1 };
+        // Attribute statement: graph|node|edge [ ... ] — list must be well-formed
+        const kw = /^(graph|node|edge)\b/i.exec(s.slice(i));
+        if(kw){
+          const afterKw = skipWs(s, i + kw[0].length);
+          if(s[afterKw] !== '[') return { ok: false, next: afterKw };
+          const end = matchPair(s, afterKw, '[', ']');
+          if(end < 0) return { ok: false, next: afterKw };
+          if(!attrListOk(s.slice(afterKw + 1, end - 1))) return { ok: false, next: afterKw };
+          i = skipWs(s, end);
+          if(s[i] === ';') i++;
+          continue;
+        }
+        // Subgraph statement: [strict] subgraph [name] { ... } — recursively well-formed
+        const sg = /^(?:strict\s+)?subgraph\b/i.exec(s.slice(i));
+        if(sg){
+          const afterSg = skipWs(s, i + sg[0].length);
+          if(s[afterSg] === '{') i = afterSg;
+          else {
+            const name = matchId(s, afterSg);
+            if(!name) return { ok: false, next: afterSg };
+            const afterName = skipWs(s, name.end);
+            if(s[afterName] !== '{') return { ok: false, next: afterName };
+            i = afterName;
+          }
+          const inner = parseStatements(s, i + 1);
+          if(!inner.ok) return inner;
+          i = inner.next;
+          if(s[i] === ';') i++;
+          continue;
+        }
+        // Simple assignment: ID = ID;
+        const lhs = matchId(s, i);
+        if(lhs){
+          const eq = skipWs(s, lhs.end);
+          if(s[eq] !== '=') return { ok: false, next: eq };
+          const rhsStart = skipWs(s, eq + 1);
+          const rhs = matchId(s, rhsStart);
+          if(!rhs) return { ok: false, next: rhsStart };
+          i = skipWs(s, rhs.end);
+          if(s[i] === ';') i++;
+          continue;
+        }
+        return { ok: false, next: i };
+      }
+    };
+    return parseStatements(src, skipWs(src, 0)).ok;
+  }
+
   function parseDot(text){
     // Strip comments once, up front: the structure test and the
     // directed-graph default both derive from the comment-free source, so a
@@ -888,15 +1006,12 @@
     }
     const arr = [...nodes.values()];
     // A structurally recognized DOT graph with zero nodes is a valid empty
-    // document ONLY when its body carries nothing the parser failed to use —
-    // e.g. the editor's own empty export (graph/node attribute statements,
-    // semicolons). Any leftover token ("digraph G { a -> }") is real input,
-    // not an empty graph — reject it rather than wipe the document.
+    // document ONLY when its body consists solely of well-formed no-op
+    // statements — the exporter's empty output satisfies this. Anything
+    // else ("digraph G { a -> }", "graph [label=];") is real input the
+    // parser could not use, not an empty graph — reject it.
     if(!arr.length){
-      const leftover = body
-        .replace(/\b(?:graph|node|edge)\s*\[[^\]]*\]\s*;?/gi, '')
-        .replace(/[\s;]/g, '');
-      return (hasStructure && !leftover) ? { title:'imported-dot', nodes: [], edges: [] } : null;
+      return (hasStructure && isWellFormedDotBody(body)) ? { title:'imported-dot', nodes: [], edges: [] } : null;
     }
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
       const r = Math.max(120, arr.length * 24);

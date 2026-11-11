@@ -911,7 +911,8 @@
         return { id, scope: scope as 'graph' | 'node' | 'edge', type, ...(dataKey ? { dataKey, ...(dataName ? { dataName } : {}) } : {}) };
       })
       .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string } => def !== null);
-    const existingPairs = new Set(state.customAttributes.map(attribute => attribute.id + '|' + attribute.scope));
+    const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
+    const existingPairs = new Set(defsByPair.keys());
     const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
     const carriedTypeById = new Map<string, string>(carriedDefs.map(def => [def.id, def.type]));
     // Ids that may not be handed out during this paste. A pair's own carried
@@ -924,6 +925,11 @@
     let skipped = 0;
     let renamed = 0;
     const failedPairs = new Set<string>();
+    // Per-paste resolution cache: ensurePair runs once per key per entity,
+    // but a freshly created/reused definition only reaches state after the
+    // loop — so the pair must be marked resolved here or the second node in
+    // the same payload would mint a duplicate.
+    const handledPairs = new Set<string>();
     const renameByPair = new Map<string, string>();
     const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }[] = [];
     const addDef = (id: string, scope: 'node' | 'edge', type: string, provenance?: { dataKey: string }) => {
@@ -932,9 +938,29 @@
       createdIds.add(id);
       mintTaken.add(id);
     };
+    // Two definitions sharing id+scope are the same property ONLY when both
+    // are unmarked (created manually — nothing else to go on) or both carry
+    // identical provenance (same original GraphML key). Anything else is a
+    // different property sharing the id: it must be re-created under a fresh
+    // id and the carried values remapped, never merged into the existing
+    // definition.
+    const provenanceMatches = (existing: AnyRecord | undefined, carried: AnyRecord | undefined) => {
+      const existingKey = String(existing?.dataKey ?? ''), existingName = String(existing?.dataName ?? '');
+      const carriedKey = String(carried?.dataKey ?? ''), carriedName = String(carried?.dataName ?? '');
+      if(!existingKey && !carriedKey) return true; // both unmarked — same property
+      return existingKey === carriedKey && existingName === carriedName;
+    };
     const ensurePair = (id: string, scope: 'node' | 'edge') => {
       const key = id + '|' + scope;
-      if(existingPairs.has(key) || failedPairs.has(key)) return;
+      if(failedPairs.has(key) || handledPairs.has(key)) return;
+      if(existingPairs.has(key) && provenanceMatches(defsByPair.get(key), carriedByPair.get(key))) {
+        handledPairs.add(key); // merge: existing wins
+        return;
+      }
+      // Fall through to the reuse/mint machinery: a key collision between
+      // DIFFERENT properties resolves exactly like a missing pair — the mint
+      // path re-creates the carried definition under a fresh id and remaps
+      // the values, leaving the existing definition untouched.
       const carriedPair = carriedByPair.get(key);
       const type = carriedPair ? carriedPair.type : (carriedTypeById.get(id) || 'string');
       // A reusable mapping already exists in the document. Resolving it
@@ -961,6 +987,7 @@
         });
         if(prior){
           renameByPair.set(key, prior.id);
+          handledPairs.add(key);
           return;
         }
       }
@@ -968,6 +995,7 @@
       if(!createdIds.has(id)){
         remaining--;
         addDef(id, scope, type, carriedPair?.dataKey ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) } : undefined);
+        handledPairs.add(key);
         return;
       }
       const newId = uniqueCustomAttributeId(id, mintTaken);
@@ -982,6 +1010,7 @@
         ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) }
         : { dataKey: id });
       renameByPair.set(key, newId);
+      handledPairs.add(key);
     };
     const ensureEntityPairs = (entities: AnyRecord[], scope: 'node' | 'edge') => {
       for(const entity of entities){

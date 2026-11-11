@@ -904,3 +904,139 @@ test('a conflicting paste keeps GraphML provenance so re-paste and import-append
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+// === Round 12 ===
+test('malformed attribute statements fail the import of an empty digraph', async () => {
+  const saved = { title: 'keep-me-r12', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [] };
+  const cases = [
+    'digraph G { graph [label=]; }',
+    'digraph G { graph [layout="neato", rankdir=]; }',
+    'digraph G { node [=5]; }',
+    'digraph G { edge [style=]; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `document survives ${JSON.stringify(text)}`);
+    assert.match(toasts(document), /fail|no graph/i, `a failure is reported for ${JSON.stringify(text)}`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('valid empty digraphs with assignments and empty subgraphs import', async () => {
+  const saved = { title: 'keep-me-r12b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [] };
+  const cases = [
+    'digraph G { rankdir=LR; }',
+    'digraph G { rankdir = LR ; }',
+    'digraph G { subgraph { } }',
+    'digraph G { subgraph cluster_0 { } }',
+    'digraph G { rankdir=LR; subgraph cluster_0 { graph [style=filled] } }',
+    'digraph G { dpi=96; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 0, `${JSON.stringify(text)} imports as a valid empty document`);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('an empty digraph with nested content that fails to parse is rejected', async () => {
+  const saved = { title: 'keep-me-r12c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const text = 'digraph G { subgraph cluster_0 { graph [rankdir=] } }'; // malformed attribute statement nested inside a subgraph
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', text);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'a malformed nested attribute statement rejects the import');
+  assert.match(toasts(document), /fail|no graph/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a batch paste with conflicting provenance mints one definition for the whole batch', async () => {
+  // Fresh document has a FRUIT property x_1 whose provenance says (x, fruit).
+  const saved = { title: 'batch-provenance', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', dataKey: 'x', dataName: 'fruit' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [
+      { id: 'c1', label: 'CarriedA', x: 30, y: 30, order: 0, custom: { x_1: 'red' } },
+      { id: 'c2', label: 'CarriedB', x: 90, y: 30, order: 1, custom: { x_1: 'blue' } },
+    ],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', dataKey: 'x', dataName: 'vehicle' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const minted = graph.customAttributes.filter(d => d.scope === 'node' && d.id !== 'x_1');
+  assert.equal(minted.length, 1, 'exactly one node-scope definition was minted for the whole batch');
+  assert.equal(minted[0].id, 'x_1_1');
+  assert.equal(minted[0].dataName, 'vehicle', 'the minted definition keeps the carried provenance');
+  assert.equal(graph.customAttributes.find(d => d.id === 'x_1')?.dataName, 'fruit', 'the fruit definition is untouched');
+  const carrieds = graph.nodes.filter(n => n.label.startsWith('Carried'));
+  assert.equal(carrieds.length, 2);
+  for(const n of carrieds) assert.equal(n.custom?.x_1_1, n.label === 'CarriedA' ? 'red' : 'blue', 'each value lands on the minted definition');
+  assert.equal(graph.customAttributes.length, 2, 'no orphaned or duplicated definitions');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a matching id with different provenance is never merged into the existing definition', async () => {
+  // The document's node x_1 came from key fruit (provenance x/fruit).
+  const saved = { title: 'fruit-doc', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', dataKey: 'x', dataName: 'fruit' }] };
+  // The clipboard carries a node property x_1 from key vehicle (provenance x/vehicle).
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 30, y: 30, order: 0, custom: { x_1: 'vehicle-value' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', dataKey: 'x', dataName: 'vehicle' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  let graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'x_1')?.dataName, 'fruit', 'the fruit definition is untouched');
+  const vehicle = graph.customAttributes.find(d => d.dataName === 'vehicle');
+  assert.ok(vehicle, 'a vehicle definition was created for the carried property');
+  assert.equal(vehicle.id, 'x_1_1');
+  const carried = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(carried?.custom?.x_1_1, 'vehicle-value', 'the carried value is bound to the vehicle definition');
+  assert.equal(carried?.custom?.x_1, undefined, 'the vehicle value never lands on the fruit definition');
+  // Re-paste: still no duplicate
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 2, 're-paste creates no additional definitions');
+  assert.equal(graph.customAttributes.some(d => d.id === 'x_1_2'), false);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
