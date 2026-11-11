@@ -406,10 +406,15 @@
   function graphmlSchema(): GraphmlSchema {
     return graphmlSchemaSource ? graphmlSchemaSource() : {readNames: []};
   }
-  // Could an unmarked key bind to one of our built-in fields?
+  // Could an unmarked key bind to one of our built-in fields? A key declared
+  // without `for` (GraphML's default is "all") may apply to any scope, so it is
+  // built-in when the name is read on *any* scope — otherwise a foreign key
+  // named `label` would be reported as a definition while still setting labels.
   function isBuiltinGraphmlKey(name: string, scope: string): boolean {
     const wanted = String(name || '').toLowerCase();
-    return graphmlSchema().readNames.some(([readName, readScope]) => readScope === scope && readName === wanted);
+    const anyScope = scope === 'all';
+    return graphmlSchema().readNames.some(([readName, readScope]) =>
+      readName === wanted && (anyScope || readScope === scope));
   }
 
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];

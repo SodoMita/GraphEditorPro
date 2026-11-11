@@ -1053,6 +1053,19 @@
     )).length;
     const legacyOurs = matchedBuiltins >= GRAPHML_BUILTIN_KEYS.length / 2;
     const documentIsOurs = declaredOurs || legacyOurs;
+    // A canonical key's name, remembered with the exact spelling that made it
+    // canonical. Two keys can collapse onto one built-in name because the data
+    // map lowercases (`attr.name` itself is case-sensitive), and then the last
+    // one would silently win — a stray attr.name="LABEL" rewriting the label.
+    // A differently-spelled alias of the same field (id="k" attr.name=
+    // "arrow.size") is not a collision: it feeds the same field by design.
+    const canonicalSpelling = new Map<string, string>();
+    for(const k of keyEls){
+      const key = `${k.getAttribute('id') || ''}|${k.getAttribute('for') || 'all'}|${String(k.getAttribute('attr.name') || '').toLowerCase()}`;
+      if(!ourKeys.has(key)) continue;
+      const lower = String(k.getAttribute('attr.name') || '').toLowerCase();
+      if(!canonicalSpelling.has(lower)) canonicalSpelling.set(lower, String(k.getAttribute('attr.name') || ''));
+    }
     keyEls.forEach(k => {
       const rawId = k.getAttribute('id') || '';
       // `name` is the lowercased form the data map is keyed by; `rawName` keeps
@@ -1060,7 +1073,13 @@
       // it was imported with (case matters to other GraphML tools).
       const rawName = k.getAttribute('attr.name') || rawId || '';
       const name = rawName.toLowerCase();
-      const forWhom = k.getAttribute('for') || 'all';
+      // GraphML's `for` defaults to "all" when omitted, and our editor only has
+      // the three concrete scopes. The default is a key that applies to every
+      // element, so the closest scope we can represent is the widest one; keeping
+      // it is always better than dropping the user's definition on the floor.
+      const forAttr = k.getAttribute('for');
+      const forWhom = forAttr || 'all';
+      const scope = forWhom === 'all' ? 'graph' : forWhom;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
       // Read by namespace URI, not by the literal prefix: `xmlns:q=...` bound to
       // the same URI is the same attribute, and an export re-serialised by
@@ -1091,13 +1110,17 @@
       // present but empty, and the data map treats an empty name as "declared,
       // but not a built-in field" — omitting the entry would let the raw-key
       // fallback bind `data key="label"` to the node label.
-      keyNames[rawId] = isDefinition ? '' : name;
-      if(isDefinition && rawId && ['graph','node','edge'].includes(forWhom)){
+      // Only a *differently spelled* name that lowercases onto a canonical one is
+      // shadowed; a legitimate alias of the same field still feeds it.
+      const canonical = canonicalSpelling.get(name);
+      const shadowsCanonical = !isDefinition && canonical !== undefined && canonical !== rawName;
+      keyNames[rawId] = (isDefinition || shadowsCanonical) ? '' : name;
+      if(isDefinition && rawId && ['graph','node','edge'].includes(scope)){
         // A marked key may record the definition's own id, used when the exported
         // key id had to differ to stay unique.
         const id = prefixed ? rawId.slice(CUSTOM_KEY_PREFIX.length) : (marked && recordedId ? recordedId : rawId);
         // Keep the definition's own id and the exact spelling of its name.
-        customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
+        customAttributes.push({id, name: rawName, scope: scope as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
       }
       // A definition's default belongs to the definition, so it must not land in
       // the built-in defaults map: a custom `shape` default would otherwise

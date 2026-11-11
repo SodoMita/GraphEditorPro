@@ -883,3 +883,118 @@ test('a foreign file reusing our key ids for other attributes keeps its definiti
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a key declared without `for` is kept, not dropped (GraphML default is "all")', async () => {
+  // `for` is optional and defaults to "all". The editor only models three
+  // concrete scopes, and dropping a definition because its scope is the
+  // spec's wildcard is silent data loss.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="tag" attr.name="tag" attr.type="string"/>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  let rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => ({
+    id: row.querySelector('[data-attribute-field="id"]').value,
+    scope: row.querySelector('[data-attribute-field="scope"]').value,
+  }));
+  assert.deepEqual(rows, [{id:'tag', scope:'graph'}], 'the definition survives with the widest scope');
+
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(document, dom.window, '#btnPasteGraphml', exported);
+  rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => row.querySelector('[data-attribute-field="id"]').value);
+  assert.deepEqual(rows, ['tag'], 'and it round-trips');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a scope-less key whose name is a built-in field still binds it, not becomes a definition', async () => {
+  // Same missing `for`, but the name is one the readers use: it must feed the
+  // built-in field rather than appear as a phantom definition.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="k" attr.name="label" attr.type="string"/>',
+    '  <graph edgedefault="directed"><node id="n1"><data key="k">Hi</data></node></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.deepEqual([...document.querySelectorAll('.custom-attribute-row')].map(r => r.querySelector('[data-attribute-field="id"]').value), [],
+    'no phantom definition');
+  assert.equal(exportedGraph(document).nodes[0].label, 'Hi', 'and the value reaches the label it names');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a differently-cased name does not overwrite the built-in value it collides with', async () => {
+  // attr.name is case-sensitive, but the internal data map lowercases. Before
+  // this was handled, a key spelled attr.name="LABEL" landed in the same slot as
+  // the real label and, being last, replaced its value.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+    '  <key id="shout" for="node" attr.name="LABEL" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="label">real</data><data key="shout">fake</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).nodes[0].label, 'real', 'the canonical key wins');
+
+  // The declaration order must not matter.
+  const reversed = graphml
+    .replace('  <key id="label" for="node" attr.name="label" attr.type="string"/>\n', '')
+    .replace('<key id="shout"', '<key id="label" for="node" attr.name="label" attr.type="string"/>\n  <key id="shout"')
+    .replace('<data key="label">real</data><data key="shout">fake</data>', '<data key="shout">fake</data><data key="label">real</data>');
+  await paste(document, dom.window, '#btnPasteGraphml', reversed);
+  assert.equal(exportedGraph(document).nodes[0].label, 'real', 'and neither does declaration order');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('every custom definition id survives an export/import cycle, however it is spelled', async () => {
+  // A table-driven guard over the id space, because the per-case tests only
+  // cover the ids someone thought of. Ids that collide with a built-in key, that
+  // look namespaced, that are built-in *names* rather than ids, and that differ
+  // only by case all have to come back unchanged after two round-trips.
+  const ids = [
+    'capacity', 'Capacity', 'CAPACITY', 'tag', 'tag2', 'score',
+    'weight', 'label', 'name', 'style', 'value', 'shape', 'direction', 'arrowSize',
+    'stroke.color', 'labels.policy', 'edge.weight.mode',
+    'qvge.custom.score', 'qvge.custom.', 'a b', 'a.b', 'x-y', '0numeric',
+  ];
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'mutual', arrowSize:20}],
+    customAttributes: ids.map(id => ({id, scope:'node', type:'string'})),
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const idsOf = () => [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value).sort();
+  assert.deepEqual(idsOf(), [...ids].sort(), 'every definition is accepted up front');
+
+  for(let pass = 1; pass <= 2; pass++){
+    document.querySelector('#btnExportGraphml').click();
+    const exported = document.querySelector('.export-modal textarea').value;
+    document.querySelector('#expCloseBtn').click();
+    // Every <key> id must be unique, or <data key="..."> becomes ambiguous.
+    const keyIds = [...exported.matchAll(/<key id="([^"]*)"/g)].map(m => m[1]);
+    assert.equal(new Set(keyIds).size, keyIds.length, `pass ${pass}: key ids are unique`);
+    await paste(document, dom.window, '#btnPasteGraphml', exported);
+    assert.deepEqual(idsOf(), [...ids].sort(), `pass ${pass}: the same ids come back`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
