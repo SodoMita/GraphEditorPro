@@ -486,9 +486,48 @@
     syncControls(); updateUndoRedo(); fitView(); queueRender(true, true); saveSoon();
     toast(I18N.t('imported', {label: label}));
   }
+  // Resolve an element's *unset* visual properties against the defaults of the
+  // document it came from.
+  //
+  // Normally an unset property is resolved at render time by nodeVisual/edgeVisual
+  // against state.settings, which is what makes changing a default update every
+  // element that inherits it. That works because the element and the defaults live
+  // in the same document. Append breaks that: the imported elements join a graph
+  // whose settings are deliberately kept, so the imported document's defaults are
+  // discarded and its elements would silently inherit the *host* graph's style.
+  //
+  // Materialising here is the only correct moment — after this the imported
+  // document's defaults no longer exist anywhere. Which properties to copy is
+  // decided by the fields the element left unset, so nothing is overwritten.
+  function materializeDefaults(nodes, edges, settings){
+    if(settings?.inheritDefaults === false) return; // not inheriting: nothing to resolve
+    const nd = settings?.nodeDefaults || {};
+    const ed = settings?.edgeDefaults || {};
+    const unset = (value) => value == null || value === '';
+    const NODE_FIELDS = ['shape','color','width','height','strokeColor','strokeSize',
+      'strokeStyle','labelColor','labelSize','labelPosition','labelFont'];
+    const EDGE_FIELDS = ['color','strokeSize','strokeStyle','arrowSize',
+      'labelColor','labelSize','labelFont'];
+    for(const n of nodes){
+      for(const field of NODE_FIELDS){
+        if(unset(n[field]) && nd[field] != null) n[field] = nd[field];
+      }
+    }
+    for(const e of edges){
+      for(const field of EDGE_FIELDS){
+        if(unset(e[field]) && ed[field] != null) e[field] = ed[field];
+      }
+    }
+  }
   function appendImportedGraph(data, label='graph'){
     // Append mode: merge imported nodes/edges into the current graph.
     // Keep existing settings (styles, defaults, background, grid colors) unchanged.
+    //
+    // The imported document's own defaults are not kept, so they have to be
+    // resolved onto its elements first — otherwise those elements inherit the host
+    // graph's style, and an export then writes the wrong values. Read them from
+    // the incoming data, before the settings are replaced.
+    materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
     const sane = sanitizeState({...data, settings: state.settings});
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
@@ -1290,6 +1329,9 @@
       'arrow.size': {target: 'arrowSize', coerce: raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX)},
       'arrowsize': {target: 'arrowSize', coerce: raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX)},
       'weight': {target: 'weight', coerce: raw => String(raw)},
+      // `value` is an accepted alias for weight in edge <data> (the reader below
+      // has always taken it), so its <default> must behave the same way.
+      'value': {target: 'weight', coerce: raw => String(raw)},
     };
     // Font names carry a size with them ("Inter,12"), so they are handled once
     // for both scopes rather than duplicated per field table.
@@ -1330,7 +1372,10 @@
     doc.querySelectorAll('node').forEach((el,i) => {
       const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node');
       // QVGE: nodes are unlabeled by default. Only use label data if present.
-      const label = String(d.label || d.name || '');
+      // A <default> is what an unset label resolves to, exactly as it is for the
+      // visual fields; `label` is element data rather than a style, so it is
+      // applied here rather than through the style bindings.
+      const label = String(d.label || d.name || keyDefaultsByFor.node.label || '');
       let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
       const geom = el.querySelector('Geometry, geometry');
       if(geom){ x = finite(geom.getAttribute('x'), x); y = finite(geom.getAttribute('y'), y); }
@@ -1371,8 +1416,11 @@
         // render time, but weight is read directly by the algorithms and the
         // weight display, so it has to be materialised here — this is the only
         // point where the file's declared defaults are still known.
-        weight: String(d.weight ?? d.value ?? edgeKeyDefs.weight ?? ''),
-        label: String(d.label || d.edgelabel || ''),
+        // Consult the *resolved* defaults, not the raw key names: `value` is an
+        // accepted alias for weight, and only the binding table knows that. Reading
+        // edgeKeyDefs.weight here would miss a <key attr.name="value"> default.
+        weight: String(d.weight ?? d.value ?? ed.weight ?? ''),
+        label: String(d.label || d.edgelabel || keyDefaultsByFor.edge.label || ''),
         directed: dirStr !== 'undirected' as any,
         direction: dirStr as any,
         type: String(d.type || '')

@@ -1444,3 +1444,107 @@ test('every edge field with a default actually receives it', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a value default is a weight default', async () => {
+  // `value` is an accepted alias for weight in edge <data>, and the reader has
+  // always honoured it there. The default binding table has to agree, or the
+  // alias works for stated values and silently fails for defaults.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="v" for="edge" attr.name="value" attr.type="int"><default>12</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).edges[0].weight, '12', 'the alias default applies');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a label default labels the elements that have none', async () => {
+  // `label` is element data rather than a style, so it is applied during element
+  // construction instead of through the style bindings — but it is still a
+  // <default>, and an unset label must resolve to it like any other property.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="nl" for="node" attr.name="label" attr.type="string"><default>Alice</default></key>',
+    '  <key id="el" for="edge" attr.name="label" attr.type="string"><default>rel</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].label, 'Alice', 'the node takes the label default');
+  assert.equal(graph.edges[0].label, 'rel', 'and so does the edge');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a stated label still beats the label default', async () => {
+  // The counterpart, so applying the default cannot overwrite stated data.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="nl" for="node" attr.name="label" attr.type="string"><default>Alice</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"><data key="nl">Bob</data></node></graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).nodes[0].label, 'Bob', 'stated data wins');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('appending keeps the imported document\'s visual defaults', async () => {
+  // Append deliberately keeps the host graph's settings, so the imported
+  // document's defaults would be discarded — leaving its elements to inherit the
+  // host style. They have to be resolved onto the elements at append time, which
+  // is the last moment those defaults exist.
+  const host = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph edgedefault="directed"><node id="a"/><node id="b"/>',
+    '    <edge id="ab" source="a" target="b"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const incoming = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="sh" for="node" attr.name="shape" attr.type="string"><default>square</default></key>',
+    '  <key id="st" for="edge" attr.name="stroke.style" attr.type="string"><default>dashed</default></key>',
+    '  <graph edgedefault="directed"><node id="c"/><node id="d"/>',
+    '    <edge id="cd" source="c" target="d"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', host);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', incoming);
+  const graph = exportedGraph(document);
+  const byId = (list, id) => list.find(item => item.id === id);
+  assert.equal(byId(graph.nodes, 'c').shape, 'square', 'the imported node keeps its document\'s shape');
+  assert.equal(byId(graph.nodes, 'd').shape, 'square');
+  assert.equal(byId(graph.edges, 'cd').strokeStyle, 'dashed', 'and the imported edge its own stroke style');
+  // The host graph must be untouched: its elements still inherit, and its
+  // settings are still its own.
+  assert.ok(!byId(graph.nodes, 'a').shape, 'the host node still inherits');
+  assert.equal(graph.settings.nodeDefaults.shape, 'circle', 'the host defaults are unchanged');
+  assert.equal(graph.settings.edgeDefaults.strokeStyle, 'solid');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
