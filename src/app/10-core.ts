@@ -387,48 +387,29 @@
   function edgeIsUndirected(e: any): boolean {
     return edgeDirection(e) === 'undirected';
   }
-  // A definition may not take an id that our own exporter already writes as a
-  // built-in key *for the same scope*: the importer reads that key as the
-  // built-in field, so the definition could never survive a round-trip. Derived
-  // from the exporter's table (50-import-export) rather than a second list that
-  // can drift out of sync with it.
-  function isReservedCustomAttributeId(id: string, scope: string): boolean {
-    if(!graphmlBuiltinKeySource) return false;
-    return graphmlBuiltinKeySource().some(([keyId, keyScope]) => keyId === id && keyScope === scope);
-  }
-  // ---- GraphML key classification: one question ----
+  // ---- GraphML keys: the importer's own read surface ----
   //
-  // "Could our exporter have written this key as a user definition?"
-  //
-  // That is answerable, and it settles every case without a name list:
-  //   * the exporter writes its own fields from GRAPHML_BUILTIN_KEYS, so an
-  //     exact (id, name, scope) match is built-in;
-  //   * it writes a user definition as <key id="D" attr.name="N"> where N is D,
-  //     or a name that is not one of its own field names for that scope.
-  // Anything else came from another tool spelling a built-in field its own way
-  // (id="k" attr.name="arrow.size"), which binds to the built-in and is not a
-  // definition. This is what keeps a user's `style`/`fillcolor`/`name`
-  // definition alive while `arrow.size` under a foreign id stays built-in.
-  let graphmlBuiltinKeySource: (() => readonly (readonly string[])[]) | null = null;
-  function registerGraphmlBuiltinKeys(source: () => readonly (readonly string[])[]): void {
-    graphmlBuiltinKeySource = source;
+  // Two rounds of review asked for opposite answers on the same <key>
+  // (id="fillcolor" attr.name="fillcolor" for="node"):
+  //   * a definition the user made, exported by us, must come back;
+  //   * a foreign key with that name must not appear as a definition, because
+  //     the importer reads `fillcolor` as the node colour.
+  // The bytes are identical, so no rule over (id, name, scope) can decide it.
+  // Only the writer knows, so the exporter marks its own definitions
+  // (qvge:custom) and everything unmarked is classified by the one question
+  // left: does the importer read this attr.name as a built-in for this scope?
+  // If it does, the key feeds a built-in field and cannot be a definition.
+  let graphmlSchemaSource: (() => GraphmlSchema) | null = null;
+  function registerGraphmlSchema(source: () => GraphmlSchema): void {
+    graphmlSchemaSource = source;
   }
-  function isBuiltinGraphmlKey(id: string, name: string, scope: string): boolean {
-    if(!graphmlBuiltinKeySource) return false;
+  function graphmlSchema(): GraphmlSchema {
+    return graphmlSchemaSource ? graphmlSchemaSource() : {readNames: []};
+  }
+  // Could an unmarked key bind to one of our built-in fields?
+  function isBuiltinGraphmlKey(name: string, scope: string): boolean {
     const wanted = String(name || '').toLowerCase();
-    const raw = graphmlBuiltinKeySource();
-    for(const [keyId, keyScope, keyName] of raw){
-      // Case-insensitive: GraphML names are, and a few are written in camelCase
-      // (attr.name="edge.weight.colorLow").
-      if(keyId === id && keyScope === scope && String(keyName).toLowerCase() === wanted) return true;
-    }
-    // A field name of ours under some other id: another tool's spelling of it.
-    // We never export a definition that way — a definition keeps its own name or
-    // uses a name we do not write — so this cannot be the user's definition.
-    let isOurFieldName = false;
-    for(const [, keyScope, keyName] of raw)
-      if(keyScope === scope && String(keyName).toLowerCase() === wanted){ isOurFieldName = true; break; }
-    return isOurFieldName && id !== name;
+    return graphmlSchema().readNames.some(([readName, readScope]) => readScope === scope && readName === wanted);
   }
 
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];

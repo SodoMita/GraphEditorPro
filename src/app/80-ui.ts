@@ -5,10 +5,11 @@
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      const newScope = $('#customAttributeScope').value;
-      if(isReservedCustomAttributeId(id, newScope)){ toast(I18N.t('attribute_id_reserved')); return; }
+      // No id is reserved: the exporter writes definitions in their own key
+      // namespace, so a definition called `direction` cannot collide with the
+      // built-in key of that name.
       if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
-      state.customAttributes.push({id, scope: newScope, type: $('#customAttributeType').value});
+      state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
       idInput.value = '';
       renderCustomAttributes(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
     });
@@ -27,7 +28,6 @@
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
-      if(isReservedCustomAttributeId(id, scope)){ toast(I18N.t('attribute_id_reserved')); return; }
       if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const type = row.querySelector('[data-attribute-field="type"]').value;
       const previous = state.customAttributes[index];

@@ -481,7 +481,10 @@ test('GraphML export never repeats a built-in key id, even when a custom definit
   const keyIds = [...graphml.matchAll(/<key id="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(keyIds).size, keyIds.length, 'every <key> id is unique');
   assert.equal(keyIds.filter(id => id === 'arrowSize').length, 1, 'exactly one arrowSize key');
-  assert.ok(keyIds.includes('capacity'), 'the non-colliding custom definition is exported');
+  // Definitions live in their own namespace, so a definition called `arrowSize`
+  // and the built-in key of that name no longer fight over the same id.
+  assert.ok(keyIds.includes('qvge.custom.arrowSize'), 'the colliding definition keeps its own id');
+  assert.ok(keyIds.includes('qvge.custom.capacity'), 'and so does the non-colliding one');
 
   // The built-in key still carries the value, and the import restores it.
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
@@ -492,10 +495,11 @@ test('GraphML export never repeats a built-in key id, even when a custom definit
   dom.window.close();
 });
 
-test('GraphML key classification follows one rule: could the exporter have written it?', async () => {
-  // Built-in: an exact (id, name, scope) match with one of the exporter's own
-  // keys, or one of its field names under a foreign id (another tool's spelling
-  // of it). Everything else is the user's definition and is preserved.
+test('an unmarked key that binds to a built-in field never becomes a definition', async () => {
+  // Foreign files have no provenance marker, so the only safe question is
+  // whether the importer reads that attr.name as a built-in for that scope.
+  // If it does, the <data> feeds one of our fields and a definition for it
+  // would be one the app could never round-trip — a phantom.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
@@ -504,22 +508,24 @@ test('GraphML key classification follows one rule: could the exporter have writt
     '  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>',
     '  <key id="edgeStrokeStyle" for="edge" attr.name="style" attr.type="string"/>',
     '  <key id="arrowSize" for="edge" attr.name="arrow.size" attr.type="double"/>',
-    // our field names under a foreign id -> still built-in
+    // the same names under foreign ids -> still built-in, still no definition
     '  <key id="k" for="edge" attr.name="arrow.size" attr.type="double"/>',
     '  <key id="k2" for="edge" attr.name="style" attr.type="string"/>',
     '  <key id="k3" for="edge" attr.name="stroke.size" attr.type="double"/>',
     '  <key id="k4" for="node" attr.name="stroke.color" attr.type="string"/>',
-    // names we never write -> the user's definitions, kept
+    // the aliases the importer reads -> built-in too, so no phantom definitions
     '  <key id="style" for="edge" attr.name="style" attr.type="string"/>',
     '  <key id="name" for="node" attr.name="name" attr.type="string"/>',
     '  <key id="fillcolor" for="node" attr.name="fillcolor" attr.type="string"/>',
     '  <key id="value" for="edge" attr.name="value" attr.type="string"/>',
     '  <key id="arrowsize" for="edge" attr.name="arrowsize" attr.type="double"/>',
+    '  <key id="posx" for="node" attr.name="posx" attr.type="double"/>',
+    // a name we never read -> the user's definition, kept
     '  <key id="score" for="node" attr.name="score" attr.type="double"/>',
     '  <graph edgedefault="directed">',
-    '    <node id="n1"><data key="label">A</data></node>',
+    '    <node id="n1"><data key="label">A</data><data key="fillcolor">#ff0000</data><data key="posx">17</data></node>',
     '    <node id="n2"/>',
-    '    <edge id="e1" source="n1" target="n2"><data key="weight">4</data><data key="edgeStrokeStyle">dashed</data><data key="k">30</data></edge>',
+    '    <edge id="e1" source="n1" target="n2"><data key="weight">4</data><data key="edgeStrokeStyle">dashed</data><data key="k">30</data><data key="value">7</data></edge>',
     '  </graph>',
     '</graphml>',
   ].join('\n');
@@ -528,13 +534,12 @@ test('GraphML key classification follows one rule: could the exporter have writt
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
 
   const rows = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  // `style` (edge), `name`, `fillcolor`, `value`, `arrowsize`, `score` are kept;
-  // `arrowsize` is kept because the exporter never writes that spelling.
-  assert.deepEqual(rows.sort(), ['arrowsize', 'fillcolor', 'name', 'score', 'style', 'value'].sort(),
-    'only keys the exporter could have written become built-in');
+  assert.deepEqual(rows, ['score'], 'only the name we never read stays a definition');
 
   const graph = exportedGraph(document);
   assert.equal(graph.nodes[0].label, 'A', 'label still binds');
+  assert.equal(graph.nodes[0].color, '#ff0000', 'the fillcolor alias still binds');
+  assert.equal(graph.nodes[0].x, 17, 'the posx alias still binds');
   assert.equal(graph.edges[0].weight, '4', 'weight still binds');
   assert.equal(graph.edges[0].strokeStyle, 'dashed', 'the app style key still binds');
   assert.equal(graph.edges[0].arrowSize, 30, 'a foreign id spelling arrow.size still binds');
@@ -543,8 +548,10 @@ test('GraphML key classification follows one rule: could the exporter have writt
 });
 
 test('a user definition named after a built-in field survives its own round-trip', async () => {
-  // The editor permits these ids and the exporter writes them as
-  // <key id="D" attr.name="D">, which the rule above keeps.
+  // These names all bind to built-in fields when a foreign file uses them, so
+  // they could never survive as definitions there. The exporter marks its own
+  // definitions instead (<key id="qvge.custom.D">), which is what makes them
+  // distinguishable — and this round-trip exact.
   const saved = {
     nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:0}],
     edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, direction:'directed'}],
@@ -593,9 +600,10 @@ test('the app\'s own export re-imports without inventing definitions', async () 
   dom.window.close();
 });
 
-test('a key that only half-matches a built-in stays a definition and survives a round-trip', async () => {
-  // A name of ours on the wrong scope, and a foreign name under one of our ids:
-  // neither could have come out of our exporter, so both belong to the user.
+test('a definition keeps its id through export and re-import, even when it looks built-in', async () => {
+  // Ids are no longer reshaped to dodge the built-in key block: a definition is
+  // written in its own namespace, so `weight`/`arrowSize` come back unchanged
+  // instead of being renamed to weight2/arrowSize2 on the way out.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
@@ -612,21 +620,17 @@ test('a key that only half-matches a built-in stays a definition and survives a 
   const {document} = dom.window;
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  assert.deepEqual(ids.sort(), ['arrowSize', 'weight'], 'both half-matches are definitions');
+  assert.deepEqual(ids.sort(), ['arrowSize', 'weight'], 'both are definitions');
 
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
-  assert.match(exported, /<key id="weight2" for="node" attr\.name="weight"/, 'the colliding id is renamed, not dropped');
-  // The definition's own name is what it is: the foreign name rides along with
-  // the renamed id instead of being flattened onto ours.
-  assert.match(exported, /<key id="arrowSize2" for="edge" attr\.name="score"/, 'the foreign name is kept');
+  assert.match(exported, /<key id="qvge\.custom\.weight" for="node" attr\.name="weight"/, 'the id is kept, not renamed');
+  assert.match(exported, /<key id="qvge\.custom\.arrowSize" for="edge" attr\.name="score"/, 'and the foreign name rides along');
 
   await paste(document, dom.window, '#btnPasteGraphml', exported);
   const again = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
-  // The renamed ids are stable from here on: neither collides any more, so a
-  // second export writes them unchanged.
-  assert.deepEqual(again.sort(), ['arrowSize2', 'weight2'], 'and it comes back, under its renamed id');
+  assert.deepEqual(again.sort(), ['arrowSize', 'weight'], 'a second round-trip is a no-op');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

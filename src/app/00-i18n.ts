@@ -306,7 +306,6 @@ const I18N: I18nService = {
     'save_attribute': { en: 'Save', ru: 'Сохранить' },
     'attribute_id_empty': { en: 'Attribute ID cannot be empty.', ru: 'ID атрибута не может быть пустым.' },
     'attribute_id_duplicate': { en: 'An attribute with this ID already exists.', ru: 'Атрибут с таким ID уже существует.' },
-    'attribute_id_reserved': { en: 'This ID is reserved for a built-in GraphML attribute.', ru: 'Этот ID зарезервирован встроенным атрибутом GraphML.' },
     'attribute_added': { en: 'Custom attribute added', ru: 'Пользовательский атрибут добавлен' },
     'attribute_updated': { en: 'Custom attribute updated', ru: 'Пользовательский атрибут изменён' },
     'attribute_deleted': { en: 'Custom attribute deleted', ru: 'Пользовательский атрибут удалён' },

@@ -312,39 +312,51 @@
     ['gridMinorAlpha', 'graph', 'grid.minor.alpha', 'double'],
     ['gridMajorAlpha', 'graph', 'grid.major.alpha', 'double'],
   ];
-  const GRAPHML_BUILTIN_KEY_IDS = new Set(GRAPHML_BUILTIN_KEYS.map(([id]) => id));
   // The one rule core needs: a key is built-in iff it is one of these. Passed as
   // a thunk so classification cannot depend on module evaluation order.
-  registerGraphmlBuiltinKeys(() => GRAPHML_BUILTIN_KEYS);
-  // <key> lines for the user's custom definitions. An id that collides with a
-  // built-in one gets a numbered suffix (arrowSize -> arrowSize2) instead of
-  // being emitted twice or dropped, so a definition is never lost in export.
+  // The attr.names the importer below reads as built-in, per scope. Kept next to
+  // the data map it mirrors so the two cannot drift apart.
+  const GRAPHML_READ_NAMES: readonly (readonly [string, string])[] = [
+    // Every attr.name the node/edge/graph readers below look up. A <key> using
+    // one of these feeds a built-in field, so it cannot also be a definition.
+    ...['label','name','x','posx','y','posy','position.x','position.y','graphics','type','shape',
+        'color','fillcolor','bgcolor','width','height','stroke.color','stroke.size','stroke.style',
+        'strokecolor','strokesize','strokestyle','label.color','label.font','label.size','label.position',
+        'labelcolor','labelfont','labelsize','labelposition']
+      .map(readName => [readName, 'node'] as const),
+    ...['weight','value','label','edgelabel','type','color','edgecolor','style',
+        'stroke.color','stroke.size','stroke.style','strokecolor','strokesize','strokestyle',
+        'arrow.size','arrowsize','directed','direction','order','id',
+        'label.color','label.font','label.size','labelcolor','labelfont','labelsize','labelposition']
+      .map(readName => [readName, 'edge'] as const),
+    ...['labels.policy','edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr',
+        'edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh',
+        'canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha']
+      .map(readName => [readName, 'graph'] as const),
+  ];
+  // Built-in cover = every attr.name our exporter writes for a scope (from
+  // GRAPHML_BUILTIN_KEYS, so it cannot drift from the key block) plus the alias
+  // names the importer accepts from other tools. Either way the <data> binds to
+  // one of our fields, so an unmarked key with that name is not a definition.
+  const GRAPHML_BUILTIN_NAMES = new Map<string, string[]>(['graph','node','edge'].map(scope => [scope, []]));
+  for(const [, forWhom, attrName] of GRAPHML_BUILTIN_KEYS) GRAPHML_BUILTIN_NAMES.get(forWhom)!.push(String(attrName).toLowerCase());
+  registerGraphmlSchema(() => ({readNames: [
+    ...GRAPHML_READ_NAMES,
+    ...[...GRAPHML_BUILTIN_NAMES].flatMap(([scope, names]) => names.map(readName => [readName, scope] as const)),
+  ]}));
+  // Our own definitions carry a prefixed key id. GraphML ids are document-unique
+  // and QVGE-built-ins own their spellings, so a separate namespace is what lets
+  // a definition survive export/import unchanged instead of being renamed around
+  // the built-in block and then re-classified by guesswork.
+  const CUSTOM_KEY_PREFIX = 'qvge.custom.';
+  // <key> lines for the user's custom definitions.
   function graphmlCustomKeyLines(): string[]{
-    const emitted = new Set(GRAPHML_BUILTIN_KEY_IDS);
-    // Ids the document declares that keep their own name. A rename must not
-    // take one of those, or the renamed key would collide with its neighbour.
-    const reservedForOthers = new Set(state.customAttributes.map(attribute => attribute.id).filter(id => !emitted.has(id)));
-    const out: string[] = [];
-    for(const attribute of state.customAttributes){
-      let id = attribute.id;
-      if(emitted.has(id)){
-        // Unbounded search for the same reason as the sanitizer's migration: a
-        // document may legitimately already use every short suffix.
-        for(let suffix = 2; ; suffix++){
-          const candidate = `${attribute.id}${suffix}`;
-          if(emitted.has(candidate) || reservedForOthers.has(candidate)) continue;
-          id = candidate;
-          break;
-        }
-      }
-      emitted.add(id);
-      // Emit the definition's own attr.name when the importer recorded one, so a
-      // key that was renamed to avoid a built-in id keeps the name that makes it
-      // meaningful on the next import.
+    return state.customAttributes.map(attribute => {
+      // The definition's own name is what it is; the id only has to be unique,
+      // which the prefix guarantees.
       const attrName = (attribute as AnyRecord).name || attribute.id;
-      out.push(`  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}"/>`);
-    }
-    return out;
+      return `  <key id="${xmlEsc(CUSTOM_KEY_PREFIX + attribute.id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}"/>`;
+    });
   }
   function exportGraphmlText(){
     const gd = state.settings.graphDefaults;
@@ -956,28 +968,36 @@
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
     const customAttributes: GraphState['customAttributes'] = [];
-    // The attribute NAME is what makes a key built-in: the engine reads those
-    // values positionally by name (weight, direction, x, …). An id is only an
-    // identifier, so an external document may legitimately reuse one of the
-    // app's key ids for an unrelated attribute (id="direction"
-    // attr.name="externalTag"). Those are kept and renamed by the sanitizer's
-    // migration instead of being dropped here.
+    // Two kinds of <key>, and no guessing between them:
+    //   1. ids in our own definition namespace — the user's definitions, kept
+    //      verbatim (id minus the prefix, name in its original case);
+    //   2. anything else, which is built-in iff the importer below reads that
+    //      attr.name for that scope. If it does, the <data> feeds one of our
+    //      fields and a definition would be one the app can never round-trip.
+    // `qvge.custom.` is what makes case (#1) and cross-scope (#4) definitions
+    // round-trip: their ids and names are written and read back unchanged,
+    // never compared against, or renamed around, a built-in key.
     doc.querySelectorAll('key').forEach(k => {
-      const id = k.getAttribute('id');
+      const rawId = k.getAttribute('id') || '';
       // `name` is the lowercased form the data map is keyed by; `rawName` keeps
-      // the original spelling so a definition can export under the exact
-      // attr.name it was imported with (case matters to other GraphML tools).
-      const rawName = k.getAttribute('attr.name') || id || '';
+      // the original spelling so a definition exports under the exact attr.name
+      // it was imported with (case matters to other GraphML tools).
+      const rawName = k.getAttribute('attr.name') || rawId || '';
       const name = rawName.toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
-      keyNames[id] = name;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      // One rule: a key is ours iff the exporter writes this exact (id, name,
-      // scope). Anything else is the user's definition and is kept — including
-      // ids and names we happen to read as aliases, because we never emit those
-      // keys ourselves, so such a document came from elsewhere.
-      if(id && !isBuiltinGraphmlKey(id, name, forWhom) && ['graph','node','edge'].includes(forWhom)){
-        customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
+      const isOurDefinition = rawId.startsWith(CUSTOM_KEY_PREFIX) && rawId.length > CUSTOM_KEY_PREFIX.length;
+      const id = isOurDefinition ? rawId.slice(CUSTOM_KEY_PREFIX.length) : rawId;
+      keyNames[rawId] = name;
+      if(['graph','node','edge'].includes(forWhom)){
+        if(isOurDefinition){
+          customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
+        } else if(rawId && !isBuiltinGraphmlKey(name, forWhom)){
+          // A foreign key. Keep its own id and the exact spelling of its name:
+          // GraphML names are case-sensitive, and comparing a lowercased name
+          // against a case-preserving id is what dropped mixed-case ids.
+          customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
+        }
       }
       const defEl = k.querySelector('default');
       if(defEl){
