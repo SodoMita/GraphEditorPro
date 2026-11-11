@@ -468,9 +468,9 @@ test('a replace-mode import can be undone back to the pre-import document', asyn
   dom.window.close();
 });
 
-test('a valid append of malformed DOT content is rejected but an empty graph is an error, not a wipe', async () => {
-  // The empty <graphml> case: parser returns null, the replace never happens,
-  // and the success toast is NOT shown.
+test('a bare GraphML <graph> is a valid empty document (round 10) and undo restores the original', async () => {
+  // Round 8 treated this as "an error"; round 10 defines a zero-node <graph>
+  // with no dangling edges as a valid empty document that must round-trip.
   const saved = { title: 'keep-me-2', nodes: [
     {id:'n1', label:'One', x:0, y:0, order:0},
   ], edges: [] };
@@ -478,10 +478,13 @@ test('a valid append of malformed DOT content is rejected but an empty graph is 
   const {document} = dom.window;
   await settle(dom.window, 60);
   await paste(document, dom.window, '#btnPasteGraphml', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"><graph id="g" edgedefault="directed"></graph></graphml>');
-  const graph = exportedGraph(document);
-  assert.equal(graph.nodes.length, 1, 'the document is intact');
-  assert.equal(graph.nodes[0].label, 'One');
-  assert.match(toasts(document), /fail|no graph/i);
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'the bare graph imports as a valid empty document');
+  assert.match(toasts(document), /imported/i);
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'undo restores the replaced document');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
@@ -714,4 +717,97 @@ test('zero-node GraphML with only graph-scoped direct-child <data> still round-t
   assert.match(toasts(document), /imported/i);
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
+});
+
+// === Round 10 ===
+test('the editor’s own empty DOT export round-trips', async () => {
+  // Seed an empty document, export it as DOT, then paste that exact text
+  // into a 3-node document — the empty export must import cleanly.
+  const {dom: domEmpty} = createEditorDom({ title: 'empty-dot-src', nodes: [], edges: [] });
+  const emptyDoc = domEmpty.window.document;
+  await settle(domEmpty.window, 60);
+  emptyDoc.querySelector('#btnExportDot').click();
+  const dotText = emptyDoc.querySelector('.export-modal textarea').value;
+  emptyDoc.querySelector('#expCloseBtn').click();
+  assert.match(dotText, /digraph/i, 'the exporter writes a digraph');
+  domEmpty.window.close();
+
+  const saved = { title: 'keep-me-r10', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', dotText);
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'the empty DOT export imports');
+  assert.match(toasts(document), /imported/i);
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 2, 'undo restores the replaced document');
+  assert.equal(graph.edges.length, 1);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a hand-written zero-node DOT graph imports; garbage still does not', async () => {
+  const saved = { title: 'keep-me-r10b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  for(const dot of ['digraph G {}', 'digraph {', 'graph G {\n}']){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', dot);
+    const graph = exportedGraph(document);
+    assert.deepEqual(errors.map(e => e.message), []);
+    if(dot === 'digraph {'){
+      assert.equal(graph.nodes.length, 1, `truncated ${JSON.stringify(dot)} is rejected`);
+      assert.match(toasts(document), /fail|no graph/i);
+    } else {
+      assert.equal(graph.nodes.length, 0, `${JSON.stringify(dot)} imports as a valid empty document`);
+      assert.match(toasts(document), /imported/i);
+    }
+    dom.window.close();
+  }
+});
+
+test('zero-node GraphML with an edge whose endpoints are absent is rejected', async () => {
+  // Finding 1: an edge key + a dangling edge must NOT import as an empty
+  // document behind an import toast.
+  const saved = { title: 'keep-me-r10c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [] };
+  const cases = [
+    // with an <key> declaration for the edge (the reported repro)
+    ['<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+     '  <key id="w" for="edge" attr.name="weight" attr.type="string"/>',
+     '  <graph id="g" edgedefault="directed">',
+     '    <edge id="e1" source="a" target="b">',
+     '      <data key="w">1</data>',
+     '    </edge>',
+     '  </graph>',
+     '</graphml>'].join('\n'),
+    // without any key
+    ['<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+     '  <graph id="g" edgedefault="directed">',
+     '    <edge id="e1" source="a" target="b"/>',
+     '  </graph>',
+     '</graphml>'].join('\n'),
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteGraphml', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 3, 'document survives the dangling-edge GraphML');
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
 });

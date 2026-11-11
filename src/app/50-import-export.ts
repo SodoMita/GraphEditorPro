@@ -812,9 +812,11 @@
     const directedGraph = /\bdigraph\b/i.test(text);
     let body = stripDotComments(text);
     const open = body.indexOf('{'), close = body.lastIndexOf('}'); if(open >= 0 && close > open) body = body.slice(open+1, close);
-    // Bare prose without a braces block and without a graph keyword is not a
-    // graph — the node matcher below would otherwise invent a node out of it.
-    const hasStructure = (open >= 0 && close > open) || directedGraph || /\bgraph\b/i.test(text);
+    // A structurally recognized DOT graph document needs BOTH the graph
+    // keyword and a balanced braces block (strict DOT grammar). Prose is not
+    // a graph — the node matcher below would otherwise invent a node out of
+    // it. A keyword without braces (truncated file) is likewise not usable.
+    const hasStructure = (open >= 0 && close > open) && (directedGraph || /\bgraph\b/i.test(text));
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
     const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]+)';
@@ -878,12 +880,11 @@
       if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
     }
     const arr = [...nodes.values()];
-    // Blank/garbled DOT (or a structurally empty digraph) parses to zero
-    // nodes — it carries no graph document, so it must be rejected rather
-    // than accepted as a valid empty document. (The JSON and GraphML
-    // zero-node rules differ on purpose: those formats round-trip valid
-    // empty documents.)
-    if(!arr.length) return null;
+    // A structurally recognized DOT graph with zero nodes — e.g. the
+    // editor's own empty export — is a valid empty document and round-trips.
+    if(!arr.length){
+      return hasStructure ? { title:'imported-dot', nodes: [], edges: [] } : null;
+    }
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
       const r = Math.max(120, arr.length * 24);
       arr.forEach((n,i) => { const a=-Math.PI/2+i*2*Math.PI/arr.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; });
@@ -1245,17 +1246,12 @@
     });
     if(nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1){ const r=Math.max(120,nodes.length*24); nodes.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/nodes.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r;}); }
     if(!graph) return null; // a GraphML file without a <graph> is not a document
-    if(!nodes.length){
-      // A zero-node document still round-trips when it encodes something a
-      // document carries: at least one <key> definition (our exports always
-      // write the built-in set plus any custom defs) or graph-scoped <data>
-      // (graph-scoped custom values, graph defaults). A bare <graph> with
-      // neither is not a document — reject it rather than blank the canvas.
-      const hasGraphData = Array.from(graph.children)
-        .some(el => (el.localName || el.tagName || '').toLowerCase() === 'data');
-      const hasKeys = doc.getElementsByTagName('key').length > 0;
-      if(!hasGraphData && !hasKeys) return null;
-    }
+    // Zero nodes with any raw <edge> element means every edge dangles (there
+    // is no node to reference) — importing would silently discard all of
+    // them and wipe the document. Our exports can never produce this shape.
+    if(!nodes.length && doc.querySelectorAll('edge').length > 0) return null;
+    // Otherwise a zero-node <graph> — bare or carrying graph-scoped defaults /
+    // <key> definitions — is a valid empty document and round-trips.
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.
