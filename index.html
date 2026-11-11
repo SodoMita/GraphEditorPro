@@ -10330,7 +10330,12 @@ function parseAttrList(text) {
         }
         if (raw == null)
             continue;
-        let v = raw.trim();
+        // Restore the syntax bytes the mask blanked inside quoted strings,
+        // wherever they appear in the value: wholly quoted values are
+        // unescaped below (idempotent second pass), but an HTML-like value
+        // carries quoted text of its own (HREF="{ref}"), which otherwise kept
+        // the mask sentinels as control characters.
+        let v = unmaskDotSyntax(raw.trim());
         const q = v[0];
         const last = v[v.length - 1];
         if ((q === '"' && last === '"') || (q === "'" && last === "'"))
@@ -11779,7 +11784,7 @@ function importMatrixCsv(text, append) {
     };
     const initialEdges = append ? state.edges.length : 0;
     const edges = append ? state.edges.slice() : [];
-    let parsed = 0, skipped = 0;
+    let parsed = 0, skipped = 0, validRows = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length)
@@ -11790,6 +11795,10 @@ function importMatrixCsv(text, append) {
                 skipped++;
             continue;
         }
+        // A data row whose endpoint resolves is a recognizable adjacency row —
+        // an all-empty one is how the editor exports an edgeless document. It
+        // must round-trip in replace mode (zero edges), not be refused.
+        validRows++;
         for (let c = 1; c < row.length && c - 1 < labels.length; c++) {
             const val = (row[c] || '').trim();
             if (!val)
@@ -11806,7 +11815,11 @@ function importMatrixCsv(text, append) {
             }
         }
     }
-    if (parsed === 0 && !append) {
+    // Refuse only input with no recognizable matrix at all: nothing parsed
+    // and not a single data row whose endpoint resolves. A zero-edge matrix
+    // of live nodes is a valid empty graph and must replace the document's
+    // edges like any other replace import.
+    if (parsed === 0 && !append && validRows === 0) {
         toast(I18N.t('csv_nothing_parsed'));
         return;
     }

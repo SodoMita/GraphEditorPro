@@ -46,7 +46,12 @@
         if(bare){ raw = bare[0]; j += bare[0].length; }
       }
       if(raw == null) continue;
-      let v = raw.trim();
+      // Restore the syntax bytes the mask blanked inside quoted strings,
+      // wherever they appear in the value: wholly quoted values are
+      // unescaped below (idempotent second pass), but an HTML-like value
+      // carries quoted text of its own (HREF="{ref}"), which otherwise kept
+      // the mask sentinels as control characters.
+      let v = unmaskDotSyntax(raw.trim());
       const q = v[0];
       const last = v[v.length - 1];
     if((q === '"' && last === '"') || (q === "'" && last === "'")) v = dotUnescape(v.slice(1, -1));

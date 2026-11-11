@@ -679,11 +679,15 @@
     };
     const initialEdges = append ? state.edges.length : 0;
     const edges: GraphEdge[] = append ? state.edges.slice() : [];
-    let parsed = 0, skipped = 0;
+    let parsed = 0, skipped = 0, validRows = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length) continue;
       const fromId = resolveNode(row[0]);
       if(!fromId){ if(row.slice(1).some(v => (v || '').trim())) skipped++; continue; }
+      // A data row whose endpoint resolves is a recognizable adjacency row —
+      // an all-empty one is how the editor exports an edgeless document. It
+      // must round-trip in replace mode (zero edges), not be refused.
+      validRows++;
       for(let c = 1; c < row.length && c-1 < labels.length; c++){
         const val = (row[c] || '').trim();
         if(!val) continue;
@@ -696,7 +700,11 @@
         }
       }
     }
-    if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
+    // Refuse only input with no recognizable matrix at all: nothing parsed
+    // and not a single data row whose endpoint resolves. A zero-edge matrix
+    // of live nodes is a valid empty graph and must replace the document's
+    // edges like any other replace import.
+    if(parsed === 0 && !append && validRows === 0){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }

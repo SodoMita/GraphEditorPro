@@ -940,3 +940,33 @@ test('a CSV replace import that parses nothing preserves the document', async ()
   }
 });
 
+
+test('the editor’s own empty matrix export imports in replace mode and clears the edges', async () => {
+  // The zero-parse guard added for garbage input must not refuse a valid
+  // empty adjacency matrix: replacing with it is how a document’s edges are
+  // cleared, and the previous head correctly did so.
+  const saved = { title: 'keep-matrix-empty', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  // Exactly what matrixCsv() writes for this document once it has no edges:
+  // BOM + header row of labels + one all-empty row per node, CRLF separated.
+  const emptyMatrix = '\ufeff,One,Two\r\nOne,,\r\nTwo,,\r\n';
+  await paste(document, dom.window, '#btnPasteMatrixCsv', emptyMatrix);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 2, 'the nodes survive');
+  assert.equal(graph.edges.length, 0, 'the empty matrix replace clears the stale edge');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  // The freshly edgeless document exports the same file it imported. (The
+  // export modal shows the payload in a <textarea>, whose value normalises
+  // CRLF to LF — compare with line endings normalised too.)
+  document.querySelector('#btnExportMatrixCsv').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  assert.equal(exported, emptyMatrix.replace(/\r\n/g, '\n'), 'the empty import round-trips through the exporter');
+  document.querySelector('#expCloseBtn').click();
+  dom.window.close();
+});

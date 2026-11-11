@@ -338,3 +338,20 @@ test('DOT comments cannot inject nodes or edges (LF, CRLF and CR files)', () => 
   assert.deepEqual(block.nodes.map(n => n.id), ['a'], 'block comment injects nothing');
   assert.equal(block.edges.length, 0);
 });
+
+test('HTML-like DOT labels keep quoted text inside them intact', () => {
+  // Audit repro: quoted text inside an HTML value was masked like any other
+  // quoted string, but only wholly quoted values were unmasked afterwards,
+  // so the label kept mask control characters instead of the braces.
+  const braces = dot.parseDot('digraph G { a [label=<<A HREF="{ref}">x</A>>]; }');
+  assert.ok(braces);
+  assert.equal(braces.nodes[0].label, '<<A HREF="{ref}">x</A>>', 'braces inside the quoted href survive');
+  const arrow = dot.parseDot('digraph G { a [label=<<A HREF="x->y">go</A>>]; }');
+  assert.ok(arrow);
+  assert.equal(arrow.nodes[0].label, '<<A HREF="x->y">go</A>>', 'an arrow inside the quoted href survives literally');
+  const dashes = dot.parseDot('digraph G { a [label=<<A TITLE="a--b">x</A>>]; }');
+  assert.ok(dashes);
+  assert.equal(dashes.nodes[0].label, '<<A TITLE="a--b">x</A>>', 'a double dash inside the quoted title survives literally');
+  assert.ok(!/[\u0001-\u0004]/.test(braces.nodes[0].label + arrow.nodes[0].label + dashes.nodes[0].label),
+    'no mask sentinel leaks into an HTML-like label');
+});
