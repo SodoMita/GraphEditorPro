@@ -979,7 +979,19 @@ test('a matrix whose columns do not resolve preserves the document', async () =>
     {id:'n1', label:'A', x:0, y:0, order:0},
     {id:'n2', label:'B', x:120, y:0, order:1},
   ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
-  for(const text of ['label,Unknown\nA,5\n', 'label,Unknown\nA,\n']){
+  // Audit repro (round B): a row endpoint resolves but the only value
+  // targets an unknown column. Audit repro (round C): one column resolves
+  // and one does not — every populated cell is skipped, so the matrix is
+  // not a coherent empty graph for this document. All must be refused.
+  const cases = [
+    'label,Unknown\nA,5\n',
+    'label,Unknown\nA,\n',
+    'label,A,Unknown\nA,,5\n',
+    'label,A,Unknown\nA,\n',
+    'label,X,Unknown\nA,1,2\n',
+    'label,A\nX,5\nA,\n',
+  ];
+  for(const text of cases){
     const {dom, errors} = createEditorDom(saved);
     const {document} = dom.window;
     await settle(dom.window, 60);

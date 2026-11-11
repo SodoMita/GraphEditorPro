@@ -11782,11 +11782,13 @@ function importMatrixCsv(text, append) {
             return labelToId.get(val);
         return null;
     };
-    // A matrix is recognizable for this document only when at least one
-    // data row's endpoint AND at least one column's endpoint resolve to a
-    // node — the shape of the editor's own export, all-empty cells included.
-    // A header of unknown columns cannot be this document's adjacency
-    // matrix; committing zero edges from it would clear the existing ones.
+    // A matrix is recognizable for this document only when it is exactly a
+    // (possibly all-empty) adjacency matrix of live nodes: every column's
+    // endpoint resolves and at least one data row's endpoint resolves. This
+    // is the shape of the editor's own export, including its all-empty
+    // cells. Anything else — a header with an unknown column, a populated
+    // cell forcing a skip — is not this document's matrix; committing zero
+    // edges from it would clear the existing ones.
     const resolvableColumns = labels.reduce((n, l) => n + (resolveNode(l) != null ? 1 : 0), 0);
     const initialEdges = append ? state.edges.length : 0;
     const edges = append ? state.edges.slice() : [];
@@ -11821,12 +11823,13 @@ function importMatrixCsv(text, append) {
             }
         }
     }
-    // Refuse only input with no recognizable matrix at all: nothing parsed,
-    // not a single data row whose endpoint resolves, or not a single column
-    // that could hold an endpoint. A zero-edge matrix of live nodes and
-    // live columns is a valid empty graph and must replace the document's
-    // edges like any other replace import.
-    if (parsed === 0 && !append && !(validRows > 0 && resolvableColumns > 0)) {
+    // Commit zero edges only for a fully coherent empty matrix: rows of
+    // live nodes over live columns, with nothing populated that could not
+    // be honored (no forced skips). Anything else is refused and the
+    // document is preserved.
+    const recognizable = labels.length > 0 && resolvableColumns === labels.length
+        && validRows > 0 && skipped === 0;
+    if (parsed === 0 && !append && !recognizable) {
         toast(I18N.t('csv_nothing_parsed'));
         return;
     }
