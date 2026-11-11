@@ -902,7 +902,12 @@
     }
     return {title:'imported-dot', nodes:arr.map(({original,...n}) => n), edges};
   }
-  function graphmlDataMap(el, keyNames): AnyRecord {
+  // A key is resolved *for a scope*: a <key for="all"> applies to graph, node and
+  // edge data alike, and whether it feeds a built-in field can differ per scope —
+  // it may collide with a canonical key on one scope and not on another. Keying
+  // this map by id alone made one collision disable the key everywhere, which
+  // silently dropped the value it carried on the other scopes.
+  function graphmlDataMap(el, keyNames, forWhom): AnyRecord {
     const map: AnyRecord = {};
     el.querySelectorAll('data').forEach(d => {
       const key = d.getAttribute('key') || '';
@@ -910,9 +915,10 @@
       // which is how a custom definition's key says "this data is not a built-in
       // value". With `||` that empty name fell back to the raw key, so data under
       // a definition called `label` still became the node label.
-      const declared = Object.prototype.hasOwnProperty.call(keyNames, key);
-      const name = (declared ? keyNames[key] : key).toLowerCase();
-      if(!name) return; // a definition's value: it belongs to no built-in field
+      const slot = `${key}|${forWhom}`;
+      const declared = Object.prototype.hasOwnProperty.call(keyNames, slot);
+      const name = (declared ? keyNames[slot] : key).toLowerCase();
+      if(!name) return; // not a built-in field on this scope
       map[name] = d.textContent.trim();
     });
     return map;
@@ -1013,7 +1019,9 @@
     const doc = new DOMParser().parseFromString(text, 'application/xml');
     if(doc.querySelector('parsererror')) throw new Error(I18N.t('err_invalid_graphml'));
     // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
+    // keyed `${keyId}|${scope}` — see graphmlDataMap
     const keyNames: Record<string, string> = {};
+    const KEY_SCOPES = ['graph', 'node', 'edge'] as const;
     const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
     const customAttributes: GraphState['customAttributes'] = [];
@@ -1119,12 +1127,13 @@
       // shadowed; a legitimate alias of the same field still feeds it.
       // A key declared for "all" collides with a canonical key on any scope, so
       // it has to be checked against every scope it could apply to.
-      const scopesChecked = forWhom === 'all' ? ['graph','node','edge'] : [forWhom];
-      const shadowsCanonical = !isDefinition && scopesChecked.some(candidateScope => {
-        const canonical = canonicalSpelling.get(`${candidateScope}|${name}`);
-        return canonical !== undefined && canonical !== rawName;
-      });
-      keyNames[rawId] = (isDefinition || shadowsCanonical) ? '' : name;
+      for(const dataScope of (forWhom === 'all' ? KEY_SCOPES : [forWhom])){
+        // Shadowing is decided per scope: a key can collide with a canonical key
+        // on one scope and still be the only source of that field on another.
+        const canonical = canonicalSpelling.get(`${dataScope}|${name}`);
+        const shadowsHere = !isDefinition && canonical !== undefined && canonical !== rawName;
+        keyNames[`${rawId}|${dataScope}`] = (isDefinition || shadowsHere) ? '' : name;
+      }
       if(isDefinition && rawId && ['graph','node','edge'].includes(scope)){
         // A marked key may record the definition's own id, used when the exported
         // key id had to differ to stay unique.
@@ -1148,7 +1157,7 @@
     const edgeDefaultAttr = graph?.getAttribute('edgedefault') || 'directed';
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
-    const graphData = graphmlDataMap(graph || doc, keyNames);
+    const graphData = graphmlDataMap(graph || doc, keyNames, 'graph');
     const graphKeyDefs = keyDefaultsByFor.graph || {};
 
     // Build settings from QVGE key defaults + graph data
@@ -1224,7 +1233,7 @@
 
     const nodes: GraphNode[] = [], idMap = new Map<string, string>();
     doc.querySelectorAll('node').forEach((el,i) => {
-      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames);
+      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames, 'node');
       // QVGE: nodes are unlabeled by default. Only use label data if present.
       const label = String(d.label || d.name || '');
       let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
@@ -1254,7 +1263,7 @@
     const edges: GraphEdge[] = [];
     doc.querySelectorAll('edge').forEach((el,i) => {
       const from = idMap.get(el.getAttribute('source')), to = idMap.get(el.getAttribute('target')); if(!from || !to) return;
-      const d = graphmlDataMap(el, keyNames);
+      const d = graphmlDataMap(el, keyNames, 'edge');
       const directedAttr = el.getAttribute('directed');
       // QVGE: edge direction can come from data "direction" field or the XML attribute
       let dirStr = directedAttr == null ? defaultDirected : parseDirection(directedAttr);

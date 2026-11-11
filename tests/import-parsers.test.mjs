@@ -1050,3 +1050,72 @@ test('a cross-scope case collision does not drop a definition either', async () 
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('an all-scope key still feeds a scope where it does not collide', async () => {
+  // A <key> with no `for` applies to every element type. Deciding whether it is
+  // a collision has to be done per scope: here it is spelled "LABEL" and collides
+  // with the canonical node key spelled "label", but on the edge scope there is
+  // no such key, so the edge value it carries is legitimate and must survive.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+    '  <key id="allk" attr.name="LABEL" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="allk">Relation</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges[0].label, 'Relation', 'the edge keeps the all-scope value');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an all-scope key is still shadowed on the scope where it does collide', async () => {
+  // The counterpart: on the node scope the canonical key must win, or the
+  // per-scope relaxation above would reintroduce the value-overwrite bug.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+    '  <key id="allk" attr.name="LABEL" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="label">real</data><data key="allk">fake</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).nodes[0].label, 'real', 'the canonical key still wins its own scope');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an all-scope key that collides nowhere feeds every scope', async () => {
+  // The base case the previous two are variations of: with no canonical rivals,
+  // one all-scope key supplies the label to nodes and edges alike.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="only" attr.name="label" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="only">N</data></node><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="only">E</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].label, 'N', 'the node keeps it');
+  assert.equal(graph.edges[0].label, 'E', 'and so does the edge');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
