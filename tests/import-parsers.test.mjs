@@ -1548,3 +1548,97 @@ test('appending keeps the imported document\'s visual defaults', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('an explicit empty label survives the label default', async () => {
+  // A label default applies to a label that is *unset*. An element carrying
+  // <data key="l"/> with no text has stated its label — an intentional blank —
+  // and must not have a default substituted for it. Presence, not truthiness.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="l" for="node" attr.name="label" attr.type="string"><default>Fallback</default></key>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="l"></data></node>',
+    '    <node id="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const byId = id => graph.nodes.find(n => n.id === id);
+  assert.equal(byId('n1').label, '', 'the stated blank is kept');
+  assert.equal(byId('n2').label, 'Fallback', 'the unset one takes the default');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an explicit empty edge label survives the edge label default', async () => {
+  // The same rule on the edge scope, which has its own label reader.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="el" for="edge" attr.name="label" attr.type="string"><default>EFB</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="el"></data></edge>',
+    '    <edge id="e2" source="n2" target="n1"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const byId = id => graph.edges.find(e => e.id === id);
+  assert.equal(byId('e1').label, '', 'the stated blank is kept');
+  assert.equal(byId('e2').label, 'EFB', 'the unset one takes the default');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append skips null entries instead of rejecting the whole import', async () => {
+  // Sanitisation happens after the defaults are materialised, so a malformed
+  // entry is still present at that point. Skipping it lets the sanitizer drop it
+  // while the rest of the payload imports, which is what append did before.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const pasteJson = async payload => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+    });
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 60);
+  };
+  await pasteJson({title: 'host', nodes: [{id: 'a', x: 0, y: 0}], edges: []});
+  document.querySelector('#optImportAppend').checked = true;
+  await pasteJson({
+    title: 'incoming',
+    nodes: [null, {id: 'b', x: 40, y: 40}],
+    edges: [null, {id: 'bc', from: 'b', to: 'b'}],
+  });
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(n => n.id), ['a', 'b'], 'the valid node still arrives');
+  assert.deepEqual(graph.edges.map(e => e.id), ['bc'], 'and so does the valid edge');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append tolerates a payload that is entirely null entries', async () => {
+  // The degenerate case: nothing usable. It must be a no-op, not a failure.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const pasteJson = async payload => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+    });
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 60);
+  };
+  await pasteJson({title: 'host', nodes: [{id: 'a', x: 0, y: 0}], edges: []});
+  document.querySelector('#optImportAppend').checked = true;
+  await pasteJson({title: 'incoming', nodes: [null, null], edges: [null]});
+  assert.deepEqual(exportedGraph(document).nodes.map(n => n.id), ['a'], 'the host graph is intact');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

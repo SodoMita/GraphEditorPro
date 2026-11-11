@@ -10259,13 +10259,22 @@ function materializeDefaults(nodes, edges, settings) {
         'strokeStyle', 'labelColor', 'labelSize', 'labelPosition', 'labelFont'];
     const EDGE_FIELDS = ['color', 'strokeSize', 'strokeStyle', 'arrowSize',
         'labelColor', 'labelSize', 'labelFont'];
+    // The caller has not sanitised yet — that is exactly what it is about to do —
+    // so an entry may be null or a non-object. Skip those here and let the
+    // sanitizer decide their fate; throwing would reject the whole import,
+    // including the entries that are perfectly good.
+    const isRecord = value => value != null && typeof value === 'object';
     for (const n of nodes) {
+        if (!isRecord(n))
+            continue;
         for (const field of NODE_FIELDS) {
             if (unset(n[field]) && nd[field] != null)
                 n[field] = nd[field];
         }
     }
     for (const e of edges) {
+        if (!isRecord(e))
+            continue;
         for (const field of EDGE_FIELDS) {
             if (unset(e[field]) && ed[field] != null)
                 e[field] = ed[field];
@@ -10881,6 +10890,12 @@ function graphmlDataMap(el, fieldFor, forWhom) {
     }
     return map;
 }
+// "Did the element state a value for any of these fields?" — as opposed to
+// leaving them out. An explicit empty <data/> is a stated value, which is why
+// this asks about presence rather than truthiness.
+function hasAny(record, ...fields) {
+    return fields.some(field => Object.prototype.hasOwnProperty.call(record, field));
+}
 function parseShape(raw) {
     const s = String(raw || '').toLowerCase();
     if (s.includes('disc') || s.includes('disk') || s.includes('circle') || s.includes('ellipse') || s.includes('oval'))
@@ -11305,10 +11320,12 @@ function parseGraphml(text) {
     doc.querySelectorAll('node').forEach((el, i) => {
         const raw = el.getAttribute('id') || ('n' + (i + 1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node');
         // QVGE: nodes are unlabeled by default. Only use label data if present.
-        // A <default> is what an unset label resolves to, exactly as it is for the
-        // visual fields; `label` is element data rather than a style, so it is
-        // applied here rather than through the style bindings.
-        const label = String(d.label || d.name || keyDefaultsByFor.node.label || '');
+        // A <default> is what an *unset* label resolves to. "Unset" means the
+        // element carries no label data at all — an explicit empty
+        // <data key="l"/> is a stated value and must survive as an empty label,
+        // or the file's deliberate blank is replaced by a default it overrode.
+        // Hence presence (`in`), not truthiness.
+        const label = String(hasAny(d, 'label', 'name') ? (d.label ?? d.name) : (keyDefaultsByFor.node.label ?? ''));
         let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
         const geom = el.querySelector('Geometry, geometry');
         if (geom) {
@@ -11377,7 +11394,8 @@ function parseGraphml(text) {
             // accepted alias for weight, and only the binding table knows that. Reading
             // edgeKeyDefs.weight here would miss a <key attr.name="value"> default.
             weight: String(d.weight ?? d.value ?? ed.weight ?? ''),
-            label: String(d.label || d.edgelabel || keyDefaultsByFor.edge.label || ''),
+            // Same presence rule as the node label above.
+            label: String(hasAny(d, 'label', 'edgelabel') ? (d.label ?? d.edgelabel) : (keyDefaultsByFor.edge.label ?? '')),
             directed: dirStr !== 'undirected',
             direction: dirStr,
             type: String(d.type || '')
