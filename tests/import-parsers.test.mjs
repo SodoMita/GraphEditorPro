@@ -1304,3 +1304,143 @@ test('a for="all" default reaches the scopes it applies to', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a weight default reaches edges that have no explicit weight', async () => {
+  // A default is what an element's unset property resolves to, not merely a
+  // setting. The renderer already treats weight this way for
+  // color/width/labelSize — edgeVisual falls back to settings.edgeDefaults — but
+  // weight itself had no fallback, so an edge with no <data> weighed 1.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="w" attr.name="weight" attr.type="int"><default>12</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.settings.edgeDefaults.weight, '12', 'the default is kept');
+  assert.equal(graph.edges[0].weight, '12', 'and the edge without its own weight resolves to it');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an explicit edge weight still beats the default', async () => {
+  // The counterpart: applying the default must not overwrite a value the file
+  // states. Both directions matter — one drops data, the other invents it.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="w" attr.name="weight" attr.type="int"><default>12</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="w">3</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).edges[0].weight, '3', 'the stated weight wins');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edge with neither weight nor default stays unweighted', async () => {
+  // And the baseline: no default declared means no weight, which is how a fresh
+  // graph behaves today. Filling in a value here would be inventing data.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const weight = exportedGraph(document).edges[0].weight;
+  // The JSON export omits empty values, so "no weight" is either absent or ''.
+  assert.ok(weight === undefined || weight === '', 'no default, no weight');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('both edge style spellings name the same field', async () => {
+  // The exporter writes the edge style as attr.name "style"; other tools and our
+  // older files use "stroke.style". They are one field, so either spelling must
+  // reach edgeDefaults.strokeStyle. A reader that knows only one of them silently
+  // drops the default the other carries.
+  for(const spelling of ['style', 'stroke.style']){
+    const graphml = [
+      '<?xml version="1.0"?>',
+      '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+      `  <key id="e4" for="edge" attr.name="${spelling}" attr.type="string"><default>dotted</default></key>`,
+      '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+      '    <edge id="e1" source="n1" target="n2"/>',
+      '  </graph>',
+      '</graphml>',
+    ].join('\n');
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    await paste(document, dom.window, '#btnPasteGraphml', graphml);
+    assert.equal(exportedGraph(document).settings.edgeDefaults.strokeStyle, 'dotted', `attr.name="${spelling}" works`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('an edge label size default is not dropped', async () => {
+  // edgeLabelSize is a declared built-in key, but the default reader had no
+  // branch for label.size on the edge scope at all.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="e5" for="edge" attr.name="label.size" attr.type="double"><default>19</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  assert.equal(exportedGraph(document).settings.edgeDefaults.labelSize, 19, 'the declared size is kept');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('every edge field with a default actually receives it', async () => {
+  // One table drives both scopes now, so the set is checked as a set: a field
+  // added to the key block but not to the binding table shows up here.
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="c" for="edge" attr.name="color" attr.type="string"><default>#010101</default></key>',
+    '  <key id="lc" for="edge" attr.name="label.color" attr.type="string"><default>#020202</default></key>',
+    '  <key id="ss" for="edge" attr.name="stroke.size" attr.type="double"><default>9</default></key>',
+    '  <key id="st" for="edge" attr.name="style" attr.type="string"><default>dotted</default></key>',
+    '  <key id="ls" for="edge" attr.name="label.size" attr.type="double"><default>19</default></key>',
+    '  <key id="as" for="edge" attr.name="arrow.size" attr.type="double"><default>5</default></key>',
+    '  <graph edgedefault="directed"><node id="n1"/><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const ed = exportedGraph(document).settings.edgeDefaults;
+  assert.equal(ed.color, '#010101');
+  assert.equal(ed.labelColor, '#020202');
+  assert.equal(ed.strokeSize, 9);
+  assert.equal(ed.strokeStyle, 'dotted');
+  assert.equal(ed.labelSize, 19);
+  assert.equal(ed.arrowSize, 5);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

@@ -1247,32 +1247,79 @@
     const gjaRaw = graphData['grid.major.alpha'] ?? graphKeyDefs['grid.major.alpha'];
     if(gjaRaw != null) settings.gridMajorAlpha = parseFloat(gjaRaw);
 
-    // Node defaults from key defaults
+    // ---- Applying declared defaults -------------------------------------------------
+    //
+    // A <default> is what an element's *unset* property resolves to. Resolving it
+    // needs two things this module knows and nothing else does: which field the
+    // key feeds (fieldFor, above) and how to parse a value for that field. Every
+    // gap between the reader and the field table has been a silent data loss —
+    // an edge `label.size` default that no branch read, an edge style default
+    // looked up under `stroke.style` while the exporter writes `style`. So the
+    // binding is declared once, here, per field; nothing below re-derives it.
+    //
+    // `coerce` returns undefined when the value is unusable, which leaves the
+    // field unset rather than inventing a value.
+    interface FieldBinding {
+      /** Defaults key this binding fills in (settings.nodeDefaults / .edgeDefaults). */
+      target: string;
+      coerce: (raw: string) => unknown;
+    }
+    const num = (raw: string, fallback: number, lo: number, hi: number) => clamp(finite(raw, fallback), lo, hi);
+    const colorOf = (raw: string) => parseColor(raw) || undefined;
+    const NODE_FIELD_BINDINGS: Record<string, FieldBinding> = {
+      'shape': {target: 'shape', coerce: raw => parseShape(raw) || undefined},
+      'color': {target: 'color', coerce: colorOf},
+      'stroke.color': {target: 'strokeColor', coerce: colorOf},
+      'stroke.size': {target: 'strokeSize', coerce: raw => num(raw, 2.2, 0, 20)},
+      'stroke.style': {target: 'strokeStyle', coerce: raw => parseStrokeStyle(raw) || undefined},
+      'label.color': {target: 'labelColor', coerce: colorOf},
+      'label.size': {target: 'labelSize', coerce: raw => num(raw, 13, 4, 72)},
+      'label.position': {target: 'labelPosition', coerce: raw => parseLabelPosition(raw) || undefined},
+      'width': {target: 'width', coerce: raw => num(raw, 50, 10, 300)},
+      'height': {target: 'height', coerce: raw => num(raw, 50, 10, 300)},
+    };
+    const EDGE_FIELD_BINDINGS: Record<string, FieldBinding> = {
+      'color': {target: 'color', coerce: colorOf},
+      'label.color': {target: 'labelColor', coerce: colorOf},
+      'stroke.size': {target: 'strokeSize', coerce: raw => num(raw, 2.4, 0, 20)},
+      // The exporter writes the edge style as attr.name "style"; older files and
+      // QVGE use "stroke.style". Both name the same field.
+      'stroke.style': {target: 'strokeStyle', coerce: raw => parseStrokeStyle(raw) || undefined},
+      'style': {target: 'strokeStyle', coerce: raw => parseStrokeStyle(raw) || undefined},
+      'label.size': {target: 'labelSize', coerce: raw => num(raw, 12, 4, 72)},
+      'arrow.size': {target: 'arrowSize', coerce: raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX)},
+      'arrowsize': {target: 'arrowSize', coerce: raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX)},
+      'weight': {target: 'weight', coerce: raw => String(raw)},
+    };
+    // Font names carry a size with them ("Inter,12"), so they are handled once
+    // for both scopes rather than duplicated per field table.
+    const applyFonts = (defs: AnyRecord, out: AnyRecord, fallbackSize: number) => {
+      const raw = defs['label.font'];
+      if(!raw) return;
+      const f = parseQvgeFont(raw);
+      if(!f) return;
+      out.labelFont = f.family;
+      if(f.size != null) out.labelSize = clamp(finite(f.size, fallbackSize), 4, 72);
+    };
+    const applyBindings = (defs: AnyRecord, bindings: Record<string, FieldBinding>, fallbackFontSize: number) => {
+      const out: AnyRecord = {};
+      for(const [field, binding] of Object.entries(bindings)){
+        const raw = defs[field];
+        if(raw == null) continue;
+        const value = binding.coerce(String(raw));
+        if(value !== undefined) out[binding.target] = value;
+      }
+      applyFonts(defs, out, fallbackFontSize);
+      return out;
+    };
+
+    // Node and edge defaults, applied from the declared bindings above.
     const nodeKeyDefs = keyDefaultsByFor.node || {};
-    const nd: AnyRecord = {};
-    if(nodeKeyDefs.shape) nd.shape = parseShape(nodeKeyDefs.shape) || undefined;
-    if(nodeKeyDefs.color) nd.color = parseColor(nodeKeyDefs.color) || undefined;
-    if(nodeKeyDefs['stroke.color']) nd.strokeColor = parseColor(nodeKeyDefs['stroke.color']) || undefined;
-    if(nodeKeyDefs['stroke.size'] != null) nd.strokeSize = clamp(finite(nodeKeyDefs['stroke.size'], 2.2), 0, 20);
-    if(nodeKeyDefs['stroke.style']) nd.strokeStyle = parseStrokeStyle(nodeKeyDefs['stroke.style']) || undefined;
-    if(nodeKeyDefs['label.color']) nd.labelColor = parseColor(nodeKeyDefs['label.color']) || undefined;
-    if(nodeKeyDefs['label.position'] != null){ const p = parseLabelPosition(nodeKeyDefs['label.position']); if(p) nd.labelPosition = p; }
-    if(nodeKeyDefs['label.font']){ const f = parseQvgeFont(nodeKeyDefs['label.font']); if(f){ nd.labelFont = f.family; if(f.size != null) nd.labelSize = f.size; } }
-    if(nodeKeyDefs.width != null) nd.width = clamp(finite(nodeKeyDefs.width, 50), 10, 300);
-    if(nodeKeyDefs.height != null) nd.height = clamp(finite(nodeKeyDefs.height, 50), 10, 300);
+    const nd = applyBindings(nodeKeyDefs, NODE_FIELD_BINDINGS, 13);
     if(Object.keys(nd).length) settings.nodeDefaults = nd;
 
-    // Edge defaults from key defaults
     const edgeKeyDefs = keyDefaultsByFor.edge || {};
-    const ed: AnyRecord = {};
-    if(edgeKeyDefs.color) ed.color = parseColor(edgeKeyDefs.color) || undefined;
-    if(edgeKeyDefs['label.color']) ed.labelColor = parseColor(edgeKeyDefs['label.color']) || undefined;
-    if(edgeKeyDefs['stroke.size'] != null) ed.strokeSize = clamp(finite(edgeKeyDefs['stroke.size'], 2.4), 0, 20);
-    if(edgeKeyDefs.style) ed.strokeStyle = parseStrokeStyle(edgeKeyDefs.style) || undefined;
-    if(edgeKeyDefs['label.font']){ const f = parseQvgeFont(edgeKeyDefs['label.font']); if(f){ ed.labelFont = f.family; if(f.size != null) ed.labelSize = f.size; } }
-    if(edgeKeyDefs['arrow.size'] != null) ed.arrowSize = clamp(finite(edgeKeyDefs['arrow.size'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
-    if(edgeKeyDefs['arrowsize'] != null) ed.arrowSize = clamp(finite(edgeKeyDefs['arrowsize'], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
-    if(edgeKeyDefs.weight != null) ed.weight = String(edgeKeyDefs.weight);
+    const ed = applyBindings(edgeKeyDefs, EDGE_FIELD_BINDINGS, 12);
     if(Object.keys(ed).length) settings.edgeDefaults = ed;
 
     // Store the edge direction default if present
@@ -1319,7 +1366,12 @@
       else if(directedAttr == null && edgeDirectionDefault != null) dirStr = edgeDirectionDefault;
       const edge: GraphEdge = {
         id: safeId(el.getAttribute('id') || ('e' + (i+1)), 'e'), from, to,
-        weight: String(d.weight ?? d.value ?? ''),
+        // An edge with no weight of its own takes the document's declared default.
+        // Every other visual property resolves through edgeVisual/edgeDefaults at
+        // render time, but weight is read directly by the algorithms and the
+        // weight display, so it has to be materialised here — this is the only
+        // point where the file's declared defaults are still known.
+        weight: String(d.weight ?? d.value ?? edgeKeyDefs.weight ?? ''),
         label: String(d.label || d.edgelabel || ''),
         directed: dirStr !== 'undirected' as any,
         direction: dirStr as any,
