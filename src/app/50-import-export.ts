@@ -821,15 +821,23 @@
   // attribute statements) satisfies this, so empty exports round-trip while
   // garbage is rejected.
   function isWellFormedDotBody(src: string): boolean {
-    const ID_SRC = '"(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*';
+    const ID_SRC = '"(?:\\.|[^"])*"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*';
     const NUM_SRC = '[+-]?(?:\\d+(\\.\\d*)?|\\.\\d+)';
     const skipWs = (s: string, i: number): number => { while(i < s.length && /[\s;]/.test(s[i])) i++; return i; };
     const matchId = (s: string, i: number): { end: number } | null => {
       const rest = s.slice(i);
-      const quoted = /^"(?:\\.|[^"])+"/.exec(rest);
+      const quoted = /^"(?:\\.|[^"])*"/.exec(rest);
       if(quoted) return { end: i + quoted[0].length };
       const m = /^[A-Za-z0-9_:.\-]*[A-Za-z0-9_][A-Za-z0-9_:.\-]*/.exec(rest);
       if(m && m[0].length) return { end: i + m[0].length };
+      return null;
+    };
+    // One definition of a DOT value (ID, quoted string, or signed number);
+    // built from the same sources of truth the attribute-item regex uses.
+    const numRe = new RegExp('^' + NUM_SRC);
+    const matchValue = (s: string, i: number): { end: number } | null => {
+      const id = matchId(s, i); if(id) return id;
+      const num = numRe.exec(s.slice(i)); if(num) return { end: i + num[0].length };
       return null;
     };
     // Index just after the closing quote of a string starting at i (or s.length if unterminated).
@@ -914,7 +922,7 @@
           const eq = skipWs(s, lhs.end);
           if(s[eq] !== '=') return { ok: false, next: eq };
           const rhsStart = skipWs(s, eq + 1);
-          const rhs = matchId(s, rhsStart);
+          const rhs = matchValue(s, rhsStart);
           if(!rhs) return { ok: false, next: rhsStart };
           i = skipWs(s, rhs.end);
           if(s[i] === ';') i++;

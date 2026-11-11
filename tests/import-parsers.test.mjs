@@ -1040,3 +1040,52 @@ test('a matching id with different provenance is never merged into the existing 
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('valid empty digraphs with quoted assignments and strict prefix import', async () => {
+  const saved = { title: 'keep-me-r13', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { rankdir="LR"; }',
+    'digraph G { size = "8,8"; }',
+    'digraph G { label="a, b"; }',
+    'digraph G { dpi="96"; }',
+    'strict graph G { dpi=96; }',
+    'strict digraph G { rankdir=LR; }',
+    'strict graph G { }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 0, `${JSON.stringify(text)} imports as a valid empty document`);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('empty quoted values and signed numbers are accepted in empty digraphs', async () => {
+  const saved = { title: 'keep-me-r13b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { graph [label=""]; }',
+    'digraph G { node [label=""]; }',
+    'digraph G { dpi=+96; }',
+    'digraph G { ranksep=-0.5; }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 0, `${JSON.stringify(text)} imports as a valid empty document`);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
