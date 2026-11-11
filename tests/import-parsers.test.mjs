@@ -1149,3 +1149,121 @@ test('a persisted document with the same custom id in two scopes is healed at lo
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('appending the same node-scoped GraphML twice reuses one definition instead of splitting the property', async () => {
+  // A graph-scoped definition already occupies the id "score". The first
+  // append mints a fresh id for the incoming node-scope property; the second
+  // append of the SAME file must resolve to that mint instead of minting
+  // another one — otherwise one property splits across definitions and the
+  // definition limit drains.
+  const saved = { title: 'keep-find1', nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id:'score', scope:'graph', type:'string' }],
+    graphCustom: { score: 'graph-value' } };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="n2"><data key="score">42</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const first = exportedGraph(document);
+  assert.equal(first.customAttributes.length, 2, 'the incoming definition survived the merge');
+  const nodeDef = first.customAttributes.find(d => d.scope === 'node');
+  assert.ok(nodeDef, 'a node-scope definition exists');
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const second = exportedGraph(document);
+  assert.equal(second.customAttributes.length, 2, 'the second append reuses the minted definition');
+  const nodeDefs = second.customAttributes.filter(d => d.scope === 'node');
+  assert.equal(nodeDefs.length, 1, 'still exactly one node-scope score definition');
+  const importedNodes = second.nodes.filter(n => n.custom);
+  assert.equal(importedNodes.length, 2, 'both imports added nodes carrying the value');
+  for(const node of importedNodes){
+    assert.equal(node.custom?.[nodeDef.id], '42', 'both nodes bind the value to the same definition');
+    assert.equal(node.custom?.score, undefined, 'the value never binds to the graph-scope id');
+  }
+  assert.equal(second.graphCustom?.score, 'graph-value', 'the graph-scope property is untouched');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('replacing the same for="all" GraphML twice keeps provenance, so a later append reuses the definitions', async () => {
+  // Replace import is wholesale; the second replace of the same file must
+  // resolve to the SAME definitions and re-stamp their provenance markers.
+  // Then appending the file must not create new node or edge definitions.
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="mood" for="all" attr.name="mood" attr.type="string"><default>alright</default></key>',
+    '  <key id="flag" attr.name="flag" attr.type="boolean"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="mood">calm</data>',
+    '    <node id="n1"><data key="mood">happy</data></node>',
+    '    <edge id="e1" source="n1" target="n1"><data key="flag">true</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace
+  const first = exportedGraph(document);
+  const idsBefore = first.customAttributes.map(d => d.id + ':' + d.scope).sort();
+  const byKey = (g, key, scope) => g.customAttributes.find(d => d.dataKey === key && d.scope === scope);
+  assert.ok(byKey(first, 'mood', 'edge'), 'expansion produced an edge-scope mood definition');
+  assert.ok(first.customAttributes.every(d => d.dataKey === 'mood' || d.dataKey === 'flag'), 'every definition carries provenance');
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace again
+  const second = exportedGraph(document);
+  assert.deepEqual(second.customAttributes.map(d => d.id + ':' + d.scope).sort(), idsBefore, 'the second replace resolves to the same definitions');
+  assert.ok(second.customAttributes.every(d => d.dataKey === 'mood' || d.dataKey === 'flag'), 'provenance markers survive the reuse');
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // append
+  const third = exportedGraph(document);
+  assert.equal(third.customAttributes.length, idsBefore.length, 'the append creates no new definitions');
+  const edgeMood = byKey(third, 'mood', 'edge');
+  const importedEdges = third.edges.filter(e => e.custom);
+  assert.ok(importedEdges.length >= 1, 'the appended edge carries its custom values');
+  for(const edge of importedEdges){
+    assert.equal(edge.custom?.[edgeMood.id], 'alright', 'the edge value binds the original edge-scope definition');
+  }
+  assert.ok(third.graphCustom?.mood !== undefined, 'the graph value is retained');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a persisted reserved-id cross-scope pair migrates to distinct ids with values bound per scope', async () => {
+  // "shape" is a reserved (built-in) id. A saved document carrying it as both
+  // a graph-scope and a node-scope definition must migrate to two distinct
+  // ids — with each scope's values bound to its own definition — instead of
+  // both value scopes binding to the same (last) migrated id.
+  const saved = { title: 'shape-xscope',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0, custom:{shape:'node-value'}}],
+    edges: [],
+    customAttributes: [
+      { id:'shape', scope:'graph', type:'string' },
+      { id:'shape', scope:'node', type:'string' },
+    ],
+    graphCustom: { shape: 'graph-value' } };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graph = exportedGraph(document);
+  const graphDef = graph.customAttributes.find(d => d.scope === 'graph');
+  const nodeDef = graph.customAttributes.find(d => d.scope === 'node');
+  assert.equal(graph.customAttributes.length, 2, 'both definitions survive');
+  assert.notEqual(graphDef.id, nodeDef.id, 'the reserved cross-scope pair mints distinct ids');
+  assert.equal(graph.graphCustom?.[graphDef.id], 'graph-value', 'the graph value binds the graph definition');
+  assert.equal(graph.nodes[0].custom?.[nodeDef.id], 'node-value', 'the node value binds the node definition');
+  assert.equal(graph.nodes[0].custom?.[graphDef.id], undefined, 'node values never leak onto the graph definition');
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  assert.ok(exported.includes(graphDef.id) && exported.includes('graph-value'), 'the GraphML export carries the graph property');
+  assert.ok(exported.includes(nodeDef.id) && exported.includes('node-value'), 'the GraphML export carries the node property');
+  document.querySelector('#expCloseBtn').click();
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

@@ -411,11 +411,32 @@
     // and pruning against the merged set drops nothing legitimate. Document-wide
     // (graph-scope) values merge with the imported ones taking precedence.
     // Imported definitions that fit the remaining capacity are merged; the
-    // rest are skipped with a toast. Same id AND scope: the current definition
-    // wins (duplicates are dropped here and consume no capacity). Same id in
-    // different scopes: the incoming definition gets a fresh id downstream.
-    const { defs: cappedDefs, skipped: defsSkipped } = capCustomDefinitions(data.customAttributes, state.customAttributes);
+    // rest are skipped with a toast. Identity is scope-aware and provenance-
+    // aware (see capCustomDefinitions): an identical property merges or
+    // reuses for free, a different property sharing the id gets a fresh id
+    // here, and same id AND scope with matching provenance — the current
+    // definition wins.
+    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(data.customAttributes, state.customAttributes);
     if(defsSkipped) toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
+    if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
+    // Definitions re-created under a fresh id (or reused across an earlier
+    // mint) bind their payload's values to the RESOLVED id. Restricted to the
+    // carried payload — the current document's own values keep their keys.
+    if(renameByPair.size){
+      const remapCustom = (map, scope) => {
+        if(!isRecord(map)) return map;
+        const out = Object.create(null);
+        for(const key of Object.keys(map)) out[renameByPair.get(scope + '|' + key) || key] = map[key];
+        return out;
+      };
+      const remapEntity = (entity, scope) =>
+        isRecord(entity) && isRecord(entity.custom) ? { ...entity, custom: remapCustom(entity.custom, scope) } : entity;
+      data = { ...data,
+        graphCustom: remapCustom(data.graphCustom, 'graph'),
+        nodes: (Array.isArray(data.nodes) ? data.nodes : []).map(node => remapEntity(node, 'node')),
+        edges: (Array.isArray(data.edges) ? data.edges : []).map(edge => remapEntity(edge, 'edge')),
+      };
+    }
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
     const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
     const sane = sanitizeState({...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom});
@@ -487,30 +508,90 @@
       ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
       : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
   }
-  // Keeps the first CUSTOM_DEFINITIONS_MAX unique definitions and reports how
-  // many unique definitions did not fit. A definition merges for free only
-  // when an identical id AND scope already exists — in the current document
-  // or earlier in the imported list — so appending into a nearly full
-  // document never discards a new property that still fits. A same-id
-  // definition of a DIFFERENT scope is a different property: it stays, and
-  // the sanitizer mints it a fresh unique id and rebinds its values.
+  // Identity of an imported definition against the current document (and the
+  // payload itself), in one pass over the carried list:
+  //   1) exact id AND scope match — the current definition wins, the carried
+  //      one merges for free (committed contract).
+  //   2) provenance reuse — the same property (same GraphML key id, same —or
+  //      missing— attr.name, same scope) already lives under another id
+  //      minted by an earlier import. Rebind the carried values to it. A
+  //      candidate whose id is a key of the incoming file is never reused:
+  //      that key may well be a different property (same guard the parser
+  //      applies to reserved-id migrations).
+  //   3) otherwise the id is free — no existing definition claims it.
+  //   4) the id is taken in another scope (or pair) — mint a fresh id, record
+  //      the carried id as provenance so the NEXT import resolves here, and
+  //      rebind the carried values.
+  // Definitions beyond the capacity cap are skipped with a toast. Returns
+  // { defs, skipped, renameByPair, renamed }; renameByPair maps
+  // 'scope|carriedId' -> resolved id for reused/minted definitions, so the
+  // caller remaps the carried payload's values to the resolved id.
   function capCustomDefinitions(defs, existingDefs){
     const existing = Array.isArray(existingDefs) ? existingDefs : [];
-    const budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
-    const seen = new Set(existing.map(attribute => attribute.id + '|' + attribute.scope));
-    const kept = [];
-    let skipped = 0;
-    for(const def of Array.isArray(defs) ? defs : []){
-      if(!isRecord(def)) continue; // unparseable: sanitize drops it too
-      const id = String(def.id ?? '').trim().slice(0, 128);
-      if(!id) continue; // no id: sanitize drops it too
-      const scope = ['graph','node','edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
-      if(seen.has(id + '|' + scope)) continue; // already defined — merges without capacity
-      if(kept.length >= budget){ skipped++; continue; }
-      seen.add(id + '|' + scope);
-      kept.push(def);
+    let budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
+    const scopeOf = (a: AnyRecord | null | undefined) => ['graph','node','edge'].includes(String(a?.scope)) ? String(a?.scope) : 'node';
+    // Provenance agreement for the reuse scan. Name is a wildcard when missing
+    // on either side: a property whose origin is unknown cannot be proven
+    // different, so it reuses the closest marked definition.
+    const provMatch = (ex: AnyRecord | undefined, inc: AnyRecord | undefined) => {
+      const ek = String(ex?.dataKey ?? '').trim(), ik = String(inc?.dataKey ?? '').trim();
+      if(!ek || !ik) return false; // both unmarked: nothing to match on, caller decides via pairs
+      if(ek !== ik) return false;
+      const en = String(ex?.dataName ?? '').trim().toLowerCase(), inm = String(inc?.dataName ?? '').trim().toLowerCase();
+      return !en || !inm || en === inm;
+    };
+    // Every key id used by the incoming file — a reuse candidate whose own id
+    // is one of those keys is never handed out for another property.
+    const fileKeys = new Set<string>();
+    for(const raw of Array.isArray(defs) ? defs : []){
+      const carriedKey = String(isRecord(raw) ? (raw.dataKey ?? raw.id ?? '') : '').trim();
+      if(carriedKey) fileKeys.add(carriedKey);
     }
-    return { defs: kept, skipped };
+    const byPair = new Map<string, AnyRecord>();
+    const byId = new Set<string>();
+    for(const a of existing){ byPair.set(String(a?.id) + '|' + scopeOf(a), a); byId.add(String(a?.id)); }
+    // Reuse is resolved before capacity accounting — a reuse mints nothing and
+    // must never be blocked by a full document.
+    const kept = [];
+    const renameByPair = new Map<string, string>();
+    let skipped = 0, renamed = 0;
+    for(const raw of Array.isArray(defs) ? defs : []){
+      if(!isRecord(raw)) continue; // unparseable: sanitize drops it too
+      const id = String(raw.id ?? '').trim().slice(0, 128);
+      if(!id) continue; // no id: sanitize drops it too
+      const scope = scopeOf(raw);
+      const pairKey = id + '|' + scope;
+      const inc: AnyRecord = {...raw, id, scope};
+      // 1) Exact id AND scope — current definition wins, dropped here.
+      if(byPair.has(pairKey)) continue; // merges without capacity
+      // 2) Provenance reuse — the property already lives under another id.
+      if(inc.dataKey){
+        const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope && !fileKeys.has(String(e?.id)) && provMatch(e, inc));
+        if(reused){ renameByPair.set(scope + '|' + id, String(reused.id)); continue; } // free reuse
+      }
+      // 3)/4) New definition, under the cap.
+      if(budget <= 0){ skipped++; continue; }
+      budget--;
+      let finalId = id;
+      if(byId.has(id)){
+        // The id is taken in another scope — the carried definition needs its
+        // own. Record the carried id as provenance so the NEXT import of the
+        // same file resolves to this mint instead of minting another one.
+        const taken = new Set(byId);
+        for(const a of kept) taken.add(String(a?.id));
+        finalId = uniqueCustomAttributeId(id, taken);
+        renameByPair.set(scope + '|' + id, finalId);
+        if(!inc.dataKey) inc.dataKey = id;
+        renamed++;
+        byId.add(finalId);
+      } else {
+        byId.add(id);
+      }
+      const def = finalId === id ? inc : {...inc, id: finalId};
+      kept.push(def);
+      byPair.set(finalId + '|' + scope, def);
+    }
+    return { defs: kept, skipped, renameByPair, renamed };
   }
   function importGraphData(data: any, label, append){
     // A blank or non-graph input ({}, an empty <graphml>, bare prose as DOT,
@@ -937,6 +1018,13 @@
             : undefined;
           if(prior){
             defId = prior.id;
+            // Re-stamp the provenance the reuse is based on. Dropping the
+            // markers here is what used to make a later re-import mint fresh
+            // node/edge definitions instead of reusing the originals.
+            markers = { dataKey: String((prior as AnyRecord).dataKey ?? id) };
+            const priorName = String((prior as AnyRecord).dataName ?? '');
+            if(priorName) markers.dataName = priorName;
+            else if(importedDataName) markers.dataName = importedDataName;
           } else if(forWhom === 'all' && !migrated){
             const taken = takenNow();
             // The graph scope may keep the bare key id — the file's own key
@@ -952,6 +1040,11 @@
             markers = { dataKey: id, dataName: name };
           } else if(importedDataKey){
             markers = { dataKey: importedDataKey, ...(importedDataName ? { dataName: importedDataName } : {}) };
+          } else {
+            // Plain external key: record its provenance so re-importing the
+            // same file — or a round-trip of an export of it — resolves to
+            // this definition instead of minting a second one each time.
+            markers = { dataKey: id, dataName: name };
           }
           customAttributes.push({id: defId, scope: scope as 'graph' | 'node' | 'edge', type: normalizedType, ...markers});
           customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id

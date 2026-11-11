@@ -1002,7 +1002,7 @@
     // values everywhere — are migrated to a fresh unique id instead of being
     // silently dropped. Ids already present in the input are reserved up
     // front, so the migration target can never overwrite existing data.
-    const customIdRenames = new Map<string, string>();
+    const customIdRenames = new Map<string, string>(); // original id -> FIRST minted id; only binds orphaned values (values with no definition claiming their scope)
     const scopeCustomRenames = new Map<string, string>(); // 'scope|id' -> newId
     const seenCustomDefScopes = new Map<string, Set<string>>();
     const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
@@ -1011,9 +1011,16 @@
         const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
         if(!id || !scope) return null;
+        const rawId = id; // the id before any migration below; mints always rename
         if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){
           const renamed = uniqueCustomAttributeId(id, usedCustomIds);
-          customIdRenames.set(id, renamed);
+          // Both maps, like every mint below: the scope-aware map binds this
+          // definition's scope of values (the same reserved id can name an
+          // unrelated definition in another scope — binding both to the same
+          // mint splits one property and strands the other), the plain map is
+          // only the fallback for values whose scope has no definition.
+          if(!customIdRenames.has(id)) customIdRenames.set(id, renamed);
+          scopeCustomRenames.set(scope + '|' + id, renamed);
           id = renamed;
         }
         // Cross-scope id conflict (legacy reserved rename already applied
@@ -1033,7 +1040,12 @@
         }
         // Keep the importer's migration marker (raw GraphML key id) so
         // re-appending the same external file lands on the same definition.
-        const dataKey = String((attribute as AnyRecord).dataKey ?? '').trim().slice(0, 128);
+        // A definition renamed on load (reserved id migrated or a cross-scope
+        // clash minted apart) records the original id as its dataKey when it
+        // carries no marker of its own — otherwise re-importing the same file
+        // can never find this definition again and mints a fresh one each
+        // time, splitting one property and draining the definition limit.
+        const dataKey = String((attribute as AnyRecord).dataKey ?? '').trim().slice(0, 128) || (id !== rawId ? rawId : '');
         const dataName = String((attribute as AnyRecord).dataName ?? '').toLowerCase().trim().slice(0, 128);
         return dataKey ? {id, scope, type, dataKey, ...(dataName ? {dataName} : {})} : {id, scope, type};
       }).filter(Boolean) as GraphState['customAttributes'];
