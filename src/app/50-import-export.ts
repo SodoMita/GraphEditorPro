@@ -313,6 +313,11 @@
     ['gridMajorAlpha', 'graph', 'grid.major.alpha', 'double'],
   ];
   const GRAPHML_BUILTIN_KEY_IDS = new Set(GRAPHML_BUILTIN_KEYS.map(([id]) => id));
+  // Core's built-in-key test needs these ids to tell the app's own
+  // <key id="edgeStrokeStyle" attr.name="style"> apart from a user's
+  // <key id="style" attr.name="style"> definition. Passed as a thunk so the
+  // classification cannot depend on module evaluation order.
+  registerGraphmlBuiltinKeyIds(() => GRAPHML_BUILTIN_KEYS.map(([id]) => id));
   // <key> lines for the user's custom definitions. An id that collides with a
   // built-in one gets a numbered suffix (arrowSize -> arrowSize2) instead of
   // being emitted twice or dropped, so a definition is never lost in export.
@@ -969,11 +974,13 @@
       const forWhom = k.getAttribute('for') || 'all';
       keyNames[id] = name;
       const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      // Only a name the app reads for this same scope makes a key built-in.
-      // Everything else is a real definition, even when its id collides with a
+      // Built-in is decided by id *and* name: a user definition may legitimately
+      // be called `style` on an edge (a name the exporter also writes), and only
+      // its own id shows it is not the app's key. Everything that is not a
+      // built-in key is a real definition, even when its id collides with a
       // reserved one — the sanitizer renames that, so dropping it here would
       // lose the attribute.
-      if(id && !isBuiltinGraphmlName(name, forWhom) && ['graph','node','edge'].includes(forWhom)){
+      if(id && !isBuiltinGraphmlKey(id, name, forWhom) && ['graph','node','edge'].includes(forWhom)){
         customAttributes.push({id, name: rawName, scope: forWhom as 'graph' | 'node' | 'edge', type: graphmlTypes.includes(attributeType) ? attributeType : 'string'});
       }
       const defEl = k.querySelector('default');
