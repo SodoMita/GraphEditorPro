@@ -1243,3 +1243,50 @@ test('an empty digraph followed only by a comment still imports', async () => {
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('valid single-node DOT statements import', async () => {
+  const saved = { title: 'keep-me-r16a', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    ['digraph G { a }', 'a'],
+    ['digraph G { a [shape=box] }', 'a'],
+    ['digraph G { "quoted node" }', 'quotednode'],
+  ];
+  for(const [text, id] of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 1, `${JSON.stringify(text)} imports as a one-node document`);
+    assert.equal(graph.nodes[0].id, id);
+    assert.match(toasts(document), /imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('node-ish garbage with no extractable nodes is rejected', async () => {
+  const saved = { title: 'keep-me-r16b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const cases = [
+    'digraph G { a b }',
+    'digraph G { a -> }',
+    'digraph G { -- b }',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 1, `${JSON.stringify(text)} must not import as an empty document`);
+    assert.equal(graph.nodes[0].id, 'n1', 'the seeded document is untouched');
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
