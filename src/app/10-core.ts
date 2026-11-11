@@ -631,7 +631,12 @@
     updateCommandStates();
   }
 
-  function sanitizeState(input: unknown): GraphState {
+  // `externalNodeIds` lets a caller say "these ids exist even though they are not
+  // in this payload". Append needs it: an incoming edge may end on a node the host
+  // graph already has. They are treated as *known* endpoints only — never as an id
+  // to resolve a colliding node onto, which is what merging the host's nodes into
+  // the payload used to cause.
+  function sanitizeState(input: unknown, externalNodeIds?: Set<string>): GraphState {
     const base = defaultState();
     if(!isRecord(input)) return base;
     const source = input;
@@ -676,8 +681,17 @@
     const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, 8000).filter(isRecord) : [];
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
-      const from = nodeReferences.get(String(e.from)) || (nodeIds.has(String(e.from)) ? String(e.from) : '');
-      const to = nodeReferences.get(String(e.to)) || (nodeIds.has(String(e.to)) ? String(e.to) : '');
+      const resolveEndpoint = (raw: unknown): string => {
+        // The payload's own nodes decide the mapping, so a colliding id resolves
+        // to the node in *this* document, never to an external one.
+        const mapped = nodeReferences.get(String(raw));
+        if(mapped) return mapped;
+        if(nodeIds.has(String(raw))) return String(raw);
+        if(externalNodeIds?.has(String(raw))) return String(raw);
+        return '';
+      };
+      const from = resolveEndpoint(e.from);
+      const to = resolveEndpoint(e.to);
       if(!from || !to) return; // Drop dangling edges before they reach render/algorithm code.
       const dir = normalizeDirection((e as any).direction ?? (e as any).directed);
       const edge: GraphEdge = {

@@ -1880,3 +1880,83 @@ test('an appended edge that really is dangling is still dropped', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// Append must resolve each edge against the document its endpoints belong to.
+// A node id that exists on both sides is the hard case: the appended edge has to
+// follow the appended node's rename, while an edge that genuinely names a host
+// node has to keep pointing at it.
+function appendPair(host, incoming) {
+  return async () => {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    const pasteJson = async payload => {
+      Object.defineProperty(dom.window.navigator, 'clipboard', {
+        configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+      });
+      document.querySelector('#btnPasteJson').click();
+      await settle(dom.window, 80);
+    };
+    await pasteJson(host);
+    document.querySelector('#optImportAppend').checked = true;
+    await pasteJson(incoming);
+    const graph = exportedGraph(document);
+    const close = () => { assert.deepEqual(errors.map(error => error.message), []); dom.window.close(); };
+    return {graph, close};
+  };
+}
+
+const HOST_TWO = {title: 'host', nodes: [{id: 'n1', label: 'H1', x: 0, y: 0}, {id: 'n2', label: 'H2', x: 100, y: 0}], edges: [{id: 'e1', from: 'n1', to: 'n2'}]};
+
+test('an appended edge follows its node when the id collides with a host node', async () => {
+  // The appended nodes are renamed (n1, n2 already exist), so the appended edge
+  // must follow them. Re-pointing it at the host nodes would silently connect the
+  // wrong pair — it looked plausible on screen and was only visible on export.
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'n1', label: 'I1', x: 50, y: 50}, {id: 'n2', label: 'I2', x: 150, y: 50}],
+    edges: [{id: 'ie', from: 'n1', to: 'n2'}],
+  });
+  const {graph, close} = await run();
+  const appended = graph.nodes.filter(node => node.label === 'I1' || node.label === 'I2');
+  const edge = graph.edges.find(candidate => candidate.id === 'ie');
+  assert.ok(edge, 'the appended edge survives');
+  assert.deepEqual(appended.map(node => node.id).sort(), [edge.from, edge.to].sort(), 'and it joins the appended nodes');
+  const hostEdge = graph.edges.find(candidate => candidate.id === 'e1');
+  assert.deepEqual([hostEdge.from, hostEdge.to], ['n1', 'n2'], 'the host edge is untouched');
+  close();
+});
+
+test('an appended edge may join a host node and an appended one', async () => {
+  // The mixed case, with a collision present to make sure the two rules do not
+  // interfere: one endpoint is genuinely the host's.
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'n1', label: 'I1', x: 50, y: 50}, {id: 'c', label: 'C', x: 70, y: 70}],
+    edges: [{id: 'mix', from: 'c', to: 'n2'}],
+  });
+  const {graph, close} = await run();
+  const edge = graph.edges.find(candidate => candidate.id === 'mix');
+  assert.ok(edge, 'the mixed edge survives');
+  const appended = graph.nodes.find(node => node.label === 'C');
+  assert.equal(edge.from, appended.id, 'the appended endpoint follows its rename');
+  assert.equal(edge.to, 'n2', 'the host endpoint keeps its id');
+  close();
+});
+
+test('a self edge on an appended node keeps both endpoints on it', async () => {
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 's', x: 60, y: 60}], edges: [{id: 'ss', from: 's', to: 's'}]});
+  const {graph, close} = await run();
+  const edge = graph.edges.find(candidate => candidate.id === 'ss');
+  assert.ok(edge, 'the self edge survives');
+  assert.equal(edge.from, edge.to, 'and stays a self edge');
+  close();
+});
+
+test('an appended edge and a host edge may share an id without merging', async () => {
+  // Edge ids collide too; the appended one takes a fresh id and both are kept.
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 'c', x: 60, y: 60}, {id: 'd', x: 90, y: 90}], edges: [{id: 'e1', from: 'c', to: 'd', label: 'INC'}]});
+  const {graph, close} = await run();
+  assert.equal(graph.edges.length, 2, 'both edges are kept');
+  assert.deepEqual(graph.edges.map(edge => edge.label || '').sort(), ['', 'INC'], 'and they stay distinct');
+  close();
+});

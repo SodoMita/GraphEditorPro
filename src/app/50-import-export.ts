@@ -587,11 +587,15 @@
     // the incoming nodes made every such edge look dangling and disappear.
     // Merging the host's nodes in first lets the check see both sides; the host's
     // own nodes are discarded immediately afterwards.
-    const hostNodes = state.nodes.map(n => ({...n}));
-    const sane = sanitizeState({...data, nodes: [...hostNodes, ...(Array.isArray(data.nodes) ? data.nodes : [])], settings: state.settings});
-    // Keep only the imported nodes: the host's are already in state.
-    const hostIds = new Set(hostNodes.map(n => n.id));
-    sane.nodes = sane.nodes.filter(n => !hostIds.has(n.id));
+    // The payload is sanitised on its own, with the host's node ids declared as
+    // known endpoints. Both halves matter:
+    //   * on its own, so a colliding id (`n1`) resolves to the payload's node
+    //     rather than the host's — merging the host nodes in made sanitizeState
+    //     match the host first and silently re-point the appended edge at it;
+    //   * with the host ids known, so an edge that legitimately ends on an
+    //     existing node is not mistaken for a dangling one.
+    const hostIds = new Set(state.nodes.map(n => n.id));
+    const sane = sanitizeState({...data, settings: state.settings}, hostIds);
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
