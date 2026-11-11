@@ -5231,6 +5231,7 @@ function renderEdges() {
             g.addEventListener('pointerdown', ev => {
                 ev.stopPropagation();
                 flushZoomPreview();
+                notePress('edge', e.id);
                 if (ev.button === 1 || ev.button === 2) {
                     registerPointer(ev);
                     pendingEdgeFrom = null;
@@ -5265,10 +5266,12 @@ function renderEdges() {
                 const combine = effectiveSelectCombine(ev);
                 setSelection([], [e.id], { type: 'edge', id: e.id }, combine);
             });
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
-                finishPolygonSelection(false);
-            else
-                editEdgeQuick(e.id); });
+            // Deliberately no stopPropagation: a double click is resolved only on the
+            // canvas (see canvasWrap's dblclick). With pointer capture active the
+            // browser delivers the event there directly; this listener exists only to
+            // commit a pending zoom, and swallowing the event would hide it from the
+            // resolver when it does arrive here.
+            g.addEventListener('dblclick', () => { flushZoomPreview(); });
             edgesLayer.appendChild(g);
             edgeEls.set(e.id, g);
             const fresh = spineEntry(e.id, g);
@@ -5705,10 +5708,8 @@ function renderNodes() {
             g.id = 'node-' + n.id;
             g.dataset.id = n.id;
             g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
-                finishPolygonSelection(false);
-            else
-                editNodeQuick(n.id); });
+            // Resolved on the canvas, for the same reason as the edge handler above.
+            g.addEventListener('dblclick', () => { flushZoomPreview(); });
             nodesLayer.appendChild(g);
             nodeEls.set(n.id, g);
             const fresh = spineEntry(n.id, g);
@@ -8313,7 +8314,38 @@ function isEmptyCanvasTarget(el) {
     // outside the canvas, so use the actual element under the pointer.
     return Boolean(el && canvasWrap.contains(el) && !isCanvasOverlayControl(el) && !el.closest('.node,.edge'));
 }
+// What the last press landed on, so a dblclick that pointer capture retargeted
+// to the canvas can still be attributed. Cleared on release so a stale value
+// cannot make an unrelated double click edit something.
+let lastPressed = null;
+function notePress(kind, id) { lastPressed = { kind, id }; }
+// Resolve which element a dblclick means. Prefer the event target (works when
+// capture is not involved); otherwise fall back to where the pointer actually
+// is, then to the element the press began on.
+function doubleClickTarget(ev) {
+    const direct = ev.target?.closest?.('.node, .edge');
+    if (direct?.dataset?.id)
+        return { kind: direct.classList.contains('node') ? 'node' : 'edge', id: direct.dataset.id };
+    const el = typeof document.elementFromPoint === 'function'
+        ? document.elementFromPoint(ev.clientX, ev.clientY)
+        : null;
+    const at = el?.closest?.('.node, .edge');
+    if (at?.dataset?.id)
+        return { kind: at.classList.contains('node') ? 'node' : 'edge', id: at.dataset.id };
+    return lastPressed;
+}
+function editQuickByHit(hit) {
+    // Only in the tools where a double click is unambiguous. In the drag-select
+    // tools a double click is two sweeps, and in edge/node modes it is drawing.
+    if (state.mode !== 'select' || state.selectTool !== 'single')
+        return;
+    if (hit.kind === 'node')
+        editNodeQuick(hit.id);
+    else
+        editEdgeQuick(hit.id);
+}
 function onNodePointerDown(ev, id) {
+    notePress('node', id);
     ev.preventDefault();
     ev.stopPropagation();
     try {
@@ -8428,6 +8460,10 @@ function onNodePointerDown(ev, id) {
 // #canvasWrap rather than the <svg> it contains, so input over every pixel of
 // the canvas viewport is always received.
 canvasWrap.addEventListener('pointerdown', ev => {
+    // A press on the canvas itself (empty space) means the double click was not
+    // about any element; drop the previous attribution so a stale one cannot
+    // make it edit something.
+    lastPressed = null;
     if (isCanvasOverlayControl(ev.target))
         return;
     svg.focus();
@@ -8498,6 +8534,17 @@ canvasWrap.addEventListener('dblclick', ev => {
         finishPolygonSelection(false);
         return;
     }
+    // Quick edit, resolved here rather than on the node/edge element itself.
+    //
+    // A node press calls setPointerCapture on the canvas so a drag keeps tracking
+    // outside the element. While the canvas holds capture, the browser retargets
+    // the events of that pointer to the capturing element — so the second click
+    // of a double click lands on #canvasWrap, and a dblclick listener on the node
+    // group never fires at all. Naming the element on press and resolving the hit
+    // here works with capture instead of against it.
+    const hit = doubleClickTarget(ev);
+    if (hit)
+        editQuickByHit(hit);
     // Node creation is intentionally handled only by Node-mode pointerdown/tap.
     // This avoids accidental nodes from double-clicks in selection tools or edge mode.
 });
@@ -10304,7 +10351,19 @@ function appendImportedGraph(data, label = 'graph') {
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
     materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
-    const sane = sanitizeState({ ...data, settings: state.settings });
+    // Sanitise against the *merged* node set, not just the incoming one.
+    //
+    // sanitizeState drops edges whose endpoints it cannot resolve, which is right
+    // for a document that stands alone. An append is not that: an incoming edge
+    // may legitimately end on a node that already exists here, and passing only
+    // the incoming nodes made every such edge look dangling and disappear.
+    // Merging the host's nodes in first lets the check see both sides; the host's
+    // own nodes are discarded immediately afterwards.
+    const hostNodes = state.nodes.map(n => ({ ...n }));
+    const sane = sanitizeState({ ...data, nodes: [...hostNodes, ...(Array.isArray(data.nodes) ? data.nodes : [])], settings: state.settings });
+    // Keep only the imported nodes: the host's are already in state.
+    const hostIds = new Set(hostNodes.map(n => n.id));
+    sane.nodes = sane.nodes.filter(n => !hostIds.has(n.id));
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();

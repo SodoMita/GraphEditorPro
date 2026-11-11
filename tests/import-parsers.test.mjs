@@ -1803,3 +1803,80 @@ test('a type default reaches the elements and survives export', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('every <data> key the exporter writes is declared in its own key block', async () => {
+  // The exporter emits its <data> lines as literals, so nothing structurally
+  // stops it naming a key it never declared — which is how the edge style once
+  // went out as "style" while the reader looked for "stroke.style". This checks
+  // the two sides agree, so that class of mismatch fails here rather than in a
+  // round trip.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  // The document needs elements: an empty graph only exports graph-level <data>,
+  // so a mismatch on a node or edge key would never appear here.
+  await paste(document, dom.window, '#btnPasteGraphml', [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="label">A</data></node><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n'));
+  document.querySelector('#btnExportGraphml').click();
+  const xml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  const declared = new Set([...xml.matchAll(/<key id="([^"]+)"/g)].map(match => match[1]));
+  const used = [...xml.matchAll(/<data key="([^"]+)"/g)].map(match => match[1]);
+  for(const key of used){
+    assert.ok(declared.has(key), `<data key="${key}"> has a matching <key> declaration`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an appended edge may end on a node the host graph already has', async () => {
+  // Append keeps the host graph, so an incoming edge is allowed to reference a
+  // node from it. Sanitising the incoming payload alone made every such edge look
+  // dangling and dropped it.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const pasteJson = async payload => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+    });
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 60);
+  };
+  await pasteJson({title: 'host', nodes: [{id: 'a', x: 0, y: 0}, {id: 'a2', x: 20, y: 20}], edges: []});
+  document.querySelector('#optImportAppend').checked = true;
+  await pasteJson({title: 'incoming', nodes: [{id: 'b', x: 60, y: 60}], edges: [{id: 'ab', from: 'a', to: 'b'}]});
+
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.edges.map(edge => edge.id), ['ab'], 'the edge survives');
+  assert.deepEqual(graph.nodes.map(node => node.id), ['a', 'a2', 'b'], 'and the host nodes are not duplicated');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an appended edge that really is dangling is still dropped', async () => {
+  // The counterpart: merging the host nodes must not disable the dangling check.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const pasteJson = async payload => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+    });
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 60);
+  };
+  await pasteJson({title: 'host', nodes: [{id: 'a', x: 0, y: 0}], edges: []});
+  document.querySelector('#optImportAppend').checked = true;
+  await pasteJson({title: 'incoming', nodes: [{id: 'b', x: 60, y: 60}], edges: [{id: 'bad', from: 'b', to: 'nowhere'}]});
+
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.edges.map(edge => edge.id), [], 'a dangling edge is not invented into the graph');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

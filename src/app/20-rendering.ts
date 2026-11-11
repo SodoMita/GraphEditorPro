@@ -1415,6 +1415,7 @@
         g.addEventListener('pointerdown', ev => {
           ev.stopPropagation();
           flushZoomPreview();
+          notePress('edge', e.id);
           if(ev.button === 1 || ev.button === 2){ registerPointer(ev); pendingEdgeFrom = null; startPan(ev); return; }
           if(ev.button !== 0) return;
           if(polygonToolActive()){ registerPointer(ev); handlePolygonPointerDown(ev); return; }
@@ -1433,7 +1434,12 @@
           const combine = effectiveSelectCombine(ev);
           setSelection([], [e.id], {type:'edge', id:e.id}, combine);
         });
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
+        // Deliberately no stopPropagation: a double click is resolved only on the
+        // canvas (see canvasWrap's dblclick). With pointer capture active the
+        // browser delivers the event there directly; this listener exists only to
+        // commit a pending zoom, and swallowing the event would hide it from the
+        // resolver when it does arrive here.
+        g.addEventListener('dblclick', () => { flushZoomPreview(); });
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
         const fresh = spineEntry(e.id, g);
@@ -1817,7 +1823,8 @@
         g = document.createElementNS(NS,'g'); g.classList.add('node');
         g.id = 'node-' + n.id; g.dataset.id = n.id;
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
+        // Resolved on the canvas, for the same reason as the edge handler above.
+        g.addEventListener('dblclick', () => { flushZoomPreview(); });
         nodesLayer.appendChild(g);
         nodeEls.set(n.id, g);
         const fresh = spineEntry(n.id, g);

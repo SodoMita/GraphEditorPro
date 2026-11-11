@@ -579,7 +579,19 @@
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
     materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
-    const sane = sanitizeState({...data, settings: state.settings});
+    // Sanitise against the *merged* node set, not just the incoming one.
+    //
+    // sanitizeState drops edges whose endpoints it cannot resolve, which is right
+    // for a document that stands alone. An append is not that: an incoming edge
+    // may legitimately end on a node that already exists here, and passing only
+    // the incoming nodes made every such edge look dangling and disappear.
+    // Merging the host's nodes in first lets the check see both sides; the host's
+    // own nodes are discarded immediately afterwards.
+    const hostNodes = state.nodes.map(n => ({...n}));
+    const sane = sanitizeState({...data, nodes: [...hostNodes, ...(Array.isArray(data.nodes) ? data.nodes : [])], settings: state.settings});
+    // Keep only the imported nodes: the host's are already in state.
+    const hostIds = new Set(hostNodes.map(n => n.id));
+    sane.nodes = sane.nodes.filter(n => !hostIds.has(n.id));
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
