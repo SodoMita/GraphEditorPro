@@ -655,6 +655,7 @@
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
       edges.push(e); parsed++;
     }
+    if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }
@@ -695,6 +696,7 @@
         }
       }
     }
+    if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }
@@ -735,20 +737,59 @@
     // attached to nodes that no longer exist — and because the sanitizer only
     // drops *unknown* endpoints, an old edge whose id happens to match a new
     // node survived as a stale connection.
+    if(parsed === 0){ toast(I18N.t('csv_nothing_parsed')); return; }
     const replacedEdges = append ? 0 : state.edges.length;
     const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
     csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
     if(replacedEdges > 0) toast(I18N.t('csv_nodes_replaced_edges', {n: state.nodes.length, e: replacedEdges}));
   }
+  // Sequential attribute-list parser, grammar identical to the empty-document
+  // scanner: items are ID, optionally ID = value, separated by
+  // whitespace/commas/semicolons. A value may be a quoted string (single or
+  // double), an HTML-like string (<...>, nested-aware), an ID, or a number.
+  // An item whose value cannot be read is skipped, as the regex did before.
   function parseAttrList(text): AnyRecord {
     const attrs: AnyRecord = {};
     if(!text) return attrs;
-    const re = /([A-Za-z_][\w.:-]*)\s*=\s*("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\]\s]+)/g;
-    let m;
-    while((m = re.exec(text))){
-      let v = m[2].trim();
-      if((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'")) v = dotUnescape(v.slice(1,-1));
-      attrs[m[1].toLowerCase()] = v;
+    let j = 0;
+    const wsOnly = (from: number): number => { let k = from; while(k < text.length && /\s/.test(text[k])) k++; return k; };
+    const skipToSeparator = (from: number): number => { const next = text.slice(from).search(/[\s,;]/); return next < 0 ? text.length : from + next; };
+    while(j < text.length){
+      while(j < text.length && /[\s,;]/.test(text[j])) j++;
+      if(j >= text.length) break;
+      const idMatch = /^[A-Za-z_][\w.:-]*/.exec(text.slice(j));
+      if(!idMatch){ j = skipToSeparator(j); continue; }
+      const key = idMatch[0].toLowerCase();
+      j = wsOnly(j + idMatch[0].length);
+      if(text[j] !== '=') continue; // bare ID — not an assignment; skipped
+      j = wsOnly(j + 1);
+      const c = text[j];
+      let raw: string | null = null;
+      if(c === '"' || c === "'"){
+        const quote = c;
+        let end = j + 1;
+        while(end < text.length){
+          if(text[end] === '\\'){ end += 2; continue; }
+          if(text[end] === quote){ end++; break; }
+          end++;
+        }
+        raw = text.slice(j, Math.min(end, text.length));
+        j = Math.min(end, text.length);
+      } else if(c === '<'){
+        const end = skipDotHtml(text, j);
+        if(end < 0){ j = skipToSeparator(j); continue; }
+        raw = text.slice(j, end);
+        j = end;
+      } else {
+        const bare = /^[^,\]\s]+/.exec(text.slice(j));
+        if(bare){ raw = bare[0]; j += bare[0].length; }
+      }
+      if(raw == null) continue;
+      let v = raw.trim();
+      const q = v[0];
+      const last = v[v.length - 1];
+    if((q === '"' && last === '"') || (q === "'" && last === "'")) v = dotUnescape(v.slice(1, -1));
+      attrs[key] = v;
     }
     return attrs;
   }
@@ -822,6 +863,29 @@
   // usable empty graph and must not replace the document. EOF is only legal
   // where no closing brace is pending, a bare '}' only where one is — so a
   // truncated or padded file can never come back as "empty".
+  // Index just after the closing quote of a string starting at i (or s.length if unterminated).
+  function skipDotString(s: string, i: number): number {
+    let j = i + 1;
+    while(j < s.length){
+      if(s[j] === '\\'){ j += 2; continue; }
+      if(s[j] === '"') return j + 1;
+      j++;
+    }
+    return s.length;
+  }
+  // Index just after an HTML-like string (<...>), tracking nesting depth and
+  // skipping quoted strings inside it. Returns -1 when unterminated.
+  function skipDotHtml(s: string, i: number): number {
+    let j = i + 1, depth = 1;
+    while(j < s.length && depth > 0){
+      const c = s[j];
+      if(c === '"'){ const end = skipDotString(s, j); if(end >= s.length && s[s.length - 1] !== '"') return -1; j = end; continue; }
+      if(c === '<'){ depth++; j++; continue; }
+      if(c === '>'){ depth--; j++; continue; }
+      j++;
+    }
+    return depth === 0 ? j : -1;
+  }
   // Blanks the syntax bytes that live inside quoted strings: braces (which the
   // matchers would read as block delimiters) and arrows (which the edge matcher
   // would read as operators). Length is preserved 1:1, so every match offset
@@ -891,32 +955,9 @@
       if(m && m[0].length) return { end: i + m[0].length };
       return null;
     };
-    // Index just after the closing quote of a string starting at i (or s.length if unterminated).
-    const skipString = (s: string, i: number): number => {
-      let j = i + 1;
-      while(j < s.length){
-        if(s[j] === '\\'){ j += 2; continue; }
-        if(s[j] === '"') return j + 1;
-        j++;
-      }
-      return s.length;
-    };
-    // Index just after an HTML-like string (<...>), tracking nesting depth and
-    // skipping quoted strings inside it. Returns -1 when unterminated.
-    const skipHtml = (s: string, i: number): number => {
-      let j = i + 1, depth = 1;
-      while(j < s.length && depth > 0){
-        const c = s[j];
-        if(c === '"'){ const end = skipString(s, j); if(end >= s.length && s[s.length - 1] !== '"') return -1; j = end; continue; }
-        if(c === '<'){ depth++; j++; continue; }
-        if(c === '>'){ depth--; j++; continue; }
-        j++;
-      }
-      return depth === 0 ? j : -1;
-    };
     // One definition of a DOT value: an HTML-like string, an ID, a quoted string, or a signed number.
     const matchValue = (s: string, i: number): { end: number } | null => {
-      if(s[i] === '<'){ const end = skipHtml(s, i); return end >= 0 ? { end } : null; }
+      if(s[i] === '<'){ const end = skipDotHtml(s, i); return end >= 0 ? { end } : null; }
       const id = matchId(s, i); if(id) return id;
       const num = numRe.exec(s.slice(i)); if(num) return { end: i + num[0].length };
       return null;
@@ -925,8 +966,8 @@
       let depth = 0;
       for(let j = i; j < s.length; j++){
         const c = s[j];
-        if(c === '<'){ const end = skipHtml(s, j); if(end < 0) return -1; j = end - 1; continue; }
-        if(c === '"'){ j = skipString(s, j) - 1; continue; }
+        if(c === '<'){ const end = skipDotHtml(s, j); if(end < 0) return -1; j = end - 1; continue; }
+        if(c === '"'){ j = skipDotString(s, j) - 1; continue; }
         if(c === open) depth++;
         else if(c === close){ depth--; if(!depth) return j + 1; }
       }

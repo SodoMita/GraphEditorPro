@@ -624,6 +624,7 @@ const I18N: I18nService = {
     'appended_n_m': { en: '{label} appended: {n:node}, {m:edge}', ru: '{label}: добавлено {n:node}, {m:edge}' },
     'appended_n_m_discarded': { en: '{label} appended: {n:node}, {m:edge} (discarded {d:edge} with a missing endpoint)', ru: '{label}: добавлено {n:node}, {m:edge} (отброшено висячих рёбер: {d})' },
     'csv_import_capped': { en: 'Imported {imported}; {dropped} dropped — the document limit is {limit}', ru: 'Импортировано: {imported}; отброшено: {dropped} — предел документа {limit}' },
+    'csv_nothing_parsed': { en: 'Nothing could be imported — the document is unchanged', ru: 'Не удалось ничего импортировать — документ не изменён' },
     'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано: {imported}; пропущено записей с неизвестными узлами: {skipped}' },
     'csv_nodes_replaced_edges': { en: 'Imported {n:node}; {e} old edges were dropped together with the replaced graph', ru: 'Импортировано: {n:node}; вместе с заменённым графом удалено старых рёбер: {e}' },
     'matrix_cap_reached': { en: 'The matrix renders at most {cap}×{cap} nodes; the graph was not enlarged further.', ru: 'Матрица отображает не более {cap}×{cap} узлов; граф дальше не увеличивался.' },

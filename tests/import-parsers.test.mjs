@@ -50,6 +50,24 @@ async function paste(document, window, buttonId, text) {
 
 const toasts = document => [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ');
 
+// === General helpers ===
+// Boot the editor on `saved`, paste `text` as DOT, and return the resulting
+// state for assertions. The default saved document is a 2-node, 1-edge graph.
+const DEFAULT_SAVED = () => ({ title: 'keep-general', nodes: [
+  {id:'n1', label:'One', x:0, y:0, order:0},
+  {id:'n2', label:'Two', x:120, y:0, order:1},
+], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] });
+async function pasteDotImport(saved, text){
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', text);
+  const graph = exportedGraph(document);
+  return { dom, document, graph, errors, toastText: toasts(document) };
+}
+// DOT-escape a string payload for embedding inside a double-quoted DOT string.
+const dotEmbed = s => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+
 // === DOT ===
 test('DOT import keeps hex colours and "#" inside labels instead of truncating lines', async () => {
   const {dom, errors} = createEditorDom();
@@ -1521,3 +1539,60 @@ test('a strict header with a graph keyword and name imports as empty', async () 
     dom.window.close();
   }
 });
+
+test('a CSV replace import that parses nothing preserves the document', async () => {
+  const saved = DEFAULT_SAVED();
+  const cases = [
+    ['#btnPasteNodesCsv', 'id,label\n\n\n'],
+    ['#btnPasteEdgesCsv', 'source_id,target_id\n\n\n'],
+    ['#btnPasteMatrixCsv', 'label,A,B\n\n\n'],
+  ];
+  for(const [button, text] of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, button, text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `${button} preserves the nodes`);
+    assert.equal(graph.edges.length, 1, `${button} preserves the edges`);
+    assert.match(toasts(document), /nothing could be imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('HTML attribute values with nesting, spaces and commas round-trip', async () => {
+  const saved = DEFAULT_SAVED();
+  const text = 'digraph G { a [label=<<TABLE><TR><TD>hello world, again</TD></TR></TABLE>>]; }';
+  const {dom, graph, errors, toastText} = await pasteDotImport(saved, text);
+  assert.equal(graph.nodes.length, 1);
+  assert.equal(graph.nodes[0].label, '<<TABLE><TR><TD>hello world, again</TD></TR></TABLE>>', 'the HTML value round-trips including its delimiters');
+  assert.match(toastText, /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('string values are opaque to the parser (generated matrix)', async () => {
+  const payloads = ['{', '}', '->', '--', 'a, b', 'x -> y', 'brace} and{', 'semi;colon', 'back\\slash', 'line\nbreak', '"'];
+  for(const payload of payloads){
+    const embedded = dotEmbed(payload);
+    for(const [name, text, check] of [
+      ['attr label', `digraph G { a [label="${embedded}"]; }`, 'node'],
+      ['graph assignment', `graph G { label="${embedded}"; }`, 'empty'],
+    ]){
+      const saved = DEFAULT_SAVED();
+      const {dom, graph, errors, toastText} = await pasteDotImport(saved, text);
+      if(check === 'node'){
+        assert.equal(graph.nodes.length, 1, `${name} ${JSON.stringify(payload)}: one node, no phantoms`);
+        assert.equal(graph.nodes[0].label, payload, 'the value round-trips byte-for-byte');
+        assert.equal(graph.edges.length, 0, 'no edge is invented from a string value');
+      } else {
+        assert.equal(graph.nodes.length, 0, `${name} ${JSON.stringify(payload)}: valid empty document`);
+        assert.match(toastText, /imported/i);
+      }
+      assert.deepEqual(errors.map(e => e.message), []);
+      dom.window.close();
+    }
+  }
+});
+
