@@ -11239,8 +11239,7 @@ function parseAttrList(text) {
             j = Math.min(end, text.length);
         }
         else if (c === '<') {
-            const end = -1; // MUTATION-PA
-            void skipDotHtml;
+            const end = skipDotHtml(text, j);
             if (end < 0) {
                 j = skipToSeparator(j);
                 continue;
