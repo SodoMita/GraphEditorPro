@@ -993,6 +993,9 @@ test('a matrix whose columns do not resolve preserves the document', async () =>
     // A populated cell beyond the header width (row wider than the header):
     // never an empty matrix — refuse.
     'label,A\nA,,5\n',
+    // A separator-only cell splits into no weights — populated, unhonorable.
+    'label,A\nA,";"\n',
+    'label,A\nA,";;,;"\n',
   ];
   for(const text of cases){
     const {dom, errors} = createEditorDom(saved);

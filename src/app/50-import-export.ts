@@ -710,6 +710,13 @@
         const toId = resolveNode(labels[c-1]);
         if(!toId){ skipped++; continue; }
         const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
+        if(weights.length === 0){
+          // A separator-only cell (";") splits into no weights at all. It
+          // was populated and unhonorable — count it, never let it vanish
+          // from the accounting (or the empty-graph guard accept it).
+          skipped++;
+          continue;
+        }
         for(const w of weights){
           edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: state.settings.directed, type:'' });
           parsed++;
@@ -717,11 +724,12 @@
       }
     }
     // Commit zero edges only when the file says "empty graph": rows of live
-    // nodes over live columns, and not a single populated cell anywhere
-    // (every populated cell is honored into parsed or counted into skipped,
-    // so parsed === 0 with skipped === 0 means wholly empty cells — the
-    // editor's own edgeless export). Anything else is refused and the
-    // document is preserved.
+    // nodes over live columns, and no populated byte anywhere that was not
+    // honored — every populated cell is parsed into an edge, or counted as
+    // skipped (beyond the header width, unknown column, or a separator-only
+    // cell that splits into no weights). parsed === 0 with skipped === 0
+    // therefore means wholly empty cells: the editor's own edgeless export.
+    // Anything else is refused and the document is preserved.
     const recognizable = labels.length > 0 && resolvableColumns === labels.length
       && validRows > 0 && skipped === 0;
     if(parsed === 0 && !append && !recognizable){ toast(I18N.t('csv_nothing_parsed')); return; }
