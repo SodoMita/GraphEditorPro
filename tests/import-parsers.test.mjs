@@ -1803,3 +1803,179 @@ test('a type default reaches the elements and survives export', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// === DOT interoperability units and shapes (QVGE_GAP_ANALYSIS.md §1.7, §1.8) ===
+test('DOT export writes pos in inches, like width/height and like QVGE', async () => {
+  const saved = {
+    title: 'units',
+    nodes: [
+      {id:'n1', label:'A', x:72, y:-144, width:72, height:72, order:0},
+      {id:'n2', label:'B', x:-36, y:36, order:1},
+    ],
+    edges: [],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  // 72 px = 1 inch, and DOT's y axis points up while the editor's points down.
+  assert.match(dot, /pos="1,2!"/, 'x=72 y=-144 becomes 1,2 in inches');
+  assert.match(dot, /pos="-0\.5,-0\.5!"/, 'negative coordinates convert too');
+  assert.match(dot, /width=1\.0000/, 'width already used inches, and still does');
+  // No inputscale: the file speaks inches, which is what neato assumes.
+  assert.doesNotMatch(dot, /inputscale/, 'positions are inches, so no rescale is declared');
+});
+
+test('DOT import reads pos as inches and honours an explicit inputscale in points', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  const dot = [
+    'digraph G {',
+    '  a [pos="1,2!"];',
+    '  b [pos="3,-4!"];',
+    '  a -> b;',
+    '}',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+  assert.equal(byId.a.x, 72, '1 inch is 72 px');
+  assert.equal(byId.a.y, -144, 'the y axis flips back');
+  assert.equal(byId.b.y, 288, '-4 becomes +288');
+
+  // `inputscale=72` means the numbers are points: 72 points = 1 inch = 72 px.
+  const {dom: dom2} = createEditorDom();
+  const {document: document2} = dom2.window;
+  await paste(document2, dom2.window, '#btnPasteDot', [
+    'digraph G {',
+    '  graph [inputscale=72];',
+    '  a [pos="72,144!"];',
+    '}',
+  ].join('\n'));
+  const points = exportedGraph(document2);
+  assert.equal(points.nodes[0].x, 72, '72 points stay 72 px');
+  assert.equal(points.nodes[0].y, -144, 'and the sign still flips');
+});
+
+test('DOT export names the hexagon hexagon, so QVGE does not turn it into a disc', async () => {
+  const saved = {
+    title: 'shapes',
+    nodes: [
+      {id:'n1', label:'H', x:0, y:0, shape:'hexagon', order:0},
+      {id:'n2', label:'D', x:100, y:0, shape:'triangleDown', order:1},
+      {id:'n3', label:'U', x:200, y:0, shape:'triangleUp', order:2},
+      {id:'n4', label:'S', x:300, y:0, shape:'square', order:3},
+      {id:'n5', label:'C', x:400, y:0, shape:'circle', order:4},
+      {id:'n6', label:'R', x:500, y:0, shape:'diamond', order:5},
+    ],
+    edges: [],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(dot, /shape="hexagon"/, 'the GraphViz/QVGE name, not polygon');
+  assert.doesNotMatch(dot, /shape="polygon"/, 'polygon is unknown to QVGE and degrades to a disc');
+  assert.doesNotMatch(dot, /sides=6/, 'sides only means anything for shape=polygon');
+  assert.match(dot, /shape="invtriangle"/);
+  assert.match(dot, /shape="triangle"/);
+  assert.match(dot, /shape="box"/);
+  assert.match(dot, /shape="ellipse"/);
+});
+
+test('DOT import maps QVGE\'s triangle2 to a downward triangle, not an upward one', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [shape="triangle2"];',
+    '  b [shape="triangle"];',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+  assert.equal(byId.a.shape, 'triangleDown', 'triangle2 is QVGE for the inverted triangle');
+  assert.equal(byId.b.shape, 'triangleUp');
+});
+
+test('an appended edges CSV never renames the edges already in the document', async () => {
+  const saved = {
+    title: 'dup',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', weight:'3', label:'original'}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#optImportAppend').checked = true;
+  pickFile(dom.window, document, 'id,source_id,target_id,weight,label\ne1,n1,n2,9,imported', 'edges.csv', 'edges-csv');
+  await settle(dom.window, 120);
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges.length, 2);
+  const original = graph.edges.find(e => e.id === 'e1');
+  assert.ok(original, 'the pre-existing edge keeps its id');
+  assert.equal(original.label, 'original', 'and its own data — the newcomer yields');
+  assert.equal(original.weight, '3');
+  const imported = graph.edges.find(e => e.id !== 'e1');
+  assert.equal(imported.label, 'imported');
+  assert.equal(imported.weight, '9');
+});
+
+// === CSV file import is reachable (QVGE_GAP_ANALYSIS.md §1.5) ===
+// The parsers existed and were tested through the clipboard, but `#fileImport`
+// did not accept .csv and no control ever called chooseImport('csv'), so the
+// file branch of importFile() was dead code. These drive the real element.
+function pickFile(window, document, text, name, forcedFormat) {
+  const input = document.querySelector('#fileImport');
+  const file = new window.File([text], name, {type: 'text/csv'});
+  if(forcedFormat) input.dataset.format = forcedFormat;
+  Object.defineProperty(input, 'files', {configurable: true, value: [file]});
+  input.dispatchEvent(new window.Event('change', {bubbles: true}));
+}
+
+test('each CSV row has a file-import button, and #fileImport accepts .csv', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  for(const id of ['btnImportEdgesCsv', 'btnImportMatrixCsv', 'btnImportNodesCsv']){
+    assert.ok(document.querySelector(`#${id}`), `${id} exists`);
+  }
+  const accept = document.querySelector('#fileImport').getAttribute('accept') || '';
+  assert.ok(accept.includes('.csv'), `the file picker lists .csv, got "${accept}"`);
+  // The dialog has to be pre-narrowed per button, or a user importing edges
+  // would be shown .dot files the reader cannot parse.
+  document.querySelector('#btnImportNodesCsv').click();
+  assert.ok((document.querySelector('#fileImport').getAttribute('accept') || '').includes('.csv'));
+  assert.equal(document.querySelector('#fileImport').dataset.format, 'nodes-csv');
+});
+
+test('the nodes CSV button imports a .csv file, ignoring its name', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  // Named "export.csv" on purpose: the old heuristic guessed the kind from the
+  // filename, so an explicit button has to win over it.
+  pickFile(dom.window, document, 'order,id,label,x,y,shape,color,type\n0,n1,Alpha,10,20,circle,#0ea5e9,\n1,n2,Beta,30,40,square,#8b5cf6,', 'export.csv');
+  await settle(dom.window, 120);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(n => n.label), ['Alpha', 'Beta']);
+  assert.deepEqual(graph.nodes.map(n => n.x), [10, 30]);
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+test('the edges CSV button imports edges against the existing nodes', async () => {
+  const saved = {
+    title: 'csv',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  // Appending to the existing graph keeps the nodes the edges point at.
+  document.querySelector('#optImportAppend').checked = true;
+  pickFile(dom.window, document, 'id,source_id,target_id,weight\ne1,n1,n2,7', 'anything.csv');
+  await settle(dom.window, 120);
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].weight, '7');
+  assert.deepEqual(errors.map(error => error.message), []);
+});

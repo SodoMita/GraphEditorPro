@@ -850,6 +850,26 @@
     saveSoon();
   }
   function flushZoomPreview(){ if(zoomPreview) commitZoomPreview(); }
+  // "100%" has to mean the scale the camera fields describe, not "make
+  // everything fit". `cameraReadout` prints zoom as 1000/viewBox.w*100 (a
+  // 1000-unit-wide camera is 100%), so resetting to 1:1 means a 1000-unit-wide
+  // window centred where the camera already is. Keeping the same aspect ratio
+  // as the viewport means the visible area keeps its shape; Fit stays on its
+  // own button. QVGE does the same with `zoomTo(1.0)`.
+  function resetZoom(){
+    const cur = currentCamera();
+    cancelZoomPreview();
+    if(pan){ state.viewBox = {...pan.previewViewBox}; pan = null; $('#canvasWrap').classList.remove('panning'); gestureActive = false; }
+    if(pinch){ state.viewBox = {...pinch.previewViewBox}; pinch = null; $('#canvasWrap').classList.remove('panning'); gestureActive = false; }
+    const rect = canvasViewportRect();
+    updateCameraViewportAspect(rect);
+    const aspect = (rect.width > 0 && rect.height > 0) ? rect.width / rect.height : 1000 / 660;
+    const w = 1000, h = w / aspect;
+    const cx = cur.x + cur.w / 2, cy = cur.y + cur.h / 2;
+    state.viewBox = boundedCamera({ x: cx - w / 2, y: cy - h / 2, w, h });
+    applyCamera();
+    saveSoon();
+  }
   function fitView(){
     cancelZoomPreview();
     if(!state.nodes.length){

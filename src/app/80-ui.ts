@@ -207,7 +207,7 @@
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { const r=canvasViewportRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
     $('#btnZoomOut').addEventListener('click', () => { const r=canvasViewportRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
-    $('#btnZoomReset').addEventListener('click', fitView); $('#btnFit').addEventListener('click', fitView);
+    $('#btnZoomReset').addEventListener('click', resetZoom); $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
     $('#matrixSize').addEventListener('keydown', ev => { if(ev.key === 'Enter') setMatrixDimension(ev.target.value); });
     $('#btnMatrixAddNode').addEventListener('click', addNodeFromMatrix);
@@ -417,6 +417,14 @@
     $('#btnImportDot').addEventListener('click', () => chooseImport('dot', '.dot,.gv,text/vnd.graphviz,text/plain'));
     $('#btnExportGraphml').addEventListener('click', exportGraphml);
     $('#btnImportGraphml').addEventListener('click', () => chooseImport('graphml', '.graphml,.xml,application/graphml+xml,application/xml,text/xml'));
+    // CSV has had a parser and three importers for a long time, but no way in
+    // from a file: `#fileImport` did not list .csv in `accept` and nothing ever
+    // called chooseImport('csv'), so the branch in importFile() was dead. Each
+    // row now has its own Import button; the format is passed explicitly so a
+    // file called "export.csv" is parsed as the kind the user asked for.
+    $('#btnImportEdgesCsv').addEventListener('click', () => chooseImport('edges-csv', '.csv,text/csv,text/plain'));
+    $('#btnImportMatrixCsv').addEventListener('click', () => chooseImport('matrix-csv', '.csv,text/csv,text/plain'));
+    $('#btnImportNodesCsv').addEventListener('click', () => chooseImport('nodes-csv', '.csv,text/csv,text/plain'));
     $('#fileImport').addEventListener('change', e => { importFile(e.target.files[0], e.target.dataset.format || 'auto'); e.target.value=''; e.target.dataset.format='auto'; });
     $('#btnExportEdgesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-edges.csv`, edgeCsv(), 'text/csv;charset=utf-8'); });
     $('#btnExportMatrixCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-matrix.csv`, matrixCsv(), 'text/csv;charset=utf-8'); });

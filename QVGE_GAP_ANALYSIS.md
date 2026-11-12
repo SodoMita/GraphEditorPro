@@ -1,8 +1,10 @@
 # GraphEditorPro ↔ QVGE: полный инвентарь функциональных пробелов
 
 **Дата:** 12 ноября 2026
-**Версия отчёта:** 5 (четвёртая волна источниковой сверки + правки по формам узлов, единицам `pos`, портам GraphML, типам атрибутов и GEXF-namespace); чужой код сверен по свежему клону QVGE `a456b65`, номера строк подтверждены построчно
-**GEP:** ветка `arena/ae1b20f4-grapheditorpro`, коммит `9395e39` (2026-11-11). Сборка: `npm ci` + `npm run build` → `index.html` **779 631 байт**, static-output gate пройден; `npm test` → **201/201** тест, 0 падений (~103 с).
+**Версия отчёта:** 6 (четвёртая волна источниковой сверки + правки по формам узлов, единицам `pos`, портам GraphML, типам атрибутов и GEXF-namespace; затем сверка после исправления пяти дефектов GEP); чужой код сверен по свежему клону QVGE `a456b65`, номера строк подтверждены построчно
+**GEP:** ветка `arena/ae1b20f4-grapheditorpro`, коммит `9395e39` (2026-11-11) + правки по дефектам §1.5/§1.7/§1.8/§6.1. Сборка: `npm ci` + `npm run build` → `index.html` **787 759 байт**, static-output gate пройден; `npm test` → **210/210** тестов, 0 падений (~127 с).
+
+> **Что изменилось в версии 6.** Пять подтверждённых дефектов GEP, перечисленных в отчёте, исправлены и покрыты тестами: файловый импорт CSV (§1.5), единицы `pos` в DOT (§1.7), имя `hexagon` (§1.8), чтение `triangle2` (§1.8) и кнопка «100 %» (§6.1). Пункты паритета P1–P6 не трогались — это по-прежнему план, а не сделанное. Места, где дефект закрыт, помечены явно: «Исправлено после отчёта (дефект №N)».
 **QVGE:** `github.com/ArsMasiuk/qvge`, ветка `0.7.dev`, HEAD `a456b65` (2025-07-01); в коде `qvgeVersionString("0.7.0")`, в `CHANGES` уже есть раздел 0.7.1.
 **Метод:** построчное сравнение исходников. QVGE в песочнице не собирается (нет Qt, apt и download.qt.io недоступны), поэтому всё ниже — вывод из кода QVGE, а не из запуска. Внешние факты (формат DOT, единицы `pos`, поведение `inputscale`) сверялись по документации GraphViz — ссылки по ходу текста (§1.7).
 
@@ -37,8 +39,8 @@
 | **GEXF** | чтение + запись (общий поднабор; есть `qvge:points` для полилиний — но с невалидным namespace, см. §9.14) | — | **нет** |
 | **GraphML** | чтение + запись | чтение + запись | паритет по формату, но см. §3.3 (значения custom-атрибутов) и §3.1 (порты) |
 | **GML** | чтение (через OGDF `readGML`) | — | **нет** |
-| **CSV** (только `edge,start,end`) | чтение (`saveSupported()==false`) | чтение + запись (богаче QVGE) | у GEP **сильнее**; но ср. §1.5 |
-| **DOT / `.dot` `.gv`** | чтение + запись | чтение + запись | паритет по формату; разрыв в опциях (§1.6), единицах `pos` (§1.7) и имени формы `hexagon` (§1.8) |
+| **CSV** (только `edge,start,end`) | чтение (`saveSupported()==false`) | чтение + запись (богаче QVGE); импорт из файла **исправлен** | у GEP **сильнее**; остался только выбор разделителя/превью (§1.5) |
+| **DOT / `.dot` `.gv`** | чтение + запись | чтение + запись | паритет по формату; разрыв только в опциях экспорта (§1.6) — единицы `pos` (§1.7) и имя `hexagon` (§1.8) **исправлены** |
 | **Plain DOT** (`.plain`, `.txt`) | чтение (вывод `dot -Tplain`) | — | **нет** |
 | **`.bak.xgr`** (автобэкап) | пишет сам, открывается как обычный XGR | — | **нет** ни бэкапа, ни формата |
 
@@ -79,11 +81,9 @@ QVGE:
 GEP (`src/app/50-import-export.ts`):
 - `parseCsv()` — **фиксированная запятая**, кавычки поддерживаются, `;` и Tab не понимаются.
 - `importEdgesCsv` (колонки `id/source_id|from/target_id|to/weight/label/directed/type/color/stroke_size/stroke_style/arrow_size`), `importMatrixCsv`, `importNodesCsv` — функционально **богаче** QVGE.
-- Диспетчер `importFile()` умеет `csv` с авто-детектом по имени и заголовку (`importFile`, строка 1575+), **но**: кнопки импорта CSV в интерфейсе нет, а `#fileImport` объявлен как `accept="application/json,.json,.dot,.gv,.graphml,.xml"` (`src/template.html:584`), и `chooseImport()` вызывается только для json/dot/graphml (`src/app/80-ui.ts:415-419`, `chooseImport` — строка 358).
+- Диспетчер `importFile()` умеет `csv` с авто-детектом по имени и заголовку (`importFile`, строка 1615+), и у каждого CSV-ряда теперь есть кнопка «Импорт» (`#btnImportEdgesCsv` / `#btnImportMatrixCsv` / `#btnImportNodesCsv`, `src/template.html:570/577/584`), которая зовёт `chooseImport('edges-csv'|'matrix-csv'|'nodes-csv', '.csv,text/csv')` (`src/app/80-ui.ts:421-429`). `#fileImport` получил `.csv` в `accept`, а явный формат из кнопки перебивает эвристику по имени файла — иначе файл `export.csv` разбирался бы не тем читателем (`src/app/50-import-export.ts:1629-1639`).
 
-**Разрыв двойной:**
-1. файловый импорт CSV фактически недостижим из UI (есть только «вставить из буфера»);
-2. нет выбора разделителя и превью — файл с `;` или Tab не прочитается.
+*Исправлено после отчёта (дефект №2).* Остаётся один разрыв, и он уже **фича**, а не дефект: нет выбора разделителя и превью колонок — файл с `;` или Tab `parseCsv()` не прочитает.
 
 ### 1.6 DOT-экспорт: опции
 
@@ -105,7 +105,11 @@ GEP `exportDotText()` (`src/app/50-import-export.ts:200-265`): всегда `gra
 1. **Внутренняя несогласованность.** В одном узле GEP пишет `width` в дюймах, а `pos` в пикселях — то есть сам файл противоречит себе: узел шириной 1.4 «дюйма» окажется в 72 раза меньше расстояния до соседа.
 2. **Обмен с QVGE даёт масштаб 72×.** Файл GEP, отрендеренный через `neato`, раздувается в 72 раза (пиксели прочитаны как дюймы); файл QVGE, открытый в GEP, сжимается в 72 раза.
 
-**Разрыв:** GEP должен либо писать дюймы (`x/72`, как QVGE и как ждёт `neato` по умолчанию), либо писать пиксели, но тогда добавлять `inputscale=72` в графовые атрибуты и читать `pos` с учётом этого атрибута (`inputscale` в GEP сейчас не упоминается ни разу — grep пуст). Второй вариант точнее (не теряет пиксельную сетку) и парсится обратно без потерь; первый — совместим «из коробки». В любом случае нужен тест round-trip GEP→QVGE→GEP.
+**Разрыв:** GEP должен либо писать дюймы (`x/72`, как QVGE и как ждёт `neato` по умолчанию), либо писать пиксели, но тогда добавлять `inputscale=72` в графовые атрибуты и читать `pos` с учётом этого атрибута. Второй вариант точнее (не теряет пиксельную сетку) и парсится обратно без потерь; первый — совместим «из коробки».
+
+**Исправлено после отчёта (дефект №4)** — выбран первый вариант. `DOT_UNITS_PER_INCH = 72` и `dotCoord()` (`src/app/50-import-export.ts:198-199`): экспорт пишет `pos = x/72, -y/72`, ровно как QVGE; `inputscale` в экспорт **не** добавляется (иначе GraphViz поделил бы повторно — дюймы и есть его умолчание). Импорт читает объявленный `inputscale` (единицы → пункты на дюйм) и масштабирует `pos` как `72/inputscale` (`:937-941`), `width`/`height` — через ту же константу. Тесты: `tests/import-parsers.test.mjs`, «DOT export writes pos in inches…» и «DOT import reads pos as inches and honours an explicit inputscale…».
+
+Цена решения, зафиксированная в коде: DOT-файлы, сохранённые прошлыми версиями GEP (пиксели, без `inputscale`), теперь читаются в 72 раза крупнее — равномерное масштабирование, которое снимает Fit.
 
 Что QVGE последователен, видно и по его plain-DOT-читателю: там всё умножается на 72 и на масштаб графа (`x*72.0*gi.g_scale`, `width*72.0*gi.g_scale` — `src/qvgeio/CFormatPlainDOT.cpp:324-327`), т.е. одна и та же единица применяется к позиции и к размеру. В GEP к размеру применяется 72, а к позиции — нет.
 
@@ -120,16 +124,18 @@ GEP `exportDotText()` (`src/app/50-import-export.ts:200-265`): всегда `gra
 | ромб | `diamond` | `diamond` | `diamond` | `diamond` | `diamond` | `diamond` |
 | треугольник вверх | `triangleUp` | `triangle` | `triangle` | `triangle` | `triangle` → triangleUp | `triangle` |
 | треугольник вниз | `triangleDown` | `invtriangle` | `triangle2` | `invtriangle` | `invtriangle`/`triangledown` → triangleDown | `invtriangle` → triangle2 |
-| шестиугольник | `hexagon` | **`polygon` + `sides=6`** | `hexagon` | `hexagon` | `hexagon`/`hex` → hexagon; `polygon`+`sides=6` → hexagon (только фолбэк, `src/app/50-import-export.ts:961-964`) | **`polygon` неизвестен → disc** |
+| шестиугольник | `hexagon` | ~~`polygon` + `sides=6`~~ → **`hexagon`** | `hexagon` | `hexagon` | `hexagon`/`hex` → hexagon; `polygon`+`sides=6` → hexagon (только фолбэк, `src/app/50-import-export.ts:1114-1126`) | **`polygon` неизвестен → disc** (теперь GEP его и не пишет) |
 
 Источники: QVGE — отрисовка `CNode.cpp:1023-1065` (ветки `square`, `diamond`, `hexagon`, `triangle`, `triangle2`, иначе disc), чтение `fromDotShape` (`CFormatDOT.cpp:69-77`: `ellipse→disc`, `rect|box→square`, `invtriangle→triangle2`, остальное без изменений), запись `toDotShape` (`CFileSerializerDOT.cpp:100-108`: `disc→ellipse`, `square→rect`, `triangle2→invtriangle`). GEP — `dotShapeName` (`src/app/50-import-export.ts:177-184`), `sides=6, regular=true` для гексагона (строка 215), `parseShape` (строки 1077-1089).
 
 Выводы:
 - **QVGE → GEP** формы переносятся без потерь: имена QVGE (`ellipse`, `rect`, `invtriangle`, `diamond`, `hexagon`, `triangle`) все покрыты `parseShape`.
 - **GEP → QVGE** теряется ровно одна форма: `polygon` не входит ни в список переименований `fromDotShape`, ни в ветки отрисовки `CNode`, поэтому шестиугольник приходит **кругом** (а `sides`/`regular` у QVGE — просто лишние атрибуты). Это тот же класс дефекта, что и в §1.7: не отсутствующая фича, а расхождение соглашений в уже поддерживаемом формате.
-- Ещё мелочь: сырой DOT с `shape=triangle2` (внутреннее имя QVGE в XGR/настройках) GEP разберёт как `triangleUp` — правило `includes('triangle')` стоит последним, но `triangle2` не матчится ни с одним из более ранних, т.е. направление перевернётся. На DOT-файлах QVGE это не проявляется (пишет `invtriangle`), но правило стоит ужесточить: добавить `triangle2` в ветку `triangleDown`.
+- ~~Ещё мелочь: сырой DOT с `shape=triangle2` GEP разберёт как `triangleUp`~~ — **исправлено (дефект №5)**: `triangle2` добавлен в ветку `triangleDown` (`src/app/50-import-export.ts:1119-1123`), тест «DOT import maps QVGE's triangle2 to a downward triangle».
 
-**Разрыв:** писать в DOT `hexagon` (это валидная фигура GraphViz и родное имя QVGE) вместо `polygon`. Тогда `sides`/`regular` становятся мёртвыми атрибутами (они действуют только при `shape=polygon`) — их лучше перестать писать, но и вреда от них нет: любой потребитель DOT их просто проигнорирует. Чинится одной строкой в `dotShapeName` + тест round-trip; заодно в `parseShape` — добавить `triangle2` в ветку `triangleDown`.
+**Разрыв:** писать в DOT `hexagon` (это валидная фигура GraphViz и родное имя QVGE) вместо `polygon`; тогда `sides`/`regular` — мёртвые атрибуты, и писать их не нужно.
+
+**Исправлено после отчёта (дефекты №3 и №5).** `dotShapeName` возвращает `hexagon`, `sides=6`/`regular=true` из экспорта убраны (`src/app/50-import-export.ts:183-190, 234`), `triangle2` читается как `triangleDown`. Тесты: «DOT export names the hexagon hexagon…» и «DOT import maps QVGE's triangle2…».
 
 ### 1.9 Сохранение файла, dirty-guard, автобэкап
 
@@ -320,7 +326,7 @@ GEP: фон и цвета/альфа сетки есть (`canvasBgColor`, `grid
 | **Snap to Grid** | есть (`optSnap`, плюс раздельные Snap X / Snap Y) | паритет/лучше |
 | **Show Node Ids** / **Show Edge Ids** | нет | см. §3.4. У QVGE это видимость атрибута `id` в метке, по умолчанию **включена** (`showNodeIds`/`showEdgeIds`, `CNodeEditorUIController.cpp:848-850, 864-865`) и запоминается в `QSettings` |
 | **Zoom / Unzoom** | есть (кнопки ±) | паритет |
-| **Reset Zoom (100%)** | **сломан**: кнопка «100%» с `title="Reset zoom"` вызывает `fitView()` (`src/app/80-ui.ts:210`). В QVGE это `m_editorView->zoomTo(1.0)` (`resetZoom()` строка 997), т.е. масштаб 1:1, а не «вписать» | вернуть собственно 100 % |
+| **Reset Zoom (100%)** | ~~сломан: кнопка «100%» вызывает `fitView()`~~ — **исправлено (дефект №1)**: своя `resetZoom()` ставит камеру шириной 1000 единиц (это и есть 100 % по формуле HUD `1000/vb.w*100`, `src/app/70-controls.ts:93`) вокруг текущего центра, сохраняя аспект вьюпорта (`src/app/40-interactions.ts:855-876`), `fitView` остался на `#btnFit` | теперь 1:1, как `zoomTo(1.0)` у QVGE |
 | **Fit to View** | есть (`btnFit`, `fitView`) | паритет |
 | **Fit Selection** | нет | `CEditorView::fitSelectedToView` (строка 90) в GEP отсутствует; рамка Fit считается по всем узлам |
 | **Zoom Back** (вернуться к зуму до последнего Fit) | нет | в QVGE `fitToView()` перед подгонкой запоминает `m_zoomBeforeFit` и `m_dxyBeforeFit`, а `zoomBack()` восстанавливает оба (`CEditorView.cpp:77-87, 113-117`); в GEP история камеры не хранится |
@@ -424,7 +430,7 @@ GEP: фон и цвета/альфа сетки есть (`canvasBgColor`, `grid
 
 | Блок | Пунктов | Что закрывает |
 |---|---|---|
-| **P1 Форматы и документ** | 11 | GEXF, GML(read), plain-DOT(read), XGR/`.bak.xgr`, Recent Files, CLI, drag&drop, CSV-разделитель+превью, DOT-опции, DOT-интероп (`pos` в §1.7 + формы в §1.8), Save/Save As + dirty-guard |
+| **P1 Форматы и документ** | 11 | GEXF, GML(read), plain-DOT(read), XGR/`.bak.xgr`, Recent Files, CLI, drag&drop, CSV-разделитель+превью, DOT-опции, Save/Save As + dirty-guard (DOT-интероп из §1.7/§1.8 и файловый импорт CSV из §1.5 **уже исправлены**) |
 | **P2 Экспорт изображений** | 3 | PNG/JPG/TIFF/BMP + DPI + cut-to-content, SVG, PDF (page setup) |
 | **P3 Структурные данные** | 6 | порты, полилинии, значения custom-атрибутов, показ ID/атрибутов в метке, z-order (только чтение из GEXF + команды), многострочные метки |
 | **P4 Инструменты** | 12 | поиск, Change Id/Swap, commutation table, merge, Link/Unlink, контекстное меню, Ctrl+Click, Select All/Toggle/Nodes only/Edges only, Ctrl-drag clone, Shift axis-lock, Alt snap, uniform size |
@@ -440,7 +446,7 @@ GEP: фон и цвета/альфа сетки есть (`canvasBgColor`, `grid
 5. **Спринт «инструменты» (P4)**: поиск, Select All/инверсия/тип, Ctrl+Click, контекстное меню (оно же хост для Change Id, Link/Unlink, merge и портов).
 6. **Спринт «раскладки» (P5)** и **«полировка» (P6)** — по остаточному принципу.
 
-**Отдельно, вне сравнения:** README устарел — в разделе «Build and safety guarantees» заявляет **141/141 тестов** и `index.html` **725 516 B**, фактически 201 тест и 779 631 B. `AUDIT.md` содержит те же цифры (строки 34, 300, 332, 341), но это документ с датой и ревизией (`2026-11-04`, `0461e9f`) — его числа историчны и переписывать их не нужно; обновлять стоит только README и, при желании, дописать в AUDIT строку «проверено на ревизии…».
+**Отдельно, вне сравнения:** README устарел — в разделе «Build and safety guarantees» заявлял **141/141 тестов** и `index.html` **725 516 B**; после правок README обновлён до фактических **210 тестов** и **787 759 B**. `AUDIT.md` содержит те же цифры (строки 34, 300, 332, 341), но это документ с датой и ревизией (`2026-11-04`, `0461e9f`) — его числа историчны и переписывать их не нужно; обновлять стоит только README и, при желании, дописать в AUDIT строку «проверено на ревизии…».
 
 ---
 

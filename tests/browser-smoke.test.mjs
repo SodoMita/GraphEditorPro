@@ -674,3 +674,46 @@ test('dialog copy follows the document language', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// QVGE_GAP_ANALYSIS.md §6.1: "100%" used to call fitView, so the button that
+// reads 100% produced whatever geometry the graph happened to have.
+test('the 100% button resets the scale to 1:1 instead of fitting the graph', async () => {
+  const saved = {
+    title: 'zoom',
+    nodes: [
+      {id:'n1', label:'far left', x:-4000, y:-2000, order:0},
+      {id:'n2', label:'far right', x:4000, y:2000, order:1},
+    ],
+    edges: [],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  await nextFrame(dom.window);
+
+  // Fit first: two nodes 8000 units apart make the camera much wider than 1000.
+  document.querySelector('#btnFit').click();
+  await nextFrame(dom.window);
+  const fitted = Number(document.querySelector('#cameraW').value);
+  assert.ok(fitted > 1000, `Fit widens the camera to hold the graph, got ${fitted}`);
+
+  document.querySelector('#btnZoomReset').click();
+  await nextFrame(dom.window);
+  const reset = Number(document.querySelector('#cameraW').value);
+  assert.equal(reset, 1000, '100% is a 1000-unit-wide camera, the app\'s own zoom reference');
+  // The viewport is 1000x660, so 1:1 keeps the aspect ratio and the height follows.
+  const height = Number(document.querySelector('#cameraH').value);
+  assert.ok(Math.abs(height - 660) < 1, `aspect preserved: 1000 wide is 660 high, got ${height}`);
+  // Centred on the same point: Fit is centred on the graph's midpoint, and the
+  // reset must not jump somewhere else.
+  assert.equal(Number(document.querySelector('#cameraX').value), 0, 'stays centred on the graph');
+  assert.equal(Number(document.querySelector('#cameraY').value), 0);
+
+  // And "Fit view" still fits — the two buttons must not have been swapped.
+  document.querySelector('#btnFit').click();
+  await nextFrame(dom.window);
+  assert.ok(Number(document.querySelector('#cameraW').value) > 1000, 'Fit view still fits');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+});

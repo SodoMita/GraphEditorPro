@@ -1367,21 +1367,24 @@
                     <button id="btnExportEdgesCsv" class="btn small symbol-only good" title="Export Edges CSV" data-i18n-title="export_edges_csv" aria-label="Export Edges CSV" data-i18n-aria-label="export_edges_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
                     <button id="btnCopyEdgeCsv" class="btn small symbol-only" title="Copy Edges" data-i18n-title="copy_edges" aria-label="Copy Edges" data-i18n-aria-label="copy_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
                     <button id="btnPasteEdgesCsv" class="btn small symbol-only" title="Paste Edges" data-i18n-title="paste_edges" aria-label="Paste Edges" data-i18n-aria-label="paste_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportEdgesCsv" class="btn small symbol-only" title="Import Edges CSV" data-i18n-title="import_edges_csv" aria-label="Import Edges CSV" data-i18n-aria-label="import_edges_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
                   </div>
                   <div class="io-row">
                     <span class="io-format" data-i18n="matrix_csv">Matrix CSV</span>
                     <button id="btnExportMatrixCsv" class="btn small symbol-only good" title="Export Matrix CSV" data-i18n-title="export_matrix_csv" aria-label="Export Matrix CSV" data-i18n-aria-label="export_matrix_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
                     <button id="btnCopyMatrixCsv" class="btn small symbol-only" title="Copy Matrix" data-i18n-title="copy_matrix" aria-label="Copy Matrix" data-i18n-aria-label="copy_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
                     <button id="btnPasteMatrixCsv" class="btn small symbol-only" title="Paste Matrix" data-i18n-title="paste_matrix" aria-label="Paste Matrix" data-i18n-aria-label="paste_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportMatrixCsv" class="btn small symbol-only" title="Import Matrix CSV" data-i18n-title="import_matrix_csv" aria-label="Import Matrix CSV" data-i18n-aria-label="import_matrix_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
                   </div>
                   <div class="io-row">
                     <span class="io-format" data-i18n="nodes_csv">Nodes CSV</span>
                     <button id="btnExportNodesCsv" class="btn small symbol-only good" title="Export Nodes CSV" data-i18n-title="export_nodes_csv" aria-label="Export Nodes CSV" data-i18n-aria-label="export_nodes_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
                     <button id="btnCopyNodesCsv" class="btn small symbol-only" title="Copy Nodes" data-i18n-title="copy_nodes" aria-label="Copy Nodes" data-i18n-aria-label="copy_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
                     <button id="btnPasteNodesCsv" class="btn small symbol-only" title="Paste Nodes" data-i18n-title="paste_nodes" aria-label="Paste Nodes" data-i18n-aria-label="paste_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportNodesCsv" class="btn small symbol-only" title="Import Nodes CSV" data-i18n-title="import_nodes_csv" aria-label="Import Nodes CSV" data-i18n-aria-label="import_nodes_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
                   </div>
                 </div>
-                <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml" hidden />
+                <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml,.csv,text/csv" hidden />
               </div>
             </details>
 
@@ -1986,14 +1989,17 @@ const I18N = {
         'import_graphml': { en: 'Import GraphML', ru: 'Импорт GraphML' },
         'edges_csv': { en: 'Edges CSV', ru: 'Рёбра CSV' },
         'export_edges_csv': { en: 'Export Edges CSV', ru: 'Экспорт рёбер CSV' },
+        'import_edges_csv': { en: 'Import Edges CSV', ru: 'Импорт рёбер CSV' },
         'copy_edges': { en: 'Copy Edges', ru: 'Копировать рёбра' },
         'paste_edges': { en: 'Paste Edges', ru: 'Вставить рёбра' },
         'matrix_csv': { en: 'Matrix CSV', ru: 'Матрица CSV' },
         'export_matrix_csv': { en: 'Export Matrix CSV', ru: 'Экспорт матрицы CSV' },
+        'import_matrix_csv': { en: 'Import Matrix CSV', ru: 'Импорт матрицы CSV' },
         'copy_matrix': { en: 'Copy Matrix', ru: 'Копировать матрицу' },
         'paste_matrix': { en: 'Paste Matrix', ru: 'Вставить матрицу' },
         'nodes_csv': { en: 'Nodes CSV', ru: 'Узлы CSV' },
         'export_nodes_csv': { en: 'Export Nodes CSV', ru: 'Экспорт узлов CSV' },
+        'import_nodes_csv': { en: 'Import Nodes CSV', ru: 'Импорт узлов CSV' },
         'copy_nodes': { en: 'Copy Nodes', ru: 'Копировать узлы' },
         'paste_nodes': { en: 'Paste Nodes', ru: 'Вставить узлы' },
         'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Включите «Добавить», чтобы влить импортированные узлы и рёбра в текущий граф без изменения стилей и фона.' },
@@ -2195,6 +2201,7 @@ const I18N = {
         'no_matrix_data': { en: 'No matrix data', ru: 'Нет данных матрицы' },
         'no_node_data': { en: 'No node data', ru: 'Нет данных узлов' },
         'csv_needs_cols': { en: 'CSV needs source_id and target_id columns', ru: 'CSV требует колонки source_id и target_id' },
+        'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
         'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
         'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
         'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
@@ -8852,6 +8859,36 @@ function commitZoomPreview() {
 }
 function flushZoomPreview() { if (zoomPreview)
     commitZoomPreview(); }
+// "100%" has to mean the scale the camera fields describe, not "make
+// everything fit". `cameraReadout` prints zoom as 1000/viewBox.w*100 (a
+// 1000-unit-wide camera is 100%), so resetting to 1:1 means a 1000-unit-wide
+// window centred where the camera already is. Keeping the same aspect ratio
+// as the viewport means the visible area keeps its shape; Fit stays on its
+// own button. QVGE does the same with `zoomTo(1.0)`.
+function resetZoom() {
+    const cur = currentCamera();
+    cancelZoomPreview();
+    if (pan) {
+        state.viewBox = { ...pan.previewViewBox };
+        pan = null;
+        $('#canvasWrap').classList.remove('panning');
+        gestureActive = false;
+    }
+    if (pinch) {
+        state.viewBox = { ...pinch.previewViewBox };
+        pinch = null;
+        $('#canvasWrap').classList.remove('panning');
+        gestureActive = false;
+    }
+    const rect = canvasViewportRect();
+    updateCameraViewportAspect(rect);
+    const aspect = (rect.width > 0 && rect.height > 0) ? rect.width / rect.height : 1000 / 660;
+    const w = 1000, h = w / aspect;
+    const cx = cur.x + cur.w / 2, cy = cur.y + cur.h / 2;
+    state.viewBox = boundedCamera({ x: cx - w / 2, y: cy - h / 2, w, h });
+    applyCamera();
+    saveSoon();
+}
 function fitView() {
     cancelZoomPreview();
     if (!state.nodes.length) {
@@ -9894,14 +9931,30 @@ function showExportPreview(name, content, type) {
 function fileBase() { return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'graph'; }
 function exportJson() { showExportPreview(`${fileBase()}.graph.json`, JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json;charset=utf-8'); }
 // Map the editor's shape names onto DOT's vocabulary (and back in parseDot).
+//
+// `hexagon` and not `polygon`: GraphViz knows a real `hexagon` shape, and it
+// is the name QVGE stores internally (`CNode.cpp` draws the `hexagon` branch,
+// `fromDotShape` passes it through). Emitting `polygon` + `sides=6` made a
+// round-trip through QVGE turn every hexagon into a disc, because `polygon`
+// matches none of its branches — see QVGE_GAP_ANALYSIS.md §1.8.
 function dotShapeName(shape) {
     return shape === 'diamond' ? 'diamond'
         : shape === 'square' ? 'box'
             : shape === 'triangleUp' ? 'triangle'
                 : shape === 'triangleDown' ? 'invtriangle'
-                    : shape === 'hexagon' ? 'polygon'
+                    : shape === 'hexagon' ? 'hexagon'
                         : 'ellipse';
 }
+// DOT `pos` is in INCHES when neato/fdp read it back (GraphViz `inputscale`
+// defaults to "no scaling, units on input are inches"), and QVGE writes and
+// reads it the same way (`CFileSerializerDOT.cpp`: `pos().x() / 72`, and
+// `x * 72` on import). The editor works in pixels at the same 72-per-inch
+// ratio `width`/`height` already use, so positions are converted on both
+// sides. Before this, one node said `width` in inches and `pos` in pixels —
+// the file contradicted itself, and a hop through QVGE or `neato` rescaled
+// the graph by 72×. QVGE_GAP_ANALYSIS.md §1.7.
+const DOT_UNITS_PER_INCH = 72;
+function dotCoord(value) { return fmtCoord(value / DOT_UNITS_PER_INCH); }
 function dotId(id) { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : '"' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
 function dotString(v) { return '"' + String(v ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'; }
 // DOT style mapping for QVGE parity: QVGE uses style values solid/dashed/dotted/dashdot/dashdotdot/none
@@ -9934,12 +9987,15 @@ function exportDotText() {
     const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
     // `graph` may only use `--`, and a mutual edge is invalid there anyway.
     const op = allUndirected ? '--' : '->';
+    // No `inputscale` here on purpose: `pos` is written in inches below, which
+    // is what neato/fdp assume when the attribute is absent. Declaring
+    // `inputscale=72` would announce points and divide the positions by 72 a
+    // second time. `width`/`height` are inches as well, so the whole file now
+    // speaks one unit.
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
         const v = nodeVisual(n);
-        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
-        if (v.shape === 'hexagon')
-            attrs.push('sides=6', 'regular=true');
+        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${dotCoord(n.x)},${dotCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
         // QVGE DOT: fillcolor=fill, color=stroke.color, penwidth=stroke.size, style=stroke.style
         attrs.push(`fillcolor=${dotString(v.color)}`);
         attrs.push(`color=${dotString(v.strokeColor)}`);
@@ -9963,7 +10019,7 @@ function exportDotText() {
                 attrs.push(`style=${dotString('filled')}`);
             }
         }
-        attrs.push(`width=${(v.width / 72).toFixed(4)}`, `height=${(v.height / 72).toFixed(4)}`);
+        attrs.push(`width=${(v.width / DOT_UNITS_PER_INCH).toFixed(4)}`, `height=${(v.height / DOT_UNITS_PER_INCH).toFixed(4)}`);
         attrs.push(`order=${n.order ?? 0}`);
         if (n.type)
             attrs.push(`type=${dotString(n.type)}`);
@@ -10474,16 +10530,19 @@ function commitCsvGraph(nodes, edges, label) {
     saveSoon();
     return { droppedNodes, droppedEdges };
 }
-function csvImportToast(imported, dropped, skipped, limit, key) {
+function csvImportToast(imported, dropped, skipped, limit, key, renamed = 0) {
+    // One toast, not a stack of four: the import reports itself once, and a
+    // rename note is appended rather than pushed on top of the summary.
+    const suffix = renamed > 0 ? ' · ' + I18N.t('csv_ids_renamed', { n: renamed }) : '';
     if (dropped > 0) {
-        toast(I18N.t('csv_import_capped', { imported, dropped, limit }));
+        toast(I18N.t('csv_import_capped', { imported, dropped, limit }) + suffix);
         return;
     }
     if (skipped > 0) {
-        toast(I18N.t('csv_import_skipped', { imported, skipped }));
+        toast(I18N.t('csv_import_skipped', { imported, skipped }) + suffix);
         return;
     }
-    toast(I18N.t(key, { n: imported }));
+    toast(I18N.t(key, { n: imported }) + suffix);
 }
 function importEdgesCsv(text, append) {
     const rows = parseCsv(text);
@@ -10513,6 +10572,26 @@ function importEdgesCsv(text, append) {
     };
     const initialEdges = append ? state.edges.length : 0;
     const edges = append ? state.edges.slice() : [];
+    // An imported id that is already taken must not silently rename an existing
+    // edge: the sanitizer names the *second* holder, which used to be the old
+    // edge, so an import could rewrite the document it was appending to. Claims
+    // are tracked here and the newcomer yields instead, with a count the toast
+    // reports. Same rule for the generated `e<N>` fallback.
+    const claimedEdgeIds = new Set(edges.map(e => e.id));
+    let renamed = 0;
+    const claimEdgeId = (wanted) => {
+        if (!claimedEdgeIds.has(wanted)) {
+            claimedEdgeIds.add(wanted);
+            return wanted;
+        }
+        renamed++;
+        let n = state.nextEdge + parsed;
+        while (claimedEdgeIds.has('e' + n))
+            n++;
+        const id = 'e' + n;
+        claimedEdgeIds.add(id);
+        return id;
+    };
     let parsed = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -10525,9 +10604,10 @@ function importEdgesCsv(text, append) {
             continue;
         }
         const e = {
-            // Duplicate/invalid ids are normalised by the sanitizer below, so no
-            // quadratic uniqueness scan is needed here.
-            id: (iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed),
+            id: claimEdgeId((iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed)),
+            // `from`/`to` are what the state model and the sanitizer read; `source`
+            // and `target` are only export aliases, so writing those two would make
+            // the sanitizer drop the edge without an error.
             from, to,
             weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0, 50) : '',
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
@@ -10547,7 +10627,7 @@ function importEdgesCsv(text, append) {
         parsed++;
     }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
-    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', renamed);
 }
 function importMatrixCsv(text, append) {
     const rows = parseCsv(text);
@@ -10755,6 +10835,15 @@ function parseDot(text) {
     if (open >= 0 && close > open)
         body = body.slice(open + 1, close);
     const nodes = new Map(), edges = [];
+    // `pos` units follow the GraphViz rule, which QVGE follows too: without
+    // `inputscale` the numbers are INCHES; with it they are points, scaled by
+    // `value / inputscale` inches. Both convert to this app's pixels at 72 per
+    // inch. Files written by releases before this fix hold pixels and no
+    // `inputscale`, so they come back 72× larger — a uniform scale that Fit
+    // undoes, and the price of no longer contradicting every other tool.
+    const declaredScale = parseFloat((body.match(/\binputscale\s*=\s*"?([0-9.]+)/i) || [])[1]);
+    const dotPointsPerInch = Number.isFinite(declaredScale) && declaredScale > 0 ? declaredScale : 1;
+    const dotPosScale = DOT_UNITS_PER_INCH / dotPointsPerInch;
     const ensureNode = id => { if (!nodes.has(id))
         nodes.set(id, { id: safeId(id, 'n'), original: id, label: id, x: 0, y: 0, shape: 'circle', color: '#0ea5e9' }); return nodes.get(id); };
     const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]+)';
@@ -10855,15 +10944,18 @@ function parseDot(text) {
         }
         // width/height from DOT are in inches (72 dpi -> px)
         if (attrs.width != null && Number.isFinite(Number(attrs.width)))
-            n.width = Math.max(10, Math.round(Number(attrs.width) * 72));
+            n.width = Math.max(10, Math.round(Number(attrs.width) * DOT_UNITS_PER_INCH));
         if (attrs.height != null && Number.isFinite(Number(attrs.height)))
-            n.height = Math.max(10, Math.round(Number(attrs.height) * 72));
+            n.height = Math.max(10, Math.round(Number(attrs.height) * DOT_UNITS_PER_INCH));
+        // `pos` is in inches too (GraphViz `inputscale` default), so it converts
+        // with the same 72 as width/height above; `dotPosScale` is that 72 unless
+        // the file declares `inputscale`, which switches the unit to points.
         if (attrs.pos) {
             const parts = attrs.pos.replace('!', '').split(',').map(Number);
             if (Number.isFinite(parts[0]))
-                n.x = parts[0];
+                n.x = parts[0] * dotPosScale;
             if (Number.isFinite(parts[1]))
-                n.y = -parts[1];
+                n.y = -parts[1] * dotPosScale;
         }
     }
     const arr = [...nodes.values()];
@@ -10968,7 +11060,10 @@ function parseShape(raw) {
         return 'square';
     // "invtriangle" is DOT's downward triangle; it must be tested before the
     // generic "triangle" rule below or every downward triangle becomes upward.
-    if (s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down')
+    // `triangle2` is QVGE's internal name for the same shape (it appears in XGR
+    // files and class attributes), so it belongs on this branch too — without
+    // it the generic rule below turned it into an upward triangle.
+    if (s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down' || s === 'triangle2')
         return 'triangleDown';
     if (s.includes('triangleup') || s === 'triangle up' || s === 'triangle-up')
         return 'triangleUp';
@@ -11525,6 +11620,21 @@ function importFile(file, forcedFormat = 'auto') {
             const name = (file.name || '').toLowerCase();
             const format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
             const append = $('#optImportAppend')?.checked;
+            // An explicit CSV kind (chosen with a per-format Import button) skips
+            // the filename/header heuristic below: a user who pressed "Import Nodes
+            // CSV" means nodes, whatever the file is called. The three readers keep
+            // their own column validation, so a mismatched file reports itself.
+            if (format !== 'auto' && format.endsWith('-csv')) {
+                if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
+                    return;
+                if (format === 'edges-csv')
+                    importEdgesCsv(text, append);
+                else if (format === 'matrix-csv')
+                    importMatrixCsv(text, append);
+                else
+                    importNodesCsv(text, append);
+                return;
+            }
             if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
                 return;
             if (format === 'dot')
@@ -13172,7 +13282,7 @@ function wireUi() {
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { const r = canvasViewportRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
     $('#btnZoomOut').addEventListener('click', () => { const r = canvasViewportRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
-    $('#btnZoomReset').addEventListener('click', fitView);
+    $('#btnZoomReset').addEventListener('click', resetZoom);
     $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
     $('#matrixSize').addEventListener('keydown', ev => { if (ev.key === 'Enter')
@@ -13489,6 +13599,14 @@ function wireUi() {
     $('#btnImportDot').addEventListener('click', () => chooseImport('dot', '.dot,.gv,text/vnd.graphviz,text/plain'));
     $('#btnExportGraphml').addEventListener('click', exportGraphml);
     $('#btnImportGraphml').addEventListener('click', () => chooseImport('graphml', '.graphml,.xml,application/graphml+xml,application/xml,text/xml'));
+    // CSV has had a parser and three importers for a long time, but no way in
+    // from a file: `#fileImport` did not list .csv in `accept` and nothing ever
+    // called chooseImport('csv'), so the branch in importFile() was dead. Each
+    // row now has its own Import button; the format is passed explicitly so a
+    // file called "export.csv" is parsed as the kind the user asked for.
+    $('#btnImportEdgesCsv').addEventListener('click', () => chooseImport('edges-csv', '.csv,text/csv,text/plain'));
+    $('#btnImportMatrixCsv').addEventListener('click', () => chooseImport('matrix-csv', '.csv,text/csv,text/plain'));
+    $('#btnImportNodesCsv').addEventListener('click', () => chooseImport('nodes-csv', '.csv,text/csv,text/plain'));
     $('#fileImport').addEventListener('change', e => { importFile(e.target.files[0], e.target.dataset.format || 'auto'); e.target.value = ''; e.target.dataset.format = 'auto'; });
     $('#btnExportEdgesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-edges.csv`, edgeCsv(), 'text/csv;charset=utf-8'); });
     $('#btnExportMatrixCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-matrix.csv`, matrixCsv(), 'text/csv;charset=utf-8'); });
