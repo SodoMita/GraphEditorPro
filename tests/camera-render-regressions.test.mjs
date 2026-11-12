@@ -1261,3 +1261,41 @@ test('a clipped edge shows its label at the ORIGINAL midpoint when that midpoint
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('fitting a graph with a node at a huge coordinate does not crash the grid', async () => {
+  // The decimated grid step comes from the camera span. With a node parked at
+  // 1e308 the span overflows to Infinity, so the step did too, and worldGridPhase
+  // fed Math.round(Infinity) to BigInt — which throws, from the middle of
+  // applyCamera, leaving the canvas blank. A step that large means nothing at any
+  // zoom, so it reports "no phase" and the caller's existing finiteness check
+  // skips the grid.
+  const graph = {
+    title: 'far-node', mode: 'select',
+    nodes: [
+      { id: 'near', label: 'NEAR', x: 0, y: 0 },
+      { id: 'far', label: 'FAR', x: 1e308, y: 0 },
+    ],
+    edges: [{ id: 'e1', from: 'near', to: 'far' }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  setCanvasRect(document.getElementById('graphCanvas'));
+
+  document.getElementById('btnFit').click();
+  await nextFrame(window);
+
+  assert.deepEqual(
+    errors.map(error => String(error.detail?.message || error.message)),
+    [],
+    'fit must not throw',
+  );
+  // And the camera still works afterwards: a plain re-render at the imported
+  // camera draws the near node again.
+  document.getElementById('cameraX').value = String(-500);
+  document.getElementById('cameraX').dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.ok(document.getElementById('node-near'), 'the near node still renders');
+  dom.window.close();
+});

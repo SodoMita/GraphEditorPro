@@ -4754,6 +4754,14 @@ function invalidateGridCache() { gridBounds = null; }
 // k*stepX - remainder corresponds to world G + k*stepX, where G is a multiple
 // of majorX. BigInt makes the remainder exact even for a 1e20 world camera.
 function worldGridPhase(origin, majorStep) {
+    // A camera can span enough that the decimated grid step itself overflows to
+    // Infinity (a node parked at a huge coordinate, then Fit). BigInt rejects
+    // that, and the throw escaped from the middle of a render, leaving the canvas
+    // blank. A step that large is meaningless anyway: nothing is drawn at that
+    // scale, so treat it as "no phase" and let the caller's own finiteness check
+    // skip the grid.
+    if (!Number.isFinite(majorStep) || !Number.isFinite(finite(origin, NaN)))
+        return 0;
     const m = BigInt(Math.max(1, Math.round(majorStep)));
     const v = BigInt(Math.trunc(finite(origin, 0)));
     return Number(((v % m) + m) % m);
