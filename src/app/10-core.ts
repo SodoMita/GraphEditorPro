@@ -17,6 +17,17 @@
   // is hidden *below* this cap; it can never raise the cap itself.
   const MATRIX_MAX_CELLS = 14400;
   const MATRIX_MAX_NODES = Math.floor(Math.sqrt(MATRIX_MAX_CELLS));  // 120
+  // Import ceilings. A pasted or dropped document is untrusted, and these bounds
+  // are what keep a hostile payload from locking the tab up. Truncation is
+  // reported by the importer rather than silently dropping entries.
+  const MAX_IMPORT_NODES = 3000;
+  const MAX_IMPORT_EDGES = 8000;
+  // Set by the most recent sanitizeState: how many nodes/edges its ceilings cut.
+  // Kept beside the caps rather than inside GraphState because it describes the
+  // *import that just happened*, not the document — nothing should persist it or
+  // undo it. sanitizeState is synchronous and its callers read this immediately.
+  let lastImportDropped = {nodes: 0, edges: 0};
+  function takeImportDropped(){ const dropped = lastImportDropped; lastImportDropped = {nodes: 0, edges: 0}; return dropped; }
   // Pair-interaction budget for the force layout (see layoutForce): bounds one
   // click to roughly a second on a mid-range machine instead of O(iter·n²).
   const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
@@ -638,6 +649,7 @@
   // the payload used to cause.
   function sanitizeState(input: unknown, externalNodeIds?: Set<string>): GraphState {
     const base = defaultState();
+    lastImportDropped = {nodes: 0, edges: 0};
     if(!isRecord(input)) return base;
     const source = input;
     const validShape = (value: unknown) => NODE_SHAPES.includes(String(value)) ? String(value) : '';  // '' = unset, falls back to default at render
@@ -648,7 +660,13 @@
 
     const usedNodeIds = new Set<string>();
     const nodeReferences = new Map<string, string>();
-    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, 3000).filter(isRecord) : [];
+    // How many entries the ceilings cut, so an importer can tell the user instead
+    // of appearing to succeed. Counted against the raw list, before the record
+    // filter, because that filter is a per-entry concern and already silent.
+    const nodeOverflow = Array.isArray(source.nodes) ? Math.max(0, source.nodes.length - MAX_IMPORT_NODES) : 0;
+    const edgeOverflow = Array.isArray(source.edges) ? Math.max(0, source.edges.length - MAX_IMPORT_EDGES) : 0;
+    lastImportDropped = {nodes: nodeOverflow, edges: edgeOverflow};
+    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, MAX_IMPORT_NODES).filter(isRecord) : [];
     const nodes: GraphNode[] = rawNodes.map((n, i) => {
       const rawId = String(n.id || ('n' + (i + 1)));
       const id = uniqueSafeId(rawId, 'n', usedNodeIds);
@@ -678,7 +696,7 @@
 
     const nodeIds = new Set(nodes.map(node => node.id));
     const usedEdgeIds = new Set<string>();
-    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, 8000).filter(isRecord) : [];
+    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, MAX_IMPORT_EDGES).filter(isRecord) : [];
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
       const resolveEndpoint = (raw: unknown): string => {

@@ -525,9 +525,14 @@
     // if the file explicitly carries its own defaults.
     const mergedSettings = {...state.settings, ...(data.settings || {})};
     const sane = sanitizeState({...data, title:data.title || fileBase(), settings: mergedSettings});
+    const dropped = takeImportDropped();
     state = {...state, ...sane, selected:null, selection:{nodes:[], edges:[]}};
     appHistory=[snapshot()]; appHistoryIndex=0;
     syncControls(); updateUndoRedo(); fitView(); queueRender(true, true); saveSoon();
+    // The ceilings silently cut the tail of a large document. Saying so matters
+    // more than the import message: the graph on screen is no longer the file.
+    const lost = dropped.nodes + dropped.edges;
+    if(lost > 0){ toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: sane.nodes.length, m: sane.edges.length}), dropped: I18N.t('n_nodes_m_edges', {n: dropped.nodes, m: dropped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})})); return; }
     toast(I18N.t('imported', {label: label}));
   }
   // Resolve an element's *unset* visual properties against the defaults of the
@@ -680,6 +685,14 @@
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
+    const capped = takeImportDropped();
+    const lost = capped.nodes + capped.edges;
+    // Truncation first: it means the document itself did not fit, so the counts
+    // below would understate what the user expected to see.
+    if(lost > 0){
+      toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: sane.nodes.length, m: validEdges.length}), dropped: I18N.t('n_nodes_m_edges', {n: capped.nodes, m: capped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})}));
+      return;
+    }
     toast(discarded > 0
       ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
       : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));

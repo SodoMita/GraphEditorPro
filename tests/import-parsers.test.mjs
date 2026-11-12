@@ -2106,3 +2106,41 @@ test('the empty-payload guard does not block formats that legitimately bring lit
     dom.window.close();
   }
 });
+
+test('an over-large document says what the ceiling dropped', async () => {
+  // The ceilings are a deliberate guard against a hostile payload, but cutting
+  // 500 nodes off the tail and reporting "JSON imported" leaves the user with a
+  // graph that silently is not their file. Both modes must say so.
+  const big = {
+    title: 'big',
+    nodes: Array.from({length: 3005}, (_, i) => ({id: 'n' + i, label: 'L' + i})),
+    edges: [],
+  };
+  for (const append of [false, true]) {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(big)}});
+    document.querySelector('#optImportAppend').checked = append;
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 300);
+    const toast = [...document.querySelectorAll('.toast')].map(el => el.textContent).join(' ');
+    assert.match(toast, /5 nodes .* dropped/, `truncation is reported (append=${append})`);
+    assert.equal(exportedGraph(document).nodes.length, 3000, 'and the ceiling still holds');
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('a document inside the ceiling imports with no truncation notice', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const small = {title: 's', nodes: [{id: 'a', label: 'A'}, {id: 'b', label: 'B'}], edges: [{id: 'e', from: 'a', to: 'b'}]};
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(small)}});
+  document.querySelector('#btnPasteJson').click();
+  await settle(dom.window, 120);
+  const toast = [...document.querySelectorAll('.toast')].map(el => el.textContent).join(' ');
+  assert.doesNotMatch(toast, /dropped/, 'no truncation notice for a normal import');
+  assert.match(toast, /imported/i);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
