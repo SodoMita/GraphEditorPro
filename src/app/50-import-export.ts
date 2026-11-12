@@ -50,9 +50,23 @@
     for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.arrowSize??'',e.labelColor||'',e.labelSize??'']); }
     return rowsToCsv(rows);
   }
+  // A node carries far more than position and fill colour, and a CSV that only
+  // wrote those silently reset the rest on re-import. The columns are the same
+  // properties every other format writes, read from the resolved visual so an
+  // inherited value is recorded rather than a blank. Columns are appended after
+  // the original eight, so a file made by an older build still imports, and a
+  // reader that only knows the first eight still finds them where they were.
+  const NODE_CSV_COLUMNS = ['order','id','label','x','y','shape','color','type',
+    'width','height','stroke_color','stroke_size','stroke_style',
+    'label_color','label_size','label_position','label_font'];
   function nodeCsv(){
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    return rowsToCsv([['order','id','label','x','y','shape','color','type'], ...sorted.map(n => [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type])]);
+    return rowsToCsv([NODE_CSV_COLUMNS, ...sorted.map(n => {
+      const v = nodeVisual(n);
+      return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type,
+        v.width ?? '', v.height ?? '', v.strokeColor || '', v.strokeSize ?? '', v.strokeStyle || '',
+        v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
+    })]);
   }
   function matrixCsv(){
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
@@ -807,6 +821,9 @@
     const iId = idx('id'), iFrom = idx('source_id') >= 0 ? idx('source_id') : idx('from'), iTo = idx('target_id') >= 0 ? idx('target_id') : idx('to');
     const iWeight = idx('weight'), iLabel = idx('label'), iDirected = idx('directed'), iType = idx('type');
     const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style'), iArrowSize = idx('arrow_size');
+    // The exporter has always written these two columns; the reader ignored them,
+    // so an edge's label colour and size were lost on every CSV round trip.
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
     if(iFrom < 0 || iTo < 0){ toast(I18N.t('csv_needs_cols')); return; }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
     const idSet = new Set(state.nodes.map(n => n.id));
@@ -838,6 +855,8 @@
       if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(parseFloat(row[iStrokeSize])||2.4, 0, 20);
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
       if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(parseFloat(row[iArrowSize])||DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      if(iLabelColor >= 0 && /^#[0-9a-f]{6}$/i.test(row[iLabelColor] || '')) e.labelColor = row[iLabelColor];
+      if(iLabelSize >= 0 && row[iLabelSize]) e.labelSize = clamp(parseFloat(row[iLabelSize])||12, 4, 72);
       edges.push(e); parsed++;
     }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
@@ -891,6 +910,10 @@
     const idx = name => header.indexOf(name);
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
+    const iWidth = idx('width'), iHeight = idx('height');
+    const iStrokeColor = idx('stroke_color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
+    const iLabelPos = idx('label_position'), iLabelFont = idx('label_font');
     const initialNodes = append ? state.nodes.length : 0;
     // Missing orders fall back to the position in the imported file, which is
     // 0-based in replace mode (the old list is gone) and continues after the
@@ -914,6 +937,20 @@
         type: (iType >= 0 ? row[iType] : '') || '',
         order: Number.isFinite(parsedOrder) ? Math.max(0, Math.trunc(parsedOrder)) : orderBase + parsed
       };
+      // Only the columns the file actually carries are set, so an older CSV — or a
+      // hand-written one — still leaves the rest inheriting as before.
+      const num = (i, lo, hi) => (i >= 0 && String(row[i] ?? '').trim() !== '' && Number.isFinite(parseFloat(row[i])) ? clamp(parseFloat(row[i]), lo, hi) : undefined);
+      const col = (i) => (i >= 0 ? String(row[i] ?? '').trim() : '');
+      const w = num(iWidth, 10, 300), h = num(iHeight, 10, 300);
+      if(w !== undefined) (n as AnyRecord).width = w;
+      if(h !== undefined) (n as AnyRecord).height = h;
+      if(col(iStrokeColor)) (n as AnyRecord).strokeColor = col(iStrokeColor);
+      const ss = num(iStrokeSize, 0, 20); if(ss !== undefined) (n as AnyRecord).strokeSize = ss;
+      if(col(iStrokeStyle)) (n as AnyRecord).strokeStyle = col(iStrokeStyle);
+      if(col(iLabelColor)) (n as AnyRecord).labelColor = col(iLabelColor);
+      const ls = num(iLabelSize, 4, 72); if(ls !== undefined) (n as AnyRecord).labelSize = ls;
+      if(col(iLabelPos)) (n as AnyRecord).labelPosition = col(iLabelPos);
+      if(col(iLabelFont)) (n as AnyRecord).labelFont = col(iLabelFont);
       nodes.push(n); parsed++;
     }
     // Replace mode replaces the whole document, exactly as it did before the

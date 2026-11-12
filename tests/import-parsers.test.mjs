@@ -2246,3 +2246,75 @@ test('a third-party DOT using Graphviz label attributes is read', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a nodes CSV keeps every node property', async () => {
+  // The node CSV wrote only order/id/label/x/y/shape/color/type, so size, stroke
+  // and the label's own styling were reset by a round trip. The new columns are
+  // appended after the original eight, so files made by an older build still read.
+  const src = {
+    nodes: [{id: 'n1', label: 'Alpha', x: 12.5, y: -67.25, order: 0, shape: 'diamond', color: '#ff0000',
+      width: 66, height: 77, strokeColor: '#00ff00', strokeSize: 3, strokeStyle: 'dashed',
+      labelColor: '#0000ff', labelSize: 21, labelPosition: 'top', labelFont: 'Courier', type: 'nt'}],
+    edges: [],
+  };
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const paste = async (text, button) => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+    document.querySelector(button).click();
+    await settle(dom.window, 90);
+  };
+  await paste(JSON.stringify(src), '#btnPasteJson');
+  const before = exportedGraph(document).nodes[0];
+  document.querySelector('#btnExportNodesCsv').click();
+  await settle(dom.window, 60);
+  const csv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(csv, '#btnPasteNodesCsv');
+  const after = exportedGraph(document).nodes[0];
+  for (const key of ['x', 'y', 'shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize',
+    'strokeStyle', 'labelColor', 'labelSize', 'labelPosition', 'labelFont', 'type', 'order']) {
+    assert.equal(String(after[key]), String(before[key]), `node ${key} survives`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an older eight-column nodes CSV still imports', async () => {
+  // The header decides what is read, so a file from an older build must keep
+  // working — and its absent styling stays inherited rather than becoming blank.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const csv = 'order,id,label,x,y,shape,color,type\n0,n1,Alpha,10,20,square,#ff0000,nt\n';
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => csv}});
+  document.querySelector('#btnPasteNodesCsv').click();
+  await settle(dom.window, 90);
+  const node = exportedGraph(document).nodes[0];
+  assert.equal(node.label, 'Alpha');
+  assert.equal(node.x, 10);
+  assert.equal(node.shape, 'square');
+  assert.equal(node.color, '#ff0000');
+  assert.equal(node.type, 'nt');
+  assert.equal(node.labelColor, undefined, 'styling the file does not carry stays inherited');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edges CSV keeps an edge label colour and size', async () => {
+  // The exporter has always written label_color and label_size; the reader
+  // ignored both, so they were lost on every round trip.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id: 'n1', label: 'Alpha'}, {id: 'n2', label: 'Beta'}], edges: []});
+  const {document} = dom.window;
+  const csv = 'id,source_id,source_label,target_id,target_label,weight,directed,label,type,color,stroke_size,stroke_style,arrow_size,label_color,label_size\n'
+    + 'e1,n1,Alpha,n2,Beta,5,mutual,L,et,#00ff00,3,dashed,20,#0000ff,21\n';
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => csv}});
+  document.querySelector('#btnPasteEdgesCsv').click();
+  await settle(dom.window, 90);
+  const edge = exportedGraph(document).edges[0];
+  assert.equal(edge.labelColor, '#0000ff');
+  assert.equal(edge.labelSize, 21);
+  assert.equal(edge.arrowSize, 20);
+  assert.equal(edge.direction, 'mutual');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
