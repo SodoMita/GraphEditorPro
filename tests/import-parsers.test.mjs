@@ -1102,11 +1102,12 @@ test('appending a GraphML key whose id matches an existing definition of another
   dom.window.close();
 });
 
-test('GraphML custom keys for="all" and with no for import as one graph-scope definition', async () => {
-  // A key declared without `for` (or explicitly for "all") is one declaration,
-  // so it is one definition — stored under the widest scope, like every other
-  // single-scope definition. Graph values import; node and edge <data> for
-  // the key are unbound (the editor has no property that would show them).
+test('GraphML custom keys for="all" and with no for import into every scope', async () => {
+  // A key declared without `for` (or explicitly for "all") is one declaration
+  // but three scopes of data — dropping the node and edge values on import is
+  // silent data loss while the toast says success. The definitions cannot
+  // share an id, so the widest scope claims it and the rest mint fresh ids;
+  // every definition records the property name so a re-import resolves back.
   const saved = { title: 'keep-allkeys',
     nodes: [{id:'n1', label:'One', x:0, y:0, order:0}],
     edges: [{ id:'e1', from:'n1', to:'n1', weight:'', label:'', directed:true }] };
@@ -1125,23 +1126,30 @@ test('GraphML custom keys for="all" and with no for import as one graph-scope de
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
   await settle(dom.window, 60);
+  const byKey = (g, name, scope) => g.customAttributes.find(d => (d.name ?? d.id) === name && d.scope === scope);
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const graph = exportedGraph(document);
-  const defs = graph.customAttributes.map(d => d.id + ':' + d.scope).sort();
-  assert.deepEqual(defs, ['flag:graph', 'mood:graph'], 'one definition per key, stored under the widest scope');
+  for(const scope of ['graph', 'node', 'edge']){
+    assert.ok(byKey(graph, 'mood', scope), `mood has a ${scope}-scope definition`);
+    assert.ok(byKey(graph, 'flag', scope), `flag has a ${scope}-scope definition`);
+  }
+  assert.equal(graph.customAttributes.length, 6, 'one definition per key per scope');
   assert.equal(graph.graphCustom?.mood, 'calm', 'graph value imported');
   assert.equal(graph.graphCustom?.flag, true, 'graph boolean coerced');
   const n2 = graph.nodes.find(n => n.id !== 'n1');
-  assert.equal(n2.custom, undefined, 'node data of a for="all" key is unbound');
+  assert.equal(n2.custom?.[byKey(graph, 'mood', 'node').id], 'happy', 'node value imported');
+  assert.equal(n2.custom?.[byKey(graph, 'flag', 'node').id], false, 'node boolean coerced');
   const e2 = graph.edges.find(e => e.id !== 'e1');
-  assert.equal(e2?.custom, undefined, 'edge data of a key without `for` is unbound');
+  assert.equal(e2.custom?.[byKey(graph, 'flag', 'edge').id], true, 'edge value imported');
+  assert.equal(e2.custom?.[byKey(graph, 'mood', 'edge').id], 'alright', 'the for="all" key default applies where no value is given');
   assert.match(toasts(document), /imported/i);
   assert.deepEqual(errors.map(e => e.message), []);
-  // Re-appending the same file must not grow the definition set.
+  // Re-appending the same file must not grow the definition set: the
+  // recorded names resolve each definition back to itself.
   document.querySelector('#optImportAppend').checked = true;
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const graph2 = exportedGraph(document);
-  assert.equal(graph2.customAttributes.length, 2, 're-importing reuses the same definitions');
+  assert.equal(graph2.customAttributes.length, 6, 're-importing reuses the expanded definitions');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
@@ -1215,11 +1223,10 @@ test('appending the same node-scoped GraphML twice reuses one definition instead
   dom.window.close();
 });
 
-test('replacing the same for="all" GraphML twice resolves to the same graph-scope definitions', async () => {
+test('replacing the same for="all" GraphML twice keeps recorded names, so a later append reuses the definitions', async () => {
   // Replace import is wholesale; the second replace of the same file must
-  // resolve to the SAME definitions. A key declared for "all" (or without
-  // `for`) is one declaration, so it is one definition, stored under the
-  // widest scope — the same rule the load path uses.
+  // resolve to the SAME definitions. Then appending the file must not create
+  // new node or edge definitions.
   const graphml = [
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
     '  <key id="mood" for="all" attr.name="mood" attr.type="string"><default>alright</default></key>',
@@ -1234,20 +1241,28 @@ test('replacing the same for="all" GraphML twice resolves to the same graph-scop
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
   await settle(dom.window, 60);
+  const byKey = (g, name, scope) => g.customAttributes.find(d => (d.name ?? d.id) === name && d.scope === scope);
   await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace
   const first = exportedGraph(document);
-  assert.deepEqual(first.customAttributes.map(d => d.id + ':' + d.scope).sort(), ['flag:graph', 'mood:graph'],
-    'one graph-scope definition per key');
+  const idsBefore = first.customAttributes.map(d => d.id + ':' + d.scope).sort();
+  assert.ok(byKey(first, 'mood', 'edge'), 'the for="all" key expands to an edge-scope definition');
+  assert.ok(first.customAttributes.every(d => (d.name ?? d.id) === 'mood' || (d.name ?? d.id) === 'flag'), 'every definition records the property name it was made from');
   assert.equal(first.graphCustom?.mood, 'calm', 'the graph value is imported');
   await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace again
   const second = exportedGraph(document);
-  assert.deepEqual(second.customAttributes.map(d => d.id + ':' + d.scope).sort(), ['flag:graph', 'mood:graph'],
-    'the second replace resolves to the same definitions');
+  assert.deepEqual(second.customAttributes.map(d => d.id + ':' + d.scope).sort(), idsBefore, 'the second replace resolves to the same definitions');
+  assert.ok(second.customAttributes.every(d => (d.name ?? d.id) === 'mood' || (d.name ?? d.id) === 'flag'), 'recorded names survive the reuse');
   document.querySelector('#optImportAppend').checked = true;
   await paste(document, dom.window, '#btnPasteGraphml', graphml);   // append
   const third = exportedGraph(document);
-  assert.equal(third.customAttributes.length, 2, 'the append creates no new definitions');
-  assert.equal(third.graphCustom?.mood, 'calm', 'the graph value survives the append');
+  assert.equal(third.customAttributes.length, idsBefore.length, 'the append creates no new definitions');
+  const edgeMood = byKey(third, 'mood', 'edge');
+  const importedEdges = third.edges.filter(e => e.custom);
+  assert.ok(importedEdges.length >= 1, 'the appended edge carries its custom values');
+  for(const edge of importedEdges){
+    assert.equal(edge.custom?.[edgeMood.id], 'alright', 'the edge value binds the same edge-scope definition (the key default applies)');
+  }
+  assert.ok(third.graphCustom?.mood !== undefined, 'the graph value is retained');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
@@ -1444,6 +1459,48 @@ test('a re-created key reused for two incoming properties never overwrites the o
     assert.deepEqual(errors.map(e => e.message), []);
     dom.window.close();
   }
+});
+test('two distinct incoming keys named like an existing property never merge into one definition', async () => {
+  // Regression: the reuse scan used to match by name and scope without ever
+  // marking the match as claimed, so two distinct key ids of one file both
+  // remapped onto the same existing definition and the first value was
+  // overwritten by the second.
+  const file1 = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="metric" for="node" attr.name="metric" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="a"><data key="metric">zero</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  // The appended file declares two distinct keys, both recorded as "metric",
+  // with a value each on one node. Both are different properties: the file
+  // key ids are what distinguish them.
+  const file2 = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="m1" for="node" attr.name="metric" attr.type="string"/>',
+    '  <key id="m2" for="node" attr.name="metric" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="b"><data key="m1">first</data><data key="m2">second</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', file1);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', file2);
+  const graph = exportedGraph(document);
+  const values = graph.nodes.find(n => n.id === 'b')?.custom ?? {};
+  assert.equal(Object.values(values).filter(v => v === 'first').length, 1, 'the first value survives');
+  assert.equal(Object.values(values).filter(v => v === 'second').length, 1, 'the second value survives');
+  assert.equal(Object.keys(values).length, 2, 'the two keys keep their own definitions, neither overwrites the other');
+  assert.ok(!Object.prototype.hasOwnProperty.call(values, 'metric'), 'neither incoming property is folded into the existing same-named definition');
+  assert.equal(graph.nodes.find(n => n.id === 'a')?.custom?.metric, 'zero', 'the existing property is untouched');
+  assert.equal(graph.customAttributes.length, 3, 'the existing definition plus one new definition per incoming key id');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
 });
 test('DOT export of a fully undirected graph still uses graph and --', async () => {
   const saved = {
@@ -1886,9 +1943,10 @@ test('a foreign file reusing our key ids for other attributes keeps its definiti
 });
 
 test('a key declared without `for` is kept, not dropped (GraphML default is "all")', async () => {
-  // `for` is optional and defaults to "all". The editor only models three
-  // concrete scopes, and dropping a definition because its scope is the
-  // spec's wildcard is silent data loss.
+  // `for` is optional and defaults to "all". The editor models three concrete
+  // scopes, so the declaration expands into one definition per scope — every
+  // id distinct, all recording the property name — instead of being dropped
+  // or collapsed onto the graph and losing the rest of the data.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
@@ -1903,14 +1961,15 @@ test('a key declared without `for` is kept, not dropped (GraphML default is "all
     id: row.querySelector('[data-attribute-field="id"]').value,
     scope: row.querySelector('[data-attribute-field="scope"]').value,
   }));
-  assert.deepEqual(rows, [{id:'tag', scope:'graph'}], 'the definition survives with the widest scope');
+  assert.deepEqual(rows, [{id:'tag', scope:'graph'}, {id:'tag_1', scope:'node'}, {id:'tag_2', scope:'edge'}],
+    'the definition expands to every scope it declares');
 
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
   await paste(document, dom.window, '#btnPasteGraphml', exported);
   rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => row.querySelector('[data-attribute-field="id"]').value);
-  assert.deepEqual(rows, ['tag'], 'and it round-trips');
+  assert.deepEqual(rows, ['tag', 'tag_1', 'tag_2'], 'and it round-trips');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

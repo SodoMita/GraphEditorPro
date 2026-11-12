@@ -784,6 +784,14 @@
     const byPair = new Map<string, AnyRecord>();
     const byId = new Set<string>();
     for(const a of existing){ byPair.set(String(a?.id) + '|' + scopeOf(a), a); byId.add(String(a?.id)); }
+    // A definition can be claimed at most once per import. Without this, two
+    // incoming properties that merely share a recorded name would both reuse
+    // the first match — remapping both value maps onto one definition and
+    // overwriting one's values with the other's. Claims are tracked by
+    // id|scope; the same pair of pools covers the document's definitions and
+    // the ones kept earlier in this pass.
+    const claimed = new Set<string>();
+    const pairOf2 = (id: unknown, scope: unknown) => String(id ?? '') + '|' + String(scope ?? '');
     // Reuse is resolved before capacity accounting — a reuse mints nothing and
     // must never be blocked by a full document.
     const kept = [];
@@ -807,9 +815,19 @@
         if(!pn || !inn || pn === inn) continue; // merges without capacity
       }
       // 2) Provenance reuse — the property already lives under another id.
+      // A definition claimed by an earlier property in this file is no longer
+      // a candidate: GraphML key ids distinguish properties even when their
+      // recorded names match.
       if(inc.name){
-        const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope && !fileKeys.has(String(e?.id)) && provMatch(e, inc));
-        if(reused){ renameByPair.set(scope + '|' + id, String(reused.id)); continue; } // free reuse
+        const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope
+          && !claimed.has(pairOf2(e?.id, scopeOf(e)))
+          && !fileKeys.has(String(e?.id))
+          && provMatch(e, inc));
+        if(reused){
+          renameByPair.set(scope + '|' + id, String(reused.id));
+          claimed.add(pairOf2(reused.id, scopeOf(reused)));
+          continue; // free reuse
+        }
       }
       // 3)/4) New definition, under the cap.
       if(budget <= 0){ skipped++; continue; }
@@ -837,6 +855,7 @@
       const def = finalId === id ? inc : {...inc, id: finalId};
       kept.push(def);
       byPair.set(finalId + '|' + scope, def);
+      claimed.add(pairOf2(finalId, scope));
     }
     return { defs: kept, skipped, renameByPair, renamed };
   }
@@ -1441,29 +1460,41 @@
           : 2;
       }
       if(info.isDefinition && info.keyId){
-        // One declaration is one definition, stored under the scope its `for`
-        // names (the widest, graph, for a key declared without one) — the same
-        // rule the load path and the exporter use. Each id is claimed at most
-        // once per file; anything already claimed mints afresh instead of
-        // silently overwriting the earlier definition.
+        // One declaration, one definition per scope its key declares: `for="all"`
+        // (or no `for`) is the whole truth of "this property exists on the
+        // graph, its nodes and its edges", so the node and edge data are bound
+        // by a definition of their own — otherwise they are silently dropped
+        // while the import succeeds. Definitions cannot share an id (the load
+        // path and the delete semantics key on id alone), so the widest scope
+        // claims the bare id first and the rest mint afresh; the attr.name is
+        // recorded on each so a re-import resolves back to them.
         const defEl = keyEls[index].querySelector('default');
         const defVal = defEl ? defEl.textContent.trim() : '';
         const defaultValue = defVal === '' ? undefined : coerceCustomValue(defVal, info.type);
+        // Claim the id once per DECLARATION in this file, not per scope: one
+        // key's expansion writes the same definitionId for graph, node and
+        // edge on purpose — the definition merge below (capCustomDefinitions)
+        // disambiguates the scopes deterministically (graph keeps the bare
+        // id, then node, then edge mint afresh) and remaps the values to the
+        // minted ids. A second, different declaration claiming the same id
+        // mints afresh here instead of silently overwriting the first.
+        const scopesForDef = info.forWhom === 'all' ? KEY_SCOPES : [info.scope];
         let defId = info.definitionId;
         if(resolvedDefIds.has(defId)){
           const taken = new Set(fileKeyIds);
-          if(Array.isArray(state.customAttributes)) for(const attribute of state.customAttributes) taken.add(attribute.id);
           for(const attribute of customAttributes) taken.add(attribute.id);
           for(const claimed of resolvedDefIds) taken.add(claimed);
           defId = uniqueCustomAttributeId(defId, taken);
         }
         resolvedDefIds.add(defId);
-        // Always record the attr.name as provenance — the import merge needs
-        // it to recognise a re-created definition across imports. The load
-        // path strips a name that equals the id again, so stored documents
-        // stay clean.
-        customAttributes.push({id: defId, scope: info.scope, type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
-        defBindings.push({id: defId, scope: info.scope, type: info.type, keyId: info.keyId, defaultValue});
+        for(const defScope of scopesForDef){
+          // Always record the attr.name as provenance — the import merge needs
+          // it to recognise a re-created definition across imports. The load
+          // path strips a name that equals the id again, so stored documents
+          // stay clean.
+          customAttributes.push({id: defId, scope: defScope, type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
+          defBindings.push({id: defId, scope: defScope, type: info.type, keyId: info.keyId, defaultValue});
+        }
       }
     }
     // <default> values resolve through fieldFor — the same mapping the data values
