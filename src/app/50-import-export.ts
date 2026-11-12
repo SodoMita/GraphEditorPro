@@ -548,10 +548,19 @@
     const nd = settings?.nodeDefaults || {};
     const ed = settings?.edgeDefaults || {};
     const unset = (value) => value == null || value === '';
+    // Every property a document's `nodeDefaults`/`edgeDefaults` can carry and an
+    // element can inherit. `type` belongs here: nodeVisual/edgeVisual resolve an
+    // element's style through the default's *type style* (`d.type`), and append
+    // discards the incoming defaults, so an element that relied on its document's
+    // default type would lose that style for good. It is in both default maps
+    // (10-core normalises nodeDefaults.type and edgeDefaults.type for exactly
+    // this reason) and sanitizeState preserves it on elements, so the only gap
+    // was this list — which is why the two lists are kept next to each other and
+    // checked by a test against the default maps rather than trusted.
     const NODE_FIELDS = ['shape','color','width','height','strokeColor','strokeSize',
-      'strokeStyle','labelColor','labelSize','labelPosition','labelFont'];
+      'strokeStyle','labelColor','labelSize','labelPosition','labelFont','type'];
     const EDGE_FIELDS = ['color','strokeSize','strokeStyle','arrowSize',
-      'labelColor','labelSize','labelFont'];
+      'labelColor','labelSize','labelFont','type'];
     // The caller has not sanitised yet — that is exactly what it is about to do —
     // so an entry may be null or a non-object. Skip those here and let the
     // sanitizer decide their fate; throwing would reject the whole import,
@@ -578,7 +587,14 @@
     // resolved onto its elements first — otherwise those elements inherit the host
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
-    materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
+    // `data` is untrusted: `nodes`/`edges` may be a non-array (an object, a string,
+    // a number). `|| []` does not guard that — an object is truthy and `for...of`
+    // then throws "is not iterable", which aborted the whole append and surfaced as
+    // "Paste failed". materializeDefaults takes the raw entries by design, so the
+    // shape is normalised here, where every caller's input is known to be foreign.
+    const incomingNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const incomingEdges = Array.isArray(data?.edges) ? data.edges : [];
+    materializeDefaults(incomingNodes, incomingEdges, data?.settings || {});
     // Sanitise against the *merged* node set, not just the incoming one.
     //
     // sanitizeState drops edges whose endpoints it cannot resolve, which is right
@@ -613,8 +629,21 @@
       n.id = newId;
       // Offset position to avoid overlap with existing nodes
       n.x += 200; n.y += 200;
-      n.order = state.nodes.length + state.nodes.filter(x => x.order >= n.order).length;
     }
+    // Give the appended nodes consecutive places at the end of the display order.
+    //
+    // `order` is a sequence the user reorders (matrix move buttons, Sort by label,
+    // Renumber), not a free-form field, and existing nodes hold 0..N-1. Appending
+    // used to compute `state.nodes.length + count(host order >= this order)` inside
+    // the loop above — but nothing is pushed to state.nodes until after it, so the
+    // count was re-read against an unchanged array and the incoming document's own
+    // 0,1,2... offsets leaked through: a 3-node host took 3 and 4 as 6 and 5, and
+    // an empty host gave every node 0. Position-in-the-list is the order that
+    // append should keep; the incoming numbers only decide it when the document
+    // defines an order of its own.
+    const incomingOrder = new Map(sane.nodes.map(node => [node.id, node.order]));
+    sane.nodes.sort((a, b) => (incomingOrder.get(a.id) ?? 0) - (incomingOrder.get(b.id) ?? 0));
+    sane.nodes.forEach((node, index) => { node.order = state.nodes.length + index; });
     // Remap edge endpoints — DISCARD edges with dangling references.
     // An edge is dangling if its endpoint wasn't in the imported nodes list
     // AND doesn't already exist in the current graph (would "snap" to wrong node).
@@ -655,7 +684,20 @@
       ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
       : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
   }
+  // Everything that arrives from outside — a pasted clip, a dropped file, a
+  // clipboard reader — ends up here, so this is where "is this a graph document at
+  // all?" is decided. A JSON array, a bare string, or `{}` has no nodes and no
+  // edges; treating that as an empty graph would replace the user's work with
+  // nothing, report success, and reset the undo history on the way out — the work
+  // would be gone with no way back. A file import is protected by its "replace?"
+  // confirmation; a paste is one click, so it needs the check itself.
   function importGraphData(data, label, append){
+    const isDocument = data != null && typeof data === 'object' && !Array.isArray(data);
+    const hasContent = isDocument && ((Array.isArray(data.nodes) && data.nodes.length) || (Array.isArray(data.edges) && data.edges.length));
+    if(!hasContent){
+      toast(I18N.t('nothing_to_import', {label}));
+      return;
+    }
     if(append){ appendImportedGraph(data, label); }
     else { replaceWithImportedGraph(data, label); }
   }

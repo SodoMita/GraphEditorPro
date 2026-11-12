@@ -545,6 +545,7 @@ const I18N: I18nService = {
     'csv_needs_cols': { en: 'CSV needs source_id and target_id columns', ru: 'CSV требует колонки source_id и target_id' },
     'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
     'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
+    'nothing_to_import': { en: 'Nothing to import: {label} contains no nodes or edges', ru: 'Нечего импортировать: {label} не содержит узлов или рёбер' },
     'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
     'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
     'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },

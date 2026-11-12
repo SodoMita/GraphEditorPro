@@ -1960,3 +1960,149 @@ test('an appended edge and a host edge may share an id without merging', async (
   assert.deepEqual(graph.edges.map(edge => edge.label || '').sort(), ['', 'INC'], 'and they stay distinct');
   close();
 });
+
+test('append survives nodes/edges that are not arrays', async () => {
+  // `data` is untrusted. A document with `"edges": {}` is malformed but its nodes
+  // are fine, and the whole append used to abort with "edges is not iterable" —
+  // the user got a Paste failed toast and exactly nothing imported. Defaults are
+  // materialised before sanitising, so the shape has to be normalised first.
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 'kept', label: 'KEPT', x: 10, y: 10}], edges: {}});
+  const {graph, close} = await run();
+  assert.ok(graph.nodes.some(node => node.label === 'KEPT'), 'the well-formed nodes are still appended');
+  assert.equal(graph.nodes.length, 3, 'host node, second host node and the appended node');
+  close();
+});
+
+test('append gives appended nodes consecutive places at the end of the order', async () => {
+  // `order` is a display sequence — the matrix view shows it as a badge and the
+  // move buttons reorder by it — so it has to stay 0..N-1. Appending used to
+  // compute it from a count re-read inside the loop, leaking the incoming
+  // document's own offsets: a 3-node host took 3 and 4 as 6 and 5.
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 'x', x: 10, y: 10}, {id: 'y', x: 20, y: 20}]});
+  const {graph, close} = await run();
+  assert.deepEqual(graph.nodes.map(node => node.order), [0, 1, 2, 3], 'contiguous and after the host');
+  close();
+});
+
+test('append into an empty graph numbers the nodes instead of giving them all zero', async () => {
+  const run = appendPair({title: 'empty', nodes: [], edges: []}, {title: 'incoming', nodes: [{id: 'p', x: 10, y: 10}, {id: 'q', x: 20, y: 20}], edges: []});
+  const {graph, close} = await run();
+  assert.deepEqual(graph.nodes.map(node => node.order), [0, 1], 'each node gets its own place');
+  close();
+});
+
+test('append materialises a default type, which the element cannot re-derive', async () => {
+  // nodeVisual/edgeVisual resolve an element's style through the *default's* type
+  // style (d.type -> nodeTypeStyles), so an element with no type of its own is
+  // fine as long as its document keeps that default. Append deliberately keeps the
+  // host's settings, so the incoming default is discarded — whatever the element
+  // needed from it has to be copied on first, or the type (and its style) is gone.
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'inherits', label: 'INHERITS', x: 10, y: 10}, {id: 'explicit', label: 'EXPLICIT', x: 20, y: 20, type: 'own'}],
+    edges: [],
+    settings: {nodeDefaults: {type: 'database'}},
+  });
+  const {graph, close} = await run();
+  assert.equal(graph.nodes.find(node => node.label === 'INHERITS').type, 'database', 'the default type is materialised');
+  assert.equal(graph.nodes.find(node => node.label === 'EXPLICIT').type, 'own', 'an explicit type is not overwritten');
+  assert.equal(graph.nodes.find(node => node.label === 'H1').type, '', 'and the host is untouched');
+  close();
+});
+
+test('every node/edge default an element can inherit survives an append', async () => {
+  // The materialise lists were the one place that had to be edited by hand when a
+  // new inherited property was added, and they had already fallen behind (`type`).
+  // Rather than assert the list, drive it from the defaults the app itself keeps:
+  // set every key to a distinctive valid value in the incoming document, append an
+  // element that sets none of them, and require each one to arrive.
+  const PROBE = {
+    node: {shape: 'square', color: '#ff0000', width: 66, height: 77, strokeColor: '#00ff00',
+      strokeSize: 3, strokeStyle: 'dashed', labelColor: '#0000ff', labelSize: 21,
+      labelPosition: 'top', labelFont: 'Courier', type: 'probe-type'},
+    edge: {color: '#ff0000', strokeSize: 3, strokeStyle: 'dashed', arrowSize: 9,
+      labelColor: '#0000ff', labelSize: 21, labelFont: 'Courier', type: 'probe-type'},
+  };
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'n-empty', label: 'NODE', x: 10, y: 10}],
+    edges: [],
+    settings: {nodeDefaults: PROBE.node},
+  });
+  const {graph, close} = await run();
+  const node = graph.nodes.find(candidate => candidate.label === 'NODE');
+  const missing = Object.keys(PROBE.node).filter(key => {
+    const want = PROBE.node[key], got = node[key];
+    return want === '' ? got !== '' : String(got) !== String(want);
+  });
+  assert.deepEqual(missing, [], 'node defaults that did not survive the append');
+  close();
+
+  // Edges need a real edge in the incoming document.
+  const runEdge = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'e-from', x: 10, y: 10}, {id: 'e-to', x: 40, y: 40}],
+    edges: [{id: 'edge-empty', from: 'e-from', to: 'e-to'}],
+    settings: {edgeDefaults: PROBE.edge},
+  });
+  const {graph: g2, close: close2} = await runEdge();
+  const edge = g2.edges.find(candidate => candidate.id === 'edge-empty');
+  const missingEdge = Object.keys(PROBE.edge).filter(key => {
+    const want = PROBE.edge[key], got = edge[key];
+    return want === '' ? got !== '' : String(got) !== String(want);
+  });
+  assert.deepEqual(missingEdge, [], 'edge defaults that did not survive the append');
+  close2();
+});
+
+test('a payload with no nodes or edges does not replace the graph', async () => {
+  // Paste has no "replace?" confirmation and resets the undo history, so an empty
+  // payload used to destroy the graph outright and report success into the
+  // bargain. A JSON array, a bare value or `{}` is not a graph document.
+  const host = {title: 'work', nodes: [{id: 'n1', label: 'A'}, {id: 'n2', label: 'B'}], edges: [{id: 'e1', from: 'n1', to: 'n2'}]};
+  for (const payload of ['[]', '{}', 'null', '"text"', '42', '{"nodes":[],"edges":[]}']) {
+    const {dom, errors} = createEditorDom(host);
+    const {document} = dom.window;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => payload}});
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 80);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `the graph survives ${payload}`);
+    assert.equal(graph.edges.length, 1, `and keeps its edge after ${payload}`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('a real document still replaces the graph', async () => {
+  // The guard must not block the normal case.
+  const {dom, errors} = createEditorDom({title: 'old', nodes: [{id: 'a', label: 'OLD'}], edges: []});
+  const {document} = dom.window;
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => '{"nodes":[{"id":"z","label":"NEW"}],"edges":[]}'}});
+  document.querySelector('#btnPasteJson').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(node => node.label), ['NEW'], 'replaced as asked');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('the empty-payload guard does not block formats that legitimately bring little', async () => {
+  // The guard keys on "no nodes and no edges", not on size: a single node with no
+  // edges is still a graph, and DOT/GraphML must never be caught by it.
+  const cases = [
+    ['#btnPasteDot', 'digraph{a;}', 1],
+    ['#btnPasteGraphml', '<graphml><graph edgedefault="directed"><node id="solo"/></graph></graphml>', 1],
+  ];
+  for (const [button, text, want] of cases) {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+    document.querySelector(button).click();
+    await settle(dom.window, 80);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, want, `${button} still imports`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
