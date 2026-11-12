@@ -357,38 +357,16 @@
   const STROKE_STYLES = ['solid','dashed','dotted','dashdot','dashdotdot','none'];
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
-  const RESERVED_CUSTOM_ATTRIBUTE_IDS = new Set(['label','nodeId','order','x','y','type','shape','color','width','height','strokeColor','strokeSize','strokeStyle','labelColor','labelFont','labelSize','labelPosition','weight','edgeLabel','edgeType','edgeColor','edgeStrokeSize','edgeStrokeStyle','edgeLabelColor','edgeLabelFont','edgeLabelSize','directed','labelsPolicy','edgeWeightMode','edgeWeightMin','edgeWeightMax','edgeWeightCorr','edgeWidthMin','edgeWidthMax','edgeWeightColorLow','edgeWeightColorHigh','canvasBgColor','gridMinorColor','gridMajorColor','gridMinorAlpha','gridMajorAlpha']);
-  // Lowercased attr.name values the built-in GraphML reader can consume.
-  // QVGE writes data under arbitrary key ids with these well-known names, so a
-  // definition may not collide with any of them either (not just by id but by
-  // name): on import, a name collision always means "built-in".
-  const RESERVED_GRAPHML_ATTR_NAMES_LOWER = new Set([
-    'label','name','id','order','x','y','type','shape','color','fillcolor','width','height',
-    'posx','posy','position.x','position.y',
-    'strokecolor','stroke.color','strokesize','stroke.size','strokestyle','stroke.style',
-    'labelcolor','label.color','labelfont','label.font','labelsize','label.size','labelposition','label.position',
-    'edgelabel','edgecolor','weight','value','direction','style','directed',
-    'labels.policy',
-    'edge.weight.mode','edge.weight.min','edge.weight.max','edge.weight.corr',
-    'edge.width.min','edge.width.max','edge.weight.colorlow','edge.weight.colorhigh',
-    'canvas.bg.color','grid.minor.color','grid.major.color','grid.minor.alpha','grid.major.alpha'
-  ]);
-  // A custom id may never collide with a built-in name even by letter case
-  // (built-in attribute lookups in imported files normalize case for QVGE
-  // compatibility). Legacy ids that were legal when saved are renamed on load
-  // instead of dropped — see sanitizeState.
-  const RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER = new Set([
-    ...[...RESERVED_CUSTOM_ATTRIBUTE_IDS].map(id => id.toLowerCase()),
-    ...RESERVED_GRAPHML_ATTR_NAMES_LOWER,
-  ]);
   // Maximum number of custom attribute definitions the editor will hold.
   const CUSTOM_DEFINITIONS_MAX = 500;
-  // Finds the first free "<base>_<n>" id for a migrated legacy id. The result
-  // never matches the reserved sets above, so migrated defs round-trip cleanly.
+  // Finds the first free "<base>_<n>" id for a re-created definition. No id is
+  // reserved in the editor (the exporter marks its own definitions, so a name
+  // like `direction` cannot collide with a built-in key) — the only constraint
+  // is uniqueness against the ids already in play.
   function uniqueCustomAttributeId(base: string, taken: Set<string>): string {
     for(let n = 1; n < 1000; n++){
       const candidate = `${base.slice(0, 120)}_${n}`;
-      if(!taken.has(candidate) && !RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(candidate.toLowerCase())){
+      if(!taken.has(candidate)){
         taken.add(candidate);
         return candidate;
       }
@@ -407,6 +385,66 @@
     if(isRecord(value)) for(const key of Object.keys(value)) out[key] = value[key];
     return out;
   }
+  const EDGE_DIRECTIONS = ['directed','mutual','undirected'];
+  const DEFAULT_ARROW_SIZE = 12;
+  const ARROW_SIZE_MIN = 4, ARROW_SIZE_MAX = 40;
+  function normalizeDirection(raw: any): string {
+    if(raw === true || raw === 'true' || raw === 1 || raw === '1') return 'directed';
+    if(raw === false || raw === 'false' || raw === 0 || raw === '0') return 'undirected';
+    const s = String(raw ?? '').trim().toLowerCase();
+    if(!s) return 'directed';
+    if(s === 'directed' || s === 'forward' || s === 'true' || s === '1' || s === 'directed (one end)') return 'directed';
+    if(s === 'mutual' || s === 'both' || s === 'bidirected' || s === 'bidirectional' || s === 'mutual (both ends)') return 'mutual';
+    if(s === 'undirected' || s === 'none' || s === 'false' || s === '0' || s === 'undirected (no ends)') return 'undirected';
+    if(['directed','mutual','undirected'].includes(s)) return s;
+    if(s.startsWith('bi')) return 'mutual';
+    return 'directed';
+  }
+  function edgeDirection(e: any): string {
+    // Canonical field is e.direction, legacy is e.directed (boolean or string)
+    const raw = (e && (e.direction ?? e.directed));
+    return normalizeDirection(raw);
+  }
+  function edgeHasEndArrow(e: any): boolean {
+    const d = edgeDirection(e);
+    return d === 'directed' || d === 'mutual';
+  }
+  function edgeHasStartArrow(e: any): boolean {
+    return edgeDirection(e) === 'mutual';
+  }
+  function edgeIsUndirected(e: any): boolean {
+    return edgeDirection(e) === 'undirected';
+  }
+  // ---- GraphML keys: the importer's own read surface ----
+  //
+  // Two rounds of review asked for opposite answers on the same <key>
+  // (id="fillcolor" attr.name="fillcolor" for="node"):
+  //   * a definition the user made, exported by us, must come back;
+  //   * a foreign key with that name must not appear as a definition, because
+  //     the importer reads `fillcolor` as the node colour.
+  // The bytes are identical, so no rule over (id, name, scope) can decide it.
+  // Only the writer knows, so the exporter marks its own definitions
+  // (qvge:custom) and everything unmarked is classified by the one question
+  // left: does the importer read this attr.name as a built-in for this scope?
+  // If it does, the key feeds a built-in field and cannot be a definition.
+  let graphmlSchemaSource: (() => GraphmlSchema) | null = null;
+  function registerGraphmlSchema(source: () => GraphmlSchema): void {
+    graphmlSchemaSource = source;
+  }
+  function graphmlSchema(): GraphmlSchema {
+    return graphmlSchemaSource ? graphmlSchemaSource() : {readNames: []};
+  }
+  // Could an unmarked key bind to one of our built-in fields? A key declared
+  // without `for` (GraphML's default is "all") may apply to any scope, so it is
+  // built-in when the name is read on *any* scope — otherwise a foreign key
+  // named `label` would be reported as a definition while still setting labels.
+  function isBuiltinGraphmlKey(name: string, scope: string): boolean {
+    const wanted = String(name || '').toLowerCase();
+    const anyScope = scope === 'all';
+    return graphmlSchema().readNames.some(([readName, readScope]) =>
+      readName === wanted && (anyScope || readScope === scope));
+  }
+
   const FONT_FAMILIES = ['Inter','ui-sans-serif','ui-serif','ui-monospace','Arial','Helvetica','Times New Roman','Courier New'];
 
   const defaultState = (): GraphState => ({
@@ -419,9 +457,10 @@
       nodeWidth:50, nodeHeight:50,
       nodeStrokeColor:'#e2e8f0', nodeStrokeSize:2.2, nodeStrokeStyle:'solid',
       nodeType:'', nodeLabelColor:'#f8fafc', nodeLabelFont:'Inter', nodeLabelSize:13, nodeLabelPosition:'center',
-      // Edit-tab edge defaults (primary for newly added edges)
-      directed:true, edgeWeight:'1', edgeLabel:'',
+      // Edit-tab edge defaults (primary for newly added edges) — QVGE uses direction string
+      directed:true, direction:'directed', edgeWeight:'1', edgeLabel:'',
       edgeType:'', edgeColor:'#94a3b8', edgeStrokeSize:2.4, edgeStrokeStyle:'solid',
+      edgeArrowSize: DEFAULT_ARROW_SIZE,
       edgeLabelColor:'#dbeafe', edgeLabelFont:'Inter', edgeLabelSize:12,
       // Pending custom property values applied to newly created nodes/edges
       // (Edit-tab "Node placement" / "New edge defaults" sections).
@@ -460,7 +499,7 @@
       },
       edgeDefaults: {
         type:'', color:'#94a3b8', labelColor:'#dbeafe', labelFont:'Inter', labelSize:12,
-        strokeSize:2.4, strokeStyle:'solid'
+        strokeSize:2.4, strokeStyle:'solid', arrowSize: DEFAULT_ARROW_SIZE
       },
       // Per-type style overrides: { 'typeName': { color, shape, width, height, ... }, ... }
       nodeTypeStyles: {},
@@ -480,7 +519,7 @@
   // The clipboard payload carries the definitions of every custom attribute
   // it references, so pasting into a document that lacks them can re-create
   // them. Existing definitions win on id conflicts.
-  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[]; customAttributes?: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }[] } | null = null;
+  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[]; customAttributes?: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }[] } | null = null;
   let pasteOffsetCount = 0;
   // UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
   // controls call it instead of reaching for a global, so modules stay
@@ -605,7 +644,7 @@
   function updateCommandStates(){
     const hasSelection = Boolean(state.selected || state.selection?.nodes?.length || state.selection?.edges?.length);
     $('#btnDelete').disabled = !hasSelection;
-    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => edgeById(id)?.directed);
+    $('#btnFlipEdges').disabled = !(state.selection?.edges || []).some(id => { const e=edgeById(id); return e && edgeDirection(e) !== 'undirected'; });
     $('#btnClear').disabled = !state.nodes.length && !state.edges.length;
     $('#btnMatrixClear').disabled = !state.edges.length;
     const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
@@ -978,91 +1017,28 @@
 
     const customAttributeTypes = ['boolean','int','long','float','double','string'];
     // Pre-scan: every id present in the input — as a definition or as a key of
-    // any custom-value map — is off-limits for renames, so migrating a legacy
-    // id can never clobber an existing definition or value.
-    const usedCustomIds = new Set<string>();
-    if(Array.isArray(source.customAttributes)){
-      for(const a of source.customAttributes){
-        if(isRecord(a)){ const rid = String(a.id ?? '').trim().slice(0, 128); if(rid) usedCustomIds.add(rid); }
-      }
-    }
-    const collectCustomKeys = (m: unknown) => { if(isRecord(m)) for(const key of Object.keys(m)) usedCustomIds.add(String(key).slice(0, 128)); };
-    collectCustomKeys(source.graphCustom);
-    if(isRecord(source.settings)){ collectCustomKeys(source.settings.nodeCustom); collectCustomKeys(source.settings.edgeCustom); }
-    if(Array.isArray(source.nodes)) for(const n of source.nodes) if(isRecord(n)) collectCustomKeys(n.custom);
-    if(Array.isArray(source.edges)) for(const e of source.edges) if(isRecord(e)) collectCustomKeys(e.custom);
-    // Scope-aware renames for cross-scope id conflicts: a definition sharing
-    // its id with a definition of a DIFFERENT scope is a different property,
-    // so it is renamed to a fresh unique id and this scope's values move to
-    // it — instead of being dropped and leaving values bound to no
-    // scope-aware reader. Same id AND scope stays first-wins (current wins).
-    // Legacy documents may contain ids that collide with built-ins (e.g.
-    // "Label", "stroke.color" or "x"), whether user-created back then or
-    // authored in an external GraphML file. Their definitions — and their
-    // values everywhere — are migrated to a fresh unique id instead of being
-    // silently dropped. Ids already present in the input are reserved up
-    // front, so the migration target can never overwrite existing data.
-    const customIdRenames = new Map<string, string>(); // original id -> FIRST minted id; only binds orphaned values (values with no definition claiming their scope)
-    const scopeCustomRenames = new Map<string, string>(); // 'scope|id' -> newId
-    const seenCustomDefScopes = new Map<string, Set<string>>();
+    // Definition ids are stable in the editor, so graphs match properties by
+    // them across imports and reloads. Two definitions cannot share an id —
+    // values are keyed by id alone — so duplicates in a saved document are
+    // collapsed first-wins, whatever scope they claim. (The import paths, not
+    // the load path, handle id conflicts from files with separate namespaces.)
+    const customAttributeIds = new Set<string>();
     const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
       .slice(0, CUSTOM_DEFINITIONS_MAX).filter(isRecord).map(attribute => {
-        let id = String(attribute.id ?? '').trim().slice(0, 128);
+        const id = String(attribute.id ?? '').trim().slice(0, 128);
         const scope = ['graph','node','edge'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
         if(!id || !scope) return null;
-        const rawId = id; // the id before any migration below; mints always rename
-        if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){
-          const renamed = uniqueCustomAttributeId(id, usedCustomIds);
-          // Both maps, like every mint below: the scope-aware map binds this
-          // definition's scope of values (the same reserved id can name an
-          // unrelated definition in another scope — binding both to the same
-          // mint splits one property and strands the other), the plain map is
-          // only the fallback for values whose scope has no definition.
-          if(!customIdRenames.has(id)) customIdRenames.set(id, renamed);
-          scopeCustomRenames.set(scope + '|' + id, renamed);
-          id = renamed;
-        }
-        // Cross-scope id conflict (legacy reserved rename already applied
-        // above — reserved mints are unique by construction, so this only
-        // fires on plain ids shared across scopes).
-        const seenScopes = seenCustomDefScopes.get(id);
-        if(seenScopes?.has(scope)) return null; // same id AND scope — first wins, as before
-        // The original id claims this scope either way, so an exact duplicate
-        // later in the list is dropped rather than minted twice.
-        seenCustomDefScopes.set(id, new Set([...(seenScopes || []), scope]));
-        if(seenScopes){
-          // A different scope claimed this id first — a different property,
-          // renamed to a fresh unique id (the mint grows usedCustomIds).
-          const renamed = uniqueCustomAttributeId(id, usedCustomIds);
-          scopeCustomRenames.set(scope + '|' + id, renamed);
-          id = renamed;
-        }
-        // Keep the importer's migration marker (raw GraphML key id) so
-        // re-appending the same external file lands on the same definition.
-        // A definition renamed on load (reserved id migrated or a cross-scope
-        // clash minted apart) records the original id as its dataKey when it
-        // carries no marker of its own — otherwise re-importing the same file
-        // can never find this definition again and mints a fresh one each
-        // time, splitting one property and draining the definition limit.
-        const dataKey = String((attribute as AnyRecord).dataKey ?? '').trim().slice(0, 128) || (id !== rawId ? rawId : '');
-        const dataName = String((attribute as AnyRecord).dataName ?? '').toLowerCase().trim().slice(0, 128);
-        return dataKey ? {id, scope, type, dataKey, ...(dataName ? {dataName} : {})} : {id, scope, type};
+        if(customAttributeIds.has(id)) return null; // first wins
+        customAttributeIds.add(id);
+        // Keep the attr.name the importer recorded (original spelling) so a
+        // re-created definition still exports under the property name it was
+        // read with.
+        const rawName = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128);
+        const out: AnyRecord = {id, scope, type};
+        if(rawName && rawName !== id) out.name = rawName;
+        return out as GraphState['customAttributes'][number];
       }).filter(Boolean) as GraphState['customAttributes'];
-    // Rewrites the keys of a value map with the renames collected above, so
-    // values stored under a migrated legacy id move to the new id.
-    // Rewrites the keys of a value map with the renames collected above:
-    // scope-aware for cross-scope id conflicts, scope-agnostic for the
-    // legacy built-in-id migration, so values move with their definition.
-    const renameCustomValues = (input: unknown, scope: 'graph' | 'node' | 'edge'): unknown => {
-      if(!isRecord(input)) return input;
-      if(!customIdRenames.size && !scopeCustomRenames.size) return input;
-      const out: AnyRecord = Object.create(null);
-      for(const key of Object.keys(input)){
-        out[scopeCustomRenames.get(scope + '|' + key) || customIdRenames.get(key) || key] = input[key];
-      }
-      return out;
-    };
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
     // New-element defaults sanitize against their own scope's definitions only.
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'node'));
@@ -1095,7 +1071,7 @@
       if(n.labelSize != null) node.labelSize = clamp(finite(n.labelSize, 13), 4, 72);
       if(n.labelPosition) node.labelPosition = validLabelPos(n.labelPosition);
       if(n.labelFont) node.labelFont = String(n.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(renameCustomValues(n.custom, 'node'), customAttributeTypeById);
+      const customValues = sanitizeCustomValues(n.custom, customAttributeTypeById);
       if(customValues) node.custom = customValues;
       return node;
     });
@@ -1108,21 +1084,26 @@
       const from = nodeReferences.get(String(e.from)) || (nodeIds.has(String(e.from)) ? String(e.from) : '');
       const to = nodeReferences.get(String(e.to)) || (nodeIds.has(String(e.to)) ? String(e.to) : '');
       if(!from || !to) return; // Drop dangling edges before they reach render/algorithm code.
+      const dir = normalizeDirection((e as any).direction ?? (e as any).directed);
       const edge: GraphEdge = {
         id: uniqueSafeId(e.id || ('e' + (i + 1)), 'e', usedEdgeIds),
         from, to,
         label: String(e.label ?? '').slice(0,80),
-        directed: Boolean(e.directed),
+        directed: dir as any, // legacy boolean compat: keep truthy for directed/mutual
+        direction: dir,
         type: String(e.type || '').slice(0,40)
       };
+      // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
+      (edge as any).directed = dir !== 'undirected';
       if(e.weight != null && e.weight !== '') edge.weight = String(e.weight).slice(0,50);
       if(e.color) edge.color = validColor(e.color) || '';
       if(e.strokeSize != null) edge.strokeSize = clamp(finite(e.strokeSize, 2.4), 0, 20);
       if(e.strokeStyle) edge.strokeStyle = validStroke(e.strokeStyle);
+      if(e.arrowSize != null) edge.arrowSize = clamp(finite(e.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       if(e.labelColor) edge.labelColor = validColor(e.labelColor) || '';
       if(e.labelSize != null) edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(renameCustomValues(e.custom, 'edge'), customAttributeTypeById);
+      const customValues = sanitizeCustomValues(e.custom, customAttributeTypeById);
       if(customValues) edge.custom = customValues;
       edges.push(edge);
     });
@@ -1146,6 +1127,7 @@
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
     settings.edgeLabelColor = validColor(settings.edgeLabelColor) || '#dbeafe';
+    settings.edgeArrowSize = clamp(finite(settings.edgeArrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     settings.edgeLabelFont = String(settings.edgeLabelFont || 'Inter').slice(0, 60);
     settings.edgeLabelSize = clamp(finite(settings.edgeLabelSize, 12), 4, 72);
     settings.hitTestMode = ['any','center'].includes(settings.hitTestMode) ? settings.hitTestMode : 'any';
@@ -1201,6 +1183,7 @@
     ed.labelColor = validColor(ed.labelColor) || '#dbeafe';
     ed.strokeStyle = validStroke(ed.strokeStyle) || 'solid';
     ed.strokeSize = clamp(finite(ed.strokeSize, 2.4), 0, 20);
+    ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
     ed.type = String(ed.type || '').slice(0, 40);
@@ -1225,6 +1208,7 @@
       } else {
         if(ts.strokeSize != null) out.strokeSize = clamp(finite(ts.strokeSize, 2.4), 0, 20);
         if(ts.strokeStyle && STROKE_STYLES.includes(ts.strokeStyle)) out.strokeStyle = ts.strokeStyle;
+        if(ts.arrowSize != null) out.arrowSize = clamp(finite(ts.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         if(validColor(ts.labelColor)) out.labelColor = ts.labelColor;
         if(ts.labelSize != null) out.labelSize = clamp(finite(ts.labelSize, 12), 4, 72);
         if(ts.labelFont) out.labelFont = String(ts.labelFont).slice(0, 60);
@@ -1255,7 +1239,16 @@
     settings.edgeListPageSize = positiveInteger(settings.edgeListPageSize, 250);
     settings.matrixDimension = clamp(parseInt(settings.matrixDimension,10) || 0, 0, MATRIX_MAX_NODES);
     settings.brushDiameter = clamp(parseInt(settings.brushDiameter,10) || 80, 10, 400);
-    settings.directed = Boolean(settings.directed); settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
+    // QVGE: edge direction default is directed/mutual/undirected (string); keep boolean legacy
+    // Prefer explicit inputSettings values over merged defaults so legacy
+    // documents like { directed:false } (without direction) are not masked by
+    // the base default direction='directed'.
+    const dirRawInput = (inputSettings as any).direction ?? (inputSettings as any).directed;
+    const dirRaw = dirRawInput !== undefined ? dirRawInput : ((settings as any).direction ?? settings.directed);
+    const dirNorm = normalizeDirection(dirRaw);
+    settings.direction = dirNorm;
+    settings.directed = dirNorm !== 'undirected';
+    settings.snap = Boolean(settings.snap); settings.snapX = Boolean(settings.snapX); settings.snapY = Boolean(settings.snapY); settings.autosave = settings.autosave !== false;
     settings.copyPreserveExternal = settings.copyPreserveExternal !== false;
     // Gizmo tool/visibility migrated to a local UI preference (45-gizmo.ts);
     // strip the legacy document field so imports/exports cannot resurrect it.
@@ -1298,6 +1291,7 @@
           if(validColor(se.color)) out.edge.color = se.color;
           if(se.strokeSize != null) out.edge.strokeSize = clamp(finite(se.strokeSize, 2.4), 0, 20);
           if(se.strokeStyle && STROKE_STYLES.includes(se.strokeStyle)) out.edge.strokeStyle = se.strokeStyle;
+          if(se.arrowSize != null) out.edge.arrowSize = clamp(finite(se.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
           if(validColor(se.labelColor)) out.edge.labelColor = se.labelColor;
           if(se.labelSize != null) out.edge.labelSize = clamp(finite(se.labelSize, 12), 4, 72);
           if(se.labelFont) out.edge.labelFont = String(se.labelFont).slice(0, 60);
@@ -1305,9 +1299,9 @@
         return out;
       }).filter(Boolean);
     } else { settings.stylePresets = []; }
-    const graphCustom = sanitizeCustomValues(renameCustomValues(source.graphCustom, 'graph'), customAttributeTypeById) || Object.create(null);
-    settings.nodeCustom = sanitizeCustomValues(renameCustomValues(inputSettings.nodeCustom, 'node'), nodeDefaultTypeById) || Object.create(null);
-    settings.edgeCustom = sanitizeCustomValues(renameCustomValues(inputSettings.edgeCustom, 'edge'), edgeDefaultTypeById) || Object.create(null);
+    const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
+    settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
+    settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
     const maxN = Math.max(
       ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),

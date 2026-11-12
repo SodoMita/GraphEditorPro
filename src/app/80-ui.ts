@@ -5,7 +5,9 @@
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){ toast(I18N.t('attribute_id_reserved')); return; }
+      // No id is reserved: the exporter writes definitions in their own key
+      // namespace, so a definition called `direction` cannot collide with the
+      // built-in key of that name.
       if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       if(state.customAttributes.length >= CUSTOM_DEFINITIONS_MAX){ toast(I18N.t('attribute_limit_reached')); return; }
       state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
@@ -30,9 +32,9 @@
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      if(RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase())){ toast(I18N.t('attribute_id_reserved')); return; }
       if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
+      if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const type = row.querySelector('[data-attribute-field="type"]').value;
       const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
       const resolvedScope = ['graph','node','edge'].includes(scope) ? scope : 'graph';
@@ -50,9 +52,13 @@
           if(!proceed) return; // nothing changes: values, definition and history untouched
         }
       }
-      // Keep the importer's/copy's provenance markers (dataKey/dataName) —
-      // they bind this definition to the source it migrated from.
-      state.customAttributes[index] = { ...oldDef, id, scope: resolvedScope, type: resolvedType };
+      // Editing something else (type, scope) must not drop the attr.name a
+      // re-created definition carries — the next export would otherwise rename
+      // it back to the custom id. Renaming the definition does drop it: the
+      // name belonged to the old key.
+      const nextDef = { ...oldDef, id, scope: resolvedScope, type: resolvedType } as GraphState['customAttributes'][number];
+      if(oldId === id && oldDef.name) nextDef.name = oldDef.name; else delete nextDef.name;
+      state.customAttributes[index] = nextDef;
       if(oldId !== id) renameCustomAttributeValues(oldId, id);
       if(scopeChanged){
         if(oldScope === 'graph') promoteGraphCustomAttribute(id, resolvedScope as 'node' | 'edge');
@@ -198,7 +204,8 @@
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0,60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value,12),4,72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
-    $('#edgeDirected').addEventListener('change', e => { state.settings.directed = e.target.checked; saveSoon(); });
+    if($('#edgeArrowSize')) $('#edgeArrowSize').addEventListener('change', e => { state.settings.edgeArrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = state.settings.edgeArrowSize; pushHistory('edge arrow size'); queueRender(true); });
+    $('#edgeDirected').addEventListener('change', e => { const v = (e.target as any).value || (e.target as any).checked; const dir = normalizeDirection(v); (state.settings as any).direction = dir; state.settings.directed = dir !== 'undirected'; saveSoon(); });
     $('#optAutosave').addEventListener('change', e => {
       state.settings.autosave = e.target.checked;
       persistAutosavePreference(e.target.checked);
@@ -307,7 +314,7 @@
         if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-elabel')){ e.label = t.value.slice(0,80); pushHistory('edit edge label'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edit edge type'); queueRender(false); saveSoon(); }
-        else if(t.matches('.edge-directed')){ e.directed = t.checked; pushHistory('edit edge directed'); queueRender(false); saveSoon(); }
+        else if(t.matches('.edge-directed')){ const v = (t as any).value || (t as any).checked; const dir = normalizeDirection(v); (e as any).direction = dir; (e as any).directed = dir !== 'undirected'; pushHistory('edit edge directed'); queueRender(true); saveSoon(); }
         else if(t.matches('.edge-color')){ e.color = t.value; pushHistory('edit edge color'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-stroke-style')){ e.strokeStyle = t.value || undefined; pushHistory('edit edge stroke style'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-id')){
@@ -544,6 +551,7 @@
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
     $('#defEdgeStrokeStyle').addEventListener('change', e => { ed().strokeStyle = e.target.value; pushHistory('default edge stroke style'); queueRender(false); });
+    if($('#defEdgeArrowSize')) $('#defEdgeArrowSize').addEventListener('change', e => { ed().arrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = ed().arrowSize; pushHistory('default edge arrow size'); queueRender(true); });
     $('#defEdgeLabelColor').addEventListener('input', e => { ed().labelColor = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeLabelColor').addEventListener('change', () => pushHistory('default edge label color'));
     $('#defEdgeLabelFont').addEventListener('change', e => { ed().labelFont = e.target.value; pushHistory('default edge label font'); queueRender(false); });

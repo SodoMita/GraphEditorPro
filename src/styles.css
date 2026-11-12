@@ -547,7 +547,7 @@
        render-space scale just like dynamically written geometry. */
     .edge-hit{stroke:transparent; stroke-width:calc(14px * var(--render-scale, 1)); fill:none; cursor:pointer}
     .edge-line{fill:none; stroke-linecap:butt; stroke-linejoin:miter}
-    .edge-arrow{pointer-events:none}
+    .edge-arrow,.edge-arrow-start{pointer-events:none}
     /* Edge selection: a wide accent LINE that reuses the edge's own path (no
        outline of the edge shape to derive, so a drag can keep it glued to the
        edge for free), plus the tip triangle enlarged about its own centre and

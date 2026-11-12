@@ -28,10 +28,15 @@
       type: effectiveType,
       strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
       strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+      arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
       labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
       labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
       labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
     };
+  }
+  function edgeArrowSize(e){
+    const v = edgeVisual(e);
+    return clamp(finite(v.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
   }
   // === Edge weight visualization helpers ===
   // Normalizes a weight value to t ∈ [0,1] based on range and correlation function.
@@ -412,8 +417,15 @@
   // can never disagree. `scale` grows the triangle about its own centre (the
   // centroid), which keeps the accent band even around the tip instead of only
   // pushing the apex forward.
+  function edgeArrowMetrics(size){
+    const len = clamp(finite(size, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+    const hw = len * (ARROW_HW / ARROW_LEN);
+    return {len, hw};
+  }
   function edgeArrowPoints(d, scale = 1){
-    const aw = renderSize(ARROW_HW), ang = d.arrowAngle;
+    const size = (d && (d as any).arrowSize != null) ? (d as any).arrowSize : DEFAULT_ARROW_SIZE;
+    const {hw} = edgeArrowMetrics(size);
+    const aw = renderSize(hw), ang = d.arrowAngle;
     const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
     const lx = d.tx + px, ly = d.ty + py;
     const rx = d.tx - px, ry = d.ty - py;
@@ -423,8 +435,30 @@
       `${cx + (lx - cx) * scale},${cy + (ly - cy) * scale} ` +
       `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
   }
+  // Same triangle as edgeArrowPoints, but from an explicit tip point/angle.
+  // The start tip sits at a different point than d.tx/d.ty, so routing it
+  // through the end-tip helper produced NaN vertices.
+  function tipPointsAt(tipX, tipY, ang, size = DEFAULT_ARROW_SIZE, scale = 1){
+    const {len, hw} = edgeArrowMetrics(size);
+    const aw = renderSize(hw);
+    const lenPx = renderSize(len);
+    // Base of the triangle is lenPx behind the tip along the arrow angle
+    const bx = tipX - Math.cos(ang) * lenPx;
+    const by = tipY - Math.sin(ang) * lenPx;
+    const px = -Math.sin(ang) * aw, py = Math.cos(ang) * aw;
+    const lx = bx + px, ly = by + py;
+    const rx = bx - px, ry = by - py;
+    if(scale === 1) return `${tipX},${tipY} ${lx},${ly} ${rx},${ry}`;
+    const cx = (tipX + lx + rx) / 3, cy = (tipY + ly + ry) / 3;
+    return `${cx + (tipX - cx) * scale},${cy + (tipY - cy) * scale} ` +
+      `${cx + (lx - cx) * scale},${cy + (ly - cy) * scale} ` +
+      `${cx + (rx - cx) * scale},${cy + (ry - cy) * scale}`;
+  }
   function hasEdgeTip(e, d){
-    return Boolean(e && e.directed && d && d.tipX != null && d.arrowAngle != null);
+    return Boolean(e && edgeHasEndArrow(e) && d && d.tipX != null && d.arrowAngle != null);
+  }
+  function hasEdgeStartTip(e, d){
+    return Boolean(e && edgeHasStartArrow(e) && d && d.startTipX != null && d.startArrowAngle != null);
   }
   // === Edge selection ring ===
   // Like nodes, a selected edge gets an accent placed BEHIND itself, so the
@@ -531,6 +565,9 @@
   function moveEdgeSelRing(g: any, d: any){
     if(g.__sel) setAttr(g.__sel, 'd', d.path);
     if(g.__selArrow && d.tipX != null && d.arrowAngle != null) setAttr(g.__selArrow, 'points', edgeArrowPoints(d, SEL_TIP_SCALE));
+    // A drag patches geometry in place and skips the release re-render, so a
+    // mutual edge's start arrowhead has to be moved here or it is left behind.
+    if((g as any).__arrowStart && d.startTipX != null && d.startArrowAngle != null) setAttr((g as any).__arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, (d as any).arrowSize));
   }
   function nodeRadiusC(n, vc){
     const c = vc || passVisuals;
@@ -598,10 +635,15 @@
     $('#edgeColor').value = state.settings.edgeColor;
     $('#edgeStrokeSize').value = state.settings.edgeStrokeSize;
     $('#edgeStrokeStyle').value = state.settings.edgeStrokeStyle;
+    if($('#edgeArrowSize')) $('#edgeArrowSize').value = state.settings.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
     $('#edgeLabelColor').value = state.settings.edgeLabelColor;
     $('#edgeLabelFont').value = state.settings.edgeLabelFont;
     $('#edgeLabelSize').value = state.settings.edgeLabelSize;
-    $('#edgeDirected').checked = state.settings.directed;
+    const edEl = $('#edgeDirected') as any;
+    if(edEl){
+      if(edEl.tagName === 'SELECT') edEl.value = normalizeDirection((state.settings as any).direction ?? state.settings.directed);
+      else edEl.checked = edgeDirection({direction: (state.settings as any).direction ?? state.settings.directed} as any) !== 'undirected';
+    }
     $('#optAutosave').checked = state.settings.autosave;
     $('#optSnap').checked = state.settings.snap;
     $('#optSnapX').checked = state.settings.snapX;
@@ -1163,6 +1205,7 @@
       // ghost can reappear on a later camera-only update.
       paintEdgeText(g, d, null, '', '', false);
       if(g.__arrow){ g.__arrow.remove(); g.__arrow = null; }
+      if((g as any).__arrowStart){ (g as any).__arrowStart.remove(); (g as any).__arrowStart = null; }
       syncEdgeSelRing(g, e, null, d, false);
       return;
     }
@@ -1175,6 +1218,18 @@
     const arrow = g.__arrow || null;
     if(arrow && hasEdgeTip(e, d)) setAttr(arrow, 'points', edgeArrowPoints(d));
     else if(arrow){ arrow.remove(); g.__arrow = null; }
+    else if(hasEdgeTip(e, d) && !arrow){
+      // Edge became mutual/directed during drag? create missing arrow
+      const na = document.createElementNS(NS,'polygon'); na.setAttribute('class','edge-arrow'); g.appendChild(na); g.__arrow = na;
+      setAttr(na, 'points', edgeArrowPoints(d)); setAttr(na, 'fill', edgeVisualC(e, vc).color);
+    }
+    const arrowStart = (g as any).__arrowStart || null;
+    if(arrowStart && hasEdgeStartTip(e, d)) setAttr(arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
+    else if(arrowStart){ arrowStart.remove(); (g as any).__arrowStart = null; }
+    else if(hasEdgeStartTip(e, d)){
+      const ns = document.createElementNS(NS,'polygon'); ns.setAttribute('class','edge-arrow-start'); g.appendChild(ns); (g as any).__arrowStart = ns;
+      setAttr(ns, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize)); setAttr(ns, 'fill', edgeVisualC(e, vc).color);
+    }
     // ...and the selection accent with it, or the highlight would be left
     // behind at the edge's old position for the rest of the gesture.
     moveEdgeSelRing(g, d);
@@ -1346,8 +1401,8 @@
       // fields. Rebuilding it every time an *unrelated* style edit repaints a
       // 2,500-edge layer was pure overhead — and the result would be identical.
       const edgeStyleKey = e.type + '\u0001' + e.color + '\u0001' + e.strokeSize + '\u0001' + e.strokeStyle
-        + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
-        + '\u0001' + e.weight + '\u0001' + e.directed;
+        + '\u0001' + (e.arrowSize ?? '') + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
+        + '\u0001' + e.weight + '\u0001' + edgeDirection(e);
       let v = (!stylePass && ent && ent.el.__styleKey === edgeStyleKey) ? ent.el.__style : null;
       if(!v){
         v = edgeRenderStyleC(e);
@@ -1397,7 +1452,7 @@
       // Include the floating origin: absolute world endpoints unchanged by a
       // camera move still produce different SVG numbers after a rebase, so the
       // geometry cache must not hand back a path from the previous origin.
-      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${e.directed ? 1 : 0}|${renderOriginX},${renderOriginY}|${renderScale}`;
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${v.arrowSize}|${renderOriginX},${renderOriginY}|${renderScale}`;
       let d = g.__geoSig === geoSig ? g.__geoData : null;
       if(!d){
         d = edgePath(a,b,e, passVisuals);
@@ -1443,7 +1498,7 @@
       // Selection accent: a wide line behind the path and a bigger copy of the
       // tip behind the arrowhead. Neither repaints the edge itself.
       syncEdgeAccent(g, e, v, d, selected && edgeVisible, bulkAccents);
-      // Update or create arrow — the tip always keeps the edge's own colour
+      // Update or create arrows — QVGE has directed (end only), mutual (both), undirected (none)
       let arrow = g.__arrow || null;
       if(hasEdgeTip(e, d)){
         if(!arrow){ arrow = document.createElementNS(NS,'polygon'); arrow.setAttribute('class','edge-arrow'); g.appendChild(arrow); g.__arrow = arrow; }
@@ -1451,6 +1506,14 @@
         setAttr(arrow, 'fill', v.color);
       } else if(arrow){
         arrow.remove(); g.__arrow = null; arrow = null;
+      }
+      let arrowStart = g.__arrowStart || null;
+      if(hasEdgeStartTip(e, d)){
+        if(!arrowStart){ arrowStart = document.createElementNS(NS,'polygon'); arrowStart.setAttribute('class','edge-arrow-start'); g.appendChild(arrowStart); g.__arrowStart = arrowStart; }
+        setAttr(arrowStart, 'points', tipPointsAt(d.startTipX, d.startTipY, d.startArrowAngle, d.arrowSize));
+        setAttr(arrowStart, 'fill', v.color);
+      } else if(arrowStart){
+        arrowStart.remove(); g.__arrowStart = null; arrowStart = null;
       }
       // Labels/weights are created whenever the edge has a visible path, then
       // hidden (not removed) when the ORIGINAL midpoint is off-screen. A camera
@@ -1563,8 +1626,13 @@
     const rc = clampRenderCoord;
     const rawAx = rawRenderX(a.x), rawAy = rawRenderY(a.y);
     const rawBx = rawRenderX(b.x), rawBy = rawRenderY(b.y);
-    const arrowGap = e.directed ? ARROW_LEN : 2; // world units
-    const empty = () => ({ path:'', labelX:0, labelY:0, tx:0, ty:0, tipX:null, tipY:null, arrowAngle:null });
+    const hasEnd = edgeHasEndArrow(e), hasStart = edgeHasStartArrow(e);
+    const v = vc ? edgeVisualC(e, vc) : edgeVisual(e);
+    const arrowLen = edgeArrowMetrics(v.arrowSize).len;
+    const arrowGapEnd = hasEnd ? arrowLen : 2;
+    const arrowGapStart = hasStart ? arrowLen : 2;
+    const arrowSize = v.arrowSize;
+    const empty = () => ({ path:'', labelX:0, labelY:0, tx:0, ty:0, tipX:null, tipY:null, arrowAngle:null, startTipX:null, startTipY:null, startArrowAngle:null, arrowSize });
     // A self-loop lives entirely around one node: if that node is outside the
     // safe render window the loop cannot have a visible segment.
     if(a.id === b.id){
@@ -1575,10 +1643,10 @@
       const spread = 0.72;
       const loop = 78 + Math.abs(step) * 10;
       // All geometry stays in raw world units until the final rc() writes.
-      const sxRaw = rawAx + Math.cos(angle - spread) * (ra + 2);
-      const syRaw = rawAy + Math.sin(angle - spread) * (ra + 2);
-      const txRaw = rawAx + Math.cos(angle + spread) * (ra + arrowGap);
-      const tyRaw = rawAy + Math.sin(angle + spread) * (ra + arrowGap);
+      const sxRaw = rawAx + Math.cos(angle - spread) * (ra + arrowGapStart);
+      const syRaw = rawAy + Math.sin(angle - spread) * (ra + arrowGapStart);
+      const txRaw = rawAx + Math.cos(angle + spread) * (ra + arrowGapEnd);
+      const tyRaw = rawAy + Math.sin(angle + spread) * (ra + arrowGapEnd);
       const c1xRaw = rawAx + Math.cos(angle - spread * 0.45) * (ra + loop);
       const c1yRaw = rawAy + Math.sin(angle - spread * 0.45) * (ra + loop);
       const c2xRaw = rawAx + Math.cos(angle + spread * 0.45) * (ra + loop);
@@ -1590,8 +1658,18 @@
       const labelX = rc(labelRawX), labelY = rc(labelRawY);
       const arrowAngle = Math.atan2(ty - c2y, tx - c2x);
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = rc(txRaw + ac * arrowGap), tipY = rc(tyRaw + as * arrowGap);
-      return { path:`M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle };
+      const tipX = hasEnd ? rc(txRaw + ac * arrowGapEnd) : null;
+      const tipY = hasEnd ? rc(tyRaw + as * arrowGapEnd) : null;
+      // For mutual self-loop, also compute start arrow opposite direction
+      let startTipX=null, startTipY=null, startArrowAngle=null;
+      if(hasStart){
+        const startAngle = Math.atan2(sy - c1y, sx - c1x);
+        const sac = Math.cos(startAngle), sas = Math.sin(startAngle);
+        startTipX = rc(sxRaw + sac * arrowGapStart);
+        startTipY = rc(syRaw + sas * arrowGapStart);
+        startArrowAngle = startAngle;
+      }
+      return { path:`M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`, labelX, labelY, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle, arrowSize };
     }
     const clip = clipEdgeSegment(rawAx, rawAy, rawBx, rawBy);
     if(!clip) return empty();
@@ -1602,24 +1680,31 @@
     const midRawX = (rawAx + rawBx) / 2, midRawY = (rawAy + rawBy) / 2;
     // A clipped endpoint is an intersection with the safe window, not a node
     // boundary: do not reserve a radius or arrow gap there.
-    const sxRaw = clip.startClipped ? clip.x0 : clip.x0 + ux * (ra + 2);
-    const syRaw = clip.startClipped ? clip.y0 : clip.y0 + uy * (ra + 2);
-    const txRaw = clip.endClipped ? clip.x1 : clip.x1 - ux * (rb + arrowGap);
-    const tyRaw = clip.endClipped ? clip.y1 : clip.y1 - uy * (rb + arrowGap);
+    const sxRaw = clip.startClipped ? clip.x0 : clip.x0 + ux * (ra + arrowGapStart);
+    const syRaw = clip.startClipped ? clip.y0 : clip.y0 + uy * (ra + arrowGapStart);
+    const txRaw = clip.endClipped ? clip.x1 : clip.x1 - ux * (rb + arrowGapEnd);
+    const tyRaw = clip.endClipped ? clip.y1 : clip.y1 - uy * (rb + arrowGapEnd);
     const sx = rc(sxRaw), sy = rc(syRaw), tx = rc(txRaw), ty = rc(tyRaw);
     if(Math.abs(offset) > 1){
       const mxRaw = midRawX - uy * offset, myRaw = midRawY + ux * offset;
       const mx = rc(mxRaw), my = rc(myRaw);
       const arrowAngle = Math.atan2(tyRaw - myRaw, txRaw - mxRaw);
       const ac = Math.cos(arrowAngle), as = Math.sin(arrowAngle);
-      const tipX = clip.endClipped ? null : rc(txRaw + ac * arrowGap);
-      const tipY = clip.endClipped ? null : rc(tyRaw + as * arrowGap);
-      return { path:`M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX:mx, labelY:my, tx, ty, tipX, tipY, arrowAngle };
+      const startArrowAngle = Math.atan2(syRaw - myRaw, sxRaw - mxRaw);
+      const sac = Math.cos(startArrowAngle), sas = Math.sin(startArrowAngle);
+      const tipX = clip.endClipped || !hasEnd ? null : rc(txRaw + ac * arrowGapEnd);
+      const tipY = clip.endClipped || !hasEnd ? null : rc(tyRaw + as * arrowGapEnd);
+      const startTipX = clip.startClipped || !hasStart ? null : rc(sxRaw + sac * arrowGapStart);
+      const startTipY = clip.startClipped || !hasStart ? null : rc(syRaw + sas * arrowGapStart);
+      return { path:`M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`, labelX:mx, labelY:my, tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle, arrowSize };
     }
     const arrowAngle = Math.atan2(uy, ux);
-    const tipX = clip.endClipped ? null : rc(clip.x1 - ux * rb);
-    const tipY = clip.endClipped ? null : rc(clip.y1 - uy * rb);
-    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:rc(midRawX), labelY:rc(midRawY), tx, ty, tipX, tipY, arrowAngle };
+    const startArrowAngle = Math.atan2(-uy, -ux);
+    const tipX = clip.endClipped || !hasEnd ? null : rc(clip.x1 - ux * rb);
+    const tipY = clip.endClipped || !hasEnd ? null : rc(clip.y1 - uy * rb);
+    const startTipX = clip.startClipped || !hasStart ? null : rc(clip.x0 + ux * ra);
+    const startTipY = clip.startClipped || !hasStart ? null : rc(clip.y0 + uy * ra);
+    return { path:`M ${sx} ${sy} L ${tx} ${ty}`, labelX:rc(midRawX), labelY:rc(midRawY), tx, ty, tipX, tipY, arrowAngle, startTipX, startTipY, startArrowAngle, arrowSize };
   }
   // A 50-unit node becomes sub-pixel when Fit spans millions of units, so
   // Chromium cannot hit-test the visible shape. Keep a transparent circular
@@ -1922,10 +2007,11 @@
             <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-            <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="true">${I18N.t('directed_edge_short')}</option><option value="false">${I18N.t('undirected_edge_short')}</option></select></label>
+            <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
             <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
             <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
             <label class="field" for="mulEdgeStrokeStyle">${I18N.t('stroke_style')} <select id="mulEdgeStrokeStyle">${strokeOptions}</select></label>
+            <label class="field" for="mulEdgeArrowSize"><span data-i18n="arrow_size">${I18N.t('arrow_size')}</span> <input id="mulEdgeArrowSize" type="number" min="4" max="40" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="decimal"></label>
             <label class="field" for="mulEdgeLabelColor">${I18N.t('label_color')} <input id="mulEdgeLabelColor" type="color" value="#dbeafe"></label>
             <label class="field" for="mulEdgeLabelSize">${I18N.t('label_size')} <input id="mulEdgeLabelSize" type="number" min="4" max="72" value="12" inputmode="decimal"></label>
             <label class="field" for="mulEdgeLabelFont"><span data-i18n="label_font">${I18N.t('label_font')}</span> <input id="mulEdgeLabelFont" list="fontList" type="text" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
@@ -1984,21 +2070,23 @@
         $('#mulEdgeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.label = v; } pushHistory('multi edge label'); queueRender(true); saveSoon(); });
         $('#mulEdgeWeight').addEventListener('change', e => { const v = e.target.value.slice(0,50); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ if(v === '') delete ed.weight; else ed.weight = v; } } pushHistory('multi edge weight'); queueRender(true); saveSoon(); });
         $('#mulEdgeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ ed.type = v; applyTypeStyleToEdge(ed); } } invalidateGraphIndex(); pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
-        $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const dir = v === 'true'; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.directed = dir; } pushHistory('multi edge directed'); queueRender(true); });
+        $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if(v === '') return; for(const id of edgeIds){ const ed = edgeById(id); if(ed){ (ed as any).direction = v; (ed as any).directed = v !== 'undirected'; } } pushHistory('multi edge directed'); queueRender(true); });
         $('#mulEdgeColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.color = e.target.value; } queueRender(false); saveSoon(); });
         $('#mulEdgeColor').addEventListener('change', () => pushHistory('multi edge color'));
         $('#mulEdgeStrokeSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,2.4),0,20); e.target.value=v; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.strokeSize = v; } pushHistory('multi edge stroke size'); queueRender(false); });
         $('#mulEdgeStrokeStyle').addEventListener('change', e => { const v = e.target.value; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.strokeStyle = v; } pushHistory('multi edge stroke style'); queueRender(false); });
+        $('#mulEdgeArrowSize').addEventListener('change', e => { const val = e.target.value; if(val === '') return; const v = clamp(finite(val, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value=v; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.arrowSize = v; } pushHistory('multi edge arrow size'); queueRender(true); });
         $('#mulEdgeLabelColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelColor = e.target.value; } queueRender(false); saveSoon(); });
         $('#mulEdgeLabelColor').addEventListener('change', () => pushHistory('multi edge label color'));
         $('#mulEdgeLabelSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,12),4,72); e.target.value=v; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelSize = v; } pushHistory('multi edge label size'); queueRender(false); });
         $('#mulEdgeLabelFont').addEventListener('change', e => { const v = e.target.value.trim().slice(0,60); for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelFont = v || undefined; } pushHistory('multi edge label font'); queueRender(false); saveSoon(); });
         attachDragNumber($('#mulEdgeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+        attachDragNumber($('#mulEdgeArrowSize'), { min: 4, max: 40, step: 1, sensitivity: 0.5 });
         attachDragNumber($('#mulEdgeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
         $('#mulResetEdgeStyle').addEventListener('click', () => {
           for(const id of edgeIds){
             const ed = edgeById(id); if(!ed) continue;
-            delete ed.color; delete ed.strokeSize; delete ed.strokeStyle;
+            delete ed.color; delete ed.strokeSize; delete ed.strokeStyle; delete ed.arrowSize;
             delete ed.labelColor; delete ed.labelSize; delete ed.labelFont;
             ed.color = '';
           }
@@ -2113,12 +2201,13 @@
           <label class="field" for="selEdgeLabel">${I18N.t('label')} <input id="selEdgeLabel" value="${esc(e.label)}"></label>
         </div>
         <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList">${typeList.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
-        <label class="row tiny muted" style="margin:8px 0"><input id="selEdgeDirected" type="checkbox" ${e.directed?'checked':''}> ${I18N.t('directed_edge')}</label>
+        <label class="field" for="selEdgeDirected">${I18N.t('direction')} <select id="selEdgeDirected"><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
         <div class="section-title">${I18N.t('style_blank_inherit')} <span class="tiny muted">${I18N.t('blank_inherit')}</span></div>
         <div class="grid2">
           <label class="field" for="selEdgeColor">${I18N.t('color')} <input id="selEdgeColor" type="color" value="${esc(v.color)}"></label>
           <label class="field" for="selEdgeStrokeSize">${I18N.t('stroke_size')} <input id="selEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="${v.strokeSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeStrokeStyle">${I18N.t('stroke_style')} <select id="selEdgeStrokeStyle"><option value="">${I18N.t('stroke_inherit')}</option>${strokeOptions}</select></label>
+          <label class="field" for="selEdgeArrowSize">${I18N.t('arrow_size')} <input id="selEdgeArrowSize" type="number" min="4" max="40" step="1" value="${v.arrowSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeLabelColor">${I18N.t('label_color')} <input id="selEdgeLabelColor" type="color" value="${esc(v.labelColor)}"></label>
           <label class="field" for="selEdgeLabelSize">${I18N.t('label_size')} <input id="selEdgeLabelSize" type="number" min="4" max="72" value="${v.labelSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeLabelFont">${I18N.t('label_font')} <input id="selEdgeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
@@ -2134,20 +2223,23 @@
       $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory(); queueRender(true); });
       $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0,80); pushHistory(); queueRender(true); });
       $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edge type'); queueRender(false); renderSelectionPanel(); });
-      $('#selEdgeDirected').addEventListener('change', ev => { e.directed = ev.target.checked; pushHistory(); queueRender(true); });
+      ($('#selEdgeDirected') as any).value = edgeDirection(e);
+      $('#selEdgeDirected').addEventListener('change', ev => { (e as any).direction = (ev.target as any).value; (e as any).directed = (ev.target as any).value !== 'undirected'; pushHistory(); queueRender(true); });
       $('#selEdgeColor').addEventListener('input', ev => { e.color = ev.target.value; queueRender(false); saveSoon(); });
       $('#selEdgeColor').addEventListener('change', () => pushHistory());
       $('#selEdgeStrokeSize').addEventListener('change', ev => { e.strokeSize = clamp(finite(ev.target.value,2.4),0,20); ev.target.value=e.strokeSize; pushHistory(); queueRender(false); });
       $('#selEdgeStrokeStyle').addEventListener('change', ev => { e.strokeStyle = ev.target.value; pushHistory(); queueRender(false); });
+      $('#selEdgeArrowSize').addEventListener('change', ev => { e.arrowSize = clamp(finite(ev.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); ev.target.value=e.arrowSize; pushHistory(); queueRender(true); });
       $('#selEdgeLabelColor').addEventListener('input', ev => { e.labelColor = ev.target.value; queueRender(false); saveSoon(); });
       $('#selEdgeLabelColor').addEventListener('change', () => pushHistory());
       $('#selEdgeLabelSize').addEventListener('change', ev => { e.labelSize = clamp(finite(ev.target.value,12),4,72); ev.target.value=e.labelSize; pushHistory(); queueRender(false); });
       $('#selEdgeLabelFont').addEventListener('change', ev => { e.labelFont = ev.target.value.slice(0,60) || undefined; pushHistory(); queueRender(false); });
       attachDragNumber($('#selEdgeStrokeSize'), { min: 0, max: 20, step: 0.1, sensitivity: 0.3 });
+      attachDragNumber($('#selEdgeArrowSize'), { min: 4, max: 40, step: 1, sensitivity: 0.5 });
       attachDragNumber($('#selEdgeLabelSize'), { min: 4, max: 72, step: 1, sensitivity: 0.5 });
       $('#selDelete').addEventListener('click', deleteSelected);
       $('#selResetEdgeStyle').addEventListener('click', () => {
-        delete e.color; delete e.strokeSize; delete e.strokeStyle;
+        delete e.color; delete e.strokeSize; delete e.strokeStyle; delete e.arrowSize;
         delete e.labelColor; delete e.labelSize; delete e.labelFont;
         e.color = '';
         pushHistory('reset edge style'); queueRender(true); saveSoon(); renderSelectionPanel();
@@ -2232,7 +2324,10 @@
       const weight = (edge.weight != null && edge.weight !== '') ? edge.weight : '';
       cellAt(values[from] || (values[from] = []), to).push(weight);
       if(edgeIds) cellAt(edgeIds[from] || (edgeIds[from] = []), to).push(edge.id);
-      if(!edge.directed && from !== to){
+      // `&&` binds tighter than `||`, so without these parentheses the
+      // undirected half ignored the self-loop guard and pushed the weight into
+      // the same cell twice (7;7), which re-imports as two edges.
+      if((edgeIsUndirected(edge) || edgeDirection(edge)==='mutual') && from !== to){
         cellAt(values[to] || (values[to] = []), from).push(weight);
         if(edgeIds) cellAt(edgeIds[to] || (edgeIds[to] = []), from).push(edge.id);
       }
@@ -2242,7 +2337,7 @@
   function adjacencyMatrix(nodes=state.nodes){ return adjacencyMatrixData(nodes, false).values; }
   function matrixCellEdgeIds(from, to){
     return state.edges
-      .filter(e => (e.from === from && e.to === to) || (!e.directed && e.from === to && e.to === from))
+      .filter(e => (e.from === from && e.to === to) || ((edgeIsUndirected(e) || edgeDirection(e)==='mutual') && e.from === to && e.to === from))
       .map(e => e.id);
   }
   const emptyCell: any[] = [];
@@ -2327,7 +2422,7 @@
         <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" aria-label="${esc(I18N.t('weight'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_weight'))}" style="width:52px"></td>
         <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" aria-label="${esc(I18N.t('label'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_label'))}" style="width:72px"></td>
         <td><input class="matrix-input edge-type" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="none" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
-        <td><input type="checkbox" class="edge-directed" data-edge-id="${esc(e.id)}" ${e.directed?'checked':''} aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"></td>
+        <td><select class="edge-directed" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"><option value="directed" ${edgeDirection(e)==='directed'?'selected':''}>→</option><option value="mutual" ${edgeDirection(e)==='mutual'?'selected':''}>↔</option><option value="undirected" ${edgeDirection(e)==='undirected'?'selected':''}>—</option></select></td>
         <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
       </tr>`);

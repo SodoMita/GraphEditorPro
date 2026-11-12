@@ -46,8 +46,8 @@
   }
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
   function edgeCsv(){
-    const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','label_color','label_size']];
-    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,e.directed?'true':'false',e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.labelColor||'',e.labelSize??'']); }
+    const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','arrow_size','label_color','label_size']];
+    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.arrowSize??'',e.labelColor||'',e.labelSize??'']); }
     return rowsToCsv(rows);
   }
   function nodeCsv(){
@@ -63,7 +63,7 @@
       const weight = (edge.weight != null && edge.weight !== '') ? edge.weight : '';
       if(!sparseRows[from].has(to)) sparseRows[from].set(to, []);
       sparseRows[from].get(to).push(weight);
-      if(!edge.directed && from !== to){
+      if((edgeIsUndirected(edge) || edgeDirection(edge)==='mutual') && from !== to){
         if(!sparseRows[to].has(from)) sparseRows[to].set(from, []);
         sparseRows[to].get(from).push(weight);
       }
@@ -198,9 +198,16 @@
     return style;
   }
   function exportDotText(){
-    const allDirected = state.edges.every(e => e.directed);
-    const header = `${allDirected ? 'digraph' : 'graph'} ${dotId(fileBase())} {`;
-    const connector = allDirected ? '->' : '--';
+    // DOT grammar: the edge operator is fixed by the graph kind — `graph` takes
+    // only `--`, `digraph` takes only `->`. Emitting `--` for an undirected edge
+    // inside a `digraph` (which a mixed graph needs, for its `dir=both` edge)
+    // is a syntax error, so the operator follows the header and the *direction*
+    // is carried by `dir` alone: none -> undirected, both -> mutual,
+    // forward -> directed.
+    const allUndirected = state.edges.length > 0 && state.edges.every(e => edgeIsUndirected(e));
+    const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
+    // `graph` may only use `--`, and a mutual edge is invalid there anyway.
+    const op = allUndirected ? '--' : '->';
     const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
       const v = nodeVisual(n);
@@ -233,17 +240,23 @@
     }
     for(const e of state.edges){
       const v = edgeVisual(e);
-      const op = e.directed ? '->' : connector;
+      const dir = edgeDirection(e);
       const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
       if(e.label) attrs.push(`label=${dotString(e.label)}`); else if(e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number') attrs.push(`label=${dotString(e.weight)}`);
-      if(!allDirected && e.directed) attrs.push('directed=true');
+      // QVGE: store direction explicitly via dir for DOT
       // QVGE DOT: color, penwidth, style, dir
       attrs.push(`color=${dotString(v.color)}`);
       attrs.push(`penwidth=${v.strokeSize}`);
       const es = v.strokeStyle;
       if(es) attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
-      if(e.directed) attrs.push(`dir=${dotString('forward')}`);
-      else attrs.push(`dir=${dotString('none')}`);
+      if(dir === 'mutual') attrs.push(`dir=${dotString('both')}`);
+      else if(dir === 'undirected') attrs.push(`dir=${dotString('none')}`);
+      else attrs.push(`dir=${dotString('forward')}`);
+      if(v.arrowSize != null){
+        const mul = v.arrowSize / DEFAULT_ARROW_SIZE;
+        const txt = Number(mul.toFixed(4)).toString();
+        attrs.push(`arrowsize=${dotString(txt)}`);
+      }
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
     lines.push('}');
@@ -251,51 +264,206 @@
   }
   function exportDot(){ showExportPreview(`${fileBase()}.dot`, exportDotText(), 'text/vnd.graphviz;charset=utf-8'); }
   function xmlEsc(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&apos;','"':'&quot;'}[c])); }
+  // ---- The GraphML field model ------------------------------------------------
+  //
+  // One table says, for every field this app understands: the attr.name our
+  // exporter writes, the alias attr.names other tools use, and how to parse a
+  // value. Everything GraphML-related is derived from it — which names are
+  // built-in (~so a key is not mistaken for a user definition), which names bind
+  // to which field for <data> values and for <default> values, and the parser for
+  // each. Adding a field in one place used to mean editing three tables, and they
+  // had already drifted: `fillcolor` and `edgecolor` were accepted as <data> but
+  // not as <default>, and `labelposition` silently fed neither.
+  //
+  // `parse` returns undefined for a value it cannot use, leaving the field unset.
+  interface GraphmlField {
+    /** The property on GraphNode/GraphEdge (or the settings default) this fills. */
+    field: string;
+    /** attr.name the exporter writes for this field. */
+    name: string;
+    /** attr.names other tools use for the same field. */
+    aliases?: string[];
+    /** GraphML attr.type the exporter declares. */
+    type?: string;
+    /** The exporter's <key> id; defaults to the field name. */
+    keyId?: string;
+  }
+  const num = (raw: unknown, fallback: number, lo: number, hi: number) => clamp(finite(raw, fallback), lo, hi);
+  const colorOrUndef = (raw: unknown) => parseColor(raw) || undefined;
+  const NODE_FIELDS_MODEL: readonly GraphmlField[] = [
+    {field: 'label', name: 'label', aliases: ['name']},
+    {field: 'id', name: 'id', keyId: 'nodeId'},
+    {field: 'order', name: 'order', type: 'int'},
+    {field: 'x', name: 'x', aliases: ['posx', 'position.x'], type: 'double'},
+    {field: 'y', name: 'y', aliases: ['posy', 'position.y'], type: 'double'},
+    {field: 'type', name: 'type'},
+    {field: 'shape', name: 'shape', aliases: ['graphics']},
+    {field: 'color', name: 'color', aliases: ['fillcolor', 'bgcolor']},
+    {field: 'width', name: 'width', type: 'double'},
+    {field: 'height', name: 'height', type: 'double'},
+    {field: 'strokeColor', name: 'stroke.color', aliases: ['strokecolor']},
+    {field: 'strokeSize', name: 'stroke.size', aliases: ['strokesize'], type: 'double'},
+    {field: 'strokeStyle', name: 'stroke.style', aliases: ['strokestyle']},
+    {field: 'labelColor', name: 'label.color', aliases: ['labelcolor']},
+    {field: 'labelFont', name: 'label.font', aliases: ['labelfont']},
+    {field: 'labelSize', name: 'label.size', aliases: ['labelsize'], type: 'double'},
+    {field: 'labelPosition', name: 'label.position', aliases: ['labelposition']},
+  ];
+  const EDGE_FIELDS_MODEL: readonly GraphmlField[] = [
+    {field: 'weight', name: 'weight', aliases: ['value']},
+    {field: 'label', name: 'label', keyId: 'edgeLabel', aliases: ['edgelabel']},
+    {field: 'type', name: 'type', keyId: 'edgeType'},
+    {field: 'color', name: 'color', keyId: 'edgeColor', aliases: ['edgecolor']},
+    {field: 'strokeSize', name: 'stroke.size', keyId: 'edgeStrokeSize', aliases: ['strokesize'], type: 'double'},
+    {field: 'strokeStyle', name: 'style', keyId: 'edgeStrokeStyle', aliases: ['stroke.style', 'strokestyle']},
+    {field: 'labelColor', name: 'label.color', keyId: 'edgeLabelColor', aliases: ['labelcolor']},
+    {field: 'labelFont', name: 'label.font', keyId: 'edgeLabelFont', aliases: ['labelfont']},
+    {field: 'labelSize', name: 'label.size', keyId: 'edgeLabelSize', aliases: ['labelsize'], type: 'double'},
+    {field: 'directed', name: 'directed', type: 'boolean'},
+    {field: 'direction', name: 'direction'},
+    {field: 'arrowSize', name: 'arrow.size', keyId: 'arrowSize', aliases: ['arrowsize'], type: 'double'},
+  ];
+  const GRAPH_FIELDS_MODEL: readonly GraphmlField[] = [
+    {field: 'labelsPolicy', name: 'labels.policy'},
+    {field: 'edgeWeightMode', name: 'edge.weight.mode'},
+    {field: 'edgeWeightMin', name: 'edge.weight.min', type: 'double'},
+    {field: 'edgeWeightMax', name: 'edge.weight.max', type: 'double'},
+    {field: 'edgeWeightCorr', name: 'edge.weight.corr'},
+    {field: 'edgeWidthMin', name: 'edge.width.min', type: 'double'},
+    {field: 'edgeWidthMax', name: 'edge.width.max', type: 'double'},
+    {field: 'edgeWeightColorLow', name: 'edge.weight.colorLow'},
+    {field: 'edgeWeightColorHigh', name: 'edge.weight.colorHigh'},
+    {field: 'canvasBgColor', name: 'canvas.bg.color'},
+    {field: 'gridMinorColor', name: 'grid.minor.color'},
+    {field: 'gridMajorColor', name: 'grid.major.color'},
+    {field: 'gridMinorAlpha', name: 'grid.minor.alpha', type: 'double'},
+    {field: 'gridMajorAlpha', name: 'grid.major.alpha', type: 'double'},
+  ];
+  const FIELDS_BY_SCOPE = {graph: GRAPH_FIELDS_MODEL, node: NODE_FIELDS_MODEL, edge: EDGE_FIELDS_MODEL} as const;
+  // attr.name (lowercased) -> field, per scope. Every alias resolves here, so a
+  // reader never has to know a second spelling.
+  const FIELD_BY_NAME: Record<string, Map<string, GraphmlField>> = {};
+  for(const [scope, model] of Object.entries(FIELDS_BY_SCOPE)){
+    const map = new Map<string, GraphmlField>();
+    for(const entry of model){
+      for(const name of [entry.name, ...(entry.aliases || [])]) map.set(name.toLowerCase(), entry);
+    }
+    FIELD_BY_NAME[scope] = map;
+  }
+  const fieldForName = (scope: string, name: string) => FIELD_BY_NAME[scope]?.get(String(name).toLowerCase());
+
+  // Every <key> the GraphML exporter writes itself, in emission order. Declared
+  // once so the custom-definition filter right below can use the same set of
+  // reserved ids instead of a hand-copied list that drifts.
+  // Derived from the field model above, so the key block and the readers cannot
+  // disagree about what a field is called. Order is the model's order: node,
+  // edge, graph, which is the order the exporter has always written.
+  const GRAPHML_BUILTIN_KEYS: readonly [string, string, string, string][] =
+    (['node', 'edge', 'graph'] as const).flatMap(scope =>
+      FIELDS_BY_SCOPE[scope].map(entry => [
+        entry.keyId || entry.field,
+        scope,
+        entry.name,
+        entry.type || 'string',
+      ] as [string, string, string, string]));
+
+  // The one rule core needs: a key is built-in iff it is one of these. Passed as
+  // a thunk so classification cannot depend on module evaluation order.
+  // The attr.names the importer below reads as built-in, per scope. Kept next to
+  // the data map it mirrors so the two cannot drift apart.
+  // Every attr.name (canonical and alias) the importer accepts, per scope —
+  // derived from the field model, so a name the reader accepts is always a name
+  // the classifier recognises as built-in.
+  const GRAPHML_READ_NAMES: readonly (readonly [string, string])[] =
+    (['node', 'edge', 'graph'] as const).flatMap(scope =>
+      [...FIELD_BY_NAME[scope].keys()].map(readName => [readName, scope] as const));
+
+  // Built-in cover = every attr.name our exporter writes for a scope (from
+  // GRAPHML_BUILTIN_KEYS, so it cannot drift from the key block) plus the alias
+  // names the importer accepts from other tools. Either way the <data> binds to
+  // one of our fields, so an unmarked key with that name is not a definition.
+  const GRAPHML_BUILTIN_NAMES = new Map<string, string[]>(['graph','node','edge'].map(scope => [scope, []]));
+  for(const [, forWhom, attrName] of GRAPHML_BUILTIN_KEYS) GRAPHML_BUILTIN_NAMES.get(forWhom)!.push(String(attrName).toLowerCase());
+  registerGraphmlSchema(() => ({readNames: [
+    ...GRAPHML_READ_NAMES,
+    ...[...GRAPHML_BUILTIN_NAMES].flatMap(([scope, names]) => names.map(readName => [readName, scope] as const)),
+  ]}));
+  // Provenance, stated rather than inferred.
+  //
+  // Three rounds of review asked for opposite answers on identical bytes:
+  //   * <key id="name" attr.name="name"> in our own export is the user's
+  //     definition and must come back;
+  //   * <key id="name" attr.name="name"> in a foreign file feeds the node label
+  //     and must not appear as a definition;
+  //   * <key id="qvge.custom.score"> from a third-party tool is that tool's key,
+  //     not ours, so it must not be silently un-prefixed into `score`.
+  // Identity cannot decide any of that, so the exporter states it:
+  //   - every definition key carries QVGE_CUSTOM_MARKER, and keeps the
+  //     definition's own id (no namespacing: an external `qvge.custom.score`
+  //     stays distinct from our `score`);
+  //   - the document declares a marker on <graphml> so a file is attributable
+  //     as a whole, which is what lets older exports (written before markers
+  //     existed) still be recognised.
+  const GRAPHML_BUILTIN_KEY_IDS = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId]) => keyId));
+  const QVGE_NS = 'http://qvge.github.io/graphml';
+  const QVGE_CUSTOM_MARKER = 'custom-attribute';
+  // Prefix used by the previous export format to namespace definitions. Still
+  // read, for documents written by that build.
+  const CUSTOM_KEY_PREFIX = 'qvge.custom.';
+  // The <key id> each definition is exported under.
+  //
+  // GraphML ids are document-unique, and a definition may legitimately share a
+  // name with a built-in field (`arrowSize`, `weight`). The marker is what says
+  // "this is a definition"; the id only has to be unique, so one that would
+  // collide with a built-in key takes a numbered suffix, and the definition's
+  // own id rides along in qvge:id so it round-trips without drifting.
+  //
+  // Values are written under the same id, so the <key> lines and the
+  // <data key="..."> emitters both read from this one map — re-deriving it in
+  // two places is how a de-collided definition silently loses its values to a
+  // built-in field on every export.
+  type CustomDef = GraphState['customAttributes'][number];
+  function customExportKeyIds(): Map<CustomDef, string> {
+    const builtinIds = GRAPHML_BUILTIN_KEY_IDS;
+    const taken = new Set(builtinIds);
+    for(const attribute of state.customAttributes) taken.add(attribute.id);
+    const emitted = new Set<string>();
+    const map = new Map<CustomDef, string>();
+    for(const attribute of state.customAttributes){
+      let id = attribute.id;
+      if(builtinIds.has(id)){
+        // Only the colliding case is rewritten, and deterministically: the first
+        // free numbered suffix that no other definition claims.
+        for(let suffix = 2; ; suffix++){
+          const candidate = `${attribute.id}${suffix}`;
+          if(!builtinIds.has(candidate) && !taken.has(candidate) && !emitted.has(candidate)){ id = candidate; break; }
+        }
+      }
+      emitted.add(id);
+      map.set(attribute, id);
+    }
+    return map;
+  }
+  function graphmlCustomKeyLines(keyIds: Map<CustomDef, string>): string[]{
+    return state.customAttributes.map(attribute => {
+      const id = keyIds.get(attribute)!;
+      const attrName = (attribute as AnyRecord).name || attribute.id;
+      // The definition's own id, when the exported key id had to differ. Without
+      // it a de-collided `arrowSize` would come back as `arrowSize2` and drift.
+      const idAttr = id === attribute.id ? '' : ` qvge:id="${xmlEsc(attribute.id)}"`;
+      return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}/>`;
+    });
+  }
   function exportGraphmlText(){
     const gd = state.settings.graphDefaults;
-    const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml" xmlns:grapheditor="https://grapheditor.pro/ns">`,
-      `  <key id="label" for="node" attr.name="label" attr.type="string"/>`,
-      `  <key id="nodeId" for="node" attr.name="id" attr.type="string"/>`,
-      `  <key id="order" for="node" attr.name="order" attr.type="int"/>`,
-      `  <key id="x" for="node" attr.name="x" attr.type="double"/>`,
-      `  <key id="y" for="node" attr.name="y" attr.type="double"/>`,
-      `  <key id="type" for="node" attr.name="type" attr.type="string"/>`,
-      `  <key id="shape" for="node" attr.name="shape" attr.type="string"/>`,
-      `  <key id="color" for="node" attr.name="color" attr.type="string"/>`,
-      `  <key id="width" for="node" attr.name="width" attr.type="double"/>`,
-      `  <key id="height" for="node" attr.name="height" attr.type="double"/>`,
-      `  <key id="strokeColor" for="node" attr.name="stroke.color" attr.type="string"/>`,
-      `  <key id="strokeSize" for="node" attr.name="stroke.size" attr.type="double"/>`,
-      `  <key id="strokeStyle" for="node" attr.name="stroke.style" attr.type="string"/>`,
-      `  <key id="labelColor" for="node" attr.name="label.color" attr.type="string"/>`,
-      `  <key id="labelFont" for="node" attr.name="label.font" attr.type="string"/>`,
-      `  <key id="labelSize" for="node" attr.name="label.size" attr.type="double"/>`,
-      `  <key id="labelPosition" for="node" attr.name="label.position" attr.type="string"/>`,
-      `  <key id="weight" for="edge" attr.name="weight" attr.type="string"/>`,
-      `  <key id="edgeLabel" for="edge" attr.name="label" attr.type="string"/>`,
-      `  <key id="edgeType" for="edge" attr.name="type" attr.type="string"/>`,
-      `  <key id="edgeColor" for="edge" attr.name="color" attr.type="string"/>`,
-      `  <key id="edgeStrokeSize" for="edge" attr.name="stroke.size" attr.type="double"/>`,
-      `  <key id="edgeStrokeStyle" for="edge" attr.name="style" attr.type="string"/>`,
-      `  <key id="edgeLabelColor" for="edge" attr.name="label.color" attr.type="string"/>`,
-      `  <key id="edgeLabelFont" for="edge" attr.name="label.font" attr.type="string"/>`,
-      `  <key id="edgeLabelSize" for="edge" attr.name="label.size" attr.type="double"/>`,
-      `  <key id="directed" for="edge" attr.name="directed" attr.type="boolean"/>`,
-      `  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>`,
-      `  <key id="edgeWeightMode" for="graph" attr.name="edge.weight.mode" attr.type="string"/>`,
-      `  <key id="edgeWeightMin" for="graph" attr.name="edge.weight.min" attr.type="double"/>`,
-      `  <key id="edgeWeightMax" for="graph" attr.name="edge.weight.max" attr.type="double"/>`,
-      `  <key id="edgeWeightCorr" for="graph" attr.name="edge.weight.corr" attr.type="string"/>`,
-      `  <key id="edgeWidthMin" for="graph" attr.name="edge.width.min" attr.type="double"/>`,
-      `  <key id="edgeWidthMax" for="graph" attr.name="edge.width.max" attr.type="double"/>`,
-      `  <key id="edgeWeightColorLow" for="graph" attr.name="edge.weight.colorLow" attr.type="string"/>`,
-      `  <key id="edgeWeightColorHigh" for="graph" attr.name="edge.weight.colorHigh" attr.type="string"/>`,
-      `  <key id="canvasBgColor" for="graph" attr.name="canvas.bg.color" attr.type="string"/>`,
-      `  <key id="gridMinorColor" for="graph" attr.name="grid.minor.color" attr.type="string"/>`,
-      `  <key id="gridMajorColor" for="graph" attr.name="grid.major.color" attr.type="string"/>`,
-      `  <key id="gridMinorAlpha" for="graph" attr.name="grid.minor.alpha" attr.type="double"/>`,
-      `  <key id="gridMajorAlpha" for="graph" attr.name="grid.major.alpha" attr.type="double"/>`,
-      ...state.customAttributes.map(attribute => `  <key id="${xmlEsc(attribute.id)}" for="${attribute.scope}" attr.name="${xmlEsc(attribute.id)}" attr.type="${attribute.type}"${attribute.dataKey ? ` grapheditor:dataKey="${xmlEsc(attribute.dataKey)}"` : ''}${attribute.dataName ? ` grapheditor:dataName="${xmlEsc(attribute.dataName)}"` : ''}/>`),
+    const customKeyIds = customExportKeyIds();
+    const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml" qvge:writer="graph-editor-pro" qvge:keys="${GRAPHML_BUILTIN_KEYS.length}">`,
+      ...GRAPHML_BUILTIN_KEYS.map(([id, forWhom, attrName, type]) => `  <key id="${id}" for="${forWhom}" attr.name="${attrName}" attr.type="${type}"/>`),
+      // Custom definitions come after the built-ins, so a custom id that matches
+      // one of them would emit a second <key> with the same id and make every
+      // <data key="..."> reference ambiguous. Those keys are emitted under a
+      // de-collided id carrying qvge:id back to the definition's own id.
+      ...graphmlCustomKeyLines(customKeyIds),
       `  <graph id="${xmlEsc(fileBase())}" edgedefault="directed">`];
     // Graph-level defaults
     lines.push(`    <data key="labelsPolicy">${xmlEsc(gd.labelsPolicy)}</data>`);
@@ -321,7 +489,7 @@
         if(!Object.prototype.hasOwnProperty.call(state.graphCustom, attr.id)) continue;
         const value = state.graphCustom[attr.id];
         if(value === undefined || value === '') continue;
-        lines.push(`    <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+        lines.push(`    <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
       }
     }
     // Node defaults are serialised per node below (resolved visuals), so no
@@ -354,7 +522,7 @@
           if(!Object.prototype.hasOwnProperty.call(n.custom, attr.id)) continue;
           const value = n.custom[attr.id];
           if(value === undefined || value === '') continue;
-          parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+          parts.push(`      <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
         }
       }
       parts.push(`    </node>`);
@@ -362,7 +530,9 @@
     }
     for(const e of state.edges){
       const v = edgeVisual(e);
-      const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${e.directed ? 'true' : 'false'}">`];
+      const dir = edgeDirection(e);
+      const directedBool = dir !== 'undirected';
+      const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${directedBool ? 'true' : 'false'}">`];
       parts.push(`      <data key="weight">${xmlEsc(e.weight)}</data>`);
       parts.push(`      <data key="edgeLabel">${xmlEsc(e.label)}</data>`);
       if(e.type) parts.push(`      <data key="edgeType">${xmlEsc(e.type)}</data>`);
@@ -372,13 +542,15 @@
       parts.push(`      <data key="edgeLabelColor">${xmlEsc(v.labelColor)}</data>`);
       parts.push(`      <data key="edgeLabelFont">${xmlEsc(v.labelFont)}</data>`);
       parts.push(`      <data key="edgeLabelSize">${xmlEsc(v.labelSize)}</data>`);
-      parts.push(`      <data key="directed">${e.directed ? 'true' : 'false'}</data>`);
+      parts.push(`      <data key="directed">${directedBool ? 'true' : 'false'}</data>`);
+      parts.push(`      <data key="direction">${xmlEsc(dir)}</data>`);
+      parts.push(`      <data key="arrowSize">${xmlEsc(v.arrowSize)}</data>`);
       if(e.custom){
         for(const attr of customEdgeDefs){
           if(!Object.prototype.hasOwnProperty.call(e.custom, attr.id)) continue;
           const value = e.custom[attr.id];
           if(value === undefined || value === '') continue;
-          parts.push(`      <data key="${xmlEsc(attr.id)}">${xmlEsc(formatCustomValue(value))}</data>`);
+          parts.push(`      <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
         }
       }
       parts.push(`    </edge>`);
@@ -403,9 +575,54 @@
     syncControls(); updateUndoRedo(); fitView(); queueRender(true, true); saveSoon();
     toast(I18N.t('imported', {label: label}));
   }
+  // Resolve an element's *unset* visual properties against the defaults of the
+  // document it came from.
+  //
+  // Normally an unset property is resolved at render time by nodeVisual/edgeVisual
+  // against state.settings, which is what makes changing a default update every
+  // element that inherits it. That works because the element and the defaults live
+  // in the same document. Append breaks that: the imported elements join a graph
+  // whose settings are deliberately kept, so the imported document's defaults are
+  // discarded and its elements would silently inherit the *host* graph's style.
+  //
+  // Materialising here is the only correct moment — after this the imported
+  // document's defaults no longer exist anywhere. Which properties to copy is
+  // decided by the fields the element left unset, so nothing is overwritten.
+  function materializeDefaults(nodes, edges, settings){
+    if(settings?.inheritDefaults === false) return; // not inheriting: nothing to resolve
+    const nd = settings?.nodeDefaults || {};
+    const ed = settings?.edgeDefaults || {};
+    const unset = (value) => value == null || value === '';
+    const NODE_FIELDS = ['shape','color','width','height','strokeColor','strokeSize',
+      'strokeStyle','labelColor','labelSize','labelPosition','labelFont'];
+    const EDGE_FIELDS = ['color','strokeSize','strokeStyle','arrowSize',
+      'labelColor','labelSize','labelFont'];
+    // The caller has not sanitised yet — that is exactly what it is about to do —
+    // so an entry may be null or a non-object. Skip those here and let the
+    // sanitizer decide their fate; throwing would reject the whole import,
+    // including the entries that are perfectly good.
+    const isRecord = value => value != null && typeof value === 'object';
+    for(const n of nodes){
+      if(!isRecord(n)) continue;
+      for(const field of NODE_FIELDS){
+        if(unset(n[field]) && nd[field] != null) n[field] = nd[field];
+      }
+    }
+    for(const e of edges){
+      if(!isRecord(e)) continue;
+      for(const field of EDGE_FIELDS){
+        if(unset(e[field]) && ed[field] != null) e[field] = ed[field];
+      }
+    }
+  }
   function appendImportedGraph(data, label='graph'){
     // Append mode: merge imported nodes/edges into the current graph.
     // Keep existing settings (styles, defaults, background, grid colors) unchanged.
+    // The imported document's own defaults are not kept, so they have to be
+    // resolved onto its elements first — otherwise those elements inherit the host
+    // graph's style, and an export then writes the wrong values. Read them from
+    // the incoming data, before the settings are replaced.
+    materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
     // Keep the current graph's attribute definitions while still learning the
     // import's: values in the imported file reference the imported definitions,
     // and pruning against the merged set drops nothing legitimate. Document-wide
@@ -497,12 +714,12 @@
   // payload itself), in one pass over the carried list:
   //   1) exact id AND scope match — the current definition wins, the carried
   //      one merges for free (committed contract).
-  //   2) provenance reuse — the same property (same GraphML key id, same —or
-  //      missing— attr.name, same scope) already lives under another id
-  //      minted by an earlier import. Rebind the carried values to it. A
-  //      candidate whose id is a key of the incoming file is never reused:
-  //      that key may well be a different property (same guard the parser
-  //      applies to reserved-id migrations).
+  //   2) provenance reuse — the same property (same recorded attr.name, same
+  //      scope) already lives under another id minted by an earlier import.
+  //      Rebind the carried values to it. A candidate whose id is a key of
+  //      the incoming file is never reused: that key may well be a different
+  //      property. Reuse requires both sides to record the same name — an
+  //      unnamed definition is never claimed for a foreign property.
   //   3) otherwise the id is free — no existing definition claims it.
   //   4) the id is taken in another scope (or pair) — mint a fresh id, record
   //      the carried id as provenance so the NEXT import resolves here, and
@@ -544,15 +761,15 @@
     const existing = Array.isArray(existingDefs) ? existingDefs : [];
     let budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
     const scopeOf = (a: AnyRecord | null | undefined) => ['graph','node','edge'].includes(String(a?.scope)) ? String(a?.scope) : 'node';
-    // Provenance agreement for the reuse scan. Name is a wildcard when missing
-    // on either side: a property whose origin is unknown cannot be proven
-    // different, so it reuses the closest marked definition.
+    // Provenance agreement for the reuse scan. The recorded attr.name is the
+    // property's identity across imports; a missing name on either side means
+    // the property cannot be proven different, so it may reuse.
     const provMatch = (ex: AnyRecord | undefined, inc: AnyRecord | undefined) => {
-      const ek = String(ex?.dataKey ?? '').trim(), ik = String(inc?.dataKey ?? '').trim();
-      if(!ek || !ik) return false; // both unmarked: nothing to match on, caller decides via pairs
-      if(ek !== ik) return false;
-      const en = String(ex?.dataName ?? '').trim().toLowerCase(), inm = String(inc?.dataName ?? '').trim().toLowerCase();
-      return !en || !inm || en === inm;
+      const en = String(ex?.name ?? '').trim().toLowerCase(), inm = String(inc?.name ?? '').trim().toLowerCase();
+      // Reuse only on positive evidence — the same property name recorded on
+      // both sides. An unnamed definition is claimed by whoever created it;
+      // an incoming property may never guess at it.
+      return en !== '' && en === inm;
     };
     // Every id the incoming payload itself uses — a mint may never hand one
     // out to another definition, or a freshly minted id collides with a later
@@ -563,8 +780,6 @@
       if(!isRecord(raw)) continue;
       const carriedId = String(raw.id ?? '').trim().slice(0, 128);
       if(carriedId) fileKeys.add(carriedId);
-      const carriedKey = String(raw.dataKey ?? '').trim();
-      if(carriedKey) fileKeys.add(carriedKey);
     }
     const byPair = new Map<string, AnyRecord>();
     const byId = new Set<string>();
@@ -580,11 +795,19 @@
       if(!id) continue; // no id: sanitize drops it too
       const scope = scopeOf(raw);
       const pairKey = id + '|' + scope;
-      const inc: AnyRecord = {...raw, id, scope};
-      // 1) Exact id AND scope — current definition wins, dropped here.
-      if(byPair.has(pairKey)) continue; // merges without capacity
+      let inc: AnyRecord = {...raw, id, scope};
+      // 1) Exact id AND scope — the current definition wins when the two
+      // definitions cannot be proven different (either side without a recorded
+      // name, or matching names): the carried one merges for free. A recorded
+      // and DIFFERENT name means a different property sharing the id, so it
+      // falls through to minting instead of stranding its values.
+      const pairHit = byPair.get(pairKey);
+      if(pairHit){
+        const pn = String(pairHit?.name ?? '').trim().toLowerCase(), inn = String(inc.name ?? '').trim().toLowerCase();
+        if(!pn || !inn || pn === inn) continue; // merges without capacity
+      }
       // 2) Provenance reuse — the property already lives under another id.
-      if(inc.dataKey){
+      if(inc.name){
         const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope && !fileKeys.has(String(e?.id)) && provMatch(e, inc));
         if(reused){ renameByPair.set(scope + '|' + id, String(reused.id)); continue; } // free reuse
       }
@@ -592,17 +815,20 @@
       if(budget <= 0){ skipped++; continue; }
       budget--;
       let finalId = id;
-      if(byId.has(id)){
-        // The id is taken in another scope — the carried definition needs its
-        // own. The mint may not hand out any id used anywhere in the incoming
-        // payload (not just the ones processed so far), and records its
-        // provenance so the NEXT import of the same file resolves to it.
+      if(byId.has(id) || pairHit){
+        // The id is taken — in another scope, by a different property with the
+        // same id and scope, or in the incoming payload. The carried definition
+        // needs its own. The mint may not hand out any id used anywhere in the
+        // incoming payload (not just the ones processed so far).
         const taken = new Set(byId);
         for(const a of kept) taken.add(String(a?.id));
         for(const carried of fileKeys) taken.add(carried);
         finalId = uniqueCustomAttributeId(id, taken);
         renameByPair.set(scope + '|' + id, finalId);
-        if(!inc.dataKey) inc.dataKey = id;
+        // Record the carried id as the name when there is none — it is the
+        // property's identity across imports, and without it the next import
+        // of the same file cannot find this definition and mints another.
+        if(!inc.name) inc = { ...inc, name: id };
         renamed++;
         byId.add(finalId);
       } else {
@@ -742,7 +968,7 @@
     const idx = name => header.indexOf(name);
     const iId = idx('id'), iFrom = idx('source_id') >= 0 ? idx('source_id') : idx('from'), iTo = idx('target_id') >= 0 ? idx('target_id') : idx('to');
     const iWeight = idx('weight'), iLabel = idx('label'), iDirected = idx('directed'), iType = idx('type');
-    const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
+    const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style'), iArrowSize = idx('arrow_size');
     if(iFrom < 0 || iTo < 0){ toast(I18N.t('csv_needs_cols')); return; }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
     const idSet = new Set(state.nodes.map(n => n.id));
@@ -766,12 +992,14 @@
         from, to,
         weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0,50) : '',
         label: (iLabel >= 0 ? row[iLabel] : '') || '',
-        directed: iDirected >= 0 ? (row[iDirected] === 'true' || row[iDirected] === '1') : state.settings.directed,
+        direction: iDirected >= 0 ? normalizeDirection(row[iDirected]) : normalizeDirection((state.settings as any).direction ?? state.settings.directed),
+        directed: ((iDirected >= 0 ? normalizeDirection(row[iDirected]) : normalizeDirection((state.settings as any).direction ?? state.settings.directed)) !== 'undirected' as any),
         type: (iType >= 0 ? row[iType] : '') || ''
       };
       if(iColor >= 0 && row[iColor]) e.color = row[iColor];
       if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(parseFloat(row[iStrokeSize])||2.4, 0, 20);
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
+      if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(parseFloat(row[iArrowSize])||DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       edges.push(e); parsed++;
     }
     if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
@@ -837,7 +1065,8 @@
           continue;
         }
         for(const w of weights){
-          edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: state.settings.directed, type:'' });
+          const dir = normalizeDirection((state.settings as any).direction ?? state.settings.directed);
+          edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: (dir !== 'undirected') as any, direction: dir as any, type:'' });
           parsed++;
         }
       }
@@ -913,25 +1142,93 @@
     }
     return items;
   }
-  // Name-indexed map for BUILT-IN attributes (QVGE writes data under arbitrary
-  // key ids with well-known attr.name values). Custom keys are excluded, so a
-  // custom key can never shadow a built-in attribute (e.g. attr.name="Label").
-  function graphmlDataMap(el, keyNames, customKeyIds): AnyRecord {
-    const map: AnyRecord = Object.create(null);
-    for(const { key, text } of graphmlChildData(el)){
-      if(customKeyIds.has(key)) continue;
-      const name = (keyNames[key] || key).toLowerCase();
-      map[name] = text;
-    }
-    return map;
-  }
-  // Exact key-id map for custom attributes: identity is the <data key="...">
-  // attribute, never the (case-normalised) attr.name, so case-distinct custom
-  // ids and custom ids that merely look like built-in names round-trip as-is.
+
   function graphmlDataMapById(el): AnyRecord {
     const map: AnyRecord = Object.create(null);
     for(const { key, text } of graphmlChildData(el)) map[key] = text;
     return map;
+  }
+  // Read the data belonging to *one element*, on *one scope*.
+  //
+  // Two rules, both learned from bugs that silently corrupted settings:
+  //
+  //  1. Only this element's own <data> children. `querySelectorAll` is
+  //     depth-first, so reading a <graph> that way also collected every <node>'s
+  //     data; a node property whose key was unknown on the graph scope then fell
+  //     through to its raw id and could overwrite a graph setting.
+  //  2. A key that is not a built-in field *on this scope* contributes nothing.
+  //     There is no fallback to the raw key id: an id is not a field name. The
+  //     fallback existed to rescue undeclared keys, but it made every custom
+  //     attribute whose id resembled a setting behave like one.
+  //
+  // `fieldFor` maps `${keyId}|${scope}` to the built-in field it feeds there, or
+  // to '' when the declaration feeds none (a definition, or a shadowed spelling).
+  // Presence in the map is what matters, so `hasOwnProperty` — never `||`.
+  function graphmlDataMap(el, fieldFor, forWhom, rankFor = {}): AnyRecord {
+    const map: AnyRecord = {};
+    // Which declaration currently holds each field, and how strong it is — the
+    // same precedence rule the defaults use, for the same reason: `weight` and
+    // its alias `value` are one property, so two <data> entries stating it must
+    // compete rather than let document order decide.
+    const held: Record<string, number> = {};
+    for(const d of Array.from(el.children) as Element[]){
+      if(d.tagName.toLowerCase() !== 'data') continue;
+      const slot = `${d.getAttribute('key') || ''}|${forWhom}`;
+      if(!Object.prototype.hasOwnProperty.call(fieldFor, slot)) continue;
+      const name = fieldFor[slot];
+      if(!name) continue; // declared, but not a built-in field on this scope
+      // Keyed by *field*, not by the spelling that carried it: `fillcolor` and
+      // `color` are one property, and a map keyed by spelling made them two.
+      const entry = fieldForName(forWhom, name);
+      const field = entry ? entry.field : name;
+      const strength = rankFor[slot] ?? 1;
+      if(held[field] !== undefined && held[field] < strength) continue;
+      map[field] = d.textContent.trim();
+      held[field] = strength;
+    }
+    return map;
+  }
+  // "Did the element state a value for any of these fields?" — as opposed to
+  // leaving them out. An explicit empty <data/> is a stated value, which is why
+  // this asks about presence rather than truthiness.
+  function hasAny(record, ...fields){
+    return fields.some(field => Object.prototype.hasOwnProperty.call(record, field));
+  }
+  // How to turn a raw GraphML string into a property value, per field. One table
+  // for both readers — <data> on an element and <default> on a key — because they
+  // are the same conversion and must not diverge.
+  const FIELD_PARSERS: Record<string, (raw: string) => unknown> = {
+    'shape': raw => parseShape(raw) || undefined,
+    'color': raw => colorOrUndef(raw),
+    'strokeColor': raw => colorOrUndef(raw),
+    'strokeSize': raw => num(raw, 2.2, 0, 20),
+    'strokeStyle': raw => parseStrokeStyle(raw) || undefined,
+    'labelColor': raw => colorOrUndef(raw),
+    'labelSize': raw => num(raw, 13, 4, 72),
+    'labelPosition': raw => parseLabelPosition(raw) || undefined,
+    'width': raw => num(raw, 50, 10, 300),
+    'height': raw => num(raw, 50, 10, 300),
+    // Edge values carry their own fallbacks; one parser serves both scopes
+    // because the ranges are the same shape and the defaults only differ where
+    // the property has a different natural size.
+    'arrowSize': raw => num(raw, DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX),
+    'weight': raw => String(raw),
+    'type': raw => String(raw),
+    'direction': raw => parseDirection(raw),
+  };
+  // Properties that live directly on GraphNode/GraphEdge and take their value
+  // verbatim. Kept separate from FIELD_PARSERS because there is nothing to parse.
+  const NODE_PASSTHROUGH = ['type'] as const;
+  const EDGE_PASSTHROUGH = ['type'] as const;
+
+  // Read a field out of a map built from <data> or from <default>. Both are keyed
+  // by *field* (graphmlDataMap resolves the spelling through the model), so this
+  // is a plain lookup — and, crucially, a lookup that cannot miss an alias: by
+  // the time a value is here, the alias has already been folded into its field.
+  // Returns undefined when the element states nothing, so callers can tell
+  // "absent" from "present but empty".
+  function rawField(record, _scope, field){
+    return Object.prototype.hasOwnProperty.call(record, field) ? record[field] : undefined;
   }
   // Parse QVGE font descriptor: "Family,Size,-1,5,weight,italic,underline,strikeout,0,0"
   // Returns {family, size}
@@ -963,163 +1260,265 @@
     return '';
   }
   function parseDirection(raw){
-    const s = String(raw || '').toLowerCase();
-    // QVGE: "directed" = one-way, "undirected" = no arrows, "mutual" = bidirectional (rendered as undirected)
-    if(s === 'undirected' || s === 'false' || s === '0' || s === 'mutual') return false;
-    return true; // "directed", "true", "1", or default
+    const s = String(raw || '').toLowerCase().trim();
+    // QVGE: "directed" = one-way, "undirected" = no arrows, "mutual" = bidirectional (both arrows)
+    if(s === 'undirected' || s === 'none' || s === 'false' || s === '0') return 'undirected';
+    if(s === 'mutual' || s === 'both' || s === 'bidirected') return 'mutual';
+    // "directed", "true", "1", "forward", or edgedefault="directed" (default)
+    return 'directed';
   }
   function parseGraphml(text){
     const doc = new DOMParser().parseFromString(text, 'application/xml');
     if(doc.querySelector('parsererror')) throw new Error(I18N.t('err_invalid_graphml'));
-    // Build keyNames map AND parse <default> values from <key> elements (QVGE format)
-    const keyNames: Record<string, string> = Object.create(null);
-    const keyDefaultsByFor: Record<string, AnyRecord> = { graph: Object.create(null), node: Object.create(null), edge: Object.create(null) };
     const graphmlTypes = ['boolean','int','long','float','double','string'];
-    // Built-in keys are recognized by attr.name (any key id) — QVGE writes
-    // arbitrary ids with well-known names. A name collision always means
-    // "built-in". Id-only collisions with built-ins are still handled as
-    // custom here; sanitizeState renames those defs to a safe unique id when
-    // loading, preserving legacy documents.
-    const reservedAttrNames = RESERVED_GRAPHML_ATTR_NAMES_LOWER;
     const customAttributes: GraphState['customAttributes'] = [];
-    const customKeyIds = new Set<string>();
-    const customKeyDataName: { id: string; scope: string; type: string; dataKey: string; defaultValue?: CustomAttributeValue }[] = [];
-    // Ids reserved for built-ins are migrated to a safe unique name AT THE KEY
-    // LEVEL, deterministically. Appending the same external GraphML file twice
-    // re-resolves to the same migrated id instead of minting x_1, x_2, ... —
-    // the migration consumes no extra capacity on repeated imports. A prior
-    // A prior migration is reused only when the raw key id, the key's lowered
-    // attr.name AND the scope all match, and never when the candidate id is
-    // itself a key in the incoming file — so distinct properties sharing a
-    // raw key id (e.g. two files both defining key "x") never share a
-    // definition, and an unrelated definition occupying the candidate id is
-    // never overwritten. `dataKey`/`dataName` markers travel with our own
-    // GraphML exports, so the round-trip keeps the same identity.
+    // Ids the incoming payload itself uses — a mint may never hand one out to
+    // another definition in this file, or a fresh mint collides with a later
+    // key of the file that was meant to keep its id.
     const fileKeyIds = new Set<string>();
-    doc.querySelectorAll('key').forEach(k => { const kid = k.getAttribute('id'); if(kid) fileKeyIds.add(kid); });
-    // Definition ids handed out by THIS FILE, claiming exactly once: a prior
-    // reuse, a raw id kept as-is, an expansion id — every consumer of an id
-    // takes it through the claim below or gets a fresh mint instead. Without
-    // this, one file's reuse can hand the same id to two distinct properties
-    // and the second overwrites the first's values at bind time.
+    // Definition ids handed out by THIS FILE, claiming exactly once: anything
+    // that takes an id takes it through this set (or gets a fresh mint), so
+    // one file can never hand the same id to two distinct properties and
+    // overwrite the first property's values with the second's.
     const resolvedDefIds = new Set<string>();
-    doc.querySelectorAll('key').forEach(k => {
-      const id = k.getAttribute('id');
-      if(!id) return;
-      const name = (k.getAttribute('attr.name') || id).toLowerCase();
-      const forWhom = (k.getAttribute('for') || 'all').trim().toLowerCase();
-      keyNames[id] = name;
-      const attributeType = String(k.getAttribute('attr.type') || 'string').toLowerCase();
-      const defEl = k.querySelector('default');
-      const defVal = defEl ? defEl.textContent.trim() : '';
-      // The GraphML spec makes for="all" the default: the key applies to
-      // graph, node AND edge. Such keys (and keys with no for attribute) are
-      // expanded into one definition per scope — graph keeps the bare id
-      // when free, the others get fresh unique ids — with provenance
-      // markers, so re-imports and round-trips resolve to the same
-      // definitions instead of growing them without bound. Dropping them
-      // silently loses the definition, the explicit values AND the default.
-      const normalizedType = graphmlTypes.includes(attributeType) ? attributeType : 'string';
-      const defaultValue = defVal === '' ? undefined : coerceCustomValue(defVal, normalizedType);
-      // Provenance markers written by our own GraphML export (namespaced
-      // attributes on <key>), read back on import.
-      const geAttr = (k: Element, local: string) => (k.getAttribute('grapheditor:' + local) || k.getAttributeNS('https://grapheditor.pro/ns', local) || '').trim().slice(0, 128);
-      const importedDataKey = geAttr(k, 'dataKey');
-      const importedDataName = geAttr(k, 'dataName').toLowerCase();
-      const scopes = forWhom === 'all' ? ['graph', 'node', 'edge'] : (['graph', 'node', 'edge'].includes(forWhom) ? [forWhom] : []);
-      const isCustom = !reservedAttrNames.has(name) && scopes.length > 0;
-      if(isCustom){
-        const migrated = RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase());
-        // An earlier import of this exact key is reused (same provenance
-        // markers, same scope) so repeated re-imports never mint duplicates.
-        // The candidate id must not be claimed by another key of the incoming
-        // file — except for expansions, where re-using the provenance of a
-        // definition minted from THIS key is exactly what keeps round-trips
-        // stable.
-        const takenNow = () => {
+    // What this import learned about its own definitions: which raw key id
+    // carried each property. Values and key defaults are bound through this,
+    // so a re-created definition still collects its <data> values.
+    const defBindings: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; keyId: string; defaultValue?: CustomAttributeValue }[] = [];
+    // ---- GraphML keys: one explicit model, then readers ----
+    //
+    // Everything about <key> is decided once, here, into `keyRoles`. The readers
+    // below (data values, <default> values, custom definitions) only consult that
+    // model; none of them re-derives a rule. That is deliberate: every defect in
+    // this area came from two places computing the same thing slightly
+    // differently — most often one verdict applied to several scopes, when a key
+    // for="all" genuinely has a different role on each.
+    const KEY_SCOPES = ['graph', 'node', 'edge'] as const;
+    type KeyScope = typeof KEY_SCOPES[number];
+    // What a single declaration means for one scope it applies to.
+    //   canonical — written by our exporter, and spelled the way we spell it
+    //   alias     — carries one of our field names under another id or spelling,
+    //               so its value feeds that field
+    //   shadowed  — a name that only collides with a canonical one after case
+    //               folding; it must not overwrite that field
+    //   definition— the user's own attribute
+    //   ignored   — declares nothing we can use
+    type KeyRole = 'canonical' | 'alias' | 'shadowed' | 'definition' | 'ignored';
+    interface KeyInfo {
+      keyId: string;
+      /** attr.name exactly as written, empty when the key has none. */
+      rawName: string;
+      /** GraphML `for`, defaulting to "all" as the spec says. */
+      forWhom: string | 'all';
+      /** Scope we store a definition under; "all" has no editor equivalent. */
+      scope: KeyScope;
+      /** Per scope: what this declaration does there. Absent = does not apply. */
+      roles: Partial<Record<KeyScope, KeyRole>>;
+      /** Id to record for a definition (a de-collided key remembers its own). */
+      definitionId: string;
+      /** True when this declaration contributes a user definition. */
+      isDefinition: boolean;
+      type: string;
+    }
+    const graphEl = doc.querySelector('graphml');
+    const keyEls = [...doc.querySelectorAll('key')];
+    for(const k of keyEls){ const kid = k.getAttribute('id'); if(kid) fileKeyIds.add(kid); }
+
+    // -- Provenance: is this document one of ours? ------------------------------
+    // Either it says so (qvge:writer, every export since marks were added), or it
+    // carries the bulk of the built-in key block, which every export of ours has
+    // always written in full. Deliberately not keyed on xmlns:qvge: that URI names
+    // the QVGE format, so a genuine QVGE file may declare it too.
+    const declaredOurs = graphEl?.getAttributeNS(QVGE_NS, 'writer') === 'graph-editor-pro';
+    // A foreign file can reuse our key ids for unrelated attributes; what it
+    // cannot do by accident is pair each id with the attr.name we pair it with.
+    const ourKeys = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId, forWhom, attrName]) =>
+      `${keyId}|${forWhom}|${String(attrName).toLowerCase()}`));
+    const pairOf = (keyId: string, forWhom: string, attrName: string) =>
+      `${keyId}|${forWhom}|${attrName.toLowerCase()}`;
+    const isOurKey = (keyId: string, forWhom: string, attrName: string) =>
+      ourKeys.has(pairOf(keyId, forWhom, attrName));
+    // A document written by an earlier build is still ours, but its key block is
+    // a subset of the current one — this PR only ever adds keys (main wrote 41, we
+    // write 43), so requiring the current count rejected every older export. The
+    // bulk of the block is the signal: we always write all of it, a foreign file
+    // lists only the handful it uses.
+    const matchedBuiltins = keyEls.filter(k =>
+      isOurKey(k.getAttribute('id') || '', k.getAttribute('for') || 'all', String(k.getAttribute('attr.name') || ''))
+    ).length;
+    const documentIsOurs = declaredOurs || matchedBuiltins >= GRAPHML_BUILTIN_KEYS.length / 2;
+    // The spelling a canonical key uses for a field on a scope. Read once, so the
+    // shadowing rule below cannot drift from the classification.
+    const canonicalSpelling = new Map<string, string>();
+    for(const k of keyEls){
+      const forWhom = k.getAttribute('for') || 'all';
+      const rawName = String(k.getAttribute('attr.name') || '');
+      if(!isOurKey(k.getAttribute('id') || '', forWhom, rawName)) continue;
+      const slot = `${forWhom}|${rawName.toLowerCase()}`;
+      if(!canonicalSpelling.has(slot)) canonicalSpelling.set(slot, rawName);
+    }
+    const appliesTo = (forWhom: string): readonly KeyScope[] =>
+      (forWhom === 'all' ? KEY_SCOPES : KEY_SCOPES.filter(s => s === forWhom)) as readonly KeyScope[];
+
+    // -- Classification --------------------------------------------------------
+    const keyInfos: KeyInfo[] = keyEls.map(k => {
+      const keyId = k.getAttribute('id') || '';
+      const rawName = String(k.getAttribute('attr.name') || '') || keyId;
+      const name = rawName.toLowerCase();
+      const forWhom = k.getAttribute('for') || 'all';
+      // The editor models three scopes; a key for "all" is stored under the widest.
+      const scope: KeyScope = forWhom === 'all' ? 'graph' : forWhom as KeyScope;
+      const type = String(k.getAttribute('attr.type') || 'string').toLowerCase();
+      const type2 = graphmlTypes.includes(type) ? type : 'string';
+      // Read by namespace URI, not by the literal prefix: a document re-serialised
+      // by another tool may bind a different prefix to the same URI.
+      const marked = k.getAttributeNS(QVGE_NS, 'kind') === QVGE_CUSTOM_MARKER;
+      const recordedId = k.getAttributeNS(QVGE_NS, 'id') || '';
+      // The prefix is a *legacy* way of naming a definition, used by the build
+      // before marks existed. A marked key's id is literal even when it starts
+      // with those characters, which keeps an external `qvge.custom.score`
+      // distinct from a definition genuinely called `score`.
+      const prefixed = !marked && documentIsOurs && keyId.startsWith(CUSTOM_KEY_PREFIX) && keyId.length > CUSTOM_KEY_PREFIX.length;
+      // Membership in the key block is decided by id alone: every export of ours
+      // has written definitions under the user's own id, never under one of our
+      // key ids, so an id we reserve can only be built-in.
+      const isDefinition = marked || prefixed ? true
+        : documentIsOurs ? !GRAPHML_BUILTIN_KEY_IDS.has(keyId)
+        : !isBuiltinGraphmlKey(name, forWhom);
+
+      const roles: Partial<Record<KeyScope, KeyRole>> = {};
+      for(const dataScope of appliesTo(forWhom)){
+        if(isDefinition){ roles[dataScope] = 'definition'; continue; }
+        if(!name){ roles[dataScope] = 'ignored'; continue; }
+        if(isOurKey(keyId, dataScope, rawName)){ roles[dataScope] = 'canonical'; continue; }
+        // A name that only collides with a canonical one after case folding must
+        // not overwrite it. A differently-spelled alias of the same field
+        // (id="k" attr.name="arrow.size") is not a collision: it feeds it.
+        const canonical = canonicalSpelling.get(`${dataScope}|${name}`);
+        if(canonical !== undefined && canonical !== rawName){ roles[dataScope] = 'shadowed'; continue; }
+        if(isBuiltinGraphmlKey(name, dataScope)){ roles[dataScope] = 'alias'; continue; }
+        // Nothing here reads it on this scope, and the document is not ours: the
+        // key belongs to the user.
+        roles[dataScope] = 'definition';
+      }
+      // A definition is stored once, under the scope its `for` names — but only
+      // when the key is not a built-in field on *any* scope it applies to. A
+      // for="all" key named `label` is not a graph field, yet it is still a
+      // built-in for nodes and edges, so it is an alias rather than a definition.
+      const feedsAnyScope = appliesTo(forWhom).some(dataScope =>
+        roles[dataScope] === 'canonical' || roles[dataScope] === 'alias');
+      const definitionHere = isDefinition || (!feedsAnyScope && roles[scope] === 'definition');
+      const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
+        : (marked && recordedId ? recordedId : keyId);
+      return {keyId, rawName, forWhom, scope, roles, definitionId, isDefinition: definitionHere, type: type2};
+    });
+
+    // -- Derived views: the only things the readers touch -----------------------
+    // Field name each (key, scope) supplies, or '' when it supplies none. Present
+    // but empty means "declared, and deliberately not a built-in field" — the data
+    // map must not fall back to the raw key id (`||` used to defeat this).
+    const fieldFor: Record<string, string> = {};
+    // Precedence per (key, scope): canonical outranks alias. Used by the <data>
+    // reader and the <default> reader alike so the two cannot disagree.
+    const fieldRank: Record<string, number> = {};
+    for(let index = 0; index < keyInfos.length; index++){
+      const info = keyInfos[index];
+      const name = info.rawName.toLowerCase();
+      for(const dataScope of appliesTo(info.forWhom)){
+        const role = info.roles[dataScope];
+        fieldFor[`${info.keyId}|${dataScope}`] = (role === 'canonical' || role === 'alias') ? name : '';
+        // Precedence has three levels, because two of them genuinely differ:
+        //   0 the model's own key, written by our exporter;
+        //   1 the model's own *spelling* under someone else's key id;
+        //   2 any other alias of the field.
+        // Without the middle level `color` and `fillcolor` under foreign ids tie,
+        // and the later declaration wins on document order alone — which is how a
+        // fillcolor default came to override a color default.
+        const entry = (role === 'canonical' || role === 'alias') ? fieldForName(dataScope, name) : undefined;
+        fieldRank[`${info.keyId}|${dataScope}`] =
+          role === 'canonical' ? 0
+          : entry && entry.name.toLowerCase() === name ? 1
+          : 2;
+      }
+      if(info.isDefinition && info.keyId){
+        // One declaration is one definition, stored under the scope its `for`
+        // names (the widest, graph, for a key declared without one) — the same
+        // rule the load path and the exporter use. Each id is claimed at most
+        // once per file; anything already claimed mints afresh instead of
+        // silently overwriting the earlier definition.
+        const defEl = keyEls[index].querySelector('default');
+        const defVal = defEl ? defEl.textContent.trim() : '';
+        const defaultValue = defVal === '' ? undefined : coerceCustomValue(defVal, info.type);
+        let defId = info.definitionId;
+        if(resolvedDefIds.has(defId)){
           const taken = new Set(fileKeyIds);
           if(Array.isArray(state.customAttributes)) for(const attribute of state.customAttributes) taken.add(attribute.id);
           for(const attribute of customAttributes) taken.add(attribute.id);
-          return taken;
-        };
-        for(const scope of scopes){
-          let defId = id;
-          let markers: AnyRecord = {};
-          const prior = Array.isArray(state.customAttributes)
-            ? state.customAttributes.find(attribute =>
-                attribute.dataKey === id
-                && attribute.scope === scope
-                && String(attribute.dataName ?? '') === name
-                && !resolvedDefIds.has(attribute.id)
-                && !(migrated && forWhom !== 'all' && fileKeyIds.has(attribute.id)))
-            : undefined;
-          if(prior){
-            defId = prior.id;
-            // Re-stamp the provenance the reuse is based on. Dropping the
-            // markers here is what used to make a later re-import mint fresh
-            // node/edge definitions instead of reusing the originals.
-            markers = { dataKey: String((prior as AnyRecord).dataKey ?? id) };
-            const priorName = String((prior as AnyRecord).dataName ?? '');
-            if(priorName) markers.dataName = priorName;
-            else if(importedDataName) markers.dataName = importedDataName;
-          } else if(forWhom === 'all' && !migrated){
-            const taken = takenNow();
-            // The graph scope may keep the bare key id — the file's own key
-            // id is only excluded when another file found a home for it,
-            // i.e. when the document already defines it.
-            taken.delete(id);
-            defId = (scope === 'graph' && !taken.has(id) && !RESERVED_CUSTOM_ATTRIBUTE_IDS_LOWER.has(id.toLowerCase()))
-              ? id
-              : uniqueCustomAttributeId(id, taken);
-            markers = { dataKey: id, dataName: name };
-          } else if(migrated){
-            defId = uniqueCustomAttributeId(id, takenNow());
-            markers = { dataKey: id, dataName: name };
-          } else if(importedDataKey){
-            markers = { dataKey: importedDataKey, ...(importedDataName ? { dataName: importedDataName } : {}) };
-          } else {
-            // Plain external key: record its provenance so re-importing the
-            // same file — or a round-trip of an export of it — resolves to
-            // this definition instead of minting a second one each time.
-            markers = { dataKey: id, dataName: name };
-          }
-          if(resolvedDefIds.has(defId)){
-            // This file already handed the id to an earlier definition (an
-            // earlier key's raw id or a prior reuse from the document). The
-            // key that resolves here keeps its property under a fresh id
-            // instead of silently overwriting the earlier definition's values.
-            const taken = new Set(fileKeyIds);
-            if(Array.isArray(state.customAttributes)) for(const attribute of state.customAttributes) taken.add(attribute.id);
-            for(const attribute of customAttributes) taken.add(attribute.id);
-            for(const claimed of resolvedDefIds) taken.add(claimed);
-            defId = uniqueCustomAttributeId(defId, taken);
-            if(!markers.dataKey) markers = { dataKey: id, ...markers };
-          }
-          resolvedDefIds.add(defId);
-          customAttributes.push({id: defId, scope: scope as 'graph' | 'node' | 'edge', type: normalizedType, ...markers});
-          customKeyIds.add(id); // the built-in reader always skips the ORIGINAL key id
-          customKeyDataName.push({id: defId, scope, type: normalizedType, dataKey: id, defaultValue});
+          for(const claimed of resolvedDefIds) taken.add(claimed);
+          defId = uniqueCustomAttributeId(defId, taken);
         }
+        resolvedDefIds.add(defId);
+        // Always record the attr.name as provenance — the import merge needs
+        // it to recognise a re-created definition across imports. The load
+        // path strips a name that equals the id again, so stored documents
+        // stay clean.
+        customAttributes.push({id: defId, scope: info.scope, type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
+        defBindings.push({id: defId, scope: info.scope, type: info.type, keyId: info.keyId, defaultValue});
       }
-      if(defEl){
-        if(forWhom === 'all'){
-          for(const s of ['graph', 'node', 'edge']){ keyDefaultsByFor[s] = keyDefaultsByFor[s] || {}; keyDefaultsByFor[s][name] = defVal; }
-        } else {
-          keyDefaultsByFor[forWhom] = keyDefaultsByFor[forWhom] || {};
-          keyDefaultsByFor[forWhom][name] = defVal;
-        }
+    }
+    // <default> values resolve through fieldFor — the same mapping the data values
+    // use — so the two readers cannot disagree about what a key means. Collecting
+    // them into a bucket keyed by `for` instead meant a key for "all" wrote to a
+    // scope nobody reads, and every role reached the map, so a shadowed spelling
+    // (declared later, or not) could replace a canonical default. A definition's
+    // default never lands here either, which is what stops a custom `shape` from
+    // changing the node default for the whole document.
+    // Defaults, keyed by *field* rather than by the attr.name that carried them.
+    // Two declarations naming the same field — `color` and its alias `fillcolor` —
+    // must compete for one slot, or the second one silently wins on document
+    // order alone. Resolving the name to a field first is what makes precedence
+    // meaningful; comparing raw names made them look like different properties.
+    const keyDefaultsByFor: Record<string, AnyRecord> = { graph: {}, node: {}, edge: {} };
+    const defaultStrength: Record<string, Record<string, number>> = { graph: {}, node: {}, edge: {} };
+    for(const dataScope of KEY_SCOPES){
+      for(let index = 0; index < keyInfos.length; index++){
+        const info = keyInfos[index];
+        if(!appliesTo(info.forWhom).includes(dataScope)) continue;
+        const defEl = keyEls[index].querySelector('default');
+        if(!defEl) continue;
+        // Which field does this declaration feed here? The same mapping the
+        // <data> reader uses, so a name that binds a value also binds a default.
+        const name = fieldFor[`${info.keyId}|${dataScope}`];
+        if(!name) continue;
+        const entry = fieldForName(dataScope, name);
+        if(!entry) continue;
+        // One precedence scale, shared with the <data> reader — a second copy is
+        // how a `fillcolor` default came to outrank a `color` one.
+        const strength = fieldRank[`${info.keyId}|${dataScope}`];
+        if(strength === undefined) continue;
+        const held = defaultStrength[dataScope][entry.field];
+        // A weaker declaration never displaces a stronger one; among equals the
+        // later <key> wins, as it would for data values.
+        if(held !== undefined && held < strength) continue;
+        // Keep the spelling that carried the value: a font default carries its
+        // own size, and the parser needs the text as written.
+        keyDefaultsByFor[dataScope][entry.field] = defEl.textContent.trim();
+        defaultStrength[dataScope][entry.field] = strength;
       }
-    });
+    }
+
     const graph = doc.querySelector('graph');
     const edgeDefaultAttr = graph?.getAttribute('edgedefault') || 'directed';
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
-    const graphData = graphmlDataMap(graph || doc, keyNames, customKeyIds);
+    const graphData = graphmlDataMap(graph || doc, fieldFor, 'graph', fieldRank);
+    // Graph-scoped custom values: bound through the raw key id, like every
+    // other scope, so a re-created definition still collects its values.
     const graphDataById = graphmlDataMapById(graph || doc);
     const graphCustom: AnyRecord = Object.create(null);
-    for(const def of customKeyDataName){
+    for(const def of defBindings){
       if(def.scope !== 'graph') continue;
-      const raw = graphDataById[def.dataKey];
+      const raw = graphDataById[def.keyId];
       if(raw != null && String(raw).trim() !== ''){ graphCustom[def.id] = coerceCustomValue(raw, def.type); }
       else if(def.defaultValue !== undefined){ graphCustom[def.id] = def.defaultValue; }
     }
@@ -1129,65 +1528,108 @@
     const settings: AnyRecord = {};
     const gd: AnyRecord = {};
     // labels.policy — from graph data first, then key default
-    const lpRaw = graphData['labels.policy'] ?? graphKeyDefs['labels.policy'];
+    const lpRaw = graphData.labelsPolicy ?? graphKeyDefs.labelsPolicy;
     if(lpRaw != null){
       const p = parseLabelsPolicy(lpRaw);
       if(p) gd.labelsPolicy = p;
     }
     // Edge weight visualization settings
-    const ewmRaw = graphData['edge.weight.mode'] ?? graphKeyDefs['edge.weight.mode'];
+    const ewmRaw = graphData.edgeWeightMode ?? graphKeyDefs.edgeWeightMode;
     if(ewmRaw != null && ['none','number','color','width'].includes(String(ewmRaw))) gd.edgeWeightMode = String(ewmRaw);
-    const ewMinRaw = graphData['edge.weight.min'] ?? graphKeyDefs['edge.weight.min'];
+    const ewMinRaw = graphData.edgeWeightMin ?? graphKeyDefs.edgeWeightMin;
     if(ewMinRaw != null && ewMinRaw !== '') gd.edgeWeightMin = Number(ewMinRaw);
-    const ewMaxRaw = graphData['edge.weight.max'] ?? graphKeyDefs['edge.weight.max'];
+    const ewMaxRaw = graphData.edgeWeightMax ?? graphKeyDefs.edgeWeightMax;
     if(ewMaxRaw != null && ewMaxRaw !== '') gd.edgeWeightMax = Number(ewMaxRaw);
-    const ewCorrRaw = graphData['edge.weight.corr'] ?? graphKeyDefs['edge.weight.corr'];
+    const ewCorrRaw = graphData.edgeWeightCorr ?? graphKeyDefs.edgeWeightCorr;
     if(ewCorrRaw != null && ['linear','log','exp','sqrt'].includes(String(ewCorrRaw))) gd.edgeWeightCorr = String(ewCorrRaw);
-    const ewWMinRaw = graphData['edge.width.min'] ?? graphKeyDefs['edge.width.min'];
+    const ewWMinRaw = graphData.edgeWidthMin ?? graphKeyDefs.edgeWidthMin;
     if(ewWMinRaw != null && ewWMinRaw !== '') gd.edgeWidthMin = Number(ewWMinRaw);
-    const ewWMaxRaw = graphData['edge.width.max'] ?? graphKeyDefs['edge.width.max'];
+    const ewWMaxRaw = graphData.edgeWidthMax ?? graphKeyDefs.edgeWidthMax;
     if(ewWMaxRaw != null && ewWMaxRaw !== '') gd.edgeWidthMax = Number(ewWMaxRaw);
-    const ewCLowRaw = graphData['edge.weight.colorlow'] ?? graphKeyDefs['edge.weight.colorlow'];
+    const ewCLowRaw = graphData.edgeWeightColorLow ?? graphKeyDefs.edgeWeightColorLow;
     if(ewCLowRaw != null){ const c = parseColor(ewCLowRaw); if(c) gd.edgeWeightColorLow = c; }
-    const ewCHighRaw = graphData['edge.weight.colorhigh'] ?? graphKeyDefs['edge.weight.colorhigh'];
+    const ewCHighRaw = graphData.edgeWeightColorHigh ?? graphKeyDefs.edgeWeightColorHigh;
     if(ewCHighRaw != null){ const c = parseColor(ewCHighRaw); if(c) gd.edgeWeightColorHigh = c; }
     if(Object.keys(gd).length) settings.graphDefaults = gd;
     // Canvas bg and grid colors — from graph data first, then key defaults
-    const cbRaw = graphData['canvas.bg.color'] ?? graphKeyDefs['canvas.bg.color'];
+    const cbRaw = graphData.canvasBgColor ?? graphKeyDefs.canvasBgColor;
     if(cbRaw != null) settings.canvasBgColor = String(cbRaw);
-    const gmRaw = graphData['grid.minor.color'] ?? graphKeyDefs['grid.minor.color'];
+    const gmRaw = graphData.gridMinorColor ?? graphKeyDefs.gridMinorColor;
     if(gmRaw != null) settings.gridMinorColor = String(gmRaw);
-    const gjRaw = graphData['grid.major.color'] ?? graphKeyDefs['grid.major.color'];
+    const gjRaw = graphData.gridMajorColor ?? graphKeyDefs.gridMajorColor;
     if(gjRaw != null) settings.gridMajorColor = String(gjRaw);
-    const gmaRaw = graphData['grid.minor.alpha'] ?? graphKeyDefs['grid.minor.alpha'];
+    const gmaRaw = graphData.gridMinorAlpha ?? graphKeyDefs.gridMinorAlpha;
     if(gmaRaw != null) settings.gridMinorAlpha = parseFloat(gmaRaw);
-    const gjaRaw = graphData['grid.major.alpha'] ?? graphKeyDefs['grid.major.alpha'];
+    const gjaRaw = graphData.gridMajorAlpha ?? graphKeyDefs.gridMajorAlpha;
     if(gjaRaw != null) settings.gridMajorAlpha = parseFloat(gjaRaw);
 
-    // Node defaults from key defaults
+    // ---- Applying declared defaults -------------------------------------------------
+    //
+    // A <default> is what an element's *unset* property resolves to. Resolving it
+    // needs two things this module knows and nothing else does: which field the
+    // key feeds (fieldFor, above) and how to parse a value for that field. Every
+    // gap between the reader and the field table has been a silent data loss —
+    // an edge `label.size` default that no branch read, an edge style default
+    // looked up under `stroke.style` while the exporter writes `style`. So the
+    // binding is declared once, here, per field; nothing below re-derives it.
+    //
+    // `coerce` returns undefined when the value is unusable, which leaves the
+    // field unset rather than inventing a value.
+    interface FieldBinding {
+      /** Defaults key this binding fills in (settings.nodeDefaults / .edgeDefaults). */
+      target: string;
+      coerce: (raw: string) => unknown;
+    }
+    // Default bindings, derived from the field model: a default is simply the
+    // same field, parsed the same way. Nothing here lists fields by hand any
+    // more, which is what let `fillcolor` and `edgecolor` work as <data> and not
+    // as <default>.
+    const FIELD_BINDINGS: Record<string, FieldBinding> = {};
+    for(const [scope, model] of Object.entries(FIELDS_BY_SCOPE)){
+      for(const entry of model){
+        const parser = FIELD_PARSERS[entry.field];
+        if(!parser) continue; // label/id/order/x/y are handled where elements are built
+        // A key's attr.name maps to a field through the model, aliases included.
+        FIELD_BINDINGS[`${scope}|${entry.name.toLowerCase()}`] = {target: entry.field, coerce: parser};
+        for(const alias of entry.aliases || []){
+          FIELD_BINDINGS[`${scope}|${alias.toLowerCase()}`] = {target: entry.field, coerce: parser};
+        }
+      }
+    }
+    // Font names carry a size with them ("Inter,12"), so they are handled once
+    // for both scopes rather than duplicated per field table.
+    // Fonts carry their own size, so they get one extra step beyond the plain
+    // bindings — but only one, and it keys off the *field*, so every alias the
+    // model declares for it (`label.font`, `labelfont`) arrives here already
+    // resolved. Reading a literal attr.name here is what dropped labelfont.
+    const applyFonts = (defs: AnyRecord, out: AnyRecord, fallbackSize: number) => {
+      const raw = defs.labelFont;
+      if(!raw) return;
+      const f = parseQvgeFont(raw);
+      if(!f) return;
+      out.labelFont = f.family;
+      if(f.size != null) out.labelSize = clamp(finite(f.size, fallbackSize), 4, 72);
+    };
+    const applyBindings = (defs: AnyRecord, scope: string, fallbackFontSize: number) => {
+      const out: AnyRecord = {};
+      for(const [field, raw] of Object.entries(defs)){
+        if(raw == null) continue;
+        const binding = FIELD_BINDINGS[`${scope}|${String(field).toLowerCase()}`];
+        if(!binding) continue;
+        const value = binding.coerce(String(raw));
+        if(value !== undefined) out[binding.target] = value;
+      }
+      applyFonts(defs, out, fallbackFontSize);
+      return out;
+    };
+
+    // Node and edge defaults, applied from the declared bindings above.
     const nodeKeyDefs = keyDefaultsByFor.node || {};
-    const nd: AnyRecord = {};
-    if(nodeKeyDefs.shape) nd.shape = parseShape(nodeKeyDefs.shape) || undefined;
-    if(nodeKeyDefs.color) nd.color = parseColor(nodeKeyDefs.color) || undefined;
-    if(nodeKeyDefs['stroke.color']) nd.strokeColor = parseColor(nodeKeyDefs['stroke.color']) || undefined;
-    if(nodeKeyDefs['stroke.size'] != null) nd.strokeSize = clamp(finite(nodeKeyDefs['stroke.size'], 2.2), 0, 20);
-    if(nodeKeyDefs['stroke.style']) nd.strokeStyle = parseStrokeStyle(nodeKeyDefs['stroke.style']) || undefined;
-    if(nodeKeyDefs['label.color']) nd.labelColor = parseColor(nodeKeyDefs['label.color']) || undefined;
-    if(nodeKeyDefs['label.position'] != null){ const p = parseLabelPosition(nodeKeyDefs['label.position']); if(p) nd.labelPosition = p; }
-    if(nodeKeyDefs['label.font']){ const f = parseQvgeFont(nodeKeyDefs['label.font']); if(f){ nd.labelFont = f.family; if(f.size != null) nd.labelSize = f.size; } }
-    if(nodeKeyDefs.width != null) nd.width = clamp(finite(nodeKeyDefs.width, 50), 10, 300);
-    if(nodeKeyDefs.height != null) nd.height = clamp(finite(nodeKeyDefs.height, 50), 10, 300);
+    const nd = applyBindings(nodeKeyDefs, 'node', 13);
     if(Object.keys(nd).length) settings.nodeDefaults = nd;
 
-    // Edge defaults from key defaults
     const edgeKeyDefs = keyDefaultsByFor.edge || {};
-    const ed: AnyRecord = {};
-    if(edgeKeyDefs.color) ed.color = parseColor(edgeKeyDefs.color) || undefined;
-    if(edgeKeyDefs['label.color']) ed.labelColor = parseColor(edgeKeyDefs['label.color']) || undefined;
-    if(edgeKeyDefs['stroke.size'] != null) ed.strokeSize = clamp(finite(edgeKeyDefs['stroke.size'], 2.4), 0, 20);
-    if(edgeKeyDefs.style) ed.strokeStyle = parseStrokeStyle(edgeKeyDefs.style) || undefined;
-    if(edgeKeyDefs['label.font']){ const f = parseQvgeFont(edgeKeyDefs['label.font']); if(f){ ed.labelFont = f.family; if(f.size != null) ed.labelSize = f.size; } }
-    if(edgeKeyDefs.weight != null) ed.weight = String(edgeKeyDefs.weight);
+    const ed = applyBindings(edgeKeyDefs, 'edge', 12);
     if(Object.keys(ed).length) settings.edgeDefaults = ed;
 
     // Store the edge direction default if present
@@ -1196,34 +1638,43 @@
 
     const nodes: GraphNode[] = [], idMap = new Map<string, string>();
     doc.querySelectorAll('node').forEach((el,i) => {
-      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, keyNames, customKeyIds), dById = graphmlDataMapById(el);
+      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node', fieldRank), dById = graphmlDataMapById(el);
       // QVGE: nodes are unlabeled by default. Only use label data if present.
-      const label = String(d.label || d.name || '');
-      let x = finite(d.x ?? d.posx ?? d['position.x'], 0), y = finite(d.y ?? d.posy ?? d['position.y'], 0);
+      // A <default> is what an *unset* label resolves to. "Unset" means the
+      // element carries no label data at all — an explicit empty
+      // <data key="l"/> is a stated value and must survive as an empty label,
+      // or the file's deliberate blank is replaced by a default it overrode.
+      // Hence presence (`in`), not truthiness.
+      const rawLabel = rawField(d, 'node', 'label');
+      const label = String(rawLabel !== undefined ? rawLabel : (rawField(keyDefaultsByFor.node, 'node', 'label') ?? ''));
       const geom = el.querySelector('Geometry, geometry');
+      let x = finite(rawField(d, 'node', 'x'), 0), y = finite(rawField(d, 'node', 'y'), 0);
       if(geom){ x = finite(geom.getAttribute('x'), x); y = finite(geom.getAttribute('y'), y); }
       const node: GraphNode = {
         id, label, x, y,
-        shape: d.shape ? parseShape(d.shape) : '',   // '' = unset, falls back to default
-        color: parseColor(d.color || d.fillcolor) || '',  // '' = unset
-        type: String(d.type || '')
+        // '' means unset: rendering falls back to the type style or the defaults.
+        shape: (FIELD_PARSERS.shape(rawField(d, 'node', 'shape') ?? '') as string) || '',
+        color: (FIELD_PARSERS.color(rawField(d, 'node', 'color') ?? '') as string) || '',
+        // `type` is element data like the label, so it takes its declared default
+        // the same way — and must, because the exporter writes the type from the
+        // element, so an unresolved default would vanish on export.
+        type: String(rawField(d, 'node', 'type') ?? keyDefaultsByFor.node.type ?? '')
       };
-      if(d.width != null) node.width = clamp(finite(d.width, 50), 10, 300);
-      if(d.height != null) node.height = clamp(finite(d.height, 50), 10, 300);
-      const sc = parseColor(d.strokecolor || d['stroke.color']); if(sc) node.strokeColor = sc;
-      if(d.strokesize != null || d['stroke.size'] != null) node.strokeSize = clamp(finite(d.strokesize ?? d['stroke.size'], 2.2), 0, 20);
-      if(d.strokestyle || d['stroke.style']) node.strokeStyle = parseStrokeStyle(d.strokestyle || d['stroke.style']);
-      const lc = parseColor(d.labelcolor || d['label.color']); if(lc) node.labelColor = lc;
-      if(d.labelsize != null || d['label.size'] != null) node.labelSize = clamp(finite(d.labelsize ?? d['label.size'], 13), 4, 72);
-      if(d.labelfont || d['label.font']){ const f = parseQvgeFont(d.labelfont || d['label.font']); if(f){ node.labelFont = f.family; if(f.size) node.labelSize = f.size; } }
-      if(d.labelposition != null || d['label.position'] != null){
-        const p = parseLabelPosition(d.labelposition ?? d['label.position']);
-        if(p) node.labelPosition = p;
+      // Every remaining field, by the model: one loop, aliases included, so a
+      // field cannot be forgotten the way `labelposition` was.
+      for(const entry of NODE_FIELDS_MODEL){
+        if(['label', 'id', 'order', 'x', 'y', 'type', 'shape', 'color'].includes(entry.field)) continue;
+        const rawValue = rawField(d, 'node', entry.field);
+        if(rawValue === undefined || rawValue === null) continue;
+        const parsed = FIELD_PARSERS[entry.field]?.(String(rawValue));
+        if(parsed !== undefined) (node as AnyRecord)[entry.field] = parsed;
       }
+      const nlf = rawField(d, 'node', 'labelFont');
+      if(nlf){ const f = parseQvgeFont(nlf); if(f){ node.labelFont = f.family; if(f.size) node.labelSize = f.size; } }
       const nodeCustom: AnyRecord = Object.create(null);
-      for(const def of customKeyDataName){
+      for(const def of defBindings){
         if(def.scope !== 'node') continue;
-        const raw = dById[def.dataKey];
+        const raw = dById[def.keyId];
         if(raw != null && String(raw).trim() !== ''){ nodeCustom[def.id] = coerceCustomValue(raw, def.type); }
         else if(def.defaultValue !== undefined){ nodeCustom[def.id] = def.defaultValue; }
       }
@@ -1234,29 +1685,45 @@
     const edges: GraphEdge[] = [];
     doc.querySelectorAll('edge').forEach((el,i) => {
       const from = idMap.get(el.getAttribute('source')), to = idMap.get(el.getAttribute('target')); if(!from || !to) return;
-      const d = graphmlDataMap(el, keyNames, customKeyIds), dById = graphmlDataMapById(el);
+      const d = graphmlDataMap(el, fieldFor, 'edge', fieldRank), dById = graphmlDataMapById(el);
       const directedAttr = el.getAttribute('directed');
       // QVGE: edge direction can come from data "direction" field or the XML attribute
-      let directed = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
-      if(d.direction != null) directed = parseDirection(d.direction);
-      else if(directedAttr == null && edgeDirectionDefault != null) directed = edgeDirectionDefault;
+      let dirStr = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
+      if(d.direction != null) dirStr = parseDirection(d.direction);
+      else if(directedAttr == null && edgeDirectionDefault != null) dirStr = edgeDirectionDefault;
       const edge: GraphEdge = {
         id: safeId(el.getAttribute('id') || ('e' + (i+1)), 'e'), from, to,
-        weight: String(d.weight ?? d.value ?? ''),
-        label: String(d.label || d.edgelabel || ''),
-        directed,
-        type: String(d.type || '')
+        // An edge with no weight of its own takes the document's declared default.
+        // Every other visual property resolves through edgeVisual/edgeDefaults at
+        // render time, but weight is read directly by the algorithms and the
+        // weight display, so it has to be materialised here — this is the only
+        // point where the file's declared defaults are still known.
+        // Consult the *resolved* defaults, not the raw key names: `value` is an
+        // accepted alias for weight, and only the binding table knows that. Reading
+        // edgeKeyDefs.weight here would miss a <key attr.name="value"> default.
+        // `ed` is the resolved edge defaults, so aliases are already folded in.
+        weight: String(rawField(d, 'edge', 'weight') ?? ed.weight ?? ''),
+        // Same presence rule as the node label above.
+        label: String(rawField(d, 'edge', 'label') ?? rawField(keyDefaultsByFor.edge, 'edge', 'label') ?? ''),
+        directed: dirStr !== 'undirected' as any,
+        direction: dirStr as any,
+        type: String(rawField(d, 'edge', 'type') ?? keyDefaultsByFor.edge.type ?? '')
       };
-      const ec = parseColor(d.color || d.edgecolor); if(ec) edge.color = ec;
-      if(d.strokesize != null || d['stroke.size'] != null) edge.strokeSize = clamp(finite(d.strokesize ?? d['stroke.size'], 2.4), 0, 20);
-      if(d.strokestyle || d['stroke.style'] || d.style) edge.strokeStyle = parseStrokeStyle(d.strokestyle || d['stroke.style'] || d.style);
-      const elc = parseColor(d.labelcolor || d['label.color']); if(elc) edge.labelColor = elc;
-      if(d.labelsize != null || d['label.size'] != null) edge.labelSize = clamp(finite(d.labelsize ?? d['label.size'], 12), 4, 72);
-      if(d.labelfont || d['label.font']){ const f = parseQvgeFont(d.labelfont || d['label.font']); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }
+      // Every remaining edge field, by the model — the same loop as the node
+      // reader, so neither scope can quietly omit a field.
+      for(const entry of EDGE_FIELDS_MODEL){
+        if(['weight', 'label', 'type', 'directed', 'direction'].includes(entry.field)) continue;
+        const rawValue = rawField(d, 'edge', entry.field);
+        if(rawValue === undefined || rawValue === null) continue;
+        const parsed = FIELD_PARSERS[entry.field]?.(String(rawValue));
+        if(parsed !== undefined) (edge as AnyRecord)[entry.field] = parsed;
+      }
+      const elf = rawField(d, 'edge', 'labelFont');
+      if(elf){ const f = parseQvgeFont(elf); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }
       const edgeCustom: AnyRecord = Object.create(null);
-      for(const def of customKeyDataName){
+      for(const def of defBindings){
         if(def.scope !== 'edge') continue;
-        const raw = dById[def.dataKey];
+        const raw = dById[def.keyId];
         if(raw != null && String(raw).trim() !== ''){ edgeCustom[def.id] = coerceCustomValue(raw, def.type); }
         else if(def.defaultValue !== undefined){ edgeCustom[def.id] = def.defaultValue; }
       }

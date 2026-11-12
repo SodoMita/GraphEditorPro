@@ -318,6 +318,10 @@
     };
     return walk(src, skipWs(src, 0), false).ok;
   }
+  // Arrow-size constants, copied from 10-core.ts — this section must stay
+  // self-contained (the unit-test harness evaluates it in isolation).
+  const DOT_DEFAULT_ARROW_SIZE = 12, DOT_ARROW_SIZE_MIN = 4, DOT_ARROW_SIZE_MAX = 40;
+  const dotClampArrowSize = (v: number) => Math.min(DOT_ARROW_SIZE_MAX, Math.max(DOT_ARROW_SIZE_MIN, v));
   function parseDot(text){
     // Strip comments once, up front: the structure test and the
     // directed-graph default both derive from the comment-free source, so a
@@ -350,8 +354,16 @@
       const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
       const a = ensureNode(fromOrig), b = ensureNode(toOrig);
       const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
-      const e = { id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed:m[2] === '->' || attrs.directed === 'true' || directedGraph } as any;
-      // QVGE DOT edge: color, penwidth->strokeSize, style->strokeStyle, dir controls directed flag
+      // QVGE tristate: '->' and the graph's directedness both mean "directed".
+      const initDir = m[2] === '->' || directedGraph ? 'directed' : 'undirected';
+      const e = { id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: initDir !== 'undirected', direction: initDir } as any;
+      if(attrs.directed){
+        const dd = String(attrs.directed).toLowerCase();
+        const direction = dd === 'undirected' || dd === 'none' ? 'undirected' : dd === 'mutual' || dd === 'both' ? 'mutual' : 'directed';
+        (e as any).direction = direction;
+        (e as any).directed = direction !== 'undirected';
+      }
+      // QVGE DOT edge: color, penwidth->strokeSize, style->strokeStyle, dir controls direction
       const ec = parseColor(attrs.color);
       if(ec) (e as any).color = ec;
       if(attrs.penwidth != null && Number.isFinite(Number(attrs.penwidth))) (e as any).strokeSize = Math.max(0, Number(attrs.penwidth));
@@ -359,11 +371,23 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
-      // dir attribute (QVGE uses dir=forward/none) can override directed flag
+      if(attrs.arrowsize != null){
+        const mul = Number(attrs.arrowsize);
+        const mv = Number.isFinite(mul) ? mul : 1;
+        // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
+        // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
+        if(mv > 5){
+          (e as any).arrowSize = dotClampArrowSize(mv);
+        } else {
+          (e as any).arrowSize = dotClampArrowSize(mv * DOT_DEFAULT_ARROW_SIZE);
+        }
+      }
+      // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
       if(attrs.dir){
         const dir = String(attrs.dir).toLowerCase();
-        if(dir === 'none' || dir === 'undirected') e.directed = false;
-        else if(dir === 'forward' || dir === 'directed' || dir === 'both') e.directed = true;
+        if(dir === 'none' || dir === 'undirected'){ (e as any).direction = 'undirected'; (e as any).directed = false; }
+        else if(dir === 'both' || dir === 'mutual'){ (e as any).direction = 'mutual'; (e as any).directed = true; }
+        else if(dir === 'forward' || dir === 'directed' || dir === 'true'){ (e as any).direction = 'directed'; (e as any).directed = true; }
       }
       edges.push(e as any);
     }

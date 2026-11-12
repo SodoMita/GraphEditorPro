@@ -262,9 +262,11 @@
     if(!seeds.size){ toast(I18N.t('select_at_least_one')); return; }
     const nodes = new Set(seeds), edges = new Set(selectedEdgeIds());
     for(const e of state.edges){
+      const dir = edgeDirection(e);
+      const isUndirectedOrMutual = dir === 'undirected' || dir === 'mutual';
       if(directedOnly){
         if(seeds.has(e.from)){ nodes.add(e.to); edges.add(e.id); }
-        else if(!e.directed && seeds.has(e.to)){ nodes.add(e.from); edges.add(e.id); }
+        else if(isUndirectedOrMutual && seeds.has(e.to)){ nodes.add(e.from); edges.add(e.id); }
       } else if(seeds.has(e.from) || seeds.has(e.to)){
         nodes.add(e.from); nodes.add(e.to); edges.add(e.id);
       }
@@ -430,7 +432,8 @@
     const s = state.settings;
     const defEdgeType = s.edgeDefaults?.type || '';
     const effectiveType = s.edgeType || defEdgeType;
-    const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: Boolean(s.directed), type: effectiveType };
+    const dir = normalizeDirection((s as any).direction ?? s.directed);
+    const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: dir !== 'undirected' as any, direction: dir as any, type: effectiveType };
     // Pending custom property values from "New edge defaults".
     const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
     if(pendingCustom) e.custom = pendingCustom;
@@ -441,15 +444,16 @@
         if(!ts.color) e.color = s.edgeColor; else e.color = '';
         if(ts.strokeSize == null) e.strokeSize = s.edgeStrokeSize;
         if(!ts.strokeStyle) e.strokeStyle = s.edgeStrokeStyle; else e.strokeStyle = '';
+        if(ts.arrowSize == null) e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
         if(!ts.labelColor) e.labelColor = s.edgeLabelColor; else e.labelColor = '';
         if(ts.labelSize == null) e.labelSize = s.edgeLabelSize;
         if(!ts.labelFont) e.labelFont = s.edgeLabelFont;
       } else {
-        e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle;
+        e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle; e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
         e.labelColor = s.edgeLabelColor; e.labelFont = s.edgeLabelFont; e.labelSize = s.edgeLabelSize;
       }
     } else {
-      e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle;
+      e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle; e.arrowSize = s.edgeArrowSize ?? DEFAULT_ARROW_SIZE;
       e.labelColor = s.edgeLabelColor; e.labelFont = s.edgeLabelFont; e.labelSize = s.edgeLabelSize;
     }
     state.edges.push(e); setSelection([], [e.id], {type:'edge', id:e.id}, false); pushHistory('add edge'); queueRender(true, true);
@@ -458,7 +462,7 @@
     const flipped = [];
     for(const id of selectedEdgeIds()){
       const e = edgeById(id);
-      if(!e?.directed || e.from === e.to) continue;
+      if(!e || edgeIsUndirected(e) || e.from === e.to) continue;
       [e.from, e.to] = [e.to, e.from];
       flipped.push(e);
     }
@@ -585,8 +589,8 @@
   function setMatrixCell(from, to, raw){
     if(!nodeById(from) || !nodeById(to)) return;
     const values = String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
-    // Find existing edges for this cell (directed: from→to; undirected: either direction)
-    const existing = state.edges.filter(e => (e.from === from && e.to === to) || (!e.directed && e.from === to && e.to === from));
+    // Find existing edges for this cell (directed: from→to; undirected/mutual: either direction)
+    const existing = state.edges.filter(e => (e.from === from && e.to === to) || ((edgeIsUndirected(e) || edgeDirection(e)==='mutual') && e.from === to && e.to === from));
     const s = state.settings;
     if(values.length === 0){
       // No new values — remove all existing edges for this cell
@@ -616,9 +620,12 @@
           id:'e' + state.nextEdge++, from, to,
           weight: values[i].slice(0, 50),
           label: tpl.label || '',
+          // Carry the canonical tristate: copying only the legacy boolean turned
+          // every extra weight of a mutual edge into a directed edge.
+          direction: (tpl as any).direction ?? (tpl.directed ? 'directed' : 'undirected'),
           directed: tpl.directed,
           type: tpl.type || '',
-          color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle,
+          color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle, arrowSize: (tpl as any).arrowSize,
           labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize
         };
         if(inherited) fresh.custom = inherited;
@@ -627,7 +634,8 @@
     } else {
       // No existing edges — create new ones with default settings
       for(const weight of values){
-        const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, weight:weight.slice(0,50), label:'', directed:Boolean(s.directed), type:'' };
+        const dir = normalizeDirection((s as any).direction ?? s.directed);
+        const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, weight:weight.slice(0,50), label:'', directed: dir !== 'undirected' as any, direction: dir as any, type:'' };
         // Pending custom property values from "New edge defaults", as on the canvas path.
         const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
         if(pendingCustom) e.custom = pendingCustom;
@@ -637,11 +645,12 @@
           if(!ts.color) e.color = s.edgeColor; else e.color = '';
           if(ts.strokeSize == null) e.strokeSize = s.edgeStrokeSize;
           if(!ts.strokeStyle) e.strokeStyle = s.edgeStrokeStyle; else e.strokeStyle = '';
+          if(ts.arrowSize == null) (e as any).arrowSize = (s as any).edgeArrowSize ?? DEFAULT_ARROW_SIZE;
           if(!ts.labelColor) e.labelColor = s.edgeLabelColor; else e.labelColor = '';
           if(ts.labelSize == null) e.labelSize = s.edgeLabelSize;
           if(!ts.labelFont) e.labelFont = s.edgeLabelFont;
         } else {
-          e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle;
+          e.color = s.edgeColor; e.strokeSize = s.edgeStrokeSize; e.strokeStyle = s.edgeStrokeStyle; (e as any).arrowSize = (s as any).edgeArrowSize ?? DEFAULT_ARROW_SIZE;
           e.labelColor = s.edgeLabelColor; e.labelFont = s.edgeLabelFont; e.labelSize = s.edgeLabelSize;
         }
         state.edges.push(e);
@@ -906,14 +915,13 @@
         const scope = ['graph','node','edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
         if(!id) return null;
-        const dataKey = String(def.dataKey ?? '').trim().slice(0, 128);
-        const dataName = String(def.dataName ?? '').toLowerCase().trim().slice(0, 128);
-        return { id, scope: scope as 'graph' | 'node' | 'edge', type, ...(dataKey ? { dataKey, ...(dataName ? { dataName } : {}) } : {}) };
+        const name = String(def.name ?? '').trim().slice(0, 128);
+        return { id, scope: scope as 'graph' | 'node' | 'edge', type, ...(name ? { name } : {}) };
       })
-      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string } => def !== null);
+      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string } => def !== null);
     const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
     const existingPairs = new Set(defsByPair.keys());
-    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
     const carriedTypeById = new Map<string, string>(carriedDefs.map(def => [def.id, def.type]));
     // Ids that may not be handed out during this paste. A pair's own carried
     // id stays available for its own direct creation; every existing
@@ -931,24 +939,23 @@
     // the same payload would mint a duplicate.
     const handledPairs = new Set<string>();
     const renameByPair = new Map<string, string>();
-    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string; dataKey?: string; dataName?: string }[] = [];
-    const addDef = (id: string, scope: 'node' | 'edge', type: string, provenance?: { dataKey: string }) => {
+    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string; name?: string }[] = [];
+    const addDef = (id: string, scope: 'node' | 'edge', type: string, provenance?: { name: string }) => {
       defsToAdd.push({ id, scope, type, ...provenance });
       existingPairs.add(id + '|' + scope);
       createdIds.add(id);
       mintTaken.add(id);
     };
     // Two definitions sharing id+scope are the same property ONLY when both
-    // are unmarked (created manually — nothing else to go on) or both carry
-    // identical provenance (same original GraphML key). Anything else is a
-    // different property sharing the id: it must be re-created under a fresh
-    // id and the carried values remapped, never merged into the existing
-    // definition.
+    // carry no recorded name (created manually — nothing else to go on) or
+    // both carry the same recorded one. Anything else is a different property
+    // sharing the id: it must be re-created under a fresh id and the carried
+    // values remapped, never merged into the existing definition.
     const provenanceMatches = (existing: AnyRecord | undefined, carried: AnyRecord | undefined) => {
-      const existingKey = String(existing?.dataKey ?? ''), existingName = String(existing?.dataName ?? '');
-      const carriedKey = String(carried?.dataKey ?? ''), carriedName = String(carried?.dataName ?? '');
-      if(!existingKey && !carriedKey) return true; // both unmarked — same property
-      return existingKey === carriedKey && existingName === carriedName;
+      const existingName = String(existing?.name ?? '').trim().toLowerCase();
+      const carriedName = String(carried?.name ?? '').trim().toLowerCase();
+      if(!existingName && !carriedName) return true; // both unrecorded — same property
+      return existingName === carriedName;
     };
     const ensurePair = (id: string, scope: 'node' | 'edge') => {
       const key = id + '|' + scope;
@@ -971,19 +978,14 @@
       if(createdIds.has(id)){
         // A previous paste already re-created this exact conflict under a
         // fresh id — reuse it so repeated pastes never split one property
-        // into tag_1, tag_2, .... Two marker shapes exist: a carried
-        // definition with original GraphML provenance (minted the same way:
-        // dataKey+dataName of the source key), or a plain carried definition
-        // (no markers: dataKey = the carried id, no dataName).
-        const carriedDataKey = carriedPair?.dataKey;
-        const carriedDataName = carriedPair?.dataName ?? '';
+        // into tag_1, tag_2, …. Identity across pastes is the recorded
+        // name (the source attr.name), falling back to the carried id —
+        // the mint records the carried id as the name the same way.
+        const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
         const prior = state.customAttributes.find(attribute => {
           if(attribute.scope !== scope) return false;
           if(carriedTypeById.has(attribute.id)) return false;
-          const attributeKey = String(attribute.dataKey ?? '');
-          const attributeName = String(attribute.dataName ?? '');
-          if(carriedDataKey) return attributeKey === carriedDataKey && attributeName === carriedDataName;
-          return attributeKey === id && attributeName === '';
+          return String(attribute.name ?? '').trim().toLowerCase() === carriedName;
         });
         if(prior){
           renameByPair.set(key, prior.id);
@@ -994,21 +996,18 @@
       if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
       if(!createdIds.has(id)){
         remaining--;
-        addDef(id, scope, type, carriedPair?.dataKey ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) } : undefined);
+        addDef(id, scope, type, carriedPair?.name ? { name: carriedPair.name } : undefined);
         handledPairs.add(key);
         return;
       }
       const newId = uniqueCustomAttributeId(id, mintTaken);
       remaining--;
       renamed++;
-      // Keep the carried definition's original provenance when it has one (a
-      // migrated GraphML id), so appending the source file — or a round-trip
-      // of an export of it — reuses THIS definition instead of minting a
-      // second one for the same property. Plain carried definitions fall
-      // back to dataKey = the carried id with no dataName.
-      addDef(newId, scope, type, carriedPair?.dataKey
-        ? { dataKey: carriedPair.dataKey, ...(carriedPair.dataName ? { dataName: carriedPair.dataName } : {}) }
-        : { dataKey: id });
+      // Keep the carried definition's recorded name when it has one; when it
+      // has none, record the carried id as the name so the next paste (or a
+      // round-trip of an export of it) finds THIS definition instead of
+      // minting a second one for the same property.
+      addDef(newId, scope, type, { name: carriedPair?.name || id });
       renameByPair.set(key, newId);
       handledPairs.add(key);
     };

@@ -267,7 +267,7 @@
                   <label class="field" for="edgeLabelSize"><span data-i18n="label_size">Label size</span>
                     <input id="edgeLabelSize" type="number" min="4" max="72" step="1" value="12" inputmode="decimal" />
                   </label>
-                  <label class="chk field" for="edgeDirected" style="align-self:end"><input id="edgeDirected" type="checkbox" checked /> <span data-i18n="directed_edge">Directed edge</span></label>
+                  <label class="field" for="edgeArrowSize"><span data-i18n="arrow_size">Arrow size</span><input id="edgeArrowSize" type="number" min="4" max="40" step="1" value="12" inputmode="decimal" /></label><label class="field" for="edgeDirected" style="align-self:end"><span data-i18n="direction">Direction</span><select id="edgeDirected"><option value="directed" data-i18n="directed_edge_short">Directed</option><option value="mutual" data-i18n="mutual_edge_short">Mutual</option><option value="undirected" data-i18n="undirected_edge_short">Undirected</option></select></label>
                 </div>
                 <div class="section-title" style="margin-top:10px"><span data-i18n="custom_properties">Custom properties</span> <span class="tiny muted" data-i18n="custom_props_new_edges">(applied to new edges)</span></div>
                 <div id="newEdgeCustomProps" class="custom-props"></div>
@@ -422,6 +422,7 @@
                   <label class="field" for="defEdgeColor"><span data-i18n="color">Color</span> <input id="defEdgeColor" type="color"></label>
                   <label class="field" for="defEdgeStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="defEdgeStrokeSize" type="number" min="0" max="20" step="0.1" inputmode="decimal"></label>
                   <label class="field" for="defEdgeStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="defEdgeStrokeStyle"><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option><option value="dashdot" data-i18n="stroke_dashdot">Dash-dot</option><option value="dashdotdot" data-i18n="stroke_dashdotdot">Dash-dot-dot</option><option value="none" data-i18n="stroke_none">None</option></select></label>
+                  <label class="field" for="defEdgeArrowSize"><span data-i18n="arrow_size">Arrow size</span> <input id="defEdgeArrowSize" type="number" min="4" max="40" step="1" inputmode="decimal"></label>
                   <label class="field" for="defEdgeLabelColor"><span data-i18n="label_color">Label color</span> <input id="defEdgeLabelColor" type="color"></label>
                   <label class="field" for="defEdgeLabelFont"><span data-i18n="label_font">Label font</span> <input id="defEdgeLabelFont" list="fontList" type="text" placeholder="Inter"></label>
                   <label class="field" for="defEdgeLabelSize"><span data-i18n="label_size">Label size</span> <input id="defEdgeLabelSize" type="number" min="4" max="72" step="1" inputmode="decimal"></label>
@@ -476,6 +477,7 @@
                   <label class="field" for="etsColor"><span data-i18n="color">Color</span> <input id="etsColor" type="color" value="#94a3b8"></label>
                   <label class="field" for="etsStrokeSize"><span data-i18n="stroke_size">Stroke size</span> <input id="etsStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4"></label>
                   <label class="field" for="etsStrokeStyle"><span data-i18n="stroke_style">Stroke style</span> <select id="etsStrokeStyle"><option value="" data-i18n="stroke_inherit">Inherit</option><option value="solid" data-i18n="stroke_solid">Solid</option><option value="dashed" data-i18n="stroke_dashed">Dashed</option><option value="dotted" data-i18n="stroke_dotted">Dotted</option><option value="dashdot" data-i18n="stroke_dashdot">Dash-dot</option><option value="dashdotdot" data-i18n="stroke_dashdotdot">Dash-dot-dot</option><option value="none" data-i18n="stroke_none">None</option></select></label>
+                  <label class="field" for="etsArrowSize"><span data-i18n="arrow_size">Arrow size</span> <input id="etsArrowSize" type="number" min="4" max="40" step="1" value="" placeholder="Inherit" data-i18n-placeholder="stroke_inherit"></label>
                   <label class="field" for="etsLabelColor"><span data-i18n="label_color">Label color</span> <input id="etsLabelColor" type="color" value="#dbeafe"></label>
                   <label class="field" for="etsLabelSize"><span data-i18n="label_size">Label size</span> <input id="etsLabelSize" type="number" min="4" max="72" step="1" value="12"></label>
                   <label class="field" for="etsLabelFont"><span data-i18n="label_font">Label font</span> <input id="etsLabelFont" list="fontList" type="text" placeholder="Inter"></label>

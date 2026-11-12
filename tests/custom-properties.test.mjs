@@ -236,7 +236,7 @@ test('GraphML export carries values and re-import restores them', async () => {
   assert.match(graphml, /<data key="docTag">hello<\/data>/, 'graph value exported');
   assert.match(graphml, /<data key="rating">4.5<\/data>/, 'double graph value exported');
   // Definitions are emitted as <key> elements.
-  assert.match(graphml, /<key id="capacity" for="node" attr\.name="capacity" attr\.type="int"\/>/);
+  assert.match(graphml, /<key id="capacity" for="node" attr\.name="capacity" attr\.type="int" qvge:kind="custom-attribute"\/>/);
 
   // Re-import the file (replace mode) through the export modal.
   document.querySelector('#btnExportGraphml').click();
@@ -789,22 +789,24 @@ test('GraphML keys with QVGE built-in attr.name (name/posx/posy) import as built
   assert.deepEqual(graph.customAttributes.map(a => a.id), ['kNote'],
     'built-in keys are not re-created as custom definitions');
   assert.equal(node.custom.kNote, 'hello', 'genuinely custom keys still import');
-  // The add form likewise refuses built-in names going forward.
+  // The add form likewise accepts built-in-looking ids now: no id is
+  // reserved any more (definitions export in their own marked key namespace).
   document.querySelector('#customAttributeId').value = 'posx';
   document.querySelector('#customAttributeScope').value = 'node';
   document.querySelector('#customAttributeType').value = 'string';
   document.querySelector('#btnAddCustomAttribute').click();
   await nextFrame(window);
-  assert.equal(exportGraph(document).customAttributes.some(a => a.id === 'posx'), false,
-    'built-in attr.name values cannot become custom ids');
+  assert.equal(exportGraph(document).customAttributes.some(a => a.id === 'posx'), true,
+    'built-in-looking ids are allowed — marked keys never alias built-in fields');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('a legacy custom id colliding with a built-in name round-trips without touching the node stroke', async () => {
-  // Documents created before the reserved-name rules: custom attribute
-  // "stroke.color" with a value, plus an unrelated built-in stroke color.
-  const legacy = {
+test('a custom id colliding with a built-in name round-trips without touching the node stroke', async () => {
+  // A custom attribute whose id spells a built-in field. Ids are kept
+  // verbatim; the exporter writes the marked key under the id as-is (it is
+  // not a built-in key id) and the value rides along with the definition.
+  const doc = {
     title: 'legacy-stroke', mode: 'select', nextNode: 2, nextEdge: 1,
     nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, strokeColor: '#123456', custom: { 'stroke.color': '#ff0000' } }],
     edges: [],
@@ -813,18 +815,18 @@ test('a legacy custom id colliding with a built-in name round-trips without touc
     settings: {},
     viewBox: { x: -500, y: -330, w: 1000, h: 660 },
   };
-  const { dom, errors } = createEditorDom(legacy);
+  const { dom, errors } = createEditorDom(doc);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
 
-  // The load migrates the legacy definition to a unique safe id, keeping the value.
+  // The definition keeps its id, and the value with it.
   let graph = exportGraph(document);
-  assert.deepEqual(graph.customAttributes.map(a => a.id), ['stroke.color_1']);
-  assert.equal(graph.nodes.find(n => n.id === 'a').custom['stroke.color_1'], '#ff0000');
+  assert.deepEqual(graph.customAttributes.map(a => a.id), ['stroke.color']);
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom['stroke.color'], '#ff0000');
 
   // Round-trip through the GraphML export and back.
   const graphml = exportGraphml(document);
-  assert.match(graphml, /<key id="stroke\.color_1" /);
+  assert.match(graphml, /<key id="stroke\.color" /);
   document.querySelector('#btnExportGraphml').click();
   const modal = document.querySelector('.export-modal');
   modal.querySelector('textarea').value = graphml;
@@ -834,14 +836,14 @@ test('a legacy custom id colliding with a built-in name round-trips without touc
   graph = exportGraph(document);
   const node = graph.nodes.find(n => n.id === 'a');
   assert.equal(node.strokeColor, '#123456', 'the built-in stroke keeps its own value');
-  assert.deepEqual(graph.customAttributes.map(a => a.id), ['stroke.color_1'], 'the custom definition survives the round-trip');
-  assert.equal(node.custom['stroke.color_1'], '#ff0000');
+  assert.deepEqual(graph.customAttributes.map(a => a.id), ['stroke.color'], 'the custom definition survives the round-trip');
+  assert.equal(node.custom['stroke.color'], '#ff0000');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('previously allowed case-variant definitions are migrated, not discarded, on load', async () => {
-  const legacy = {
+test('case-variant definition ids are kept verbatim, not discarded, on load', async () => {
+  const doc = {
     title: 'legacy-case', mode: 'select', nextNode: 2, nextEdge: 2,
     nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, custom: { FillColor: 'red' } }],
     edges: [{ id: 'e1', from: 'a', to: 'a', directed: true, weight: '1', label: '', type: '', custom: { Direction: 9 } }],
@@ -854,16 +856,16 @@ test('previously allowed case-variant definitions are migrated, not discarded, o
     settings: {},
     viewBox: { x: -500, y: -330, w: 1000, h: 660 },
   };
-  const { dom, errors } = createEditorDom(legacy);
+  const { dom, errors } = createEditorDom(doc);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
 
   const graph = exportGraph(document);
-  assert.deepEqual(graph.customAttributes.map(a => a.id).sort(), ['Direction_1', 'FillColor_1', 'Label_1'],
-    'legacy ids are renamed to unique safe ids');
-  assert.equal(graph.graphCustom.Label_1, 5, 'the graph value moved with its definition');
-  assert.equal(graph.nodes.find(n => n.id === 'a').custom.FillColor_1, 'red');
-  assert.equal(graph.edges.find(e => e.id === 'e1').custom.Direction_1, 9);
+  assert.deepEqual(graph.customAttributes.map(a => a.id).sort(), ['Direction', 'FillColor', 'Label'],
+    'definition ids are kept exactly as saved');
+  assert.equal(graph.graphCustom.Label, 5, 'the graph value stays with its definition');
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom.FillColor, 'red');
+  assert.equal(graph.edges.find(e => e.id === 'e1').custom.Direction, 9);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
@@ -988,8 +990,8 @@ test('a __proto__ custom property works like any other: own-key storage end to e
   seededDom.dom.window.close();
 });
 
-test('legacy migration reserves ids from the whole input — no overwrite of existing definitions', async () => {
-  const legacy = {
+test('saved definitions keep their ids — no id is reserved anywhere', async () => {
+  const doc = {
     title: 'legacy-reserve', mode: 'select', nextNode: 2, nextEdge: 1,
     nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, custom: { Label: 'a', Label_1: 'b' } }],
     edges: [],
@@ -1003,20 +1005,18 @@ test('legacy migration reserves ids from the whole input — no overwrite of exi
     settings: {},
     viewBox: { x: -500, y: -330, w: 1000, h: 660 },
   };
-  const { dom, errors } = createEditorDom(legacy);
+  const { dom, errors } = createEditorDom(doc);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
 
   const graph = exportGraph(document);
   const ids = graph.customAttributes.map(a => a.id).sort();
-  // The pre-existing Label_1 and Tag_1 survive untouched; the legacy ids are
-  // migrated to fresh ids that collide with nothing in the input.
-  assert.deepEqual(ids, ['Label_1', 'Label_2', 'Weight_1', 'Weight_3'],
-    'pre-existing definitions and orphan value keys are both reserved; migrated ids skip them');
+  assert.deepEqual(ids, ['Label', 'Label_1', 'Weight', 'Weight_1'],
+    'every definition keeps the id it was saved with');
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom.Label, 'a');
   assert.equal(graph.nodes.find(n => n.id === 'a').custom.Label_1, 'b');
-  assert.equal(graph.nodes.find(n => n.id === 'a').custom.Label_2, 'a', 'the legacy value moved to the migrated id');
-  assert.equal(graph.graphCustom.Weight_1, 'y', 'the pre-existing definition keeps its value');
-  assert.equal(graph.graphCustom.Weight_3, 'x', 'the graph value moved to the migrated id');
+  assert.equal(graph.graphCustom.Weight, 'x');
+  assert.equal(graph.graphCustom.Weight_1, 'y', 'the definitions keep their own values');
   assert.equal(Object.prototype.hasOwnProperty.call(graph.graphCustom, 'Weight_2'), false,
     'an orphan value key with no definition is dropped, not adopted');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -1117,7 +1117,7 @@ test('__proto__ values survive cloning: new nodes from pending defaults and dupl
   dom.window.close();
 });
 
-test('an external GraphML key whose id is a built-in name is migrated, not discarded', async () => {
+test('an external GraphML key whose id is a built-in name keeps its id', async () => {
   const qvge = `<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
   <key id="x" for="node" attr.name="externalTag" attr.type="string"/>
@@ -1138,22 +1138,23 @@ test('an external GraphML key whose id is a built-in name is migrated, not disca
   let graph = exportGraph(document);
   const def = graph.customAttributes.find(a => a.scope === 'node');
   assert.ok(def, 'the external key is kept as a custom definition');
-  assert.equal(def.id, 'x_1', 'the reserved id is migrated to a safe unique id');
+  assert.equal(def.id, 'x', 'the id is kept verbatim');
   const node = graph.nodes.find(n => n.id === 'a');
-  assert.equal(node.custom.x_1, 'hello', 'the value moved with the definition');
+  assert.equal(node.custom.x, 'hello', 'the value binds to the definition');
   assert.equal(typeof node.x, 'number', 'the built-in x coordinate was not captured');
 
-  // The migrated definition round-trips cleanly from then on.
+  // The definition exports under a de-collided key id marked back to it.
   const graphml = exportGraphml(document);
-  assert.match(graphml, /<key id="x_1" /);
+  assert.match(graphml, /<key id="x2" for="node" attr\.name="externalTag"[^>]*qvge:id="x"/,
+    'the built-in key id is de-collided on export, marked back to the definition');
   document.querySelector('#btnExportGraphml').click();
   const reimport = document.querySelector('.export-modal');
   reimport.querySelector('textarea').value = graphml;
   reimport.querySelector('#expImportBtn').click();
   await nextFrame(window); await settle(window, 60);
   graph = exportGraph(document);
-  assert.equal(graph.customAttributes.some(a => a.id === 'x_1' && a.scope === 'node'), true);
-  assert.equal(graph.nodes.find(n => n.id === 'a').custom.x_1, 'hello');
+  assert.equal(graph.customAttributes.some(a => a.id === 'x' && a.scope === 'node'), true);
+  assert.equal(graph.nodes.find(n => n.id === 'a').custom.x, 'hello');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
@@ -1375,7 +1376,7 @@ test('changing a definition scope warns about and handles stored values', async 
   promote.dom.window.close();
 });
 
-test('repeated GraphML appends of the same external key resolve to one migrated definition', async () => {
+test('repeated GraphML appends of the same external key resolve to one definition', async () => {
   const external = `<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
   <key id="x" for="node" attr.name="externalTag" attr.type="int"/>
@@ -1397,19 +1398,17 @@ test('repeated GraphML appends of the same external key resolve to one migrated 
     modal.remove();
   }
   const exported = exportGraph(document);
-  const migrated = exported.customAttributes.filter(a => /^x_\d+$/.test(a.id));
-  assert.equal(migrated.length, 1, 'one migrated definition, not a new one per import');
-  assert.equal(migrated[0].id, 'x_1');
-  assert.equal(exported.customAttributes.some(a => a.id === 'x_2'), false);
-  assert.equal(migrated.length, 1);
+  const matches = exported.customAttributes.filter(a => a.id === 'x');
+  assert.equal(matches.length, 1, 'one definition, not a new one per import');
+  assert.equal(matches[0].name, 'externalTag', 'provenance recorded for reuse');
   for(const node of exported.nodes){
-    assert.equal(node.custom.x_1, 7, 'every node carries the value under the same definition');
+    assert.equal(node.custom.x, 7, 'every node carries the value under the same definition');
   }
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('appending a GraphML file never overwrites an unrelated property that occupies a migration candidate', async () => {
+test('appending a GraphML file never overwrites an unrelated property', async () => {
   const external = `<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
   <key id="x" for="graph" attr.name="externalTag" attr.type="string"/>
@@ -1446,26 +1445,26 @@ test('appending a GraphML file never overwrites an unrelated property that occup
   let exported = exportGraph(document);
   assert.equal(exported.graphCustom.x_1, 'keep',
     'the unrelated x_1 graph value survives the append');
-  const migratedGraph = exported.customAttributes.find(a => a.dataKey === 'x');
-  assert.ok(migratedGraph, 'the reserved key migrated to a fresh definition');
-  assert.equal(migratedGraph.id, 'x_2', 'the migration skipped the occupied candidate');
-  assert.equal(exported.graphCustom[migratedGraph.id], 'fresh', 'the imported value landed on the migrated definition');
-  const migratedNode = exported.customAttributes.find(a => a.dataKey === 'directed');
-  assert.ok(migratedNode, 'the node-scope reserved key migrated');
-  assert.equal(migratedNode.id, 'directed_2', 'the migration skipped the occupied candidate');
+  const freshGraph = exported.customAttributes.find(a => a.id === 'x');
+  assert.ok(freshGraph, 'the incoming key gets its own definition');
+  assert.equal(freshGraph.name, 'externalTag', 'provenance is recorded');
+  assert.equal(exported.graphCustom.x, 'fresh', 'the imported value lands on the imported definition');
+  const freshNode = exported.customAttributes.find(a => a.id === 'directed');
+  assert.ok(freshNode, 'the incoming node key gets its own definition');
+  assert.equal(freshNode.name, 'externalFlag');
   const importedNode = exported.nodes.find(n => n.id === 'imp');
   assert.ok(importedNode);
-  assert.equal(importedNode.custom.directed_2, true);
+  assert.equal(importedNode.custom.directed, true);
   assert.equal(exported.nodes.find(n => n.id === 'seed').custom.directed_1, true,
     'the unrelated directed_1 definition and value are untouched');
 
-  // Re-appending the same file merges into the migrated definitions instead of minting new ones.
+  // Re-appending the same file merges into the same definitions instead of minting new ones.
   await appendOnce();
   exported = exportGraph(document);
-  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id), ['x_2']);
-  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'directed').map(a => a.id), ['directed_2']);
+  assert.equal(exported.customAttributes.filter(a => a.id === 'x').length, 1);
+  assert.equal(exported.customAttributes.filter(a => a.id === 'directed').length, 1);
   assert.equal(exported.graphCustom.x_1, 'keep');
-  assert.equal(exported.graphCustom.x_2, 'fresh');
+  assert.equal(exported.graphCustom.x, 'fresh');
   assert.equal(exported.nodes.find(n => n.id === 'seed').custom.directed_1, true);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
@@ -1573,7 +1572,7 @@ const appendGraphmlFile = async (document, window, text, append = true) => {
   modal.remove();
 };
 
-test('GraphML keys sharing a raw id in two files migrate to distinct definitions', async () => {
+test('GraphML keys sharing a raw id in two files get distinct definitions', async () => {
   const file1 = `<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
   <key id="x" for="graph" attr.name="colour" attr.type="string"/>
@@ -1596,19 +1595,18 @@ test('GraphML keys sharing a raw id in two files migrate to distinct definitions
   await appendGraphmlFile(document, window, file1);
   await appendGraphmlFile(document, window, file2);
   const exported = exportGraph(document);
-  const migratedColour = exported.customAttributes.find(a => a.dataName === 'colour');
-  const migratedOwner = exported.customAttributes.find(a => a.dataName === 'owner');
-  assert.ok(migratedColour, 'the colour property migrated');
-  assert.ok(migratedOwner, 'the owner property of the same raw key id migrated to a distinct definition');
-  assert.notEqual(migratedColour.id, migratedOwner.id);
-  assert.equal(exported.graphCustom[migratedColour.id], 'red');
-  assert.equal(exported.graphCustom[migratedOwner.id], 'bob', 'the second property does not overwrite the first');
-  assert.equal(exported.customAttributes.filter(a => a.dataKey === 'x').length, 2);
+  const colour = exported.customAttributes.find(a => a.name === 'colour');
+  const owner = exported.customAttributes.find(a => a.name === 'owner');
+  assert.ok(colour, 'the colour property is kept');
+  assert.ok(owner, 'the owner property of the same raw key id gets its own definition');
+  assert.notEqual(colour.id, owner.id);
+  assert.equal(exported.graphCustom[colour.id], 'red');
+  assert.equal(exported.graphCustom[owner.id], 'bob', 'the second property does not overwrite the first');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('a reused migration id is not handed out when the incoming file uses it as a key', async () => {
+test('a key id the incoming file uses is never handed out to another definition', async () => {
   const file1 = `<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
   <key id="x" for="graph" attr.name="externalTag" attr.type="string"/>
@@ -1632,23 +1630,21 @@ test('a reused migration id is not handed out when the incoming file uses it as 
   await nextFrame(window);
   await appendGraphmlFile(document, window, file1);
   let exported = exportGraph(document);
-  assert.equal(exported.graphCustom.x_1, 'original');
-  // The migrated x_1 now collides with a key id inside the incoming file,
-  // so the reserved key must mint a fresh definition instead of merging.
+  assert.equal(exported.graphCustom.x, 'original', 'the imported definition keeps its id verbatim');
+  // The same property re-imported merges (newer data wins); the file's own
+  // key x_1 is a different property and keeps its id verbatim too.
   await appendGraphmlFile(document, window, file2);
   exported = exportGraph(document);
-  const fresh = exported.customAttributes.find(a => a.id === 'x_2');
-  assert.ok(fresh, 'the reused candidate was skipped because the file uses x_1 as a key');
-  assert.equal(fresh.dataKey, 'x');
-  assert.equal(exported.graphCustom.x_2, 'second', 'the reserved key keeps both of the file’s properties');
-  assert.equal(exported.graphCustom.x_1, 'other-value', 'the file’s x_1 key merges with the existing x_1 definition');
-  const reused = exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id);
-  assert.deepEqual(new Set(reused), new Set(['x_1', 'x_2']));
+  const other = exported.customAttributes.find(a => a.id === 'x_1');
+  assert.ok(other, 'the file’s own x_1 key becomes its own definition');
+  assert.equal(other.name, 'other');
+  assert.equal(exported.graphCustom.x_1, 'other-value', 'the file’s x_1 value lands on the file’s definition');
+  assert.equal(exported.graphCustom.x, 'second', 'the same property re-imported takes the newer value');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('migration provenance survives a GraphML export/reopen cycle and definition edits', async () => {
+test('recorded provenance survives a GraphML export/reopen cycle and definition edits', async () => {
   const source = `<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
   <key id="x" for="graph" attr.name="externalTag" attr.type="string"/>
@@ -1662,30 +1658,30 @@ test('migration provenance survives a GraphML export/reopen cycle and definition
   await nextFrame(window);
   await appendGraphmlFile(document, window, source);
   let exported = exportGraph(document);
-  assert.equal(exported.customAttributes.find(a => a.dataKey === 'x').id, 'x_1');
+  assert.equal(exported.customAttributes.find(a => a.name === 'externalTag').id, 'x');
 
   // Export → reopen (replace mode) loses nothing: provenance travels in the GraphML.
   const graphml = exportGraphml(document);
-  assert.match(graphml, /grapheditor:dataKey="x"/);
+  assert.match(graphml, /attr\.name="externalTag"/, 'the exported key records the property name');
   await appendGraphmlFile(document, window, graphml, false);
   exported = exportGraph(document);
-  const reopened = exported.customAttributes.find(a => a.dataKey === 'x');
+  const reopened = exported.customAttributes.find(a => a.name === 'externalTag');
   assert.ok(reopened, 'provenance is restored when the exported GraphML is reopened');
-  assert.equal(reopened.id, 'x_1');
-  // Appending the original source again merges into the restored definition.
+  assert.equal(reopened.id, 'x', 'the definition round-trips under its own id');
+  // Appending the original source again merges into the same definition.
   await appendGraphmlFile(document, window, source);
   exported = exportGraph(document);
-  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id), ['x_1']);
+  assert.deepEqual(exported.customAttributes.filter(a => a.name === 'externalTag').map(a => a.id), ['x']);
 
-  // Editing the definition keeps the markers too.
+  // Editing the definition keeps the recorded name.
   const row = () => [...document.querySelectorAll('.custom-attribute-row')]
-    .find(r => r.querySelector('[data-attribute-field="id"]').value === 'x_1');
+    .find(r => r.querySelector('[data-attribute-field="id"]').value === 'x');
   row().querySelector('[data-attribute-field="type"]').value = 'long';
   row().querySelector('[data-attribute-action="save"]').click();
   await nextFrame(window); await settle(window, 40);
   await appendGraphmlFile(document, window, source);
   exported = exportGraph(document);
-  assert.deepEqual(exported.customAttributes.filter(a => a.dataKey === 'x').map(a => a.id), ['x_1']);
+  assert.deepEqual(exported.customAttributes.filter(a => a.name === 'externalTag').map(a => a.id), ['x']);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
