@@ -12248,13 +12248,24 @@ let _hotkeysCache = null;
 function getHotkeys() {
     if (_hotkeysCache)
         return _hotkeysCache;
+    _hotkeysCache = { ...DEFAULT_HOTKEYS };
     try {
         const stored = localStorage.getItem(HOTKEYS_KEY);
-        _hotkeysCache = stored ? { ...DEFAULT_HOTKEYS, ...JSON.parse(stored) } : { ...DEFAULT_HOTKEYS };
+        const saved = stored ? JSON.parse(stored) : null;
+        // Storage is user-writable and survives upgrades, so anything can be in
+        // there. Only a known action with a string code is adopted — a null, a
+        // number or an object in a slot used to reach prettyKeyCode and throw
+        // "code.startsWith is not a function" from the settings panel, which then
+        // failed to render at all. Unknown keys are ignored the same way.
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+            for (const name of Object.keys(DEFAULT_HOTKEYS)) {
+                const code = saved[name];
+                if (typeof code === 'string')
+                    _hotkeysCache[name] = code;
+            }
+        }
     }
-    catch {
-        _hotkeysCache = { ...DEFAULT_HOTKEYS };
-    }
+    catch { /* unreadable storage: defaults stand */ }
     return _hotkeysCache;
 }
 function setHotkey(name, code) {
@@ -12275,7 +12286,7 @@ function resetHotkeys() {
     toast(I18N.t('hotkeys_reset'));
 }
 function prettyKeyCode(code) {
-    if (!code)
+    if (typeof code !== 'string' || !code)
         return '\u2014';
     if (code === 'Space')
         return 'Space';

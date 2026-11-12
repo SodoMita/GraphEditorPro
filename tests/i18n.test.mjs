@@ -272,3 +272,43 @@ test('every data-i18n key used by the markup has a dictionary entry', async () =
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// localStorage is user-writable and survives upgrades, so a preference slot can
+// hold anything. A non-string hotkey code used to reach prettyKeyCode and throw
+// "code.startsWith is not a function" while the panel was being populated.
+function hotkeyStorage(stored) {
+  return html.replace('<script>', `<script>localStorage.setItem('graph-editor-pro-hotkeys', ${JSON.stringify(stored)});</script><script>`);
+}
+async function openWithStoredHotkeys(stored) {
+  const errors = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', error => errors.push(error));
+  const dom = new JSDOM(hotkeyStorage(stored), {
+    runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://offline.test/', virtualConsole,
+    beforeParse(window) {
+      window.matchMedia = () => ({media: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}});
+      window.alert = () => {}; window.confirm = () => true; window.prompt = () => null;
+    },
+  });
+  await new Promise(resolve => dom.window.setTimeout(resolve, 120));
+  return {dom, errors};
+}
+
+test('a corrupted hotkey preference falls back instead of breaking the panel', async () => {
+  for (const stored of ['{"select":null}', '{"select":42}', '{"select":{}}', '[1,2,3]', '"text"', 'null']) {
+    const {dom, errors} = await openWithStoredHotkeys(stored);
+    const inputs = [...dom.window.document.querySelectorAll('.hotkey-input')];
+    assert.ok(inputs.length > 0, 'the hotkey panel is populated');
+    for (const input of inputs) assert.equal(typeof input.dataset.code, 'string', 'every slot holds a code');
+    assert.deepEqual(errors.map(error => error.message), [], `stored ${stored} must not throw`);
+    dom.window.close();
+  }
+});
+
+test('a valid stored hotkey is still applied', async () => {
+  const {dom} = await openWithStoredHotkeys('{"select":"KeyA"}');
+  const select = [...dom.window.document.querySelectorAll('.hotkey-input')].find(input => input.dataset.hotkey === 'select');
+  assert.equal(select.dataset.code, 'KeyA', 'the customised code is used');
+  assert.equal(select.value, 'A', 'and shown to the user');
+  dom.window.close();
+});
