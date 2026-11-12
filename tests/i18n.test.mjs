@@ -272,3 +272,96 @@ test('every data-i18n key used by the markup has a dictionary entry', async () =
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// localStorage is user-writable and survives upgrades, so a preference slot can
+// hold anything. A non-string hotkey code used to reach prettyKeyCode and throw
+// "code.startsWith is not a function" while the panel was being populated.
+function hotkeyStorage(stored) {
+  return html.replace('<script>', `<script>localStorage.setItem('graph-editor-pro-hotkeys', ${JSON.stringify(stored)});</script><script>`);
+}
+async function openWithStoredHotkeys(stored) {
+  const errors = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', error => errors.push(error));
+  const dom = new JSDOM(hotkeyStorage(stored), {
+    runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://offline.test/', virtualConsole,
+    beforeParse(window) {
+      window.matchMedia = () => ({media: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}});
+      window.alert = () => {}; window.confirm = () => true; window.prompt = () => null;
+    },
+  });
+  await new Promise(resolve => dom.window.setTimeout(resolve, 120));
+  return {dom, errors};
+}
+
+test('a corrupted hotkey preference falls back instead of breaking the panel', async () => {
+  for (const stored of ['{"select":null}', '{"select":42}', '{"select":{}}', '[1,2,3]', '"text"', 'null']) {
+    const {dom, errors} = await openWithStoredHotkeys(stored);
+    const inputs = [...dom.window.document.querySelectorAll('.hotkey-input')];
+    assert.ok(inputs.length > 0, 'the hotkey panel is populated');
+    for (const input of inputs) assert.equal(typeof input.dataset.code, 'string', 'every slot holds a code');
+    assert.deepEqual(errors.map(error => error.message), [], `stored ${stored} must not throw`);
+    dom.window.close();
+  }
+});
+
+test('a valid stored hotkey is still applied', async () => {
+  const {dom} = await openWithStoredHotkeys('{"select":"KeyA"}');
+  const select = [...dom.window.document.querySelectorAll('.hotkey-input')].find(input => input.dataset.hotkey === 'select');
+  assert.equal(select.dataset.code, 'KeyA', 'the customised code is used');
+  assert.equal(select.value, 'A', 'and shown to the user');
+  dom.window.close();
+});
+
+// The Clipboard API is refused outright in a sandboxed iframe or under a
+// restrictive permissions policy — exactly when the legacy fallback runs — and
+// execCommand is deprecated, so it may not exist. Calling it unguarded threw an
+// uncaught TypeError out of the click handler, and the toast said "Copied"
+// regardless, so the user was told a copy happened when nothing was on the
+// clipboard.
+async function runCopyWithFallback(mode) {
+  const errors = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', error => errors.push(error));
+  const dom = new JSDOM(html, {
+    runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://offline.test/', virtualConsole,
+    beforeParse(window) {
+      window.matchMedia = () => ({media: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}});
+      window.alert = () => {}; window.confirm = () => true; window.prompt = () => null;
+      if (mode === 'missing') window.document.execCommand = undefined;
+      else if (mode === 'false') window.document.execCommand = () => false;
+      else if (mode === 'true') window.document.execCommand = () => true;
+      else if (mode === 'throws') window.document.execCommand = () => { throw new Error('blocked'); };
+    },
+  });
+  await new Promise(resolve => dom.window.setTimeout(resolve, 120));
+  const {window} = dom;
+  const toasts = [];
+  new window.MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (node.nodeType === 1 && /toast/i.test(node.className || '')) toasts.push(node.textContent.trim());
+    }
+  }).observe(window.document.body, {childList: true, subtree: true});
+  Object.defineProperty(window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => { throw new Error('blocked'); }, readText: async () => '{}'}});
+  window.document.querySelector('#btnCopyJson').click();
+  await new Promise(resolve => window.setTimeout(resolve, 120));
+  const stray = window.document.querySelectorAll('textarea').length;
+  dom.window.close();
+  return {toasts: toasts.join(' | '), stray, errors: errors.map(error => error.message)};
+}
+
+test('a refused clipboard copy reports failure instead of throwing and claiming success', async () => {
+  for (const mode of ['missing', 'false', 'throws']) {
+    const {toasts, stray, errors} = await runCopyWithFallback(mode);
+    assert.deepEqual(errors, [], `execCommand=${mode} must not throw`);
+    assert.match(toasts, /Could not copy/, `execCommand=${mode} reports that nothing was copied`);
+    assert.doesNotMatch(toasts, /^Copied$/, 'and does not claim success');
+    assert.equal(stray, 0, 'the temporary textarea is cleaned up');
+  }
+});
+
+test('a legacy copy that succeeds is reported as copied', async () => {
+  const {toasts, errors} = await runCopyWithFallback('true');
+  assert.deepEqual(errors, []);
+  assert.match(toasts, /Copied/);
+});

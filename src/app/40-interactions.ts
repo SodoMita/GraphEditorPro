@@ -400,7 +400,33 @@
     // outside the canvas, so use the actual element under the pointer.
     return Boolean(el && canvasWrap.contains(el) && !isCanvasOverlayControl(el) && !el.closest('.node,.edge'));
   }
+  // What the last press landed on, so a dblclick that pointer capture retargeted
+  // to the canvas can still be attributed. Cleared on release so a stale value
+  // cannot make an unrelated double click edit something.
+  let lastPressed: {kind: 'node' | 'edge'; id: string} | null = null;
+  function notePress(kind: 'node' | 'edge', id: string){ lastPressed = {kind, id}; }
+  // Resolve which element a dblclick means. Prefer the event target (works when
+  // capture is not involved); otherwise fall back to where the pointer actually
+  // is, then to the element the press began on.
+  function doubleClickTarget(ev){
+    const direct = (ev.target as Element | null)?.closest?.('.node, .edge') as HTMLElement | null;
+    if(direct?.dataset?.id) return {kind: direct.classList.contains('node') ? 'node' as const : 'edge' as const, id: direct.dataset.id};
+    const el = typeof document.elementFromPoint === 'function'
+      ? document.elementFromPoint(ev.clientX, ev.clientY) as Element | null
+      : null;
+    const at = el?.closest?.('.node, .edge') as HTMLElement | null;
+    if(at?.dataset?.id) return {kind: at.classList.contains('node') ? 'node' as const : 'edge' as const, id: at.dataset.id};
+    return lastPressed;
+  }
+  function editQuickByHit(hit: {kind: 'node' | 'edge'; id: string}){
+    // Only in the tools where a double click is unambiguous. In the drag-select
+    // tools a double click is two sweeps, and in edge/node modes it is drawing.
+    if(state.mode !== 'select' || state.selectTool !== 'single') return;
+    if(hit.kind === 'node') editNodeQuick(hit.id);
+    else editEdgeQuick(hit.id);
+  }
   function onNodePointerDown(ev, id){
+    notePress('node', id);
     ev.preventDefault(); ev.stopPropagation(); try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     registerPointer(ev);
     if(ev.button === 1 || ev.button === 2){
@@ -501,6 +527,10 @@
   // #canvasWrap rather than the <svg> it contains, so input over every pixel of
   // the canvas viewport is always received.
   canvasWrap.addEventListener('pointerdown', ev => {
+    // A press on the canvas itself (empty space) means the double click was not
+    // about any element; drop the previous attribution so a stale one cannot
+    // make it edit something.
+    lastPressed = null;
     if(isCanvasOverlayControl(ev.target)) return;
     svg.focus();
     registerPointer(ev);
@@ -557,6 +587,16 @@
       finishPolygonSelection(false);
       return;
     }
+    // Quick edit, resolved here rather than on the node/edge element itself.
+    //
+    // A node press calls setPointerCapture on the canvas so a drag keeps tracking
+    // outside the element. While the canvas holds capture, the browser retargets
+    // the events of that pointer to the capturing element — so the second click
+    // of a double click lands on #canvasWrap, and a dblclick listener on the node
+    // group never fires at all. Naming the element on press and resolving the hit
+    // here works with capture instead of against it.
+    const hit = doubleClickTarget(ev);
+    if(hit) editQuickByHit(hit);
     // Node creation is intentionally handled only by Node-mode pointerdown/tap.
     // This avoids accidental nodes from double-clicks in selection tools or edge mode.
   });

@@ -50,9 +50,23 @@
     for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.arrowSize??'',e.labelColor||'',e.labelSize??'']); }
     return rowsToCsv(rows);
   }
+  // A node carries far more than position and fill colour, and a CSV that only
+  // wrote those silently reset the rest on re-import. The columns are the same
+  // properties every other format writes, read from the resolved visual so an
+  // inherited value is recorded rather than a blank. Columns are appended after
+  // the original eight, so a file made by an older build still imports, and a
+  // reader that only knows the first eight still finds them where they were.
+  const NODE_CSV_COLUMNS = ['order','id','label','x','y','shape','color','type',
+    'width','height','stroke_color','stroke_size','stroke_style',
+    'label_color','label_size','label_position','label_font'];
   function nodeCsv(){
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    return rowsToCsv([['order','id','label','x','y','shape','color','type'], ...sorted.map(n => [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type])]);
+    return rowsToCsv([NODE_CSV_COLUMNS, ...sorted.map(n => {
+      const v = nodeVisual(n);
+      return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type,
+        v.width ?? '', v.height ?? '', v.strokeColor || '', v.strokeSize ?? '', v.strokeStyle || '',
+        v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
+    })]);
   }
   function matrixCsv(){
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
@@ -236,6 +250,14 @@
       attrs.push(`width=${(v.width/72).toFixed(4)}`, `height=${(v.height/72).toFixed(4)}`);
       attrs.push(`order=${n.order ?? 0}`);
       if(n.type) attrs.push(`type=${dotString(n.type)}`);
+      // Label styling, spelled the way Graphviz spells it. Read the resolved
+      // visual like every other attribute here: a value the element leaves unset
+      // is inherited, and writing the raw field would record nothing at all.
+      if(v.labelColor) attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+      if(v.labelSize != null) attrs.push(`fontsize=${v.labelSize}`);
+      if(v.labelFont) attrs.push(`fontname=${dotString(v.labelFont)}`);
+      if(v.labelPosition === 'top') attrs.push(`labelloc=${dotString('t')}`);
+      else if(v.labelPosition === 'bottom') attrs.push(`labelloc=${dotString('b')}`);
       lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for(const e of state.edges){
@@ -247,15 +269,24 @@
       // QVGE DOT: color, penwidth, style, dir
       attrs.push(`color=${dotString(v.color)}`);
       attrs.push(`penwidth=${v.strokeSize}`);
+      if(v.type) attrs.push(`type=${dotString(v.type)}`);
+      if(v.labelColor) attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+      if(v.labelSize != null) attrs.push(`fontsize=${v.labelSize}`);
       const es = v.strokeStyle;
       if(es) attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
       if(dir === 'mutual') attrs.push(`dir=${dotString('both')}`);
       else if(dir === 'undirected') attrs.push(`dir=${dotString('none')}`);
       else attrs.push(`dir=${dotString('forward')}`);
       if(v.arrowSize != null){
+        // `arrowsize` is Graphviz's multiplier, so write it for other tools — but a
+        // multiplier is lossy in both directions: 20 -> 1.6667 -> 20.0004, and any
+        // value whose multiplier lands under 5 cannot be told apart from an
+        // absolute size on the way back in. Our own model stores the absolute
+        // size, so carry that exactly as well and let our reader prefer it.
         const mul = v.arrowSize / DEFAULT_ARROW_SIZE;
         const txt = Number(mul.toFixed(4)).toString();
         attrs.push(`arrowsize=${dotString(txt)}`);
+        attrs.push(`arrow_size=${dotString(String(v.arrowSize))}`);
       }
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
@@ -525,9 +556,14 @@
     // if the file explicitly carries its own defaults.
     const mergedSettings = {...state.settings, ...(data.settings || {})};
     const sane = sanitizeState({...data, title:data.title || fileBase(), settings: mergedSettings});
+    const dropped = takeImportDropped();
     state = {...state, ...sane, selected:null, selection:{nodes:[], edges:[]}};
     appHistory=[snapshot()]; appHistoryIndex=0;
     syncControls(); updateUndoRedo(); fitView(); queueRender(true, true); saveSoon();
+    // The ceilings silently cut the tail of a large document. Saying so matters
+    // more than the import message: the graph on screen is no longer the file.
+    const lost = dropped.nodes + dropped.edges;
+    if(lost > 0){ toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: sane.nodes.length, m: sane.edges.length}), dropped: I18N.t('n_nodes_m_edges', {n: dropped.nodes, m: dropped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})})); return; }
     toast(I18N.t('imported', {label: label}));
   }
   // Resolve an element's *unset* visual properties against the defaults of the
@@ -548,10 +584,19 @@
     const nd = settings?.nodeDefaults || {};
     const ed = settings?.edgeDefaults || {};
     const unset = (value) => value == null || value === '';
+    // Every property a document's `nodeDefaults`/`edgeDefaults` can carry and an
+    // element can inherit. `type` belongs here: nodeVisual/edgeVisual resolve an
+    // element's style through the default's *type style* (`d.type`), and append
+    // discards the incoming defaults, so an element that relied on its document's
+    // default type would lose that style for good. It is in both default maps
+    // (10-core normalises nodeDefaults.type and edgeDefaults.type for exactly
+    // this reason) and sanitizeState preserves it on elements, so the only gap
+    // was this list — which is why the two lists are kept next to each other and
+    // checked by a test against the default maps rather than trusted.
     const NODE_FIELDS = ['shape','color','width','height','strokeColor','strokeSize',
-      'strokeStyle','labelColor','labelSize','labelPosition','labelFont'];
+      'strokeStyle','labelColor','labelSize','labelPosition','labelFont','type'];
     const EDGE_FIELDS = ['color','strokeSize','strokeStyle','arrowSize',
-      'labelColor','labelSize','labelFont'];
+      'labelColor','labelSize','labelFont','type'];
     // The caller has not sanitised yet — that is exactly what it is about to do —
     // so an entry may be null or a non-object. Skip those here and let the
     // sanitizer decide their fate; throwing would reject the whole import,
@@ -578,8 +623,31 @@
     // resolved onto its elements first — otherwise those elements inherit the host
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
-    materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
-    const sane = sanitizeState({...data, settings: state.settings});
+    // `data` is untrusted: `nodes`/`edges` may be a non-array (an object, a string,
+    // a number). `|| []` does not guard that — an object is truthy and `for...of`
+    // then throws "is not iterable", which aborted the whole append and surfaced as
+    // "Paste failed". materializeDefaults takes the raw entries by design, so the
+    // shape is normalised here, where every caller's input is known to be foreign.
+    const incomingNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const incomingEdges = Array.isArray(data?.edges) ? data.edges : [];
+    materializeDefaults(incomingNodes, incomingEdges, data?.settings || {});
+    // Sanitise against the *merged* node set, not just the incoming one.
+    //
+    // sanitizeState drops edges whose endpoints it cannot resolve, which is right
+    // for a document that stands alone. An append is not that: an incoming edge
+    // may legitimately end on a node that already exists here, and passing only
+    // the incoming nodes made every such edge look dangling and disappear.
+    // Merging the host's nodes in first lets the check see both sides; the host's
+    // own nodes are discarded immediately afterwards.
+    // The payload is sanitised on its own, with the host's node ids declared as
+    // known endpoints. Both halves matter:
+    //   * on its own, so a colliding id (`n1`) resolves to the payload's node
+    //     rather than the host's — merging the host nodes in made sanitizeState
+    //     match the host first and silently re-point the appended edge at it;
+    //   * with the host ids known, so an edge that legitimately ends on an
+    //     existing node is not mistaken for a dangling one.
+    const hostIds = new Set(state.nodes.map(n => n.id));
+    const sane = sanitizeState({...data, settings: state.settings}, hostIds);
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -597,8 +665,21 @@
       n.id = newId;
       // Offset position to avoid overlap with existing nodes
       n.x += 200; n.y += 200;
-      n.order = state.nodes.length + state.nodes.filter(x => x.order >= n.order).length;
     }
+    // Give the appended nodes consecutive places at the end of the display order.
+    //
+    // `order` is a sequence the user reorders (matrix move buttons, Sort by label,
+    // Renumber), not a free-form field, and existing nodes hold 0..N-1. Appending
+    // used to compute `state.nodes.length + count(host order >= this order)` inside
+    // the loop above — but nothing is pushed to state.nodes until after it, so the
+    // count was re-read against an unchanged array and the incoming document's own
+    // 0,1,2... offsets leaked through: a 3-node host took 3 and 4 as 6 and 5, and
+    // an empty host gave every node 0. Position-in-the-list is the order that
+    // append should keep; the incoming numbers only decide it when the document
+    // defines an order of its own.
+    const incomingOrder = new Map(sane.nodes.map(node => [node.id, node.order]));
+    sane.nodes.sort((a, b) => (incomingOrder.get(a.id) ?? 0) - (incomingOrder.get(b.id) ?? 0));
+    sane.nodes.forEach((node, index) => { node.order = state.nodes.length + index; });
     // Remap edge endpoints — DISCARD edges with dangling references.
     // An edge is dangling if its endpoint wasn't in the imported nodes list
     // AND doesn't already exist in the current graph (would "snap" to wrong node).
@@ -635,11 +716,32 @@
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
+    const capped = takeImportDropped();
+    const lost = capped.nodes + capped.edges;
+    // Truncation first: it means the document itself did not fit, so the counts
+    // below would understate what the user expected to see.
+    if(lost > 0){
+      toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: sane.nodes.length, m: validEdges.length}), dropped: I18N.t('n_nodes_m_edges', {n: capped.nodes, m: capped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})}));
+      return;
+    }
     toast(discarded > 0
       ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
       : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
   }
+  // Everything that arrives from outside — a pasted clip, a dropped file, a
+  // clipboard reader — ends up here, so this is where "is this a graph document at
+  // all?" is decided. A JSON array, a bare string, or `{}` has no nodes and no
+  // edges; treating that as an empty graph would replace the user's work with
+  // nothing, report success, and reset the undo history on the way out — the work
+  // would be gone with no way back. A file import is protected by its "replace?"
+  // confirmation; a paste is one click, so it needs the check itself.
   function importGraphData(data, label, append){
+    const isDocument = data != null && typeof data === 'object' && !Array.isArray(data);
+    const hasContent = isDocument && ((Array.isArray(data.nodes) && data.nodes.length) || (Array.isArray(data.edges) && data.edges.length));
+    if(!hasContent){
+      toast(I18N.t('nothing_to_import', {label}));
+      return;
+    }
     if(append){ appendImportedGraph(data, label); }
     else { replaceWithImportedGraph(data, label); }
   }
@@ -719,6 +821,9 @@
     const iId = idx('id'), iFrom = idx('source_id') >= 0 ? idx('source_id') : idx('from'), iTo = idx('target_id') >= 0 ? idx('target_id') : idx('to');
     const iWeight = idx('weight'), iLabel = idx('label'), iDirected = idx('directed'), iType = idx('type');
     const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style'), iArrowSize = idx('arrow_size');
+    // The exporter has always written these two columns; the reader ignored them,
+    // so an edge's label colour and size were lost on every CSV round trip.
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
     if(iFrom < 0 || iTo < 0){ toast(I18N.t('csv_needs_cols')); return; }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
     const idSet = new Set(state.nodes.map(n => n.id));
@@ -750,6 +855,8 @@
       if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(parseFloat(row[iStrokeSize])||2.4, 0, 20);
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
       if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(parseFloat(row[iArrowSize])||DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      if(iLabelColor >= 0 && /^#[0-9a-f]{6}$/i.test(row[iLabelColor] || '')) e.labelColor = row[iLabelColor];
+      if(iLabelSize >= 0 && row[iLabelSize]) e.labelSize = clamp(parseFloat(row[iLabelSize])||12, 4, 72);
       edges.push(e); parsed++;
     }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
@@ -803,6 +910,10 @@
     const idx = name => header.indexOf(name);
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
+    const iWidth = idx('width'), iHeight = idx('height');
+    const iStrokeColor = idx('stroke_color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
+    const iLabelPos = idx('label_position'), iLabelFont = idx('label_font');
     const initialNodes = append ? state.nodes.length : 0;
     // Missing orders fall back to the position in the imported file, which is
     // 0-based in replace mode (the old list is gone) and continues after the
@@ -826,6 +937,20 @@
         type: (iType >= 0 ? row[iType] : '') || '',
         order: Number.isFinite(parsedOrder) ? Math.max(0, Math.trunc(parsedOrder)) : orderBase + parsed
       };
+      // Only the columns the file actually carries are set, so an older CSV — or a
+      // hand-written one — still leaves the rest inheriting as before.
+      const num = (i, lo, hi) => (i >= 0 && String(row[i] ?? '').trim() !== '' && Number.isFinite(parseFloat(row[i])) ? clamp(parseFloat(row[i]), lo, hi) : undefined);
+      const col = (i) => (i >= 0 ? String(row[i] ?? '').trim() : '');
+      const w = num(iWidth, 10, 300), h = num(iHeight, 10, 300);
+      if(w !== undefined) (n as AnyRecord).width = w;
+      if(h !== undefined) (n as AnyRecord).height = h;
+      if(col(iStrokeColor)) (n as AnyRecord).strokeColor = col(iStrokeColor);
+      const ss = num(iStrokeSize, 0, 20); if(ss !== undefined) (n as AnyRecord).strokeSize = ss;
+      if(col(iStrokeStyle)) (n as AnyRecord).strokeStyle = col(iStrokeStyle);
+      if(col(iLabelColor)) (n as AnyRecord).labelColor = col(iLabelColor);
+      const ls = num(iLabelSize, 4, 72); if(ls !== undefined) (n as AnyRecord).labelSize = ls;
+      if(col(iLabelPos)) (n as AnyRecord).labelPosition = col(iLabelPos);
+      if(col(iLabelFont)) (n as AnyRecord).labelFont = col(iLabelFont);
       nodes.push(n); parsed++;
     }
     // Replace mode replaces the whole document, exactly as it did before the
@@ -930,12 +1055,23 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
-      if(attrs.arrowsize != null){
+      if(attrs.type) (e as any).type = String(attrs.type).slice(0, 40);
+      const edgeFontColor = parseColor(attrs.fontcolor);
+      if(edgeFontColor) (e as any).labelColor = edgeFontColor;
+      if(attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize))) (e as any).labelSize = clamp(Number(attrs.fontsize), 4, 72);
+      // Our own exports carry the exact absolute size, which avoids the
+      // multiplier's rounding and its ambiguity; other tools only send the
+      // Graphviz multiplier.
+      const exactArrow = Number(attrs.arrow_size);
+      if(attrs.arrow_size != null && Number.isFinite(exactArrow)){
+        (e as any).arrowSize = clamp(exactArrow, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      } else if(attrs.arrowsize != null){
         const mul = Number(attrs.arrowsize);
         const m = Number.isFinite(mul) ? mul : 1;
-        // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
-        // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
-        if(m > 5){
+        // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12).
+        // Legacy files stored absolute size here instead (e.g. 12), so a value too
+        // large to be a plausible multiplier is read as absolute.
+        if(m > ARROW_SIZE_MAX / DEFAULT_ARROW_SIZE){
           (e as any).arrowSize = clamp(m, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         } else {
           (e as any).arrowSize = clamp(m * DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
@@ -984,6 +1120,13 @@
       if(attrs.width != null && Number.isFinite(Number(attrs.width))) (n as any).width = Math.max(10, Math.round(Number(attrs.width)*72));
       if(attrs.height != null && Number.isFinite(Number(attrs.height))) (n as any).height = Math.max(10, Math.round(Number(attrs.height)*72));
       if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
+      // Label styling, in Graphviz's own spelling (see the exporter).
+      const nodeFontColor = parseColor(attrs.fontcolor);
+      if(nodeFontColor) (n as any).labelColor = nodeFontColor;
+      if(attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize))) (n as any).labelSize = clamp(Number(attrs.fontsize), 4, 72);
+      if(attrs.fontname) (n as any).labelFont = String(attrs.fontname).slice(0, 60);
+      if(attrs.labelloc === 't') (n as any).labelPosition = 'top';
+      else if(attrs.labelloc === 'b') (n as any).labelPosition = 'bottom';
     }
     const arr = [...nodes.values()];
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
