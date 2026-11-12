@@ -2188,3 +2188,61 @@ test('a third-party DOT arrow multiplier still converts through the default', as
     dom.window.close();
   }
 });
+
+test('DOT keeps label styling, node label placement and edge type', async () => {
+  // The exporter wrote shape/colour/size but never the label's own styling, so a
+  // DOT round trip silently reset a label's colour, size, font and position to the
+  // document defaults, and dropped an edge's type. The attributes are Graphviz's
+  // own spellings, and the reader accepts them from other tools too.
+  const src = {
+    nodes: [
+      {id: 'n1', label: 'A', x: 12, y: -67, labelColor: '#0000ff', labelSize: 21, labelPosition: 'top', labelFont: 'Courier'},
+      {id: 'n2', label: 'B', x: 100, y: 200},
+    ],
+    edges: [{id: 'e1', from: 'n1', to: 'n2', label: 'L', type: 'et', labelColor: '#0000ff', labelSize: 21}],
+  };
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const paste = async (text, button) => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+    document.querySelector(button).click();
+    await settle(dom.window, 90);
+  };
+  await paste(JSON.stringify(src), '#btnPasteJson');
+  document.querySelector('#btnExportDot').click();
+  await settle(dom.window, 60);
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(dot, '#btnPasteDot');
+  const graph = exportedGraph(document);
+  const node = graph.nodes.find(candidate => candidate.label === 'A');
+  assert.equal(node.labelColor, '#0000ff', 'node label colour');
+  assert.equal(node.labelSize, 21, 'node label size');
+  assert.equal(node.labelFont, 'Courier', 'node label font');
+  assert.equal(node.labelPosition, 'top', 'node label position');
+  assert.equal(graph.edges[0].type, 'et', 'edge type');
+  assert.equal(graph.edges[0].labelColor, '#0000ff', 'edge label colour');
+  assert.equal(graph.edges[0].labelSize, 21, 'edge label size');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a third-party DOT using Graphviz label attributes is read', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const dot = 'digraph{a[label="A",fontcolor="#123456",fontsize=18,fontname="Arial",labelloc="b"];b;a->b[type="flow",fontcolor="#654321",fontsize=14]}';
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => dot}});
+  document.querySelector('#btnPasteDot').click();
+  await settle(dom.window, 90);
+  const graph = exportedGraph(document);
+  const node = graph.nodes.find(candidate => candidate.label === 'A');
+  assert.equal(node.labelColor, '#123456');
+  assert.equal(node.labelSize, 18);
+  assert.equal(node.labelFont, 'Arial');
+  assert.equal(node.labelPosition, 'bottom');
+  assert.equal(graph.edges[0].type, 'flow');
+  assert.equal(graph.edges[0].labelColor, '#654321');
+  assert.equal(graph.edges[0].labelSize, 14);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

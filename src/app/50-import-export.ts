@@ -236,6 +236,14 @@
       attrs.push(`width=${(v.width/72).toFixed(4)}`, `height=${(v.height/72).toFixed(4)}`);
       attrs.push(`order=${n.order ?? 0}`);
       if(n.type) attrs.push(`type=${dotString(n.type)}`);
+      // Label styling, spelled the way Graphviz spells it. Read the resolved
+      // visual like every other attribute here: a value the element leaves unset
+      // is inherited, and writing the raw field would record nothing at all.
+      if(v.labelColor) attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+      if(v.labelSize != null) attrs.push(`fontsize=${v.labelSize}`);
+      if(v.labelFont) attrs.push(`fontname=${dotString(v.labelFont)}`);
+      if(v.labelPosition === 'top') attrs.push(`labelloc=${dotString('t')}`);
+      else if(v.labelPosition === 'bottom') attrs.push(`labelloc=${dotString('b')}`);
       lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for(const e of state.edges){
@@ -247,6 +255,9 @@
       // QVGE DOT: color, penwidth, style, dir
       attrs.push(`color=${dotString(v.color)}`);
       attrs.push(`penwidth=${v.strokeSize}`);
+      if(v.type) attrs.push(`type=${dotString(v.type)}`);
+      if(v.labelColor) attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+      if(v.labelSize != null) attrs.push(`fontsize=${v.labelSize}`);
       const es = v.strokeStyle;
       if(es) attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
       if(dir === 'mutual') attrs.push(`dir=${dotString('both')}`);
@@ -1007,6 +1018,10 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
+      if(attrs.type) (e as any).type = String(attrs.type).slice(0, 40);
+      const edgeFontColor = parseColor(attrs.fontcolor);
+      if(edgeFontColor) (e as any).labelColor = edgeFontColor;
+      if(attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize))) (e as any).labelSize = clamp(Number(attrs.fontsize), 4, 72);
       // Our own exports carry the exact absolute size, which avoids the
       // multiplier's rounding and its ambiguity; other tools only send the
       // Graphviz multiplier.
@@ -1068,6 +1083,13 @@
       if(attrs.width != null && Number.isFinite(Number(attrs.width))) (n as any).width = Math.max(10, Math.round(Number(attrs.width)*72));
       if(attrs.height != null && Number.isFinite(Number(attrs.height))) (n as any).height = Math.max(10, Math.round(Number(attrs.height)*72));
       if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
+      // Label styling, in Graphviz's own spelling (see the exporter).
+      const nodeFontColor = parseColor(attrs.fontcolor);
+      if(nodeFontColor) (n as any).labelColor = nodeFontColor;
+      if(attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize))) (n as any).labelSize = clamp(Number(attrs.fontsize), 4, 72);
+      if(attrs.fontname) (n as any).labelFont = String(attrs.fontname).slice(0, 60);
+      if(attrs.labelloc === 't') (n as any).labelPosition = 'top';
+      else if(attrs.labelloc === 'b') (n as any).labelPosition = 'bottom';
     }
     const arr = [...nodes.values()];
     if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){

@@ -10058,6 +10058,19 @@ function exportDotText() {
         attrs.push(`order=${n.order ?? 0}`);
         if (n.type)
             attrs.push(`type=${dotString(n.type)}`);
+        // Label styling, spelled the way Graphviz spells it. Read the resolved
+        // visual like every other attribute here: a value the element leaves unset
+        // is inherited, and writing the raw field would record nothing at all.
+        if (v.labelColor)
+            attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+        if (v.labelSize != null)
+            attrs.push(`fontsize=${v.labelSize}`);
+        if (v.labelFont)
+            attrs.push(`fontname=${dotString(v.labelFont)}`);
+        if (v.labelPosition === 'top')
+            attrs.push(`labelloc=${dotString('t')}`);
+        else if (v.labelPosition === 'bottom')
+            attrs.push(`labelloc=${dotString('b')}`);
         lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for (const e of state.edges) {
@@ -10072,6 +10085,12 @@ function exportDotText() {
         // QVGE DOT: color, penwidth, style, dir
         attrs.push(`color=${dotString(v.color)}`);
         attrs.push(`penwidth=${v.strokeSize}`);
+        if (v.type)
+            attrs.push(`type=${dotString(v.type)}`);
+        if (v.labelColor)
+            attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+        if (v.labelSize != null)
+            attrs.push(`fontsize=${v.labelSize}`);
         const es = v.strokeStyle;
         if (es)
             attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
@@ -10953,6 +10972,13 @@ function parseDot(text) {
             if (ss)
                 e.strokeStyle = ss;
         }
+        if (attrs.type)
+            e.type = String(attrs.type).slice(0, 40);
+        const edgeFontColor = parseColor(attrs.fontcolor);
+        if (edgeFontColor)
+            e.labelColor = edgeFontColor;
+        if (attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize)))
+            e.labelSize = clamp(Number(attrs.fontsize), 4, 72);
         // Our own exports carry the exact absolute size, which avoids the
         // multiplier's rounding and its ambiguity; other tools only send the
         // Graphviz multiplier.
@@ -11044,6 +11070,18 @@ function parseDot(text) {
             if (Number.isFinite(parts[1]))
                 n.y = -parts[1];
         }
+        // Label styling, in Graphviz's own spelling (see the exporter).
+        const nodeFontColor = parseColor(attrs.fontcolor);
+        if (nodeFontColor)
+            n.labelColor = nodeFontColor;
+        if (attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize)))
+            n.labelSize = clamp(Number(attrs.fontsize), 4, 72);
+        if (attrs.fontname)
+            n.labelFont = String(attrs.fontname).slice(0, 60);
+        if (attrs.labelloc === 't')
+            n.labelPosition = 'top';
+        else if (attrs.labelloc === 'b')
+            n.labelPosition = 'bottom';
     }
     const arr = [...nodes.values()];
     if (arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1) {
