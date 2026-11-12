@@ -312,3 +312,56 @@ test('a valid stored hotkey is still applied', async () => {
   assert.equal(select.value, 'A', 'and shown to the user');
   dom.window.close();
 });
+
+// The Clipboard API is refused outright in a sandboxed iframe or under a
+// restrictive permissions policy — exactly when the legacy fallback runs — and
+// execCommand is deprecated, so it may not exist. Calling it unguarded threw an
+// uncaught TypeError out of the click handler, and the toast said "Copied"
+// regardless, so the user was told a copy happened when nothing was on the
+// clipboard.
+async function runCopyWithFallback(mode) {
+  const errors = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', error => errors.push(error));
+  const dom = new JSDOM(html, {
+    runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://offline.test/', virtualConsole,
+    beforeParse(window) {
+      window.matchMedia = () => ({media: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}});
+      window.alert = () => {}; window.confirm = () => true; window.prompt = () => null;
+      if (mode === 'missing') window.document.execCommand = undefined;
+      else if (mode === 'false') window.document.execCommand = () => false;
+      else if (mode === 'true') window.document.execCommand = () => true;
+      else if (mode === 'throws') window.document.execCommand = () => { throw new Error('blocked'); };
+    },
+  });
+  await new Promise(resolve => dom.window.setTimeout(resolve, 120));
+  const {window} = dom;
+  const toasts = [];
+  new window.MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (node.nodeType === 1 && /toast/i.test(node.className || '')) toasts.push(node.textContent.trim());
+    }
+  }).observe(window.document.body, {childList: true, subtree: true});
+  Object.defineProperty(window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => { throw new Error('blocked'); }, readText: async () => '{}'}});
+  window.document.querySelector('#btnCopyJson').click();
+  await new Promise(resolve => window.setTimeout(resolve, 120));
+  const stray = window.document.querySelectorAll('textarea').length;
+  dom.window.close();
+  return {toasts: toasts.join(' | '), stray, errors: errors.map(error => error.message)};
+}
+
+test('a refused clipboard copy reports failure instead of throwing and claiming success', async () => {
+  for (const mode of ['missing', 'false', 'throws']) {
+    const {toasts, stray, errors} = await runCopyWithFallback(mode);
+    assert.deepEqual(errors, [], `execCommand=${mode} must not throw`);
+    assert.match(toasts, /Could not copy/, `execCommand=${mode} reports that nothing was copied`);
+    assert.doesNotMatch(toasts, /^Copied$/, 'and does not claim success');
+    assert.equal(stray, 0, 'the temporary textarea is cleaned up');
+  }
+});
+
+test('a legacy copy that succeeds is reported as copied', async () => {
+  const {toasts, errors} = await runCopyWithFallback('true');
+  assert.deepEqual(errors, []);
+  assert.match(toasts, /Copied/);
+});

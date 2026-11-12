@@ -161,8 +161,27 @@
     }, 2300);
   }
   async function copyText(text){
-    try{ await navigator.clipboard.writeText(text); toast(I18N.t('copied')); }
-    catch{ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast(I18N.t('copied')); }
+    try{ await navigator.clipboard.writeText(text); toast(I18N.t('copied')); return; }
+    catch{ /* fall through to the legacy path */ }
+    // The Clipboard API is refused outright in a sandboxed iframe or under a
+    // restrictive permissions policy, which is exactly when the fallback runs —
+    // and execCommand is deprecated, so it may not exist at all. Calling it
+    // unguarded threw an uncaught TypeError out of the handler, and the toast
+    // said "Copied" regardless, so the user was told a copy had happened when
+    // nothing was on the clipboard. Now the legacy path is guarded and the
+    // message reflects the result.
+    let copied = false;
+    const ta = document.createElement('textarea');
+    try{
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      copied = typeof document.execCommand === 'function' && document.execCommand('copy') === true;
+    } catch { copied = false; }
+    finally { ta.remove(); }
+    toast(copied ? I18N.t('copied') : I18N.t('copy_failed'));
   }
 
   // === Copy-to-clipboard for every export format ===

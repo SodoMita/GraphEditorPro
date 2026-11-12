@@ -550,6 +550,7 @@ const I18N: I18nService = {
     'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
     'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },
     'copied': { en: 'Copied', ru: 'Скопировано' },
+    'copy_failed': { en: 'Could not copy — select the text and copy it manually', ru: 'Не удалось скопировать — выделите текст и скопируйте вручную' },
     'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание «{name}» — если ничего не произошло, нажмите «Копировать»' },
     'textarea_empty': { en: 'Textarea is empty', ru: 'Поле пусто' },
     'sample_loaded': { en: 'Sample graph loaded', ru: 'Загружен пример графа' },
