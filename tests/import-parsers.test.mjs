@@ -599,10 +599,10 @@ test('a nonempty node array in which every entry is malformed is rejected, not i
 });
 
 
-test('at the 500-definition limit, repeated pastes reuse the remapped definition instead of dropping the value', async () => {
-  // 498 filler node-scope definitions + one graph-scoped 'tag' = 499.
+test('at the definition limit, repeated pastes reuse the remapped definition instead of dropping the value', async () => {
+  // 1998 filler node-scope definitions + one graph-scoped 'tag' = 1999.
   // The carried clipboard definition 'tag' (node scope) conflicts on paste.
-  const fillers = Array.from({ length: 498 }, (_, i) => ({ id: 'fill_' + i, scope: 'node', type: 'string' }));
+  const fillers = Array.from({ length: 1998 }, (_, i) => ({ id: 'fill_' + i, scope: 'node', type: 'string' }));
   const saved = { title: 'at-cap', nodes: [{id:'n1', label:'Keep', x:0, y:0, order:0}], edges: [],
     customAttributes: [...fillers, { id: 'tag', scope: 'graph', type: 'string' }] };
   const payload = JSON.stringify({ type: 'graph-editor-clipboard',
@@ -621,7 +621,7 @@ test('at the 500-definition limit, repeated pastes reuse the remapped definition
   document.querySelector('#btnPaste2').click();
   await settle(dom.window, 80);
   const graph = exportedGraph(document);
-  assert.equal(graph.customAttributes.length, 500, 'the limit is still respected exactly');
+  assert.equal(graph.customAttributes.length, 2000, 'the limit is still respected exactly');
   const tag1 = graph.customAttributes.find(d => d.id === 'tag_1');
   assert.equal(tag1?.name, 'tag', 'the first paste re-created the conflict as tag_1 with the carried id recorded as its name');
   const carrieds = graph.nodes.filter(n => n.label === 'Carried');

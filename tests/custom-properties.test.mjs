@@ -564,7 +564,7 @@ test('GraphML graph-scope values are not overwritten by node values sharing attr
   dom.window.close();
 });
 
-test('more than 200 custom values survive a load (cap matches the 500-definition limit)', async () => {
+test('more than 200 custom values survive a load (cap matches the definition limit)', async () => {
   const customAttributes = [];
   const custom = {};
   for (let i = 0; i < 210; i++) {
@@ -894,8 +894,8 @@ test('changing a definition from string to long keeps a 64-bit value the number 
   dom.window.close();
 });
 
-test('the editor refuses a 501st definition instead of letting it vanish on reload', async () => {
-  const customAttributes = Array.from({ length: 500 }, (_, i) => ({
+test('the editor refuses a 2001st definition instead of letting it vanish on reload', async () => {
+  const customAttributes = Array.from({ length: 2000 }, (_, i) => ({
     id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
   }));
   const graph = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes, graphCustom: {} };
@@ -910,14 +910,14 @@ test('the editor refuses a 501st definition instead of letting it vanish on relo
   await nextFrame(window);
 
   const exported = exportGraph(document);
-  assert.equal(exported.customAttributes.length, 500, 'the cap holds; nothing silently disappears on reload');
+  assert.equal(exported.customAttributes.length, 2000, 'the cap holds; nothing silently disappears on reload');
   assert.equal(exported.customAttributes.some(a => a.id === 'overflow'), false);
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
 test('append-import past the definition cap skips the extra definitions with a toast', async () => {
-  const customAttributes = Array.from({ length: 500 }, (_, i) => ({
+  const customAttributes = Array.from({ length: 2000 }, (_, i) => ({
     id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
   }));
   const graph = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes, graphCustom: {} };
@@ -942,7 +942,7 @@ test('append-import past the definition cap skips the extra definitions with a t
   await nextFrame(window); await settle(window, 60);
 
   const exported = exportGraph(document);
-  assert.equal(exported.customAttributes.length, 500, 'the imported definitions beyond the cap are skipped');
+  assert.equal(exported.customAttributes.length, 2000, 'the imported definitions beyond the cap are skipped');
   assert.equal(exported.customAttributes.some(a => a.id === 'extra1'), false);
   assert.equal(exported.graphCustom.extra2, undefined, 'values without a definition are dropped, not stored');
   const toastText = [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ');
@@ -1024,21 +1024,21 @@ test('saved definitions keep their ids — no id is reserved anywhere', async ()
 });
 
 test('append import counts duplicate definitions for free against capacity', async () => {
-  const customAttributes = Array.from({ length: 499 }, (_, i) => ({
-    id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
+  const customAttributes = Array.from({ length: 1999 }, (_, i) => ({
+    id: 'attr' + String(i).padStart(4, '0'), scope: 'node', type: 'string',
   }));
   const graph = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes, graphCustom: {} };
   const { dom, errors } = createEditorDom(graph);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
 
-  // attr000 already exists; extra is new — it fits exactly once (499 + 1 = 500).
+  // attr0000 already exists; extra is new — it fits exactly once (1999 + 1 = 2000).
   const imported = {
     title: 'imported', mode: 'select', nextNode: 1, nextEdge: 1,
     nodes: [{ id: 'app1', label: 'App', x: 100, y: 100, order: 0, custom: { extra: 'kept' } }],
     edges: [],
     customAttributes: [
-      { id: 'attr000', scope: 'node', type: 'string' },
+      { id: 'attr0000', scope: 'node', type: 'string' },
       { id: 'extra', scope: 'node', type: 'string' },
     ],
     graphCustom: {},
@@ -1053,7 +1053,7 @@ test('append import counts duplicate definitions for free against capacity', asy
   await nextFrame(window); await settle(window, 60);
 
   let exported = exportGraph(document);
-  assert.equal(exported.customAttributes.length, 500);
+  assert.equal(exported.customAttributes.length, 2000);
   assert.equal(exported.customAttributes.some(a => a.id === 'extra'), true,
     'the new definition fits the remaining capacity and is kept');
   assert.equal(exported.nodes.find(n => n.id === 'app1').custom.extra, 'kept',
@@ -1063,8 +1063,8 @@ test('append import counts duplicate definitions for free against capacity', asy
   dom.window.close();
 
   // Genuinely full: the new definition is skipped with a toast.
-  const fullAttributes = Array.from({ length: 500 }, (_, i) => ({
-    id: 'attr' + String(i).padStart(3, '0'), scope: 'node', type: 'string',
+  const fullAttributes = Array.from({ length: 2000 }, (_, i) => ({
+    id: 'attr' + String(i).padStart(4, '0'), scope: 'node', type: 'string',
   }));
   const full = { ...customPropertiesGraph(), nodes: [], edges: [], customAttributes: fullAttributes, graphCustom: {} };
   const fullDom = createEditorDom(full);
@@ -1077,7 +1077,7 @@ test('append import counts duplicate definitions for free against capacity', asy
   fullModal.querySelector('#expImportBtn').click();
   await nextFrame(fullWindow); await settle(fullWindow, 60);
   exported = exportGraph(fullDocument);
-  assert.equal(exported.customAttributes.length, 500);
+  assert.equal(exported.customAttributes.length, 2000);
   assert.equal(exported.customAttributes.some(a => a.id === 'extra'), false);
   const fullToast = [...fullDocument.querySelectorAll('.toast')].map(t => t.textContent).join(' | ');
   assert.match(fullToast, /Skipped 1/, 'only the definition that does not fit is skipped');

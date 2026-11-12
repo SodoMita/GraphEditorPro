@@ -1994,8 +1994,8 @@ const I18N = {
         'attribute_id_empty': { en: 'Attribute ID cannot be empty.', ru: 'ID атрибута не может быть пустым.' },
         'attribute_id_duplicate': { en: 'An attribute with this ID already exists.', ru: 'Атрибут с таким ID уже существует.' },
         'attribute_added': { en: 'Custom attribute added', ru: 'Пользовательский атрибут добавлен' },
-        'attribute_limit_reached': { en: 'Custom attribute limit (500) reached. Delete one before adding another.', ru: 'Достигнут предел пользовательских атрибутов (500). Удалите один перед добавлением нового.' },
-        'attribute_import_skipped': { en: 'Skipped {n} custom attribute definition(s) beyond the 500 limit.', ru: 'Пропущено определений пользовательских атрибутов сверх лимита 500: {n}.' },
+        'attribute_limit_reached': { en: 'Custom attribute limit (2000) reached. Delete one before adding another.', ru: 'Достигнут предел пользовательских атрибутов (2000). Удалите один перед добавлением нового.' },
+        'attribute_import_skipped': { en: 'Skipped {n} custom attribute definition(s) beyond the 2000 limit.', ru: 'Пропущено определений пользовательских атрибутов сверх лимита 2000: {n}.' },
         'attribute_scope_values': { en: 'This attribute has {n} stored value(s). They cannot move with a scope change and will be discarded. Continue?', ru: 'У этого атрибута есть сохранённые значения: {n}. При смене области они будут удалены. Продолжить?' },
         'attribute_scope_renamed': { en: '{n} pasted attribute(s) were renamed: the id is taken by a definition of another scope.', ru: 'Переименованы вставленные атрибуты ({n}): id занят определением в другой области видимости.' },
         'attribute_updated': { en: 'Custom attribute updated', ru: 'Пользовательский атрибут изменён' },
@@ -2821,7 +2821,7 @@ const STROKE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot', 'dashdotdot', 'no
 const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
 const LABEL_POLICIES = ['auto', 'on', 'off'];
 // Maximum number of custom attribute definitions the editor will hold.
-const CUSTOM_DEFINITIONS_MAX = 500;
+const CUSTOM_DEFINITIONS_MAX = 2000;
 // Finds the first free "<base>_<n>" id for a re-created definition. No id is
 // reserved in the editor (the exporter marks its own definitions, so a name
 // like `direction` cannot collide with a built-in key) — the only constraint
@@ -8239,7 +8239,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
     // display or export the pasted values, so in that case the carried
     // definition is re-created under a fresh unique id and the carried values
     // are remapped to it (lossless). Same-pair definitions merge (the
-    // existing one wins). Definitions beyond the 500 cap are skipped with a
+    // existing one wins). Definitions beyond the definition cap are skipped with a
     // toast and their values are dropped, as on any other load path.
     const carriedDefs = (Array.isArray(data.customAttributes) ? data.customAttributes : [])
         .filter(isRecord)

@@ -906,7 +906,7 @@
     // display or export the pasted values, so in that case the carried
     // definition is re-created under a fresh unique id and the carried values
     // are remapped to it (lossless). Same-pair definitions merge (the
-    // existing one wins). Definitions beyond the 500 cap are skipped with a
+    // existing one wins). Definitions beyond the definition cap are skipped with a
     // toast and their values are dropped, as on any other load path.
     const carriedDefs = (Array.isArray(data.customAttributes) ? data.customAttributes : [])
       .filter(isRecord)

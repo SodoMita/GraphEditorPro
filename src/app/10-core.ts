@@ -358,7 +358,7 @@
   const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const LABEL_POLICIES = ['auto','on','off'];
   // Maximum number of custom attribute definitions the editor will hold.
-  const CUSTOM_DEFINITIONS_MAX = 500;
+  const CUSTOM_DEFINITIONS_MAX = 2000;
   // Finds the first free "<base>_<n>" id for a re-created definition. No id is
   // reserved in the editor (the exporter marks its own definitions, so a name
   // like `direction` cannot collide with a built-in key) — the only constraint
