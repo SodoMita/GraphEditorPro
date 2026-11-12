@@ -253,9 +253,15 @@
       else if(dir === 'undirected') attrs.push(`dir=${dotString('none')}`);
       else attrs.push(`dir=${dotString('forward')}`);
       if(v.arrowSize != null){
+        // `arrowsize` is Graphviz's multiplier, so write it for other tools — but a
+        // multiplier is lossy in both directions: 20 -> 1.6667 -> 20.0004, and any
+        // value whose multiplier lands under 5 cannot be told apart from an
+        // absolute size on the way back in. Our own model stores the absolute
+        // size, so carry that exactly as well and let our reader prefer it.
         const mul = v.arrowSize / DEFAULT_ARROW_SIZE;
         const txt = Number(mul.toFixed(4)).toString();
         attrs.push(`arrowsize=${dotString(txt)}`);
+        attrs.push(`arrow_size=${dotString(String(v.arrowSize))}`);
       }
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }
@@ -1001,12 +1007,19 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
-      if(attrs.arrowsize != null){
+      // Our own exports carry the exact absolute size, which avoids the
+      // multiplier's rounding and its ambiguity; other tools only send the
+      // Graphviz multiplier.
+      const exactArrow = Number(attrs.arrow_size);
+      if(attrs.arrow_size != null && Number.isFinite(exactArrow)){
+        (e as any).arrowSize = clamp(exactArrow, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      } else if(attrs.arrowsize != null){
         const mul = Number(attrs.arrowsize);
         const m = Number.isFinite(mul) ? mul : 1;
-        // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
-        // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
-        if(m > 5){
+        // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12).
+        // Legacy files stored absolute size here instead (e.g. 12), so a value too
+        // large to be a plausible multiplier is read as absolute.
+        if(m > ARROW_SIZE_MAX / DEFAULT_ARROW_SIZE){
           (e as any).arrowSize = clamp(m, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
         } else {
           (e as any).arrowSize = clamp(m * DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);

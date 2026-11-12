@@ -2144,3 +2144,47 @@ test('a document inside the ceiling imports with no truncation notice', async ()
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a DOT export carries every arrow size back exactly', async () => {
+  // Graphviz's `arrowsize` is a multiplier, so writing it is lossy in both
+  // directions: 20 -> 1.6667 -> 20.0004, and a multiplier below 5 cannot be told
+  // apart from a legacy absolute size. Our own export therefore also carries the
+  // exact absolute value, which our reader prefers; other tools still get the
+  // standard attribute.
+  for (const size of [4, 5, 20, 37.5, 40]) {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    const paste = async (text, button) => {
+      Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+      document.querySelector(button).click();
+      await settle(dom.window, 90);
+    };
+    await paste(JSON.stringify({nodes: [{id: 'a', x: 0, y: 0}, {id: 'b', x: 50, y: 0}], edges: [{id: 'e', from: 'a', to: 'b', arrowSize: size}]}), '#btnPasteJson');
+    document.querySelector('#btnExportDot').click();
+    await settle(dom.window, 60);
+    const dot = document.querySelector('.export-modal textarea').value;
+    document.querySelector('#expCloseBtn').click();
+    assert.match(dot, /arrowsize="/, 'the standard multiplier is still written for other tools');
+    await paste(dot, '#btnPasteDot');
+    assert.equal(exportedGraph(document).edges[0].arrowSize, size, `size ${size} survives the round trip`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('a third-party DOT arrow multiplier still converts through the default', async () => {
+  // Files that only have the Graphviz attribute must keep working: the value is a
+  // multiplier of the 12px default, except where it is too large to be one.
+  const cases = [['0.5', 6], ['2', 24], ['12', 12], ['', 12]];
+  for (const [attr, want] of cases) {
+    const {dom} = createEditorDom();
+    const {document} = dom.window;
+    const dot = attr === '' ? 'digraph{a->b}' : `digraph{a->b[arrowsize="${attr}"]}`;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => dot}});
+    document.querySelector('#btnPasteDot').click();
+    await settle(dom.window, 90);
+    const size = exportedGraph(document).edges[0].arrowSize;
+    assert.ok(size === want || size === undefined, `arrowsize ${attr || '(absent)'} -> ${size}, wanted ${want}`);
+    dom.window.close();
+  }
+});
