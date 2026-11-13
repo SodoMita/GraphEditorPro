@@ -436,6 +436,7 @@
     }
     // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
     document.addEventListener('keydown', ev => {
+      if(uiDialogOpen()) return; // a modal dialog owns the keyboard
       const mod = ev.ctrlKey || ev.metaKey;
       if(!mod) return;
       const target = ev.target as HTMLElement;
@@ -662,6 +663,7 @@
     $('#btnBfs').addEventListener('click', runBfs); $('#btnDfs').addEventListener('click', runDfs); $('#btnDijkstra').addEventListener('click', runDijkstra); $('#btnComponents').addEventListener('click', runComponents); $('#btnTopo').addEventListener('click', runTopo); $('#btnStats').addEventListener('click', runStats);
     $('#btnCopyResults').addEventListener('click', () => copyText($('#algoOutput').textContent));
     window.addEventListener('keydown', ev => {
+      if(uiDialogOpen()) return; // a modal dialog owns the keyboard (Escape handled by the dialog itself)
       const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '');
       const ctrl = ev.ctrlKey || ev.metaKey;
       // Undo/Redo work even when typing in inputs (Ctrl+Z is universal)

@@ -3512,3 +3512,41 @@ test('a persisted fractional value in an integer-typed definition survives verba
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('Ctrl+Z behind a modal confirm does not revert history (the narrowing-confirm race)', async () => {
+  const saved = { title: 'modal-gate',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0 }],
+    edges: [],
+    customAttributes: [
+      { id: 'keepme', scope: 'node', type: 'string' },
+      { id: 'doomed', scope: 'graph', type: 'string' },
+    ],
+    graphCustom: {} };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const {window} = dom;
+  await settle(window, 60);
+  // Delete "doomed" through the panel button: this pushes a history entry.
+  const rows = () => [...document.querySelectorAll('#customAttributesList [data-custom-attribute]')];
+  const doomedRow = rows().find(row => row.querySelector('[data-attribute-field="id"]')?.value === 'doomed');
+  doomedRow.querySelector('[data-attribute-action="delete"]').click();
+  await settle(window, 40);
+  assert.equal(rows().length, 1, 'the attribute is deleted');
+  // Open the clear-graph confirm (any modal proves the gate).
+  document.querySelector('#btnClear').click();
+  await settle(window, 40);
+  assert.ok(document.querySelector('.app-dialog'), 'the confirm dialog opens');
+  // Ctrl+Z while the dialog is open must not resurrect the deleted attribute.
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true }));
+  await settle(window, 40);
+  assert.equal(rows().length, 1, 'history is not reverted behind the modal');
+  document.querySelector('.app-dialog [data-dialog-cancel]').click();
+  await settle(window, 40);
+  assert.equal(rows().length, 1, 'still deleted after the dialog closes');
+  // And the app shortcut works again once the dialog is gone.
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true }));
+  await settle(window, 40);
+  assert.equal(rows().length, 2, 'undo works again after the dialog closes');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

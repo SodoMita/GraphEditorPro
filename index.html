@@ -2663,6 +2663,12 @@ let dialogEl = null;
 let dialogResolve = null;
 let dialogReturnFocus = null;
 let dialogCleanup = null;
+// While a modal dialog is open it owns the keyboard: the global shortcut
+// handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
+// Ctrl+Z landing mid-confirm would revert history under the dialog and the
+// pending confirm would then apply itself to the reverted document.
+let dialogOpenCount = 0;
+function uiDialogOpen() { return dialogOpenCount > 0; }
 function closeDialog(result = null) {
     if (!dialogEl)
         return;
@@ -2674,6 +2680,7 @@ function closeDialog(result = null) {
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
+    dialogOpenCount = Math.max(0, dialogOpenCount - 1);
     if (dialogReturnFocus?.isConnected)
         dialogReturnFocus.focus({ preventScroll: true });
     dialogReturnFocus = null;
@@ -2705,6 +2712,7 @@ function showDialog(options) {
         </form>`;
         document.body.appendChild(dialog);
         dialogEl = dialog;
+        dialogOpenCount++;
         const input = dialog.querySelector('#' + inputId);
         const form = dialog.querySelector('form');
         const finish = (result) => closeDialog(result);
@@ -15492,6 +15500,8 @@ function wireUi() {
     }
     // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
     document.addEventListener('keydown', ev => {
+        if (uiDialogOpen())
+            return; // a modal dialog owns the keyboard
         const mod = ev.ctrlKey || ev.metaKey;
         if (!mod)
             return;
@@ -15754,6 +15764,8 @@ function wireUi() {
     $('#btnStats').addEventListener('click', runStats);
     $('#btnCopyResults').addEventListener('click', () => copyText($('#algoOutput').textContent));
     window.addEventListener('keydown', ev => {
+        if (uiDialogOpen())
+            return; // a modal dialog owns the keyboard (Escape handled by the dialog itself)
         const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '');
         const ctrl = ev.ctrlKey || ev.metaKey;
         // Undo/Redo work even when typing in inputs (Ctrl+Z is universal)

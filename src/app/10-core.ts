@@ -219,6 +219,12 @@
   let dialogResolve: ((value: string | boolean | null) => void) | null = null;
   let dialogReturnFocus: HTMLElement | null = null;
   let dialogCleanup: (() => void) | null = null;
+  // While a modal dialog is open it owns the keyboard: the global shortcut
+  // handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
+  // Ctrl+Z landing mid-confirm would revert history under the dialog and the
+  // pending confirm would then apply itself to the reverted document.
+  let dialogOpenCount = 0;
+  function uiDialogOpen(): boolean { return dialogOpenCount > 0; }
   function closeDialog(result: string | boolean | null = null){
     if(!dialogEl) return;
     // Detach the document-level listeners *before* restoring focus: they pull
@@ -229,6 +235,7 @@
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
+    dialogOpenCount = Math.max(0, dialogOpenCount - 1);
     if(dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
     dialogReturnFocus = null;
     resolve?.(result);
@@ -258,6 +265,7 @@
         </form>`;
       document.body.appendChild(dialog);
       dialogEl = dialog;
+      dialogOpenCount++;
       const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
       const form = dialog.querySelector('form');
       const finish = (result: string | boolean | null) => closeDialog(result);
