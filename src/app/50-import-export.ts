@@ -451,7 +451,14 @@
       // The definition's own id, when the exported key id had to differ. Without
       // it a de-collided `arrowSize` would come back as `arrowSize2` and drift.
       const idAttr = id === attribute.id ? '' : ` qvge:id="${xmlEsc(attribute.id)}"`;
-      return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}/>`;
+      // The key id this definition was minted from, when it is not the
+      // definition's own id (a re-created one). Without it a re-import cannot
+      // tell which carried property to rebind and mints afresh — swapping the
+      // values of same-named keys on a round-trip. When it equals the
+      // definition's own id the default resolution already finds it, so it is
+      // omitted to keep ordinary exports byte-stable.
+      const originAttr = attribute.origin && attribute.origin !== attribute.id ? ` qvge:origin="${xmlEsc(attribute.origin)}"` : '';
+      return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}${originAttr}/>`;
     });
   }
   function exportGraphmlText(){
@@ -489,7 +496,7 @@
       for(const attr of customGraphDefs){
         if(!Object.prototype.hasOwnProperty.call(state.graphCustom, attr.id)) continue;
         const value = state.graphCustom[attr.id];
-        if(value === undefined || value === '') continue;
+        if(value === undefined || value === null) continue; // a stored '' is a stated value
         lines.push(`    <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
       }
     }
@@ -522,7 +529,7 @@
         for(const attr of customNodeDefs){
           if(!Object.prototype.hasOwnProperty.call(n.custom, attr.id)) continue;
           const value = n.custom[attr.id];
-          if(value === undefined || value === '') continue;
+          if(value === undefined || value === null) continue; // a stored '' is a stated value
           parts.push(`      <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
         }
       }
@@ -550,7 +557,7 @@
         for(const attr of customEdgeDefs){
           if(!Object.prototype.hasOwnProperty.call(e.custom, attr.id)) continue;
           const value = e.custom[attr.id];
-          if(value === undefined || value === '') continue;
+          if(value === undefined || value === null) continue; // a stored '' is a stated value
           parts.push(`      <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
         }
       }
@@ -824,16 +831,28 @@
       // records the carried key id it was minted from (`origin`), and a
       // candidate with the same origin is bound regardless of declaration
       // order — GraphML key ids distinguish properties even when their
-      // recorded names match. A candidate whose origin differs from this
-      // carried id is a distinct property and is never chosen here. Failing
-      // an identity match, the legacy attr.name rule applies as it always
-      // has (it merges the same property across sources that share no key
-      // identity); a definition claimed by an earlier property in this file
-      // is likewise no longer a candidate.
+      // recorded names match. Two guards keep identity from claiming a
+      // DIFFERENT property that merely shares the key id: the recorded
+      // names, when both sides carry one, must agree; and the candidate's
+      // origin must be the incoming definition's origin (a definition the
+      // payload re-exports keeps it, an older document defaults it to its
+      // own id). Failing an identity match, the legacy attr.name rule
+      // applies as it always has and binds only definitions with NO
+      // recorded origin — a provenance-tracked definition was created for a
+      // specific key id and may not drift onto a different one. A
+      // definition claimed by an earlier property in this file is likewise
+      // no longer a candidate.
+      const incOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+      const incNameLc = String(inc.name ?? '').trim().toLowerCase();
+      const nameAgreement = (e: AnyRecord | undefined) => {
+        const en = String(e?.name ?? '').trim().toLowerCase();
+        return !en || !incNameLc || en === incNameLc;
+      };
       const identity = [...existing, ...kept].find(e => e && scopeOf(e) === scope
         && !claimed.has(pairOf2(e?.id, scopeOf(e)))
         && !fileKeys.has(String(e?.id))
-        && e?.origin && String(e.origin) === id);
+        && e?.origin && String(e.origin) === incOrigin
+        && nameAgreement(e));
       if(identity){
         renameByPair.set(scope + '|' + id, String(identity.id));
         claimed.add(pairOf2(identity.id, scopeOf(identity)));
@@ -843,6 +862,7 @@
         const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope
           && !claimed.has(pairOf2(e?.id, scopeOf(e)))
           && !fileKeys.has(String(e?.id))
+          && (!e?.origin || String(e.origin) === incOrigin)
           && provMatch(e, inc));
         if(reused){
           renameByPair.set(scope + '|' + id, String(reused.id));
@@ -875,9 +895,12 @@
       }
       const def = finalId === id ? inc : {...inc, id: finalId};
       // Record the carried key id this definition was minted from — the
-      // identity a re-import matches against. The recorded name stays the
+      // identity a re-import matches against. A payload that re-exports an
+      // earlier definition keeps the origin it was minted from; a fresh
+      // mint defaults it to the carried id. The recorded name stays the
       // attr.name for export spelling.
-      kept.push({ ...def, origin: id });
+      const keepOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+      kept.push({ ...def, origin: keepOrigin });
       byPair.set(finalId + '|' + scope, def);
       claimed.add(pairOf2(finalId, scope));
     }
@@ -1360,6 +1383,9 @@
       roles: Partial<Record<KeyScope, KeyRole>>;
       /** Id to record for a definition (a de-collided key remembers its own). */
       definitionId: string;
+      /** qvge:origin of a key written by our exporter — the foreign key id the
+          definition was minted from. Empty for everything else. */
+      origin: string;
       /** True when this declaration contributes a user definition on some scope. */
       isDefinition: boolean;
       /** True when the declaration is a declared foreign or stamped key — such a
@@ -1468,7 +1494,8 @@
       const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
       const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
         : (marked && recordedId ? recordedId : keyId);
-      return {keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2};
+      const origin = k.getAttributeNS(QVGE_NS, 'origin') || '';
+      return {keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2, origin};
     });
 
     // -- Derived views: the only things the readers touch -----------------------
@@ -1547,8 +1574,9 @@
           // mixed-role key, e.g. a foreign `label`) keeps the per-scope
           // definitions: an 'all' definition would surface a custom editor
           // for a name that is built-in on the other scopes.
+          const originProp = info.origin ? { origin: info.origin } : {};
           if(info.forWhom === 'all' && scopesForDef.length === KEY_SCOPES.length){
-            customAttributes.push({id: defId, scope: 'all', type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
+            customAttributes.push({id: defId, scope: 'all', type: info.type, name: info.rawName, ...originProp} as GraphState['customAttributes'][number]);
             defBindings.push({id: defId, scope: 'all', type: info.type, keyId: info.keyId, defaultValue});
             continue;
           }
@@ -1557,7 +1585,7 @@
             // it to recognise a re-created definition across imports. The load
             // path strips a name that equals the id again, so stored documents
             // stay clean.
-            customAttributes.push({id: defId, scope: defScope, type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
+            customAttributes.push({id: defId, scope: defScope, type: info.type, name: info.rawName, ...originProp} as GraphState['customAttributes'][number]);
             defBindings.push({id: defId, scope: defScope, type: info.type, keyId: info.keyId, defaultValue});
           }
         }
@@ -1615,8 +1643,9 @@
     const graphCustom: AnyRecord = Object.create(null);
     for(const def of defBindings){
       if(def.scope !== 'graph' && def.scope !== 'all') continue;
-      const raw = graphDataById[def.keyId];
-      if(raw != null && String(raw).trim() !== ''){ graphCustom[def.id] = coerceCustomValue(raw, def.type); }
+      // Presence, not truthiness: an explicitly empty (or whitespace) <data>
+      // is a stated value that suppresses the declared <default>.
+      if(Object.prototype.hasOwnProperty.call(graphDataById, def.keyId)) graphCustom[def.id] = coerceCustomValue(graphDataById[def.keyId], def.type);
       else if(def.defaultValue !== undefined){ graphCustom[def.id] = def.defaultValue; }
     }
     const graphKeyDefs = keyDefaultsByFor.graph || {};
@@ -1771,8 +1800,9 @@
       const nodeCustom: AnyRecord = Object.create(null);
       for(const def of defBindings){
         if(def.scope !== 'node' && def.scope !== 'all') continue;
-        const raw = dById[def.keyId];
-        if(raw != null && String(raw).trim() !== ''){ nodeCustom[def.id] = coerceCustomValue(raw, def.type); }
+        // Presence, not truthiness: an explicitly empty (or whitespace) <data>
+        // is a stated value that suppresses the declared <default>.
+        if(Object.prototype.hasOwnProperty.call(dById, def.keyId)) nodeCustom[def.id] = coerceCustomValue(dById[def.keyId], def.type);
         else if(def.defaultValue !== undefined){ nodeCustom[def.id] = def.defaultValue; }
       }
       if(Object.keys(nodeCustom).length) node.custom = nodeCustom;
@@ -1820,8 +1850,9 @@
       const edgeCustom: AnyRecord = Object.create(null);
       for(const def of defBindings){
         if(def.scope !== 'edge' && def.scope !== 'all') continue;
-        const raw = dById[def.keyId];
-        if(raw != null && String(raw).trim() !== ''){ edgeCustom[def.id] = coerceCustomValue(raw, def.type); }
+        // Presence, not truthiness: an explicitly empty (or whitespace) <data>
+        // is a stated value that suppresses the declared <default>.
+        if(Object.prototype.hasOwnProperty.call(dById, def.keyId)) edgeCustom[def.id] = coerceCustomValue(dById[def.keyId], def.type);
         else if(def.defaultValue !== undefined){ edgeCustom[def.id] = def.defaultValue; }
       }
       if(Object.keys(edgeCustom).length) edge.custom = edgeCustom;

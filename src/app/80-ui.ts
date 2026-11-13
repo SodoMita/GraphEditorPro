@@ -38,7 +38,6 @@
       idInput.setCustomValidity('');
       if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const scope = row.querySelector('[data-attribute-field="scope"]').value;
-      if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const type = row.querySelector('[data-attribute-field="type"]').value;
       const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
       const resolvedScope = ['graph','node','edge','all'].includes(scope) ? scope : 'graph';
@@ -63,10 +62,18 @@
       }
       // Editing something else (type, scope) must not drop the attr.name a
       // re-created definition carries — the next export would otherwise rename
-      // it back to the custom id. Renaming the definition does drop it: the
-      // name belonged to the old key.
+      // it back to the custom id. Renaming the definition drops both the name
+      // and the origin: both belonged to the old key, and keeping the origin
+      // would let a later import of an unrelated file with the same key id
+      // merge its values into the renamed property.
       const nextDef = { ...oldDef, id, scope: resolvedScope, type: resolvedType } as GraphState['customAttributes'][number];
-      if(oldId === id && oldDef.name) nextDef.name = oldDef.name; else delete nextDef.name;
+      if(oldId === id){
+        if(oldDef.name) nextDef.name = oldDef.name; else delete nextDef.name;
+        if((oldDef as AnyRecord).origin) nextDef.origin = (oldDef as AnyRecord).origin; else delete nextDef.origin;
+      } else {
+        delete nextDef.name;
+        delete nextDef.origin;
+      }
       state.customAttributes[index] = nextDef;
       if(oldId !== id) renameCustomAttributeValues(oldId, id);
       if(scopeChanged){

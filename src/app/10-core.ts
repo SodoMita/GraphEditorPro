@@ -704,6 +704,7 @@
       return text.slice(0, CUSTOM_VALUE_MAX);
     }
     if(type === 'int' || type === 'long'){
+      if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
       const numeric = Number(text);
       if(Number.isFinite(numeric)){
         const truncated = Math.trunc(numeric);
@@ -717,6 +718,7 @@
       return text.slice(0, CUSTOM_VALUE_MAX);
     }
     if(type === 'float' || type === 'double'){
+      if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
       const numeric = Number(text);
       if(Number.isFinite(numeric)) return numeric;
       return text.slice(0, CUSTOM_VALUE_MAX);
@@ -785,7 +787,12 @@
       if(type === undefined) continue; // value without a definition is dropped, not trusted
       const raw = Object.prototype.hasOwnProperty.call(input, rawKey) ? input[rawKey] : undefined;
       if(raw == null) continue;
-      if(typeof raw === 'string' && raw.trim() === '') continue; // empty means unset
+      if(typeof raw === 'string' && raw.trim() === ''){
+        // An explicitly empty/whitespace string is a stated value for
+        // string-typed attributes (it beats a declared <default> and must
+        // survive save/load); for other types it is not a value.
+        if(type !== 'string') continue;
+      }
       out[key] = coerceCustomValue(raw, type);
       count++;
     }

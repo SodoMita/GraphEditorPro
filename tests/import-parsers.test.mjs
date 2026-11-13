@@ -811,10 +811,12 @@ test('a conflicting paste keeps the recorded name so re-paste and import-append 
   // kept under the name it was read with) is pasted.
   const saved = { title: 'cap-provenance', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
     customAttributes: [{ id: 'x_1', scope: 'graph', type: 'string' }] };
+  // The clipboard payload carries a re-export of the definition — including
+  // the foreign key id it was minted from (our payloads always re-export it).
   const payload = JSON.stringify({ type: 'graph-editor-clipboard',
     nodes: [{ id: 'c1', label: 'Carried', x: 30, y: 30, order: 0, custom: { x_1: 'red' } }],
     edges: [], externalEdges: [],
-    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', name: 'fill color' }] });
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', name: 'fill color', origin: 'x' }] });
   const originalGraphml = [
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
     '  <key id="x" for="node" attr.name="fill color" attr.type="string"/>',
@@ -3149,6 +3151,211 @@ test('cancelling the narrowing confirmation leaves every value untouched', async
   assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'all', 'the definition stays all-scope');
   assert.equal(graph.graphCustom?.metric, 'graph-value', 'the graph value is kept');
   assert.equal(graph.nodes[0].custom?.metric, 'node-value', 'the node value is kept');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// === Audit round (2026-11): origin provenance & verbatim empties ===
+
+test('identity reuse does not bind a same-key-id property with a different recorded name', async () => {
+  // A graph-scope 'a' takes the bare id, so the first file's node key mints
+  // a_1 (name fruit). A second file declaring node key a with name owner is
+  // the same key id but a DIFFERENT property — it must mint afresh.
+  const saved = { title: 'origin-name-guard', nodes: [], edges: [],
+    customAttributes: [{ id: 'a', scope: 'graph', type: 'string' }] };
+  const file = (name, value) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="a" for="node" attr.name="${name}" attr.type="string"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="n1"><data key="a">${value}</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', file('fruit', 'apple'));
+  await paste(document, dom.window, '#btnPasteGraphml', file('owner', 'bob'));
+  const graph = exportedGraph(document);
+  const fruit = graph.customAttributes.find(d => d.name === 'fruit');
+  const owner = graph.customAttributes.find(d => d.name === 'owner');
+  assert.ok(fruit && owner, 'two distinct definitions exist for the two properties');
+  assert.notEqual(fruit.id, owner.id, 'a distinct property is never bound to the fruit definition');
+  const imported = graph.nodes.filter(n => n.custom);
+  const values = imported.flatMap(n => Object.entries(n.custom));
+  assert.ok(values.some(([id, v]) => id === fruit.id && v === 'apple'), 'the fruit value stays on the fruit definition');
+  assert.ok(values.some(([id, v]) => id === owner.id && v === 'bob'), 'bob binds the owner definition, not the fruit one');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('JSON round-trip preserves origin, so a later reverse-order append cannot swap same-name properties', async () => {
+  const saved = { title: 'origin-json', nodes: [], edges: [],
+    customAttributes: [
+      { id: 'a', scope: 'graph', type: 'int', name: 'metric' },
+      { id: 'b', scope: 'graph', type: 'int', name: 'metric' },
+    ] };
+  const graphml = (first, second, v1, v2) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="${first}" for="node" attr.name="metric" attr.type="int"/>`,
+    `  <key id="${second}" for="node" attr.name="metric" attr.type="int"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="m1"><data key="${first}">${v1}</data><data key="${second}">${v2}</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('a', 'b', 100, 200));
+  // Export the JSON document, then replace-import it (origin must survive)…
+  const json = exportedGraph(document);
+  assert.ok(json.customAttributes.some(d => d.id === 'a_1' && d.origin === 'a'), 'the minted definition exports its origin');
+  const jsonText = JSON.stringify(json);
+  document.querySelector('#optImportAppend').checked = false;
+  await paste(document, window, '#btnPasteJson', jsonText);               // clean replace
+  // …then append the same keys reversed — values must not swap.
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('b', 'a', 200, 100));
+  const graph = exportedGraph(document);
+  const a1 = graph.customAttributes.find(d => d.origin === 'a' && d.scope === 'node');
+  const b1 = graph.customAttributes.find(d => d.origin === 'b' && d.scope === 'node');
+  assert.ok(a1 && b1, 'both original definitions survive the round-trips');
+  const customs = graph.nodes.map(n => n.custom).filter(Boolean);
+  assert.ok(customs.some(c => c[a1.id] === 100 && c[b1.id] === 200), 'the values stay bound to the same definitions in both key orders');
+  assert.equal(graph.customAttributes.length, 4, 'no definitions are minted by the round-trip');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('GraphML round-trip preserves origin, so reverse-order reimport cannot swap same-name properties', async () => {
+  const saved = { title: 'origin-graphml', nodes: [], edges: [],
+    customAttributes: [
+      { id: 'a', scope: 'graph', type: 'int', name: 'metric' },
+      { id: 'b', scope: 'graph', type: 'int', name: 'metric' },
+    ] };
+  const graphml = (first, second) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="${first}" for="node" attr.name="metric" attr.type="int"/>`,
+    `  <key id="${second}" for="node" attr.name="metric" attr.type="int"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="m1"><data key="${first}">100</data><data key="${second}">200</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('a', 'b'));
+  // Export GraphML and reimport it (replace), then append reversed.
+  const exporter = document.querySelector('#btnExportGraphml');
+  exporter.click();
+  const modal = document.querySelector('.export-modal');
+  const text = modal.querySelector('textarea').value;
+  modal.remove();
+  document.querySelector('#optImportAppend').checked = false;
+  exporter.click();
+  const modal2 = document.querySelector('.export-modal');
+  modal2.querySelector('textarea').value = text;
+  modal2.querySelector('#expImportBtn').click();
+  await settle(window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('b', 'a'));
+  const graph = exportedGraph(document);
+  const a1 = graph.customAttributes.find(d => d.origin === 'a' && d.scope === 'node');
+  const b1 = graph.customAttributes.find(d => d.origin === 'b' && d.scope === 'node');
+  assert.ok(a1 && b1, 'both original definitions survive the GraphML round-trip');
+  const customs = graph.nodes.map(n => n.custom).filter(Boolean);
+  assert.ok(customs.some(c => c[a1.id] === 100 && c[b1.id] === 200), 'the values stay bound to the same definitions in both key orders');
+  assert.equal(graph.customAttributes.length, 4, 'no definitions are minted by the round-trip');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('one clipboard paste never binds two carried properties to one existing definition', async () => {
+  // The document already holds k2_1 (node, name 'tag', origin 'k2'). The
+  // payload carries two NEW properties with distinct ids and the same name.
+  // The k3 value must not be stolen by k2_1 (and k3 must not mint onto it) —
+  // and the k2 value must still resolve to k2_1 via its origin.
+  const saved = { title: 'paste-claimed', nodes: [{id:'keep', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'k2_1', scope: 'node', type: 'string', name: 'tag', origin: 'k2' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { k3: 'VAL_K3', k2: 'VAL_K2' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [
+      { id: 'k3', scope: 'node', type: 'string', name: 'tag' },
+      { id: 'k2', scope: 'node', type: 'string', name: 'tag' },
+    ] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const carried = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(carried.custom?.k2_1, 'VAL_K2', 'the k2 value reuses the k2_1 definition via its origin');
+  assert.equal(carried.custom?.k3, 'VAL_K3', 'the k3 value keeps its own definition, never collapses onto k2_1');
+  const defs = graph.customAttributes.filter(d => (d.name ?? d.id) === 'tag');
+  assert.equal(defs.length, 2, 'one reused definition (k2_1) and one fresh one for the distinct property');
+  assert.ok(defs.some(d => d.id === 'k2_1'), 'the existing definition is reused');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an explicitly empty or whitespace-only custom string beats the declared default, and round-trips', async () => {
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="note" for="node" attr.name="note" attr.type="string"><default>fallback</default></key>',
+    '  <key id="gNote" for="graph" attr.name="gNote" attr.type="string"><default>gfallback</default></key>',
+    '  <key id="eNote" for="edge" attr.name="eNote" attr.type="string"><default>efallback</default></key>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="gNote"></data>',
+    '    <node id="n1"><data key="note"></data></node>',
+    '    <node id="n2"><data key="note"> </data></node>',
+    '    <node id="n3"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="eNote"></data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  await paste(document, window, '#btnPasteGraphml', graphml);
+  let graph = exportedGraph(document);
+  assert.equal(graph.graphCustom?.gNote, '', 'an explicitly empty graph-level value beats the default');
+  const byId = id => graph.nodes.find(n => n.id === id);
+  assert.equal(byId('n1')?.custom?.note, '', 'an explicitly empty node value beats the default');
+  assert.equal(byId('n2')?.custom?.note, ' ', 'a whitespace-only node value is stored verbatim');
+  assert.equal(byId('n3')?.custom?.note, 'fallback', 'an absent value takes the default');
+  assert.equal(graph.edges[0]?.custom?.eNote, '', 'an explicitly empty edge value beats the default');
+  // The empty values must survive the export verbatim…
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const exported = modal.querySelector('textarea').value;
+  modal.remove();
+  assert.match(exported, /<data key="note"><\/data>/, 'the empty node value is written');
+  assert.match(exported, /<data key="note"> <\/data>/, 'the whitespace node value is written');
+  assert.match(exported, /<data key="gNote"><\/data>/, 'the empty graph value is written');
+  assert.match(exported, /<data key="eNote"><\/data>/, 'the empty edge value is written');
+  // …and the reimport.
+  document.querySelector('#btnExportGraphml').click();
+  const modal2 = document.querySelector('.export-modal');
+  modal2.querySelector('textarea').value = exported;
+  modal2.querySelector('#expImportBtn').click();
+  await settle(window, 60);
+  graph = exportedGraph(document);
+  assert.equal(graph.graphCustom?.gNote, '', 'the empty graph value survives the round-trip');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.note, '', 'the empty node value survives the round-trip');
+  assert.equal(graph.nodes.find(n => n.id === 'n2')?.custom?.note, ' ', 'the whitespace node value survives the round-trip');
+  assert.equal(graph.edges.find(e => e.id === 'e1')?.custom?.eNote, '', 'the empty edge value survives the round-trip');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

@@ -940,10 +940,14 @@
     // loop — so the pair must be marked resolved here or the second node in
     // the same payload would mint a duplicate.
     const handledPairs = new Set<string>();
+    // One paste = one pass: a definition reused here for one carried property
+    // may not be claimed by another (distinct ids, same recorded name) — the
+    // later remap would overwrite the earlier property's values with its own.
+    const claimed = new Set<string>();
     const renameByPair = new Map<string, string>();
     const defsToAdd: { id: string; scope: 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }[] = [];
-    const addDef = (newId: string, scope: 'node' | 'edge' | 'all', type: string, carriedId: string, provenance?: { name: string }) => {
-      defsToAdd.push({ id: newId, scope, type, origin: carriedId, ...provenance });
+    const addDef = (newId: string, scope: 'node' | 'edge' | 'all', type: string, carriedOrigin: string, provenance?: { name: string }) => {
+      defsToAdd.push({ id: newId, scope, type, origin: carriedOrigin, ...provenance });
       existingPairs.add(newId + '|' + scope);
       createdIds.add(newId);
       mintTaken.add(newId);
@@ -973,45 +977,49 @@
       const carriedPair = carriedByPair.get(key);
       const type = carriedPair ? carriedPair.type : (carriedTypeById.get(id) || 'string');
       // A reusable mapping already exists in the document. Resolving it
-      // before the capacity check matters when the definition limit is full:
-      // reuse creates no definition, so it must never be blocked by a full
-      // document — otherwise repeated pastes drop the value under the
-      // graph-scoped id, where export omits it entirely.
-      if(createdIds.has(id)){
-        // A previous paste already re-created this exact conflict under a
-        // fresh id — reuse it so repeated pastes never split one property
-        // into tag_1, tag_2, …. Identity across pastes is the recorded
-        // name (the source attr.name), falling back to the carried id —
-        // the mint records the carried id as the name the same way.
-        const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
-        // Identity outranks name (same rule as the import merge): a definition
-        // created by an earlier paste records the carried key id it was minted
-        // from, and only a candidate with the same origin may be reused — key
-        // ids distinguish properties that share attr.name. Candidates with no
-        // recorded origin fall back to the recorded name.
-        // Identity outranks name (same rule as the import merge): a
-        // definition created by an earlier paste records the carried key id
-        // it was minted from, and only a candidate with the same origin is
-        // bound — key ids distinguish properties that share attr.name. Failing
-        // an identity match the recorded-name rule applies as it always has.
-        const prior = state.customAttributes.find(attribute =>
-          attribute.scope === scope && !carriedTypeById.has(attribute.id)
-          && String((attribute as AnyRecord).origin ?? '') === id)
-        ?? state.customAttributes.find(attribute => {
-          if(attribute.scope !== scope) return false;
-          if(carriedTypeById.has(attribute.id)) return false;
-          return String(attribute.name ?? '').trim().toLowerCase() === carriedName;
-        });
-        if(prior){
-          renameByPair.set(key, prior.id);
-          handledPairs.add(key);
-          return;
-        }
+      // before ANY mint decision matters twice: reuse creates no definition,
+      // so it must never be blocked by a full document; and identity
+      // binding must not depend on the carried id being free — a definition
+      // re-created under a fresh id by an earlier import (origin = the
+      // foreign key id) must be found even when the carried id itself is
+      // unused here. Identity across pastes is the recorded origin (a
+      // re-exported payload keeps it), with the recorded name as a guard:
+      // when both sides carry a name, it must agree — a different
+      // property sharing the key id must never be claimed. A definition
+      // claimed by an earlier property in this paste is no longer a
+      // candidate.
+      const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
+      const carriedNameRaw = String(carriedPair?.name ?? '').trim().toLowerCase();
+      const incOrigin = (String(carriedPair?.origin ?? '').trim() || id);
+      const nameAgreement = (a: AnyRecord | undefined) => {
+        const an = String(a?.name ?? '').trim().toLowerCase();
+        return !an || !carriedNameRaw || an === carriedNameRaw;
+      };
+      const prior = state.customAttributes.find(attribute =>
+        attribute.scope === scope && !carriedTypeById.has(attribute.id)
+        && !claimed.has(attribute.id + '|' + scope)
+        && attribute.origin && String(attribute.origin) === incOrigin
+        && nameAgreement(attribute as AnyRecord))
+      ?? state.customAttributes.find(attribute => {
+        if(attribute.scope !== scope) return false;
+        if(carriedTypeById.has(attribute.id)) return false;
+        if(claimed.has(attribute.id + '|' + scope)) return false;
+        // The recorded-name rule binds only origin-less definitions (created
+        // manually); a provenance-tracked definition belongs to a specific
+        // key id and may not drift onto a different one.
+        if(String((attribute as AnyRecord).origin ?? '').trim()) return false;
+        return String(attribute.name ?? '').trim().toLowerCase() === carriedName;
+      });
+      if(prior){
+        renameByPair.set(key, prior.id);
+        claimed.add(prior.id + '|' + scope);
+        handledPairs.add(key);
+        return;
       }
       if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
       if(!createdIds.has(id)){
         remaining--;
-        addDef(id, scope, type, id, carriedPair?.name ? { name: carriedPair.name } : undefined);
+        addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || id), carriedPair?.name ? { name: carriedPair.name } : undefined);
         handledPairs.add(key);
         return;
       }
@@ -1022,7 +1030,7 @@
       // has none, record the carried id as the name so the next paste (or a
       // round-trip of an export of it) finds THIS definition instead of
       // minting a second one for the same property.
-      addDef(newId, scope, type, id, { name: carriedPair?.name || id });
+      addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || id), { name: carriedPair?.name || id });
       renameByPair.set(key, newId);
       handledPairs.add(key);
     };
