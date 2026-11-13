@@ -88,7 +88,8 @@ interface GraphState {
    *  (e.g. a definition re-created under a fresh id, where the exporter cannot
    *  use the id as the key name). Ids are stable in the editor, so graphs can
    *  match definitions across imports by their own id. */
-  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }[];
+  /** `origin` is the carried key id a definition was minted from, recorded so re-imports bind to the same property. */
+  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string; origin?: string }[];
   /** Values of user-defined customAttributes with scope 'graph', keyed by attribute id. */
   graphCustom: Record<string, CustomAttributeValue>;
   selected: { type: 'node' | 'edge'; id: string } | null;

@@ -2863,3 +2863,123 @@ test('a type default reaches the elements and survives export', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// === Audit round: three P2 regressions (2026-11) ===
+
+test('re-importing same-name properties in reverse declaration order keeps each value with its own definition', async () => {
+  // Two graph-scope definitions share the recorded name 'metric', so the
+  // node keys 'a' and 'b' (also both named 'metric') must mint afresh.
+  // Re-importing the same keys with the <key> declarations reversed must
+  // still bind each key to ITS definition — the key identity recorded at
+  // creation (`origin`) is what disambiguates them; name+order does not.
+  const saved = { title: 'order-independent-reuse', nodes: [], edges: [],
+    customAttributes: [
+      { id: 'a', scope: 'graph', type: 'int', name: 'metric' },
+      { id: 'b', scope: 'graph', type: 'int', name: 'metric' },
+    ] };
+  const graphml = (first, second) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="${first}" for="node" attr.name="metric" attr.type="int"/>`,
+    `  <key id="${second}" for="node" attr.name="metric" attr.type="int"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="m1"><data key="${first}">100</data><data key="${second}">200</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml('a', 'b'));
+  let graph = exportedGraph(document);
+  const byOrigin = (g, origin) => g.customAttributes.find(d => d.origin === origin);
+  assert.equal(byOrigin(graph, 'a')?.id, 'a_1', 'the first key mints a_1');
+  assert.equal(byOrigin(graph, 'b')?.id, 'b_1', 'the second key mints b_1');
+  const m1 = graph.nodes.find(n => n.id === 'm1');
+  assert.equal(m1?.custom?.a_1, 100, 'a binds a_1');
+  assert.equal(m1?.custom?.b_1, 200, 'b binds b_1');
+  // Append the same file with the <key> declarations reversed: neither a
+  // new definition nor swapped values may happen.
+  await paste(document, dom.window, '#btnPasteGraphml', graphml('b', 'a'));
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.filter(d => d.origin === 'a').length, 1, 'no new definition is minted for key a');
+  assert.equal(graph.customAttributes.filter(d => d.origin === 'b').length, 1, 'no new definition is minted for key b');
+  assert.equal(graph.customAttributes.length, 4, 'the document keeps the two graph and two node definitions');
+  const customs = graph.nodes.map(n => n.custom).filter(Boolean);
+  assert.ok(customs.some(c => c.a_1 === 100 && c.b_1 === 200), 'the re-imported values stay bound to the same definitions');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a mixed-role for="all" key keeps its graph-level value as a definition; built-in scopes stay fields', async () => {
+  // A foreign key named `label` for the whole file: label is a built-in
+  // field on nodes and edges — those data bind to the built-ins as usual.
+  // The graph has no such field, so its graph-level value is the user's
+  // own property and must survive — before this fix it was silently
+  // dropped while the import reported success.
+  const saved = { title: 'mixed-role', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="extLabel" for="all" attr.name="label" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="extLabel">graph-note</data>',
+    '    <node id="n1"><data key="extLabel">node-label</data></node>',
+    '    <edge id="e1" source="n1" target="n1"><data key="extLabel">edge-label</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace import
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes;
+  assert.equal(defs.length, 1, 'exactly one definition — on the graph scope only');
+  assert.equal(defs[0].scope, 'graph');
+  assert.equal(graph.graphCustom?.extLabel, 'graph-note', 'the graph-level value is preserved as a custom property');
+  const n = graph.nodes.find(n => n.id === 'n1');
+  const e = graph.edges.find(e => e.id === 'e1');
+  assert.equal(n?.label, 'node-label', 'the node label field received its value');
+  assert.equal(e?.label, 'edge-label', 'the edge label field received its value');
+  assert.ok(!n?.custom, 'no node-scope definition is created for a built-in field');
+  assert.ok(!e?.custom, 'no edge-scope definition is created for a built-in field');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e2 => e2.message), []);
+  dom.window.close();
+});
+
+test('GraphML round-trips custom string values verbatim, spaces included', async () => {
+  const saved = { title: 'verbatim-strings',
+    customAttributes: [{ id: 'note', scope: 'node', type: 'string' }],
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { note: ' keep me ' } }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  // The stored value carries its spaces through the exporter…
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const graphml = modal.querySelector('textarea').value;
+  assert.match(graphml, /<data key="note"> keep me <\/data>/, 'the exported value carries its spaces');
+  modal.remove();
+  // …and through re-importing that file into the same document.
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const imported = graph.nodes.find(n => n.custom && Object.keys(n.custom).length && n.label === 'One');
+  assert.equal(imported?.custom?.note, ' keep me ', 'the spaces survive the round-trip');
+  // A foreign <default> with surrounding padding is stored verbatim too.
+  const padded = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="pad" for="node" attr.name="pad" attr.type="string"><default>  padded  </default></key>',
+    '  <graph edgedefault="directed"><node id="p1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, window, '#btnPasteGraphml', padded);
+  const withPad = exportedGraph(document);
+  const p1 = withPad.nodes.find(n => n.id === 'p1');
+  assert.equal(p1?.custom?.pad, '  padded  ', 'the padded default is stored verbatim');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

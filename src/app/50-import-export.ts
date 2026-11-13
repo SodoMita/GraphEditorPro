@@ -815,9 +815,25 @@
         if(!pn || !inn || pn === inn) continue; // merges without capacity
       }
       // 2) Provenance reuse — the property already lives under another id.
-      // A definition claimed by an earlier property in this file is no longer
-      // a candidate: GraphML key ids distinguish properties even when their
-      // recorded names match.
+      // Identity outranks name: a definition created by an earlier import
+      // records the carried key id it was minted from (`origin`), and a
+      // candidate with the same origin is bound regardless of declaration
+      // order — GraphML key ids distinguish properties even when their
+      // recorded names match. A candidate whose origin differs from this
+      // carried id is a distinct property and is never chosen here. Failing
+      // an identity match, the legacy attr.name rule applies as it always
+      // has (it merges the same property across sources that share no key
+      // identity); a definition claimed by an earlier property in this file
+      // is likewise no longer a candidate.
+      const identity = [...existing, ...kept].find(e => e && scopeOf(e) === scope
+        && !claimed.has(pairOf2(e?.id, scopeOf(e)))
+        && !fileKeys.has(String(e?.id))
+        && e?.origin && String(e.origin) === id);
+      if(identity){
+        renameByPair.set(scope + '|' + id, String(identity.id));
+        claimed.add(pairOf2(identity.id, scopeOf(identity)));
+        continue; // free reuse
+      }
       if(inc.name){
         const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope
           && !claimed.has(pairOf2(e?.id, scopeOf(e)))
@@ -853,7 +869,10 @@
         byId.add(id);
       }
       const def = finalId === id ? inc : {...inc, id: finalId};
-      kept.push(def);
+      // Record the carried key id this definition was minted from — the
+      // identity a re-import matches against. The recorded name stays the
+      // attr.name for export spelling.
+      kept.push({ ...def, origin: id });
       byPair.set(finalId + '|' + scope, def);
       claimed.add(pairOf2(finalId, scope));
     }
@@ -1156,7 +1175,10 @@
     if(!root || !root.children) return items;
     for(const child of root.children){
       if((child.localName || child.tagName) === 'data'){
-        items.push({ key: child.getAttribute('key') || '', text: (child.textContent || '').trim() });
+        // Verbatim: custom values are user data (' keep me ' is not 'keep me').
+        // Numeric and boolean coercion trims for parsing itself; nothing here
+        // may trim, or a round-trip silently edits a stored string.
+        items.push({ key: child.getAttribute('key') || '', text: child.textContent || '' });
       }
     }
     return items;
@@ -1329,14 +1351,15 @@
       rawName: string;
       /** GraphML `for`, defaulting to "all" as the spec says. */
       forWhom: string | 'all';
-      /** Scope we store a definition under; "all" has no editor equivalent. */
-      scope: KeyScope;
       /** Per scope: what this declaration does there. Absent = does not apply. */
       roles: Partial<Record<KeyScope, KeyRole>>;
       /** Id to record for a definition (a de-collided key remembers its own). */
       definitionId: string;
-      /** True when this declaration contributes a user definition. */
+      /** True when this declaration contributes a user definition on some scope. */
       isDefinition: boolean;
+      /** True when the declaration is a declared foreign or stamped key — such a
+          key defines eagerly, values or not (it IS a property). */
+      eager: boolean;
       type: string;
     }
     const graphEl = doc.querySelector('graphml');
@@ -1379,14 +1402,24 @@
     const appliesTo = (forWhom: string): readonly KeyScope[] =>
       (forWhom === 'all' ? KEY_SCOPES : KEY_SCOPES.filter(s => s === forWhom)) as readonly KeyScope[];
 
+    // Which key ids carry a non-empty <data> on each scope — computed up
+    // front because the classification decides per declaration which scopes
+    // become definitions. A mixed-role declaration (built-in on one scope,
+    // this user's property on another) only defines the scopes that actually
+    // hold a value or a default; anything else would be a phantom definition.
+    const dataKeyIdsByScope: Record<KeyScope, Set<string>> = { graph: new Set(), node: new Set(), edge: new Set() };
+    for(const d of Array.from(doc.querySelectorAll('data'))){
+      const parentTag = ((d as Element).parentElement?.tagName || '').toLowerCase();
+      const dataScope = parentTag === 'graph' ? 'graph' : parentTag === 'node' ? 'node' : parentTag === 'edge' ? 'edge' : null;
+      const keyId = d.getAttribute('key') || '';
+      if(dataScope && keyId && (d.textContent || '').trim() !== '') dataKeyIdsByScope[dataScope].add(keyId);
+    }
     // -- Classification --------------------------------------------------------
     const keyInfos: KeyInfo[] = keyEls.map(k => {
       const keyId = k.getAttribute('id') || '';
       const rawName = String(k.getAttribute('attr.name') || '') || keyId;
       const name = rawName.toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
-      // The editor models three scopes; a key for "all" is stored under the widest.
-      const scope: KeyScope = forWhom === 'all' ? 'graph' : forWhom as KeyScope;
       const type = String(k.getAttribute('attr.type') || 'string').toLowerCase();
       const type2 = graphmlTypes.includes(type) ? type : 'string';
       // Read by namespace URI, not by the literal prefix: a document re-serialised
@@ -1420,16 +1453,17 @@
         // key belongs to the user.
         roles[dataScope] = 'definition';
       }
-      // A definition is stored once, under the scope its `for` names — but only
-      // when the key is not a built-in field on *any* scope it applies to. A
-      // for="all" key named `label` is not a graph field, yet it is still a
-      // built-in for nodes and edges, so it is an alias rather than a definition.
-      const feedsAnyScope = appliesTo(forWhom).some(dataScope =>
-        roles[dataScope] === 'canonical' || roles[dataScope] === 'alias');
-      const definitionHere = isDefinition || (!feedsAnyScope && roles[scope] === 'definition');
+      // The definition decision is per scope, never per declaration: a key can
+      // be this user's property on one scope and a built-in field on another.
+      // A for="all" key named `label` feeds the node and edge label fields, yet
+      // the graph has no such field — suppressing the definition because the
+      // key feeds built-ins elsewhere silently dropped its graph-level value
+      // while the import reported success. Each scope whose role is
+      // 'definition' contributes one; scopes feeding a built-in stay built-ins.
+      const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
       const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
         : (marked && recordedId ? recordedId : keyId);
-      return {keyId, rawName, forWhom, scope, roles, definitionId, isDefinition: definitionHere, type: type2};
+      return {keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2};
     });
 
     // -- Derived views: the only things the readers touch -----------------------
@@ -1460,40 +1494,53 @@
           : 2;
       }
       if(info.isDefinition && info.keyId){
-        // One declaration, one definition per scope its key declares: `for="all"`
-        // (or no `for`) is the whole truth of "this property exists on the
-        // graph, its nodes and its edges", so the node and edge data are bound
-        // by a definition of their own — otherwise they are silently dropped
-        // while the import succeeds. Definitions cannot share an id (the load
-        // path and the delete semantics key on id alone), so the widest scope
-        // claims the bare id first and the rest mint afresh; the attr.name is
-        // recorded on each so a re-import resolves back to them.
+        // One declaration, one definition per scope its key declares AND reads
+        // as the user's property — a mixed-role for="all" key (a foreign `label`
+        // key) defines only the scopes that are not built-in; the scopes
+        // feeding built-ins stay built-ins. Definitions cannot share an id
+        // (the load path and the delete semantics key on id alone), so the
+        // widest scope in KEY_SCOPES order claims the bare id first and the
+        // rest mint afresh; the attr.name is recorded on each so a re-import
+        // resolves back to them.
         const defEl = keyEls[index].querySelector('default');
-        const defVal = defEl ? defEl.textContent.trim() : '';
-        const defaultValue = defVal === '' ? undefined : coerceCustomValue(defVal, info.type);
-        // Claim the id once per DECLARATION in this file, not per scope: one
-        // key's expansion writes the same definitionId for graph, node and
-        // edge on purpose — the definition merge below (capCustomDefinitions)
-        // disambiguates the scopes deterministically (graph keeps the bare
-        // id, then node, then edge mint afresh) and remaps the values to the
-        // minted ids. A second, different declaration claiming the same id
-        // mints afresh here instead of silently overwriting the first.
-        const scopesForDef = info.forWhom === 'all' ? KEY_SCOPES : [info.scope];
-        let defId = info.definitionId;
-        if(resolvedDefIds.has(defId)){
-          const taken = new Set(fileKeyIds);
-          for(const attribute of customAttributes) taken.add(attribute.id);
-          for(const claimed of resolvedDefIds) taken.add(claimed);
-          defId = uniqueCustomAttributeId(defId, taken);
-        }
-        resolvedDefIds.add(defId);
-        for(const defScope of scopesForDef){
-          // Always record the attr.name as provenance — the import merge needs
-          // it to recognise a re-created definition across imports. The load
-          // path strips a name that equals the id again, so stored documents
-          // stay clean.
-          customAttributes.push({id: defId, scope: defScope, type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
-          defBindings.push({id: defId, scope: defScope, type: info.type, keyId: info.keyId, defaultValue});
+        // Verbatim: a custom default is user data (' padded ' is not 'padded').
+        // All-whitespace means unset; anything else is stored as written.
+        const defVal = defEl ? (defEl.textContent ?? '') : '';
+        const hasDefault = defVal.trim() !== '';
+        const defaultValue = hasDefault ? coerceCustomValue(defVal, info.type) : undefined;
+        // A declared foreign or stamped key always defines (it declares a
+        // property, values or not). A mixed-role key defines only the scopes
+        // that carry a value or a default — anything else would be a phantom
+        // definition in the Data tab.
+        const scopesForDef = KEY_SCOPES.filter(s => {
+          if(info.roles[s] !== 'definition') return false;
+          if(info.eager) return true;
+          return hasDefault || dataKeyIdsByScope[s].has(info.keyId);
+        });
+        if(scopesForDef.length){
+          // Claim the id once per DECLARATION in this file, not per scope: one
+          // key's expansion writes the same definitionId for every scope that
+          // defines on purpose — the definition merge below (capCustomDefinitions)
+          // disambiguates the scopes deterministically (graph keeps the bare id,
+          // then node, then edge mint afresh) and remaps the values to the
+          // minted ids. A second, different declaration claiming the same id
+          // mints afresh here instead of silently overwriting the first.
+          let defId = info.definitionId;
+          if(resolvedDefIds.has(defId)){
+            const taken = new Set(fileKeyIds);
+            for(const attribute of customAttributes) taken.add(attribute.id);
+            for(const claimed of resolvedDefIds) taken.add(claimed);
+            defId = uniqueCustomAttributeId(defId, taken);
+          }
+          resolvedDefIds.add(defId);
+          for(const defScope of scopesForDef){
+            // Always record the attr.name as provenance — the import merge needs
+            // it to recognise a re-created definition across imports. The load
+            // path strips a name that equals the id again, so stored documents
+            // stay clean.
+            customAttributes.push({id: defId, scope: defScope, type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
+            defBindings.push({id: defId, scope: defScope, type: info.type, keyId: info.keyId, defaultValue});
+          }
         }
       }
     }

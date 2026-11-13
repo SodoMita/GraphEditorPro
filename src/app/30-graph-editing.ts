@@ -916,12 +916,13 @@
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
         if(!id) return null;
         const name = String(def.name ?? '').trim().slice(0, 128);
-        return { id, scope: scope as 'graph' | 'node' | 'edge', type, ...(name ? { name } : {}) };
+        const origin = String((def as AnyRecord).origin ?? '').trim().slice(0, 128);
+        return { id, scope: scope as 'graph' | 'node' | 'edge', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
       })
-      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string } => def !== null);
+      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string; origin?: string } => def !== null);
     const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
     const existingPairs = new Set(defsByPair.keys());
-    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string; origin?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
     const carriedTypeById = new Map<string, string>(carriedDefs.map(def => [def.id, def.type]));
     // Ids that may not be handed out during this paste. A pair's own carried
     // id stays available for its own direct creation; every existing
@@ -939,12 +940,12 @@
     // the same payload would mint a duplicate.
     const handledPairs = new Set<string>();
     const renameByPair = new Map<string, string>();
-    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string; name?: string }[] = [];
-    const addDef = (id: string, scope: 'node' | 'edge', type: string, provenance?: { name: string }) => {
-      defsToAdd.push({ id, scope, type, ...provenance });
-      existingPairs.add(id + '|' + scope);
-      createdIds.add(id);
-      mintTaken.add(id);
+    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string; name?: string; origin?: string }[] = [];
+    const addDef = (newId: string, scope: 'node' | 'edge', type: string, carriedId: string, provenance?: { name: string }) => {
+      defsToAdd.push({ id: newId, scope, type, origin: carriedId, ...provenance });
+      existingPairs.add(newId + '|' + scope);
+      createdIds.add(newId);
+      mintTaken.add(newId);
     };
     // Two definitions sharing id+scope are the same property ONLY when both
     // carry no recorded name (created manually — nothing else to go on) or
@@ -982,7 +983,20 @@
         // name (the source attr.name), falling back to the carried id —
         // the mint records the carried id as the name the same way.
         const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
-        const prior = state.customAttributes.find(attribute => {
+        // Identity outranks name (same rule as the import merge): a definition
+        // created by an earlier paste records the carried key id it was minted
+        // from, and only a candidate with the same origin may be reused — key
+        // ids distinguish properties that share attr.name. Candidates with no
+        // recorded origin fall back to the recorded name.
+        // Identity outranks name (same rule as the import merge): a
+        // definition created by an earlier paste records the carried key id
+        // it was minted from, and only a candidate with the same origin is
+        // bound — key ids distinguish properties that share attr.name. Failing
+        // an identity match the recorded-name rule applies as it always has.
+        const prior = state.customAttributes.find(attribute =>
+          attribute.scope === scope && !carriedTypeById.has(attribute.id)
+          && String((attribute as AnyRecord).origin ?? '') === id)
+        ?? state.customAttributes.find(attribute => {
           if(attribute.scope !== scope) return false;
           if(carriedTypeById.has(attribute.id)) return false;
           return String(attribute.name ?? '').trim().toLowerCase() === carriedName;
@@ -996,7 +1010,7 @@
       if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
       if(!createdIds.has(id)){
         remaining--;
-        addDef(id, scope, type, carriedPair?.name ? { name: carriedPair.name } : undefined);
+        addDef(id, scope, type, id, carriedPair?.name ? { name: carriedPair.name } : undefined);
         handledPairs.add(key);
         return;
       }
@@ -1007,7 +1021,7 @@
       // has none, record the carried id as the name so the next paste (or a
       // round-trip of an export of it) finds THIS definition instead of
       // minting a second one for the same property.
-      addDef(newId, scope, type, { name: carriedPair?.name || id });
+      addDef(newId, scope, type, id, { name: carriedPair?.name || id });
       renameByPair.set(key, newId);
       handledPairs.add(key);
     };

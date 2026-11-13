@@ -519,7 +519,7 @@
   // The clipboard payload carries the definitions of every custom attribute
   // it references, so pasting into a document that lacks them can re-create
   // them. Existing definitions win on id conflicts.
-  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[]; customAttributes?: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }[] } | null = null;
+  let clipboardData: { nodes: GraphNode[]; edges: GraphEdge[]; externalEdges: GraphEdge[]; customAttributes?: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string; origin?: string }[] } | null = null;
   let pasteOffsetCount = 0;
   // UI hook installed by the UI layer (80-ui.ts). Renderers that rebuild
   // controls call it instead of reaching for a global, so modules stay
@@ -1033,10 +1033,13 @@
         customAttributeIds.add(id);
         // Keep the attr.name the importer recorded (original spelling) so a
         // re-created definition still exports under the property name it was
-        // read with.
+        // read with. Keep `origin` for the same reason: it is the carried key
+        // id the definition was minted from, which re-imports match against.
         const rawName = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128);
+        const rawOrigin = String((attribute as AnyRecord).origin ?? '').trim().slice(0, 128);
         const out: AnyRecord = {id, scope, type};
         if(rawName && rawName !== id) out.name = rawName;
+        if(rawOrigin) out.origin = rawOrigin;
         return out as GraphState['customAttributes'][number];
       }).filter(Boolean) as GraphState['customAttributes'];
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
