@@ -3360,6 +3360,41 @@ test('an explicitly empty or whitespace-only custom string beats the declared de
   dom.window.close();
 });
 
+test('DOT round-trip preserves bracketed labels and self-exported node attributes', async () => {
+  const labels = ['arr[0]', 'say "hi" [1]', 'x]y'];
+  const saved = {
+    title: 'brackets',
+    nodes: labels.map((label, i) => ({ id: 'n' + i, label, x: i * 120, y: 0, order: i })),
+    edges: [{ id: 'e1', from: 'n0', to: 'n1', label: 'link[0]', weight: '3', directed: true }],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, labels.length, 'every node survives the round-trip');
+  assert.deepEqual(graph.nodes.map(n => n.label), labels, 'bracketed labels round-trip');
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].label, 'link[0]', 'bracketed edge labels round-trip');
+  dom.window.close();
+});
+
+test('DOT import applies stacked attribute lists (node colour after label, edge direction after weight)', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot',
+    'digraph G {\n  n1 [label="first"][color="#ff0000"];\n  n2 [label="second"];\n  n1 -> n2 [weight="2"][dir="none"];\n}');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.find(n => n.label === 'first')?.color, '#ff0000', 'the second node list is applied');
+  assert.equal(graph.edges[0]?.weight, '2', 'the first edge list is applied');
+  assert.equal(graph.edges[0]?.direction, 'undirected', 'the second edge list is applied');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
 test('an append import reuses an all-scope definition for a narrower incoming scope instead of minting', async () => {
   const saved = { title: 'all-cover',
     nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { mood: 'calm' } }],

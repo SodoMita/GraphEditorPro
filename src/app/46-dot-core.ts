@@ -152,27 +152,65 @@
     }
     return depth === 0 ? j : -1;
   }
-  // Blanks the syntax bytes that live inside quoted strings: braces (which the
-  // matchers would read as block delimiters) and arrows (which the edge matcher
-  // would read as operators). Length is preserved 1:1, so every match offset
-  // still indexes the original, and the placeholders are mapped back out of
-  // extracted attribute values via unmaskDotSyntax.
+  // Blanks the syntax bytes that live inside quoted strings AND inside
+  // HTML-like strings: braces (which the matchers would read as block
+  // delimiters), arrows (which the edge matcher would read as operators) and
+  // brackets (which the attribute-list matcher would read as list delimiters).
+  // Brackets are legal inside both contexts ('label="arr[0]"',
+  // 'label=<<B>[x]</B>>'), and a literal ']' in a value used to terminate the
+  // attribute-list match early and drop or garble the rest of the statement.
+  // Length is preserved 1:1 by the sentinels, and the placeholders are mapped
+  // back out of extracted attribute values via unmaskDotSyntax. An HTML-like
+  // string nests '<...>' and may carry quoted text of its own (HREF="{ref}"),
+  // which is masked by the same rules.
   function maskDotSyntax(src: string): string {
+    // One syntax byte (or arrow pair) → its sentinel, or null when the byte
+    // is ordinary text. Arrows are two bytes, so the replacement also carries
+    // the source length it consumes.
+    const maskSeq = (i: number): { rep: string, len: number } | null => {
+      const d = src[i];
+      if(d === '{') return { rep: '\u0001', len: 1 };
+      if(d === '}') return { rep: '\u0002', len: 1 };
+      if(d === '[') return { rep: '\u0005', len: 1 };
+      if(d === ']') return { rep: '\u0006', len: 1 };
+      if(d === '-' && src[i + 1] === '>') return { rep: '-\u0003', len: 2 };
+      if(d === '-' && src[i + 1] === '-') return { rep: '-\u0004', len: 2 };
+      return null;
+    };
+    // Copies a quoted string starting at i (src[i] === '"') through its
+    // closing quote, masking the syntax bytes inside. Escape bytes (\\ plus
+    // the next byte) are copied verbatim so an escaped quote cannot terminate
+    // the string. An unterminated string consumes the rest of the input —
+    // the same rule the structure scanner uses.
+    const copyQuoted = (start: number): { text: string, next: number } => {
+      let text = '"', i = start + 1;
+      while(i < src.length){
+        const d = src[i];
+        if(d === '\\'){ text += d; if(i + 1 < src.length){ text += src[i + 1]; i += 2; } else i++; continue; }
+        if(d === '"'){ text += '"'; i++; return { text, next: i }; }
+        const m = maskSeq(i);
+        if(m){ text += m.rep; i += m.len; continue; }
+        text += d; i++;
+      }
+      return { text, next: i };
+    };
     let out = '';
     for(let i = 0; i < src.length;){
       const c = src[i];
-      if(c === '"'){
-        out += '"'; i++;
-        while(i < src.length){
+      if(c === '"'){ const r = copyQuoted(i); out += r.text; i = r.next; continue; }
+      if(c === '<'){
+        // HTML-like string: mask until its matching '>' (nesting depth and
+        // quoted text inside included), then resume normal scanning.
+        out += '<'; i++;
+        let depth = 1;
+        while(i < src.length && depth > 0){
           const d = src[i];
-          if(d === '\\'){ out += d; if(i + 1 < src.length){ out += src[i + 1]; i += 2; } else i++; continue; }
-          if(d === '"'){ out += '"'; i++; break; }
-          if(d === '{') out += '\u0001';
-          else if(d === '}') out += '\u0002';
-          else if(d === '-' && src[i + 1] === '>'){ out += '-\u0003'; i += 2; continue; }
-          else if(d === '-' && src[i + 1] === '-'){ out += '-\u0004'; i += 2; continue; }
-          else out += d;
-          i++;
+          if(d === '"'){ const r = copyQuoted(i); out += r.text; i = r.next; continue; }
+          if(d === '<'){ depth++; out += d; i++; continue; }
+          if(d === '>'){ depth--; out += d; i++; continue; }
+          const m = maskSeq(i);
+          if(m){ out += m.rep; i += m.len; continue; }
+          out += d; i++;
         }
         continue;
       }
@@ -181,7 +219,7 @@
     return out;
   }
   function unmaskDotSyntax(s: string): string {
-    return s.replace(/\u0001/g, '{').replace(/\u0002/g, '}').replace(/\u0003/g, '>').replace(/\u0004/g, '-');
+    return s.replace(/\u0001/g, '{').replace(/\u0002/g, '}').replace(/\u0003/g, '>').replace(/\u0004/g, '-').replace(/\u0005/g, '[').replace(/\u0006/g, ']');
   }
   // Walks a comment-free DOT source and reports its outline without interpreting
   // values: the index of the first '{' and the last '}' OUTSIDE any quoted string
@@ -346,9 +384,21 @@
     // A bare token must contain at least one word-ish character: a run of
     // pure punctuation ('--', ':.') is never a node reference or endpoint —
     // it is the arrow operator or noise, and must not invent a node.
-    const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*)';
+    // Quoted IDs may carry escape pairs (a backslash before the quote). The
+    // escape branch must be regex backslash-backslash-dot (escaped backslash
+    // plus any byte) — in this source string that is doubled to four
+    // backslashes. A single backslash-dot would match a literal dot instead.
+    const id = '("(?:\\\\.|[^"])+"|[A-Za-z0-9_:.\\-]*[A-Za-z0-9_][A-Za-z0-9_:.\\-]*)';
     const edgeRe = new RegExp(id + '\\s*(--|->)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?', 'g');
-    const work = maskDotSyntax(body);
+    // Stacked attribute lists ('n1 [label="a"][color="#f00"]') are merged into
+    // one comma-separated list before the node/edge matchers run — in the
+    // masked source a '][' pair can only be two adjacent lists of the same
+    // statement (quoted/HTML strings can no longer carry a literal ']' or
+    // '['), and a statement-initial '[' is not legal DOT anyway. Attribute
+    // items are whitespace/comma/semicolon separated, so a plain comma join
+    // reparses identically; later lists override duplicate keys, matching
+    // how a single repeated key is handled.
+    const work = maskDotSyntax(body).replace(/\]\s*\[/g, ',');
     let m;
     while((m = edgeRe.exec(work))){
       const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');

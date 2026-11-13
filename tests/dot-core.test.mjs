@@ -355,3 +355,62 @@ test('HTML-like DOT labels keep quoted text inside them intact', () => {
   assert.ok(!/[\u0001-\u0004]/.test(braces.nodes[0].label + arrow.nodes[0].label + dashes.nodes[0].label),
     'no mask sentinel leaks into an HTML-like label');
 });
+
+test('DOT import keeps bracketed text inside quoted values (arr[0])', () => {
+  const one = dot.parseDot('digraph G {\n  n1 [label="arr[0]", shape="circle"];\n}');
+  assert.ok(one, 'a self-exported label with a bracketed subscript imports');
+  assert.equal(one.nodes[0].label, 'arr[0]');
+  const two = dot.parseDot('digraph G {\n  n1 [label="arr[0]"];\n  n2 [label="ok"];\n}');
+  assert.ok(two, 'the graph imports');
+  assert.deepEqual(two.nodes.map(n => n.label), ['arr[0]', 'ok'], 'no node is silently dropped');
+  const closing = dot.parseDot('digraph G {\n  n1 [label="x]y"];\n}');
+  assert.equal(closing.nodes[0].label, 'x]y', 'a lone close bracket inside quotes survives');
+});
+
+test('a quoted bracket no longer truncates edge attribute lists', () => {
+  const r = dot.parseDot('digraph G {\n  a -> b [label="arr[0]", color="#ff0000", dir="none"];\n}');
+  assert.ok(r, 'the edge statement imports');
+  assert.equal(r.edges.length, 1);
+  assert.equal(r.edges[0].label, 'arr[0]');
+  assert.equal(r.edges[0].color, '#ff0000');
+  assert.equal(r.edges[0].direction, 'undirected');
+});
+
+test('stacked attribute lists merge, parse once, and later lists win', () => {
+  const node = dot.parseDot('digraph G {\n  n1 [label="first"][color="#ff0000"];\n}');
+  assert.ok(node, 'stacked node lists import');
+  assert.equal(node.nodes[0].label, 'first');
+  assert.equal(node.nodes[0].color, '#ff0000', 'the second list is applied');
+  const three = dot.parseDot('digraph G {\n  n1 [label="x"][shape="square"][color="#00ff00"];\n}');
+  assert.equal(three.nodes[0].shape, 'square', 'two stacked extras are both applied');
+  assert.equal(three.nodes[0].color, '#00ff00');
+  const edge = dot.parseDot('digraph G {\n  a -> b [weight="2"][dir="none"];\n}');
+  assert.ok(edge);
+  assert.equal(edge.edges[0].weight, '2', 'the first edge list is applied');
+  assert.equal(edge.edges[0].direction, 'undirected', 'the second edge list is applied');
+  const repeated = dot.parseDot('digraph G {\n  n1 [label="first"][label="second"];\n}');
+  assert.equal(repeated.nodes[0].label, 'second', 'a repeated key resolves to the later list');
+});
+
+test('HTML-like labels may contain brackets and arrows without leaking structure', () => {
+  const r = dot.parseDot('digraph G {\n  n1 [label=<<B>[x]</B>>, color="#ff0000"];\n}');
+  assert.ok(r, 'a bracketed HTML label imports');
+  assert.equal(r.nodes[0].label, '<<B>[x]</B>>');
+  assert.equal(r.nodes[0].color, '#ff0000');
+  const arrow = dot.parseDot('digraph G {\n  n1 [label=<<B>a->b</B>>];\n  n2 [label="plain"];\n}');
+  assert.ok(arrow);
+  assert.equal(arrow.nodes.length, 2, 'an arrow inside HTML text invents no edge');
+  assert.equal(arrow.edges.length, 0);
+  assert.equal(arrow.nodes[0].label, '<<B>a->b</B>>');
+  const table = dot.parseDot('digraph G {\n  n1 [label=<<TABLE><TR><TD>cell[1]</TD></TR></TABLE>>];\n}');
+  assert.ok(table);
+  assert.equal(table.nodes[0].label, '<<TABLE><TR><TD>cell[1]</TD></TR></TABLE>>');
+  assert.ok(!/[\u0001-\u0006]/.test(r.nodes[0].label + arrow.nodes[0].label + table.nodes[0].label),
+    'no mask sentinel leaks into an HTML-like label');
+});
+
+test('quoted IDs with escape pairs import and their values unescape once', () => {
+  const r = dot.parseDot('digraph G {\n  "say \\"hi\\"" [label="quoted \\"label\\" [1]"];\n}');
+  assert.ok(r, 'a quoted id with escaped quotes imports instead of rejecting the document');
+  assert.deepEqual(r.nodes.map(n => n.label), ['quoted "label" [1]']);
+});
