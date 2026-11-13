@@ -3302,7 +3302,7 @@ function migrateCustomValuesForType(id, newType) {
     }
     return dropped;
 }
-function sanitizeCustomValues(input, typeById) {
+function sanitizeCustomValues(input, typeById, keepOrphaned) {
     if (!isRecord(input))
         return undefined;
     const out = Object.create(null);
@@ -3313,10 +3313,29 @@ function sanitizeCustomValues(input, typeById) {
         const key = String(rawKey).slice(0, 128);
         if (!key)
             continue;
-        const type = typeById.get(key);
-        if (type === undefined)
-            continue; // value without a definition is dropped, not trusted
         const raw = Object.prototype.hasOwnProperty.call(input, rawKey) ? input[rawKey] : undefined;
+        const type = typeById.get(key);
+        if (type === undefined) {
+            // A value whose definition was collapsed away (same id survives in
+            // another scope; the load path drops the loser first-wins) is user
+            // data, not garbage — keep it verbatim so load never destroys it.
+            // A value with no definition anywhere is dropped, not trusted.
+            if (keepOrphaned && keepOrphaned.has(key)) {
+                if (typeof raw === 'string') {
+                    out[key] = raw.slice(0, CUSTOM_VALUE_MAX);
+                    count++;
+                }
+                else if (typeof raw === 'number' && Number.isFinite(raw)) {
+                    out[key] = raw;
+                    count++;
+                }
+                else if (typeof raw === 'boolean') {
+                    out[key] = raw;
+                    count++;
+                }
+            }
+            continue;
+        }
         if (raw == null)
             continue;
         if (typeof raw === 'string' && raw.trim() === '') {
@@ -3665,9 +3684,12 @@ function sanitizeState(input) {
             out.origin = rawOrigin;
         return out;
     }).filter(Boolean);
-    const customAttributeTypeById = customAttributeTypeMap(customAttributes);
-    // New-element defaults sanitize against definitions applicable to their
-    // scope — which includes 'all' definitions.
+    // Values sanitize against the definitions applicable to their scope —
+    // which includes 'all' definitions. A same-id definition that survived in
+    // another scope marks the value as a collapsed orphan (kept verbatim, not
+    // destroyed); an id with no surviving definition anywhere is dropped.
+    const allSurvivingTypeById = customAttributeTypeMap(customAttributes);
+    const graphCustomTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'graph')));
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'node')));
     const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'edge')));
     const usedNodeIds = new Set();
@@ -3707,7 +3729,7 @@ function sanitizeState(input) {
             node.labelPosition = validLabelPos(n.labelPosition);
         if (n.labelFont)
             node.labelFont = String(n.labelFont).slice(0, 60);
-        const customValues = sanitizeCustomValues(n.custom, customAttributeTypeById);
+        const customValues = sanitizeCustomValues(n.custom, nodeDefaultTypeById, allSurvivingTypeById);
         if (customValues)
             node.custom = customValues;
         return node;
@@ -3748,7 +3770,7 @@ function sanitizeState(input) {
             edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
         if (e.labelFont)
             edge.labelFont = String(e.labelFont).slice(0, 60);
-        const customValues = sanitizeCustomValues(e.custom, customAttributeTypeById);
+        const customValues = sanitizeCustomValues(e.custom, edgeDefaultTypeById, allSurvivingTypeById);
         if (customValues)
             edge.custom = customValues;
         edges.push(edge);
@@ -3997,7 +4019,7 @@ function sanitizeState(input) {
     else {
         settings.stylePresets = [];
     }
-    const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
+    const graphCustom = sanitizeCustomValues(source.graphCustom, graphCustomTypeById, allSurvivingTypeById) || Object.create(null);
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
@@ -8353,6 +8375,14 @@ function pasteClipboardInternal(fromSystemClipboard) {
             handledPairs.add(key); // merge: existing wins
             return;
         }
+        // An existing 'all' definition is the document's definition for this id
+        // on every scope — a carried narrower-scope pair with matching
+        // provenance merges into it (existing wins), never mints an env_1 twin.
+        const allKey = id + '|all';
+        if (scope !== 'all' && existingPairs.has(allKey) && provenanceMatches(defsByPair.get(allKey), carriedByPair.get(key))) {
+            handledPairs.add(key); // merge: the all definition wins
+            return;
+        }
         // Fall through to the reuse/mint machinery: a key collision between
         // DIFFERENT properties resolves exactly like a missing pair — the mint
         // path re-creates the carried definition under a fresh id and remaps
@@ -8378,16 +8408,17 @@ function pasteClipboardInternal(fromSystemClipboard) {
             const an = String(a?.name ?? '').trim().toLowerCase();
             return !an || !carriedNameRaw || an === carriedNameRaw;
         };
-        const prior = state.customAttributes.find(attribute => attribute.scope === scope && !carriedTypeById.has(attribute.id)
-            && !claimed.has(attribute.id + '|' + scope)
+        const scopeCovered = (a) => a?.scope === scope || a?.scope === 'all';
+        const prior = state.customAttributes.find(attribute => scopeCovered(attribute) && !carriedTypeById.has(attribute.id)
+            && !claimed.has(attribute.id + '|' + attribute.scope)
             && attribute.origin && String(attribute.origin) === incOrigin
             && nameAgreement(attribute))
             ?? state.customAttributes.find(attribute => {
-                if (attribute.scope !== scope)
+                if (!scopeCovered(attribute))
                     return false;
                 if (carriedTypeById.has(attribute.id))
                     return false;
-                if (claimed.has(attribute.id + '|' + scope))
+                if (claimed.has(attribute.id + '|' + attribute.scope))
                     return false;
                 // The recorded-name rule binds only origin-less definitions (created
                 // manually); a provenance-tracked definition belongs to a specific
@@ -8468,12 +8499,22 @@ function pasteClipboardInternal(fromSystemClipboard) {
         toast(I18N.t('attribute_import_skipped', { n: skipped }));
     if (renamed)
         toast(I18N.t('attribute_scope_renamed', { n: renamed }));
-    // Coerce carried values against the resolved definitions. Values whose
-    // definition does not exist (or was skipped over the cap) are dropped, as
-    // on any other load path — never silently kept out of reach.
-    const pasteTypeById = customAttributeTypeMap(state.customAttributes);
-    for (const entity of [...data.nodes, ...data.edges, ...(data.externalEdges || [])]) {
-        const resolved = sanitizeCustomValues(entity?.custom, pasteTypeById);
+    // Coerce carried values against the definitions applicable to each
+    // entity's scope. A same-id definition surviving in another scope marks
+    // the value as a collapsed orphan — kept verbatim, never destroyed; an
+    // id with no definition anywhere is dropped.
+    const pasteAllSurvivingTypeById = customAttributeTypeMap(state.customAttributes);
+    const pasteNodeTypeById = customAttributeTypeMap(state.customAttributes.filter(a => defAppliesTo(a, 'node')));
+    const pasteEdgeTypeById = customAttributeTypeMap(state.customAttributes.filter(a => defAppliesTo(a, 'edge')));
+    for (const entity of [...data.nodes]) {
+        const resolved = sanitizeCustomValues(entity?.custom, pasteNodeTypeById, pasteAllSurvivingTypeById);
+        if (resolved)
+            entity.custom = resolved;
+        else
+            delete entity?.custom;
+    }
+    for (const entity of [...data.edges, ...(data.externalEdges || [])]) {
+        const resolved = sanitizeCustomValues(entity?.custom, pasteEdgeTypeById, pasteAllSurvivingTypeById);
         if (resolved)
             entity.custom = resolved;
         else
@@ -11823,8 +11864,13 @@ function exportJsonText() { return JSON.stringify(JSON.parse(snapshot()), null, 
 function replaceWithImportedGraph(data, label = 'graph') {
     cancelZoomPreview();
     // Preserve current graph defaults (Style tab) when importing — only override
-    // if the file explicitly carries its own defaults.
-    const mergedSettings = { ...state.settings, ...(data.settings || {}) };
+    // if the file explicitly carries its own defaults. The pending new-element
+    // custom-value maps are the exception: they are document-local and an
+    // import that does not carry its own must not inherit the replaced
+    // document's (they would stamp onto elements created later).
+    const mergedSettings = { ...state.settings, ...(data.settings || {}),
+        nodeCustom: isRecord(data.settings) && isRecord(data.settings.nodeCustom) ? data.settings.nodeCustom : Object.create(null),
+        edgeCustom: isRecord(data.settings) && isRecord(data.settings.edgeCustom) ? data.settings.edgeCustom : Object.create(null) };
     const sane = sanitizeState({ ...data, title: data.title || fileBase(), settings: mergedSettings });
     // Snapshot the pre-import document FIRST: after a replace, undo must bring
     // the old document back instead of starting from a one-entry history.
@@ -12098,8 +12144,10 @@ function capCustomDefinitions(defs, existingDefs) {
         // definitions cannot be proven different (either side without a recorded
         // name, or matching names): the carried one merges for free. A recorded
         // and DIFFERENT name means a different property sharing the id, so it
-        // falls through to minting instead of stranding its values.
-        const pairHit = byPair.get(pairKey);
+        // falls through to minting instead of stranding its values. An 'all'
+        // definition is the document's definition for this id on every scope,
+        // so it covers a narrower incoming pair the same way.
+        const pairHit = byPair.get(pairKey) ?? (scope !== 'all' ? byPair.get(id + '|all') : undefined);
         if (pairHit) {
             const pn = String(pairHit?.name ?? '').trim().toLowerCase(), inn = String(inc.name ?? '').trim().toLowerCase();
             if (!pn || !inn || pn === inn)
@@ -12127,7 +12175,8 @@ function capCustomDefinitions(defs, existingDefs) {
             const en = String(e?.name ?? '').trim().toLowerCase();
             return !en || !incNameLc || en === incNameLc;
         };
-        const identity = [...existing, ...kept].find(e => e && scopeOf(e) === scope
+        const covers = (e) => { const s2 = scopeOf(e); return s2 === scope || s2 === 'all'; };
+        const identity = [...existing, ...kept].find(e => e && covers(e)
             && !claimed.has(pairOf2(e?.id, scopeOf(e)))
             && !fileKeys.has(String(e?.id))
             && e?.origin && String(e.origin) === incOrigin
@@ -12138,7 +12187,7 @@ function capCustomDefinitions(defs, existingDefs) {
             continue; // free reuse
         }
         if (inc.name) {
-            const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope
+            const reused = [...existing, ...kept].find(e => e && covers(e)
                 && !claimed.has(pairOf2(e?.id, scopeOf(e)))
                 && !fileKeys.has(String(e?.id))
                 && (!e?.origin || String(e.origin) === incOrigin)

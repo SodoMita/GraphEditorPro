@@ -775,7 +775,7 @@
     }
     return dropped;
   }
-  function sanitizeCustomValues(input: unknown, typeById: Map<string, string>): Record<string, CustomAttributeValue> | undefined {
+  function sanitizeCustomValues(input: unknown, typeById: Map<string, string>, keepOrphaned?: Map<string, string>): Record<string, CustomAttributeValue> | undefined {
     if(!isRecord(input)) return undefined;
     const out: Record<string, CustomAttributeValue> = Object.create(null);
     let count = 0;
@@ -783,9 +783,20 @@
       if(count >= CUSTOM_VALUE_KEYS_MAX) break;
       const key = String(rawKey).slice(0, 128);
       if(!key) continue;
-      const type = typeById.get(key);
-      if(type === undefined) continue; // value without a definition is dropped, not trusted
       const raw = Object.prototype.hasOwnProperty.call(input, rawKey) ? input[rawKey] : undefined;
+      const type = typeById.get(key);
+      if(type === undefined){
+        // A value whose definition was collapsed away (same id survives in
+        // another scope; the load path drops the loser first-wins) is user
+        // data, not garbage — keep it verbatim so load never destroys it.
+        // A value with no definition anywhere is dropped, not trusted.
+        if(keepOrphaned && keepOrphaned.has(key)){
+          if(typeof raw === 'string'){ out[key] = raw.slice(0, CUSTOM_VALUE_MAX); count++; }
+          else if(typeof raw === 'number' && Number.isFinite(raw)){ out[key] = raw; count++; }
+          else if(typeof raw === 'boolean'){ out[key] = raw; count++; }
+        }
+        continue;
+      }
       if(raw == null) continue;
       if(typeof raw === 'string' && raw.trim() === ''){
         // An explicitly empty/whitespace string is a stated value for
@@ -1070,9 +1081,12 @@
         if(rawOrigin) out.origin = rawOrigin;
         return out as GraphState['customAttributes'][number];
       }).filter(Boolean) as GraphState['customAttributes'];
-    const customAttributeTypeById = customAttributeTypeMap(customAttributes);
-    // New-element defaults sanitize against definitions applicable to their
-    // scope — which includes 'all' definitions.
+    // Values sanitize against the definitions applicable to their scope —
+    // which includes 'all' definitions. A same-id definition that survived in
+    // another scope marks the value as a collapsed orphan (kept verbatim, not
+    // destroyed); an id with no surviving definition anywhere is dropped.
+    const allSurvivingTypeById = customAttributeTypeMap(customAttributes);
+    const graphCustomTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'graph')));
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'node')));
     const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'edge')));
 
@@ -1103,7 +1117,7 @@
       if(n.labelSize != null) node.labelSize = clamp(finite(n.labelSize, 13), 4, 72);
       if(n.labelPosition) node.labelPosition = validLabelPos(n.labelPosition);
       if(n.labelFont) node.labelFont = String(n.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(n.custom, customAttributeTypeById);
+      const customValues = sanitizeCustomValues(n.custom, nodeDefaultTypeById, allSurvivingTypeById);
       if(customValues) node.custom = customValues;
       return node;
     });
@@ -1135,7 +1149,7 @@
       if(e.labelColor) edge.labelColor = validColor(e.labelColor) || '';
       if(e.labelSize != null) edge.labelSize = clamp(finite(e.labelSize, 12), 4, 72);
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
-      const customValues = sanitizeCustomValues(e.custom, customAttributeTypeById);
+      const customValues = sanitizeCustomValues(e.custom, edgeDefaultTypeById, allSurvivingTypeById);
       if(customValues) edge.custom = customValues;
       edges.push(edge);
     });
@@ -1331,7 +1345,7 @@
         return out;
       }).filter(Boolean);
     } else { settings.stylePresets = []; }
-    const graphCustom = sanitizeCustomValues(source.graphCustom, customAttributeTypeById) || Object.create(null);
+    const graphCustom = sanitizeCustomValues(source.graphCustom, graphCustomTypeById, allSurvivingTypeById) || Object.create(null);
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;

@@ -3359,3 +3359,63 @@ test('an explicitly empty or whitespace-only custom string beats the declared de
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('an append import reuses an all-scope definition for a narrower incoming scope instead of minting', async () => {
+  const saved = { title: 'all-cover',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { mood: 'calm' } }],
+    edges: [],
+    customAttributes: [{ id: 'mood', scope: 'all', type: 'string' }],
+    graphCustom: {} };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="mood" for="node" attr.name="mood" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="n2"><data key="mood">happy</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 1, 'the all-scope definition covers the incoming node-scope property');
+  assert.equal(graph.customAttributes[0].scope, 'all');
+  assert.equal(graph.nodes.find(n => n.id === 'n2')?.custom?.mood, 'happy', 'the imported node binds the all-scope definition');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.mood, 'calm', 'the carried value stays bound');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a replace import that carries no settings does not inherit the replaced document\'s pending custom defaults', async () => {
+  const saved = { title: 'old',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0 }],
+    edges: [],
+    customAttributes: [{ id: 'score', scope: 'all', type: 'string' }],
+    graphCustom: {},
+    settings: { nodeCustom: { score: 'carried-node-default' }, edgeCustom: { score: 'carried-edge-default' } } };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  assert.equal(exportedGraph(document).settings.nodeCustom?.score, 'carried-node-default', 'the seed default is in place');
+  assert.equal(exportedGraph(document).settings.edgeCustom?.score, 'carried-edge-default', 'the seed edge default is in place');
+  // A JSON file without settings must not drag the replaced document's pending
+  // defaults along — they would stamp onto elements created in the new document.
+  const payload = JSON.stringify({ title: 'new',
+    nodes: [{ id: 'n1', label: 'A', x: 0, y: 0, order: 0 }], edges: [],
+    customAttributes: [{ id: 'score', scope: 'all', type: 'string' }] });
+  await paste(document, dom.window, '#btnPasteJson', payload);
+  const replaced = exportedGraph(document);
+  assert.equal(replaced.settings.nodeCustom?.score, undefined, 'the replaced document\'s pending node default is gone');
+  assert.equal(replaced.settings.edgeCustom?.score, undefined, 'the replaced document\'s pending edge default is gone');
+  // …while a file that carries its own pending defaults still applies them.
+  const payload2 = JSON.stringify({ title: 'newer',
+    nodes: [{ id: 'n1', label: 'A', x: 0, y: 0, order: 0 }], edges: [],
+    customAttributes: [{ id: 'score', scope: 'all', type: 'string' }],
+    settings: { nodeCustom: { score: 'file-node-default' } } });
+  await paste(document, dom.window, '#btnPasteJson', payload2);
+  assert.equal(exportedGraph(document).settings.nodeCustom?.score, 'file-node-default', 'a carried pending default is applied');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

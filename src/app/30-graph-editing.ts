@@ -970,6 +970,14 @@
         handledPairs.add(key); // merge: existing wins
         return;
       }
+      // An existing 'all' definition is the document's definition for this id
+      // on every scope — a carried narrower-scope pair with matching
+      // provenance merges into it (existing wins), never mints an env_1 twin.
+      const allKey = id + '|all';
+      if(scope !== 'all' && existingPairs.has(allKey) && provenanceMatches(defsByPair.get(allKey), carriedByPair.get(key))) {
+        handledPairs.add(key); // merge: the all definition wins
+        return;
+      }
       // Fall through to the reuse/mint machinery: a key collision between
       // DIFFERENT properties resolves exactly like a missing pair — the mint
       // path re-creates the carried definition under a fresh id and remaps
@@ -995,15 +1003,16 @@
         const an = String(a?.name ?? '').trim().toLowerCase();
         return !an || !carriedNameRaw || an === carriedNameRaw;
       };
+      const scopeCovered = (a: AnyRecord | undefined) => a?.scope === scope || a?.scope === 'all';
       const prior = state.customAttributes.find(attribute =>
-        attribute.scope === scope && !carriedTypeById.has(attribute.id)
-        && !claimed.has(attribute.id + '|' + scope)
+        scopeCovered(attribute as AnyRecord) && !carriedTypeById.has(attribute.id)
+        && !claimed.has(attribute.id + '|' + attribute.scope)
         && attribute.origin && String(attribute.origin) === incOrigin
         && nameAgreement(attribute as AnyRecord))
       ?? state.customAttributes.find(attribute => {
-        if(attribute.scope !== scope) return false;
+        if(!scopeCovered(attribute as AnyRecord)) return false;
         if(carriedTypeById.has(attribute.id)) return false;
-        if(claimed.has(attribute.id + '|' + scope)) return false;
+        if(claimed.has(attribute.id + '|' + attribute.scope)) return false;
         // The recorded-name rule binds only origin-less definitions (created
         // manually); a provenance-tracked definition belongs to a specific
         // key id and may not drift onto a different one.
@@ -1068,12 +1077,19 @@
     if(defsToAdd.length){ renderCustomAttributes(); renderCustomPropHosts(); }
     if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
     if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
-    // Coerce carried values against the resolved definitions. Values whose
-    // definition does not exist (or was skipped over the cap) are dropped, as
-    // on any other load path — never silently kept out of reach.
-    const pasteTypeById = customAttributeTypeMap(state.customAttributes);
-    for(const entity of [...data.nodes, ...data.edges, ...(data.externalEdges || [])]){
-      const resolved = sanitizeCustomValues(entity?.custom, pasteTypeById);
+    // Coerce carried values against the definitions applicable to each
+    // entity's scope. A same-id definition surviving in another scope marks
+    // the value as a collapsed orphan — kept verbatim, never destroyed; an
+    // id with no definition anywhere is dropped.
+    const pasteAllSurvivingTypeById = customAttributeTypeMap(state.customAttributes);
+    const pasteNodeTypeById = customAttributeTypeMap(state.customAttributes.filter(a => defAppliesTo(a, 'node')));
+    const pasteEdgeTypeById = customAttributeTypeMap(state.customAttributes.filter(a => defAppliesTo(a, 'edge')));
+    for(const entity of [...data.nodes]){
+      const resolved = sanitizeCustomValues(entity?.custom, pasteNodeTypeById, pasteAllSurvivingTypeById);
+      if(resolved) entity.custom = resolved; else delete entity?.custom;
+    }
+    for(const entity of [...data.edges, ...(data.externalEdges || [])]){
+      const resolved = sanitizeCustomValues(entity?.custom, pasteEdgeTypeById, pasteAllSurvivingTypeById);
       if(resolved) entity.custom = resolved; else delete entity?.custom;
     }
     const preserveExternal = state.settings.copyPreserveExternal !== false;

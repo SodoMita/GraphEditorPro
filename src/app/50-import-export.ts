@@ -572,8 +572,13 @@
   function replaceWithImportedGraph(data, label='graph'){
     cancelZoomPreview();
     // Preserve current graph defaults (Style tab) when importing — only override
-    // if the file explicitly carries its own defaults.
-    const mergedSettings = {...state.settings, ...(data.settings || {})};
+    // if the file explicitly carries its own defaults. The pending new-element
+    // custom-value maps are the exception: they are document-local and an
+    // import that does not carry its own must not inherit the replaced
+    // document's (they would stamp onto elements created later).
+    const mergedSettings = {...state.settings, ...(data.settings || {}),
+      nodeCustom: isRecord(data.settings) && isRecord((data.settings as AnyRecord).nodeCustom) ? (data.settings as AnyRecord).nodeCustom : Object.create(null),
+      edgeCustom: isRecord(data.settings) && isRecord((data.settings as AnyRecord).edgeCustom) ? (data.settings as AnyRecord).edgeCustom : Object.create(null) };
     const sane = sanitizeState({...data, title:data.title || fileBase(), settings: mergedSettings});
     // Snapshot the pre-import document FIRST: after a replace, undo must bring
     // the old document back instead of starting from a one-entry history.
@@ -820,8 +825,10 @@
       // definitions cannot be proven different (either side without a recorded
       // name, or matching names): the carried one merges for free. A recorded
       // and DIFFERENT name means a different property sharing the id, so it
-      // falls through to minting instead of stranding its values.
-      const pairHit = byPair.get(pairKey);
+      // falls through to minting instead of stranding its values. An 'all'
+      // definition is the document's definition for this id on every scope,
+      // so it covers a narrower incoming pair the same way.
+      const pairHit = byPair.get(pairKey) ?? (scope !== 'all' ? byPair.get(id + '|all') : undefined);
       if(pairHit){
         const pn = String(pairHit?.name ?? '').trim().toLowerCase(), inn = String(inc.name ?? '').trim().toLowerCase();
         if(!pn || !inn || pn === inn) continue; // merges without capacity
@@ -848,7 +855,8 @@
         const en = String(e?.name ?? '').trim().toLowerCase();
         return !en || !incNameLc || en === incNameLc;
       };
-      const identity = [...existing, ...kept].find(e => e && scopeOf(e) === scope
+      const covers = (e: AnyRecord | undefined) => { const s2 = scopeOf(e); return s2 === scope || s2 === 'all'; };
+      const identity = [...existing, ...kept].find(e => e && covers(e)
         && !claimed.has(pairOf2(e?.id, scopeOf(e)))
         && !fileKeys.has(String(e?.id))
         && e?.origin && String(e.origin) === incOrigin
@@ -859,7 +867,7 @@
         continue; // free reuse
       }
       if(inc.name){
-        const reused = [...existing, ...kept].find(e => e && scopeOf(e) === scope
+        const reused = [...existing, ...kept].find(e => e && covers(e)
           && !claimed.has(pairOf2(e?.id, scopeOf(e)))
           && !fileKeys.has(String(e?.id))
           && (!e?.origin || String(e.origin) === incOrigin)
