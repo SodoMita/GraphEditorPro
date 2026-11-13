@@ -1731,3 +1731,33 @@ test('repeated pastes reuse the definition renamed for a scope conflict instead 
   assert.equal(exported.graphCustom.tag, 'graphval');
   t2.dom.window.close();
 });
+
+test('a fractional value typed into an integer-typed field is stored verbatim, never silently truncated', async () => {
+  const { dom, errors } = createEditorDom(customPropertiesGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await selectNode(window, document, 'a', 300, 330);
+  const capacity = document.querySelector('#selectionPanel [data-custom-attribute="capacity"]');
+  changeValue(window, capacity, '7.5');
+  await nextFrame(window);
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.find(n => n.id === 'a')?.custom?.capacity, '7.5', 'the stated fraction is stored verbatim');
+  assert.equal(document.querySelector('#selectionPanel [data-custom-attribute="capacity"]').value, '7.5');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('the integer-typed field resyncs to the stored value after commit (042 commits to 42)', async () => {
+  const { dom, errors } = createEditorDom(customPropertiesGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await selectNode(window, document, 'a', 300, 330);
+  const capacity = document.querySelector('#selectionPanel [data-custom-attribute="capacity"]');
+  changeValue(window, capacity, '042');
+  await nextFrame(window);
+  assert.equal(document.querySelector('#selectionPanel [data-custom-attribute="capacity"]').value, '42', 'the field shows the stored value, not the typed text');
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.find(n => n.id === 'a')?.custom?.capacity, 42, 'the stored value is the integer 42');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

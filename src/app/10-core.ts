@@ -707,13 +707,15 @@
       if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
       const numeric = Number(text);
       if(Number.isFinite(numeric)){
-        const truncated = Math.trunc(numeric);
+        // A stated fraction is not an int/long — kept as the exact text,
+        // never silently truncated (same lenient rule as out-of-range input).
+        if(!Number.isInteger(numeric)) return text.slice(0, CUSTOM_VALUE_MAX);
         // Out-of-range values are kept as the exact text the user typed or the
         // file contains (never silently clamped) — same lenient rule as for
         // unparseable input, so a valid 64-bit long round-trips intact.
-        if(type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
-        if(type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
-        return truncated;
+        if(type === 'int' && (numeric < -2147483648 || numeric > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
+        if(type === 'long' && Math.abs(numeric) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
+        return numeric;
       }
       return text.slice(0, CUSTOM_VALUE_MAX);
     }
@@ -744,13 +746,14 @@
       if(text === '') return undefined;
       const numeric = Number(text);
       if(!Number.isFinite(numeric)) return undefined;
-      const truncated = Math.trunc(numeric);
+      // A stated fraction cannot be represented as an int/long.
+      if(!Number.isInteger(numeric)) return undefined;
       // Out-of-range values are preserved as the exact text, mirroring the
       // input and import paths — a 64-bit long the JS number line cannot hold
       // is stored as text, never dropped or clamped.
-      if(type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
-      if(type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
-      return truncated;
+      if(type === 'int' && (numeric < -2147483648 || numeric > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
+      if(type === 'long' && Math.abs(numeric) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
+      return numeric;
     }
     if(type === 'float' || type === 'double'){
       if(typeof value === 'boolean') return undefined;
@@ -967,12 +970,14 @@
     if(def.type === 'string'){ setAll(text.slice(0, CUSTOM_VALUE_MAX)); return 'ok'; }
     const numeric = Number(text);
     if(!Number.isFinite(numeric)) return 'invalid';
-    const truncated = Math.trunc(numeric);
-    // Out-of-range input is stored as the exact text (never silently clamped);
-    // it round-trips unchanged and the field keeps showing what was typed.
-    if(def.type === 'int' && (truncated < -2147483648 || truncated > 2147483647)) setAll(text.slice(0, CUSTOM_VALUE_MAX));
-    else if(def.type === 'long' && Math.abs(truncated) > Number.MAX_SAFE_INTEGER) setAll(text.slice(0, CUSTOM_VALUE_MAX));
-    else if(def.type === 'int' || def.type === 'long') setAll(truncated);
+    // A stated fraction is not an int/long — stored as the exact text,
+    // never silently truncated (same lenient rule as out-of-range input).
+    // Out-of-range input is likewise stored as the exact text; it
+    // round-trips unchanged and the field keeps showing what was typed.
+    if((def.type === 'int' || def.type === 'long') && !Number.isInteger(numeric)) setAll(text.slice(0, CUSTOM_VALUE_MAX));
+    else if(def.type === 'int' && (numeric < -2147483648 || numeric > 2147483647)) setAll(text.slice(0, CUSTOM_VALUE_MAX));
+    else if(def.type === 'long' && Math.abs(numeric) > Number.MAX_SAFE_INTEGER) setAll(text.slice(0, CUSTOM_VALUE_MAX));
+    else if(def.type === 'int' || def.type === 'long') setAll(numeric);
     else setAll(numeric); // float / double
     return 'ok';
   }
@@ -1031,6 +1036,14 @@
         const result = applyCustomPropValue(def, targets, String(input.value ?? ''), multi);
         if(result === 'invalid'){ toast(I18N.t('attribute_invalid_number')); renderCustomPropHosts(); return; }
         if(result === 'noop') return;
+        // Reflect what was actually stored — '042' commits to 42, and a
+        // stated fraction on an integer-typed property is stored verbatim
+        // as text. The field must not keep showing what was never stored.
+        const shown = sharedCustomPropValue(targets, def.id);
+        if(!shown.mixed && shown.value !== undefined){
+          const formatted = formatCustomValue(shown.value);
+          if(input.value !== formatted) input.value = formatted;
+        }
         pushHistory('custom property'); queueRender(false); saveSoon();
       });
     });

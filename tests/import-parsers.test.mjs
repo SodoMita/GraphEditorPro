@@ -3497,3 +3497,18 @@ test('an external edge that cannot materialize mints no definition (one that can
   assert.equal(pasted.edges[0]?.custom?.ew, 'stray', 'the value stays bound to the minted definition');
   positive.dom.window.close();
 });
+
+test('a persisted fractional value in an integer-typed definition survives verbatim instead of truncating', async () => {
+  const saved = { title: 'frac',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { capacity: '7.5', exact: 42.9 } }],
+    edges: [],
+    customAttributes: [{ id: 'capacity', scope: 'node', type: 'int' }, { id: 'exact', scope: 'node', type: 'long' }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].custom?.capacity, '7.5', 'a stated fraction of an int property round-trips verbatim');
+  assert.equal(graph.nodes[0].custom?.exact, '42.9', 'a stated fraction of a long property round-trips verbatim');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
