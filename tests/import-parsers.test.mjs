@@ -3454,3 +3454,46 @@ test('a replace import that carries no settings does not inherit the replaced do
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('an external edge that cannot materialize mints no definition (one that can, does)', async () => {
+  // The clipboard carries a node and an external edge reaching from it to a
+  // node that is in neither the selection nor the target document — the edge
+  // can never be pasted, so minting a definition for it would strand a
+  // phantom property in the document forever.
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'keep', label: 'Kept', x: 0, y: 0, order: 0 }],
+    edges: [],
+    externalEdges: [{ id: 'e9', from: 'keep', to: 'outside', weight: '1', directed: true, custom: { ew: 'stray' } }],
+    customAttributes: [{ id: 'ew', scope: 'edge', type: 'string' }] });
+
+  // Target without the missing endpoint: the edge is dropped, no definition.
+  const {dom, errors} = createEditorDom({ title: 'p2-5', nodes: [{ id: 'stay', label: 'Stay', x: 0, y: 0, order: 0 }], edges: [], customAttributes: [] });
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard', { configurable: true,
+    value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const dropped = exportedGraph(document);
+  assert.equal(dropped.nodes.some(n => n.label === 'Kept'), true, 'the node is pasted');
+  assert.equal(dropped.edges.length, 0, 'the external edge is not pasted');
+  assert.equal(dropped.customAttributes.length, 0, 'no definition is minted for a dropped edge');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+
+  // Target that has the endpoint: the edge materializes and mints its definition.
+  const seed = { title: 'p2-5-b', nodes: [{ id: 'outside', label: 'Outside', x: 300, y: 0, order: 0 }], edges: [], customAttributes: [] };
+  const positive = createEditorDom(seed);
+  const document2 = positive.dom.window.document;
+  await settle(positive.dom.window, 60);
+  Object.defineProperty(positive.dom.window.navigator, 'clipboard', { configurable: true,
+    value: { writeText: async () => {}, readText: async () => payload } });
+  document2.querySelector('#btnPaste2').click();
+  await settle(positive.dom.window, 80);
+  const pasted = exportedGraph(document2);
+  assert.equal(pasted.edges.length, 1, 'the edge is pasted onto the existing endpoint');
+  const ew = pasted.customAttributes.find(d => d.id === 'ew');
+  assert.ok(ew && ew.scope === 'edge', 'the materialized edge minted its definition');
+  assert.equal(pasted.edges[0]?.custom?.ew, 'stray', 'the value stays bound to the minted definition');
+  positive.dom.window.close();
+});

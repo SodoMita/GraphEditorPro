@@ -8302,6 +8302,36 @@ function pasteClipboardInternal(fromSystemClipboard) {
         toast(I18N.t('clipboard_empty'));
         return false;
     }
+    const preserveExternal = state.settings.copyPreserveExternal !== false;
+    const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
+    // An endpoint's fate decides whether a carried edge will be pasted at
+    // all: 'pasted' = it clones with this paste, 'existing' = it stays bound
+    // to a node the document already has, 'absent' = it points nowhere and
+    // the edge is dropped. Definition minting below is limited to the edges
+    // that will actually materialize — a dropped edge must not leave a
+    // phantom definition (and its values) behind.
+    const carriedNodeIds = new Set(data.nodes.map(n => String(n?.id)));
+    const endpointFate = (id) => {
+        const key = String(id ?? '');
+        return carriedNodeIds.has(key) ? 'pasted' : originalExistingNodeIds.has(key) ? 'existing' : 'absent';
+    };
+    const edgeMaterializes = (orig, isExternal) => {
+        if (isExternal && !preserveExternal)
+            return false;
+        const fs = endpointFate(orig?.from), ts = endpointFate(orig?.to);
+        if (fs === 'pasted' && ts === 'pasted')
+            return true;
+        if (fs === 'absent' || ts === 'absent')
+            return false;
+        if (fs === 'existing' && ts === 'existing')
+            return true;
+        // Exactly one pasted side: an external edge reaching into the document.
+        return preserveExternal;
+    };
+    const materializedEdges = [
+        ...data.edges.filter(e => edgeMaterializes(e, false)).map(e => ({ entity: e })),
+        ...(data.externalEdges || []).filter(e => edgeMaterializes(e, true)).map(e => ({ entity: e })),
+    ];
     // Re-create carried custom-attribute definitions this document lacks.
     // Definitions are resolved per (id, scope) PAIR, not by id alone: an
     // existing definition with the same id but a different scope cannot
@@ -8469,8 +8499,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         }
     };
     ensureEntityPairs(data.nodes, 'node');
-    ensureEntityPairs(data.edges, 'edge');
-    ensureEntityPairs(data.externalEdges || [], 'edge');
+    ensureEntityPairs(materializedEdges.map(m => m.entity), 'edge');
     if (defsToAdd.length)
         state.customAttributes.push(...defsToAdd);
     // Remap carried values whose definition was re-created under a fresh id.
@@ -8488,7 +8517,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         };
         for (const node of data.nodes)
             remapCustom(node, 'node');
-        for (const edge of [...data.edges, ...(data.externalEdges || [])])
+        for (const { entity: edge } of materializedEdges)
             remapCustom(edge, 'edge');
     }
     if (defsToAdd.length) {
@@ -8513,15 +8542,13 @@ function pasteClipboardInternal(fromSystemClipboard) {
         else
             delete entity?.custom;
     }
-    for (const entity of [...data.edges, ...(data.externalEdges || [])]) {
+    for (const { entity } of materializedEdges) {
         const resolved = sanitizeCustomValues(entity?.custom, pasteEdgeTypeById, pasteAllSurvivingTypeById);
         if (resolved)
             entity.custom = resolved;
         else
             delete entity?.custom;
     }
-    const preserveExternal = state.settings.copyPreserveExternal !== false;
-    const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
     const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
     let nextOrder = maxOrder + 1;
     pasteOffsetCount = (pasteOffsetCount + 1) % 20;
@@ -8609,49 +8636,11 @@ function pasteClipboardInternal(fromSystemClipboard) {
         edgeIdMap.add(nid);
         usedEdgeIds2.add(nid);
     };
-    for (const orig of data.edges) {
+    // The set was resolved before the definitions were minted; idMap now
+    // agrees with it one-to-one (an endpoint maps iff it is being pasted).
+    for (const { entity: orig } of materializedEdges) {
         const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
-        if (nf && nt) {
-            addEdgeWithNewId(orig, nf, nt);
-        }
-        else if (!nf && !nt) {
-            if (originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)) {
-                addEdgeWithNewId(orig, orig.from, orig.to);
-            }
-        }
-        else {
-            if (!preserveExternal)
-                continue;
-            if (nf && !nt) {
-                if (originalExistingNodeIds.has(orig.to))
-                    addEdgeWithNewId(orig, nf, orig.to);
-            }
-            else if (!nf && nt) {
-                if (originalExistingNodeIds.has(orig.from))
-                    addEdgeWithNewId(orig, orig.from, nt);
-            }
-        }
-    }
-    if (preserveExternal) {
-        for (const orig of data.externalEdges) {
-            const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
-            if (nf && nt) {
-                addEdgeWithNewId(orig, nf, nt);
-            }
-            else if (nf && !nt) {
-                if (originalExistingNodeIds.has(orig.to))
-                    addEdgeWithNewId(orig, nf, orig.to);
-            }
-            else if (!nf && nt) {
-                if (originalExistingNodeIds.has(orig.from))
-                    addEdgeWithNewId(orig, orig.from, nt);
-            }
-            else {
-                if (originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)) {
-                    addEdgeWithNewId(orig, orig.from, orig.to);
-                }
-            }
-        }
+        addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
     }
     if (newNodes.length)
         state.nodes.push(...newNodes);
