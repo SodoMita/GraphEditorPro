@@ -675,6 +675,13 @@
        which can shrink to almost nothing when the matrix and edge list are
        both enabled. */
     @media (max-width:950px) and (orientation:portrait){
+      /* The lifted tool rows are viewport-fixed and rise with the sheet; on a
+         short phone (matrix and edge list enabled) they can reach above the
+         canvas into the app bar. The app bar must always outrank them in
+         portrait — 35 clears the rows (31) and the sheet (30) while staying
+         below the presets overlay (60), toasts (70), dialogs (90) and the
+         export modal (100). */
+      .appbar{z-index:35}
       .canvas-wrap.sheet-open .mode-fab{position:fixed; bottom:calc(var(--sheet-h, 0px) + 12px); z-index:31}
       .canvas-wrap.sheet-open .sel-tools,
       .canvas-wrap.sheet-open .edge-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 68px); z-index:31}
