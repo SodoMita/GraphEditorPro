@@ -1352,7 +1352,7 @@
                     <input id="customAttributeId" type="text" maxlength="128" required autocomplete="off" />
                   </label>
                   <label class="field col" for="customAttributeScope"><span data-i18n="attribute_scope">Applies to</span>
-                    <select id="customAttributeScope"><option value="graph" data-i18n="scope_graph">Graph</option><option value="node" data-i18n="scope_node">Node</option><option value="edge" data-i18n="scope_edge">Edge</option></select>
+                    <select id="customAttributeScope"><option value="graph" data-i18n="scope_graph">Graph</option><option value="node" data-i18n="scope_node">Node</option><option value="edge" data-i18n="scope_edge">Edge</option><option value="all" data-i18n="scope_all">All (graph, node, edge)</option></select>
                   </label>
                   <label class="field col" for="customAttributeType"><span data-i18n="attribute_type">Type</span>
                     <select id="customAttributeType"><option value="boolean">boolean</option><option value="int">int</option><option value="long">long</option><option value="float">float</option><option value="double">double</option><option value="string">string</option></select>
@@ -1989,13 +1989,14 @@ const I18N = {
         'algo_output_init': { en: 'Create a graph, choose a start node, then run an algorithm.', ru: 'Создайте граф, выберите стартовый узел, затем запустите алгоритм.' },
         // --- Data tab ---
         'custom_attributes': { en: 'Custom attributes', ru: 'Пользовательские атрибуты' },
-        'custom_attributes_help': { en: 'Define GraphML attributes for the graph, nodes, or edges.', ru: 'Определите атрибуты GraphML для графа, узлов или рёбер.' },
+        'custom_attributes_help': { en: 'Define GraphML attributes for the graph, nodes, edges, or all of them.', ru: 'Определите атрибуты GraphML для графа, узлов, рёбер или всех сразу.' },
         'attribute_id': { en: 'Attribute ID (required)', ru: 'ID атрибута (обязательно)' },
         'attribute_scope': { en: 'Applies to', ru: 'Объект' },
         'attribute_type': { en: 'Type', ru: 'Тип' },
         'scope_graph': { en: 'Graph', ru: 'Граф' },
         'scope_node': { en: 'Node', ru: 'Узел' },
         'scope_edge': { en: 'Edge', ru: 'Ребро' },
+        'scope_all': { en: 'All (graph, node, edge)', ru: 'Все (граф, узлы, рёбра)' },
         'add_attribute': { en: 'Add attribute', ru: 'Добавить атрибут' },
         'save_attribute': { en: 'Save', ru: 'Сохранить' },
         'attribute_id_empty': { en: 'Attribute ID cannot be empty.', ru: 'ID атрибута не может быть пустым.' },
@@ -3324,8 +3325,16 @@ function sanitizeCustomValues(input, typeById) {
 function formatCustomValue(value) {
     return typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value);
 }
+// A definition applies to a scope when it is registered for exactly that
+// scope — or for 'all', the mirror of GraphML for="all": one definition
+// covering graph, node and edge, whose values are stored per scope under
+// the same id. Every scope-filtered reader of definitions goes through
+// this helper so an 'all' definition cannot be forgotten somewhere.
+function defAppliesTo(attribute, scope) {
+    return attribute?.scope === scope || attribute?.scope === 'all';
+}
 function definedCustomAttributes(scope) {
-    return state.customAttributes.filter(attribute => attribute.scope === scope);
+    return state.customAttributes.filter(attribute => defAppliesTo(attribute, scope));
 }
 function customValueOf(target, id) {
     const store = customStoreOf(target);
@@ -3395,9 +3404,21 @@ function customValueStoreRefs() {
 //   node/edge -> graph : N values cannot collapse to 1 — the values are
 //                        discarded after explicit confirmation;
 //   node <-> edge      : values belong to the old entity type — same
-//                        confirmed-discard treatment. (Values are always one
-//                        undo step with the definition edit.)
+//                        confirmed-discard treatment;
+//   any scope -> 'all'  : grow-only — the existing values stay where they
+//                        are (each store keyed by the same id), nothing is
+//                        moved or discarded, no confirmation;
+//   'all' -> scope      : narrowing — the stores of the scopes that lose
+//                        the definition hold values with nowhere to show;
+//                        they are discarded after explicit confirmation.
+//                        (Values are always one undo step with the edit.)
+// 'all' = every scope holds its own values under the same id — the count is
+// the sum. Callers pass the exact scope to count/discard; the UI passes the
+// lost scopes of a narrowing edit one at a time.
 function countCustomAttributeValues(id, scope) {
+    if (scope === 'all') {
+        return countCustomAttributeValues(id, 'graph') + countCustomAttributeValues(id, 'node') + countCustomAttributeValues(id, 'edge');
+    }
     let count = 0;
     if (scope === 'graph') {
         if (isRecord(state.graphCustom) && Object.prototype.hasOwnProperty.call(state.graphCustom, id))
@@ -3437,6 +3458,11 @@ function promoteGraphCustomAttribute(id, scope) {
     delete state.graphCustom[id];
 }
 function discardCustomAttributeValues(id, scope) {
+    if (scope === 'all') {
+        for (const s of ['graph', 'node', 'edge'])
+            discardCustomAttributeValues(id, s);
+        return;
+    }
     if (scope === 'graph') {
         unsetCustomValue('graph', id);
         return;
@@ -3564,7 +3590,7 @@ function wireCustomProps(host, scope, targets, multi) {
     host.querySelectorAll(`.custom-props[data-scope="${scope}"] .custom-prop-input`).forEach(input => {
         input.addEventListener('change', () => {
             const id = input.getAttribute('data-custom-attribute') || '';
-            const def = state.customAttributes.find(attribute => attribute.id === id && attribute.scope === scope);
+            const def = state.customAttributes.find(attribute => attribute.id === id && defAppliesTo(attribute, scope));
             if (!def)
                 return;
             const result = applyCustomPropValue(def, targets, String(input.value ?? ''), multi);
@@ -3610,7 +3636,7 @@ function sanitizeState(input) {
     const customAttributes = (Array.isArray(source.customAttributes) ? source.customAttributes : [])
         .slice(0, CUSTOM_DEFINITIONS_MAX).filter(isRecord).map(attribute => {
         const id = String(attribute.id ?? '').trim().slice(0, 128);
-        const scope = ['graph', 'node', 'edge'].includes(String(attribute.scope)) ? attribute.scope : null;
+        const scope = ['graph', 'node', 'edge', 'all'].includes(String(attribute.scope)) ? attribute.scope : null;
         const type = customAttributeTypes.includes(String(attribute.type)) ? String(attribute.type) : 'string';
         if (!id || !scope)
             return null;
@@ -3631,9 +3657,10 @@ function sanitizeState(input) {
         return out;
     }).filter(Boolean);
     const customAttributeTypeById = customAttributeTypeMap(customAttributes);
-    // New-element defaults sanitize against their own scope's definitions only.
-    const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'node'));
-    const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => a.scope === 'edge'));
+    // New-element defaults sanitize against definitions applicable to their
+    // scope — which includes 'all' definitions.
+    const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'node')));
+    const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'edge')));
     const usedNodeIds = new Set();
     const nodeReferences = new Map();
     const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, 3000).filter(isRecord) : [];
@@ -8256,7 +8283,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         .filter(isRecord)
         .map(def => {
         const id = String(def.id ?? '').trim().slice(0, 128);
-        const scope = ['graph', 'node', 'edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
+        const scope = ['graph', 'node', 'edge', 'all'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
         if (!id)
             return null;
@@ -8268,6 +8295,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
     const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
     const existingPairs = new Set(defsByPair.keys());
     const carriedByPair = new Map(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedScopeById = new Map(carriedDefs.map(def => [def.id, def.scope]));
     const carriedTypeById = new Map(carriedDefs.map(def => [def.id, def.type]));
     // Ids that may not be handed out during this paste. A pair's own carried
     // id stays available for its own direct creation; every existing
@@ -8381,8 +8409,13 @@ function pasteClipboardInternal(fromSystemClipboard) {
         for (const entity of entities) {
             if (!isRecord(entity?.custom))
                 continue;
-            for (const key of Object.keys(entity.custom))
-                ensurePair(key, scope);
+            for (const key of Object.keys(entity.custom)) {
+                // A carried 'all' definition owns its values on every scope — an
+                // entity value keyed by it must resolve against the 'all' pair,
+                // never mint a competing per-scope twin. Other carried scopes keep
+                // today's per-scope handling (a cross-scope id forks losslessly).
+                ensurePair(key, carriedScopeById.get(key) === 'all' ? 'all' : scope);
+            }
         }
     };
     ensureEntityPairs(data.nodes, 'node');
@@ -8397,7 +8430,9 @@ function pasteClipboardInternal(fromSystemClipboard) {
                 return;
             const out = Object.create(null);
             for (const [key, value] of Object.entries(entity.custom)) {
-                out[renameByPair.get(key + '|' + scope) || key] = value;
+                // Values of an all-scope definition are keyed under 'all|' — look
+                // there before the per-scope entry.
+                out[renameByPair.get(key + '|all') || renameByPair.get(key + '|' + scope) || key] = value;
             }
             entity.custom = out;
         };
@@ -11670,9 +11705,10 @@ function exportGraphmlText() {
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
     // User-defined custom attribute values (definitions are emitted as <key> above).
-    const customGraphDefs = state.customAttributes.filter(a => a.scope === 'graph');
-    const customNodeDefs = state.customAttributes.filter(a => a.scope === 'node');
-    const customEdgeDefs = state.customAttributes.filter(a => a.scope === 'edge');
+    // 'all' definitions apply on every scope and write their values everywhere.
+    const customGraphDefs = state.customAttributes.filter(a => defAppliesTo(a, 'graph'));
+    const customNodeDefs = state.customAttributes.filter(a => defAppliesTo(a, 'node'));
+    const customEdgeDefs = state.customAttributes.filter(a => defAppliesTo(a, 'edge'));
     if (isRecord(state.graphCustom)) {
         for (const attr of customGraphDefs) {
             if (!Object.prototype.hasOwnProperty.call(state.graphCustom, attr.id))
@@ -11955,8 +11991,11 @@ function remapImportedCustomValues(data, renameByPair) {
         if (!isRecord(map))
             return map;
         const out = Object.create(null);
-        for (const key of Object.keys(map))
-            out[renameByPair.get(scope + '|' + key) || key] = map[key];
+        for (const key of Object.keys(map)) {
+            // A carried definition may resolve under its own scope or as 'all' —
+            // check both, the exact scope first.
+            out[renameByPair.get(scope + '|' + key) || renameByPair.get('all|' + key) || key] = map[key];
+        }
         return out;
     };
     const remapEntity = (entity, scope) => isRecord(entity) && isRecord(entity.custom) ? { ...entity, custom: remapCustom(entity.custom, scope) } : entity;
@@ -11978,7 +12017,7 @@ function remapImportedCustomValues(data, renameByPair) {
 function capCustomDefinitions(defs, existingDefs) {
     const existing = Array.isArray(existingDefs) ? existingDefs : [];
     let budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
-    const scopeOf = (a) => ['graph', 'node', 'edge'].includes(String(a?.scope)) ? String(a?.scope) : 'node';
+    const scopeOf = (a) => ['graph', 'node', 'edge', 'all'].includes(String(a?.scope)) ? String(a?.scope) : 'node';
     // Provenance agreement for the reuse scan. The recorded attr.name is the
     // property's identity across imports; a missing name on either side means
     // the property cannot be proven different, so it may reuse.
@@ -12823,14 +12862,16 @@ function parseGraphml(text) {
                         : 2;
         }
         if (info.isDefinition && info.keyId) {
-            // One declaration, one definition per scope its key declares AND reads
-            // as the user's property — a mixed-role for="all" key (a foreign `label`
-            // key) defines only the scopes that are not built-in; the scopes
-            // feeding built-ins stay built-ins. Definitions cannot share an id
-            // (the load path and the delete semantics key on id alone), so the
-            // widest scope in KEY_SCOPES order claims the bare id first and the
-            // rest mint afresh; the attr.name is recorded on each so a re-import
-            // resolves back to them.
+            // One declaration defines on every scope its key declares AND reads
+            // as the user's property — a mixed-role for="all" key (a foreign
+            // `label` key) defines only the scopes that are not built-in; the
+            // scopes feeding built-ins stay built-ins. A declaration that
+            // defines on every scope collapses to ONE 'all' definition (see
+            // below) so GraphML's for="all" round-trips 1:1. Definitions cannot
+            // share an id (the load path and the delete semantics key on id
+            // alone), so the widest scope in KEY_SCOPES order claims the bare id
+            // first and the rest mint afresh; the attr.name is recorded on each
+            // so a re-import resolves back to them.
             const defEl = keyEls[index].querySelector('default');
             // Verbatim: a custom default is user data (' padded ' is not 'padded').
             // All-whitespace means unset; anything else is stored as written.
@@ -12866,6 +12907,18 @@ function parseGraphml(text) {
                     defId = uniqueCustomAttributeId(defId, taken);
                 }
                 resolvedDefIds.add(defId);
+                // A for="all" declaration whose definition applies on every scope
+                // mints ONE 'all' definition — GraphML's scope is preserved 1:1,
+                // the cap slot is spent once, and values keyed by id still land
+                // per scope. A declaration that defines only on some scopes (a
+                // mixed-role key, e.g. a foreign `label`) keeps the per-scope
+                // definitions: an 'all' definition would surface a custom editor
+                // for a name that is built-in on the other scopes.
+                if (info.forWhom === 'all' && scopesForDef.length === KEY_SCOPES.length) {
+                    customAttributes.push({ id: defId, scope: 'all', type: info.type, name: info.rawName });
+                    defBindings.push({ id: defId, scope: 'all', type: info.type, keyId: info.keyId, defaultValue });
+                    continue;
+                }
                 for (const defScope of scopesForDef) {
                     // Always record the attr.name as provenance — the import merge needs
                     // it to recognise a re-created definition across imports. The load
@@ -12933,7 +12986,7 @@ function parseGraphml(text) {
     const graphDataById = graphmlDataMapById(graph || doc);
     const graphCustom = Object.create(null);
     for (const def of defBindings) {
-        if (def.scope !== 'graph')
+        if (def.scope !== 'graph' && def.scope !== 'all')
             continue;
         const raw = graphDataById[def.keyId];
         if (raw != null && String(raw).trim() !== '') {
@@ -13115,7 +13168,7 @@ function parseGraphml(text) {
         }
         const nodeCustom = Object.create(null);
         for (const def of defBindings) {
-            if (def.scope !== 'node')
+            if (def.scope !== 'node' && def.scope !== 'all')
                 continue;
             const raw = dById[def.keyId];
             if (raw != null && String(raw).trim() !== '') {
@@ -13184,7 +13237,7 @@ function parseGraphml(text) {
         }
         const edgeCustom = Object.create(null);
         for (const def of defBindings) {
-            if (def.scope !== 'edge')
+            if (def.scope !== 'edge' && def.scope !== 'all')
                 continue;
             const raw = dById[def.keyId];
             if (raw != null && String(raw).trim() !== '') {
@@ -14628,6 +14681,7 @@ function renderCustomAttributes() {
             <option value="graph" ${attribute.scope === 'graph' ? 'selected' : ''}>${esc(I18N.t('scope_graph'))}</option>
             <option value="node" ${attribute.scope === 'node' ? 'selected' : ''}>${esc(I18N.t('scope_node'))}</option>
             <option value="edge" ${attribute.scope === 'edge' ? 'selected' : ''}>${esc(I18N.t('scope_edge'))}</option>
+            <option value="all" ${attribute.scope === 'all' ? 'selected' : ''}>${esc(I18N.t('scope_all'))}</option>
           </select></label>
           <label class="field col"><span>${esc(I18N.t('attribute_type'))}</span><select data-attribute-field="type">${CUSTOM_ATTRIBUTE_TYPES.map(type => `<option value="${type}" ${attribute.type === type ? 'selected' : ''}>${type}</option>`).join('')}</select></label>
         </div>
@@ -14659,7 +14713,11 @@ function wireUi() {
             toast(I18N.t('attribute_limit_reached'));
             return;
         }
-        state.customAttributes.push({ id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value });
+        const scopeValue = String($('#customAttributeScope').value || '');
+        const scope = ['graph', 'node', 'edge', 'all'].includes(scopeValue) ? scopeValue : 'graph';
+        const typeValue = String($('#customAttributeType').value || '');
+        const type = CUSTOM_ATTRIBUTE_TYPES.includes(typeValue) ? typeValue : 'string';
+        state.customAttributes.push({ id, scope: scope, type });
         idInput.value = '';
         renderCustomAttributes();
         renderCustomPropHosts();
@@ -14705,21 +14763,26 @@ function wireUi() {
         }
         const type = row.querySelector('[data-attribute-field="type"]').value;
         const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
-        const resolvedScope = ['graph', 'node', 'edge'].includes(scope) ? scope : 'graph';
+        const resolvedScope = ['graph', 'node', 'edge', 'all'].includes(scope) ? scope : 'graph';
         const oldScope = oldDef.scope;
         const scopeChanged = oldScope !== resolvedScope;
-        // A scope change away from a scope that holds values cannot carry them
-        // over (a node value is meaningless on an edge, and N values cannot
-        // collapse into one graph value). Graph scope is the one lossless
-        // direction (promoted below); everything else needs an explicit danger
-        // confirmation — or the whole save is aborted, values untouched.
-        if (scopeChanged && oldScope !== 'graph') {
-            const scopeValues = countCustomAttributeValues(oldId, oldScope);
-            if (scopeValues > 0) {
-                const proceed = await uiConfirm(I18N.t('attribute_scope_values', { n: scopeValues }), { danger: true, confirmLabel: I18N.t('save_attribute') });
-                if (!proceed)
-                    return; // nothing changes: values, definition and history untouched
-            }
+        // Growing into 'all' loses nothing: the definition starts applying
+        // everywhere and the existing values stay in their stores under the
+        // same id — nothing moves, nothing is discarded, no confirmation.
+        // Narrowing (or moving between single scopes) drops the stores the
+        // definition no longer covers — their values are counted and, after an
+        // explicit danger confirmation, discarded. The one lossless exception
+        // is graph -> node/edge, which promotes the graph value instead.
+        const scopesOf = (s) => s === 'all' ? ['graph', 'node', 'edge'] : [s];
+        const promote = oldScope === 'graph' && (resolvedScope === 'node' || resolvedScope === 'edge');
+        const lostScopes = scopeChanged ? scopesOf(oldScope).filter(s => !scopesOf(resolvedScope).includes(s)) : [];
+        const lostValues = lostScopes
+            .filter(s => !(promote && s === 'graph'))
+            .reduce((sum, s) => sum + countCustomAttributeValues(oldId, s), 0);
+        if (lostValues > 0) {
+            const proceed = await uiConfirm(I18N.t('attribute_scope_values', { n: lostValues }), { danger: true, confirmLabel: I18N.t('save_attribute') });
+            if (!proceed)
+                return; // nothing changes: values, definition and history untouched
         }
         // Editing something else (type, scope) must not drop the attr.name a
         // re-created definition carries — the next export would otherwise rename
@@ -14734,10 +14797,11 @@ function wireUi() {
         if (oldId !== id)
             renameCustomAttributeValues(oldId, id);
         if (scopeChanged) {
-            if (oldScope === 'graph')
+            if (promote)
                 promoteGraphCustomAttribute(id, resolvedScope);
             else
-                discardCustomAttributeValues(id, oldScope);
+                for (const s of lostScopes)
+                    discardCustomAttributeValues(id, s);
         }
         // A type change rewrites every stored value; values that cannot be
         // represented in the new type are dropped (undo restores all of them).

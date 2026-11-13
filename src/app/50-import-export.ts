@@ -481,9 +481,10 @@
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
     // User-defined custom attribute values (definitions are emitted as <key> above).
-    const customGraphDefs = state.customAttributes.filter(a => a.scope === 'graph');
-    const customNodeDefs = state.customAttributes.filter(a => a.scope === 'node');
-    const customEdgeDefs = state.customAttributes.filter(a => a.scope === 'edge');
+    // 'all' definitions apply on every scope and write their values everywhere.
+    const customGraphDefs = state.customAttributes.filter(a => defAppliesTo(a, 'graph'));
+    const customNodeDefs = state.customAttributes.filter(a => defAppliesTo(a, 'node'));
+    const customEdgeDefs = state.customAttributes.filter(a => defAppliesTo(a, 'edge'));
     if(isRecord(state.graphCustom)){
       for(const attr of customGraphDefs){
         if(!Object.prototype.hasOwnProperty.call(state.graphCustom, attr.id)) continue;
@@ -739,7 +740,11 @@
     const remapCustom = (map, scope) => {
       if(!isRecord(map)) return map;
       const out = Object.create(null);
-      for(const key of Object.keys(map)) out[renameByPair.get(scope + '|' + key) || key] = map[key];
+      for(const key of Object.keys(map)){
+        // A carried definition may resolve under its own scope or as 'all' —
+        // check both, the exact scope first.
+        out[renameByPair.get(scope + '|' + key) || renameByPair.get('all|' + key) || key] = map[key];
+      }
       return out;
     };
     const remapEntity = (entity, scope) =>
@@ -760,7 +765,7 @@
   function capCustomDefinitions(defs, existingDefs){
     const existing = Array.isArray(existingDefs) ? existingDefs : [];
     let budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
-    const scopeOf = (a: AnyRecord | null | undefined) => ['graph','node','edge'].includes(String(a?.scope)) ? String(a?.scope) : 'node';
+    const scopeOf = (a: AnyRecord | null | undefined) => ['graph','node','edge','all'].includes(String(a?.scope)) ? String(a?.scope) : 'node';
     // Provenance agreement for the reuse scan. The recorded attr.name is the
     // property's identity across imports; a missing name on either side means
     // the property cannot be proven different, so it may reuse.
@@ -1325,7 +1330,7 @@
     // What this import learned about its own definitions: which raw key id
     // carried each property. Values and key defaults are bound through this,
     // so a re-created definition still collects its <data> values.
-    const defBindings: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; keyId: string; defaultValue?: CustomAttributeValue }[] = [];
+    const defBindings: { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; keyId: string; defaultValue?: CustomAttributeValue }[] = [];
     // ---- GraphML keys: one explicit model, then readers ----
     //
     // Everything about <key> is decided once, here, into `keyRoles`. The readers
@@ -1494,14 +1499,16 @@
           : 2;
       }
       if(info.isDefinition && info.keyId){
-        // One declaration, one definition per scope its key declares AND reads
-        // as the user's property — a mixed-role for="all" key (a foreign `label`
-        // key) defines only the scopes that are not built-in; the scopes
-        // feeding built-ins stay built-ins. Definitions cannot share an id
-        // (the load path and the delete semantics key on id alone), so the
-        // widest scope in KEY_SCOPES order claims the bare id first and the
-        // rest mint afresh; the attr.name is recorded on each so a re-import
-        // resolves back to them.
+        // One declaration defines on every scope its key declares AND reads
+        // as the user's property — a mixed-role for="all" key (a foreign
+        // `label` key) defines only the scopes that are not built-in; the
+        // scopes feeding built-ins stay built-ins. A declaration that
+        // defines on every scope collapses to ONE 'all' definition (see
+        // below) so GraphML's for="all" round-trips 1:1. Definitions cannot
+        // share an id (the load path and the delete semantics key on id
+        // alone), so the widest scope in KEY_SCOPES order claims the bare id
+        // first and the rest mint afresh; the attr.name is recorded on each
+        // so a re-import resolves back to them.
         const defEl = keyEls[index].querySelector('default');
         // Verbatim: a custom default is user data (' padded ' is not 'padded').
         // All-whitespace means unset; anything else is stored as written.
@@ -1533,6 +1540,18 @@
             defId = uniqueCustomAttributeId(defId, taken);
           }
           resolvedDefIds.add(defId);
+          // A for="all" declaration whose definition applies on every scope
+          // mints ONE 'all' definition — GraphML's scope is preserved 1:1,
+          // the cap slot is spent once, and values keyed by id still land
+          // per scope. A declaration that defines only on some scopes (a
+          // mixed-role key, e.g. a foreign `label`) keeps the per-scope
+          // definitions: an 'all' definition would surface a custom editor
+          // for a name that is built-in on the other scopes.
+          if(info.forWhom === 'all' && scopesForDef.length === KEY_SCOPES.length){
+            customAttributes.push({id: defId, scope: 'all', type: info.type, name: info.rawName} as GraphState['customAttributes'][number]);
+            defBindings.push({id: defId, scope: 'all', type: info.type, keyId: info.keyId, defaultValue});
+            continue;
+          }
           for(const defScope of scopesForDef){
             // Always record the attr.name as provenance — the import merge needs
             // it to recognise a re-created definition across imports. The load
@@ -1595,7 +1614,7 @@
     const graphDataById = graphmlDataMapById(graph || doc);
     const graphCustom: AnyRecord = Object.create(null);
     for(const def of defBindings){
-      if(def.scope !== 'graph') continue;
+      if(def.scope !== 'graph' && def.scope !== 'all') continue;
       const raw = graphDataById[def.keyId];
       if(raw != null && String(raw).trim() !== ''){ graphCustom[def.id] = coerceCustomValue(raw, def.type); }
       else if(def.defaultValue !== undefined){ graphCustom[def.id] = def.defaultValue; }
@@ -1751,7 +1770,7 @@
       if(nlf){ const f = parseQvgeFont(nlf); if(f){ node.labelFont = f.family; if(f.size) node.labelSize = f.size; } }
       const nodeCustom: AnyRecord = Object.create(null);
       for(const def of defBindings){
-        if(def.scope !== 'node') continue;
+        if(def.scope !== 'node' && def.scope !== 'all') continue;
         const raw = dById[def.keyId];
         if(raw != null && String(raw).trim() !== ''){ nodeCustom[def.id] = coerceCustomValue(raw, def.type); }
         else if(def.defaultValue !== undefined){ nodeCustom[def.id] = def.defaultValue; }
@@ -1800,7 +1819,7 @@
       if(elf){ const f = parseQvgeFont(elf); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }
       const edgeCustom: AnyRecord = Object.create(null);
       for(const def of defBindings){
-        if(def.scope !== 'edge') continue;
+        if(def.scope !== 'edge' && def.scope !== 'all') continue;
         const raw = dById[def.keyId];
         if(raw != null && String(raw).trim() !== ''){ edgeCustom[def.id] = coerceCustomValue(raw, def.type); }
         else if(def.defaultValue !== undefined){ edgeCustom[def.id] = def.defaultValue; }

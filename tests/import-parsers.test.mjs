@@ -1104,10 +1104,10 @@ test('appending a GraphML key whose id matches an existing definition of another
 
 test('GraphML custom keys for="all" and with no for import into every scope', async () => {
   // A key declared without `for` (or explicitly for "all") is one declaration
-  // but three scopes of data — dropping the node and edge values on import is
-  // silent data loss while the toast says success. The definitions cannot
-  // share an id, so the widest scope claims it and the rest mint fresh ids;
-  // every definition records the property name so a re-import resolves back.
+  // covering every scope — dropping the node and edge values on import is
+  // silent data loss while the toast says success. GraphML's scope is kept
+  // 1:1 in the stored document: ONE definition with scope 'all' carries the
+  // property on every scope under the same id.
   const saved = { title: 'keep-allkeys',
     nodes: [{id:'n1', label:'One', x:0, y:0, order:0}],
     edges: [{ id:'e1', from:'n1', to:'n1', weight:'', label:'', directed:true }] };
@@ -1129,19 +1129,20 @@ test('GraphML custom keys for="all" and with no for import into every scope', as
   const byKey = (g, name, scope) => g.customAttributes.find(d => (d.name ?? d.id) === name && d.scope === scope);
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const graph = exportedGraph(document);
-  for(const scope of ['graph', 'node', 'edge']){
-    assert.ok(byKey(graph, 'mood', scope), `mood has a ${scope}-scope definition`);
-    assert.ok(byKey(graph, 'flag', scope), `flag has a ${scope}-scope definition`);
+  for(const name of ['mood', 'flag']){
+    assert.ok(byKey(graph, name, 'all'), `${name} has an all-scope definition`);
   }
-  assert.equal(graph.customAttributes.length, 6, 'one definition per key per scope');
+  assert.equal(graph.customAttributes.length, 2, 'one definition per key, scope all');
   assert.equal(graph.graphCustom?.mood, 'calm', 'graph value imported');
   assert.equal(graph.graphCustom?.flag, true, 'graph boolean coerced');
+  const allMood = byKey(graph, 'mood', 'all').id;
+  const allFlag = byKey(graph, 'flag', 'all').id;
   const n2 = graph.nodes.find(n => n.id !== 'n1');
-  assert.equal(n2.custom?.[byKey(graph, 'mood', 'node').id], 'happy', 'node value imported');
-  assert.equal(n2.custom?.[byKey(graph, 'flag', 'node').id], false, 'node boolean coerced');
+  assert.equal(n2.custom?.[allMood], 'happy', 'node value imported under the shared id');
+  assert.equal(n2.custom?.[allFlag], false, 'node boolean coerced');
   const e2 = graph.edges.find(e => e.id !== 'e1');
-  assert.equal(e2.custom?.[byKey(graph, 'flag', 'edge').id], true, 'edge value imported');
-  assert.equal(e2.custom?.[byKey(graph, 'mood', 'edge').id], 'alright', 'the for="all" key default applies where no value is given');
+  assert.equal(e2.custom?.[allFlag], true, 'edge value imported');
+  assert.equal(e2.custom?.[allMood], 'alright', 'the for="all" key default applies where no value is given');
   assert.match(toasts(document), /imported/i);
   assert.deepEqual(errors.map(e => e.message), []);
   // Re-appending the same file must not grow the definition set: the
@@ -1149,7 +1150,7 @@ test('GraphML custom keys for="all" and with no for import into every scope', as
   document.querySelector('#optImportAppend').checked = true;
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const graph2 = exportedGraph(document);
-  assert.equal(graph2.customAttributes.length, 6, 're-importing reuses the expanded definitions');
+  assert.equal(graph2.customAttributes.length, 2, 're-importing reuses the all-scope definitions');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
@@ -1245,7 +1246,7 @@ test('replacing the same for="all" GraphML twice keeps recorded names, so a late
   await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace
   const first = exportedGraph(document);
   const idsBefore = first.customAttributes.map(d => d.id + ':' + d.scope).sort();
-  assert.ok(byKey(first, 'mood', 'edge'), 'the for="all" key expands to an edge-scope definition');
+  assert.ok(byKey(first, 'mood', 'all'), 'the for="all" key mints an all-scope definition');
   assert.ok(first.customAttributes.every(d => (d.name ?? d.id) === 'mood' || (d.name ?? d.id) === 'flag'), 'every definition records the property name it was made from');
   assert.equal(first.graphCustom?.mood, 'calm', 'the graph value is imported');
   await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace again
@@ -1256,11 +1257,11 @@ test('replacing the same for="all" GraphML twice keeps recorded names, so a late
   await paste(document, dom.window, '#btnPasteGraphml', graphml);   // append
   const third = exportedGraph(document);
   assert.equal(third.customAttributes.length, idsBefore.length, 'the append creates no new definitions');
-  const edgeMood = byKey(third, 'mood', 'edge');
+  const edgeMood = byKey(third, 'mood', 'all');
   const importedEdges = third.edges.filter(e => e.custom);
   assert.ok(importedEdges.length >= 1, 'the appended edge carries its custom values');
   for(const edge of importedEdges){
-    assert.equal(edge.custom?.[edgeMood.id], 'alright', 'the edge value binds the same edge-scope definition (the key default applies)');
+    assert.equal(edge.custom?.[edgeMood.id], 'alright', 'the edge value binds the same all-scope definition (the key default applies)');
   }
   assert.ok(third.graphCustom?.mood !== undefined, 'the graph value is retained');
   assert.deepEqual(errors.map(e => e.message), []);
@@ -1943,10 +1944,10 @@ test('a foreign file reusing our key ids for other attributes keeps its definiti
 });
 
 test('a key declared without `for` is kept, not dropped (GraphML default is "all")', async () => {
-  // `for` is optional and defaults to "all". The editor models three concrete
-  // scopes, so the declaration expands into one definition per scope — every
-  // id distinct, all recording the property name — instead of being dropped
-  // or collapsed onto the graph and losing the rest of the data.
+  // `for` is optional and defaults to "all". The declaration imports as ONE
+  // definition with scope 'all' — GraphML's scope kept 1:1 — which applies
+  // on every scope instead of being dropped or collapsed onto the graph and
+  // losing the rest of the data.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
@@ -1961,15 +1962,15 @@ test('a key declared without `for` is kept, not dropped (GraphML default is "all
     id: row.querySelector('[data-attribute-field="id"]').value,
     scope: row.querySelector('[data-attribute-field="scope"]').value,
   }));
-  assert.deepEqual(rows, [{id:'tag', scope:'graph'}, {id:'tag_1', scope:'node'}, {id:'tag_2', scope:'edge'}],
-    'the definition expands to every scope it declares');
+  assert.deepEqual(rows, [{id:'tag', scope:'all'}],
+    'the definition imports as a single all-scope definition');
 
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
   await paste(document, dom.window, '#btnPasteGraphml', exported);
   rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => row.querySelector('[data-attribute-field="id"]').value);
-  assert.deepEqual(rows, ['tag', 'tag_1', 'tag_2'], 'and it round-trips');
+  assert.deepEqual(rows, ['tag'], 'and it round-trips');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
@@ -2980,6 +2981,174 @@ test('GraphML round-trips custom string values verbatim, spaces included', async
   const withPad = exportedGraph(document);
   const p1 = withPad.nodes.find(n => n.id === 'p1');
   assert.equal(p1?.custom?.pad, '  padded  ', 'the padded default is stored verbatim');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// === The multi-scope ('all') definition model ===
+
+test('pasting a payload carrying an all-scope definition does not fork a per-scope twin', async () => {
+  // The entity values are keyed by the definition's id; the payload declares
+  // it once, scope 'all'. The paste must resolve against the 'all|' pair —
+  // minting a node-scope twin would silently move the values off the shared id.
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { metric: 'm' } }],
+    edges: [{ id: 'c2', from: 'c1', to: 'c1', directed: true, custom: { metric: 'e' } }],
+    externalEdges: [],
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }] });
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes.filter(d => d.id === 'metric');
+  assert.equal(defs.length, 1, 'exactly one definition is created for the carried all-scope definition');
+  assert.equal(defs[0].scope, 'all', 'and it is an all-scope definition');
+  const node = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(node.custom?.metric, 'm', 'the node value binds the shared id');
+  const edge = graph.edges.find(e => e.from === node.id);
+  assert.equal(edge.custom?.metric, 'e', 'the edge value binds the same shared id');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('pasting an all-scope definition whose id is taken mints an all-scope twin, never a per-scope one', async () => {
+  const saved = { title: 'all-twin', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'metric', scope: 'graph', type: 'string' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { metric: 'm' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const alls = graph.customAttributes.filter(d => d.scope === 'all');
+  assert.equal(alls.length, 1, 'one fresh all-scope definition is minted');
+  assert.equal(alls[0].origin, 'metric', 'it records the carried id as its origin');
+  const node = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(node.custom?.[alls[0].id], 'm', 'the carried value binds the fresh all-scope id');
+  assert.equal(node.custom?.metric, undefined, 'and never the taken graph-scope id');
+  assert.equal(graph.customAttributes.filter(d => d.scope === 'graph').length, 1, 'the original graph definition is untouched');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an all-scope definition exports for="all" and re-imports as all-scope, values intact', async () => {
+  const saved = { title: 'all-roundtrip',
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { metric: 'node-value' } }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  // The stored 'all' scope survives the load path.
+  assert.equal(exportedGraph(document).customAttributes[0]?.scope, 'all', 'the saved document loads with an all-scope definition');
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const graphml = modal.querySelector('textarea').value;
+  modal.remove();
+  assert.match(graphml, /<key id="metric" for="all"[^>]*qvge:kind="custom-attribute"/, 'the definition exports for="all"');
+  assert.match(graphml, /<data key="metric">graph-value<\/data>/, 'the graph value is written');
+  assert.match(graphml, /<data key="metric">node-value<\/data>/, 'the node value is written');
+  // Replace-import the export: one all-scope definition comes back.
+  document.querySelector('#btnExportGraphml').click();
+  const modal2 = document.querySelector('.export-modal');
+  modal2.querySelector('textarea').value = graphml;
+  modal2.querySelector('#expImportBtn').click();
+  await settle(window, 60);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes.filter(d => d.id === 'metric');
+  assert.equal(defs.length, 1, 'a single definition survives the round-trip');
+  assert.equal(defs[0].scope, 'all', 'and it comes back all-scope');
+  assert.equal(graph.graphCustom?.metric, 'graph-value', 'the graph value survives');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.metric, 'node-value', 'the node value survives');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('growing a graph definition to all is additive — no confirmation, the value stays graph-level', async () => {
+  const saved = { title: 'grow-to-all',
+    customAttributes: [{ id: 'metric', scope: 'graph', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0 }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
+  assert.equal(rowSelect()?.value, 'graph');
+  rowSelect().value = 'all';
+  document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
+  await settle(window, 60);
+  assert.equal(document.querySelector('.app-dialog'), null, 'no confirmation is asked when growing to all');
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'all', 'the definition is all-scope now');
+  assert.equal(graph.graphCustom?.metric, 'graph-value', 'and the graph value stayed where it was');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('narrowing an all definition asks for confirmation and drops only the lost scopes', async () => {
+  const saved = { title: 'narrow-from-all',
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { metric: 'node-value' } }],
+    edges: [{ id: 'e1', from: 'n1', to: 'n1', directed: true, custom: { metric: 'edge-value' } }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
+  assert.equal(rowSelect()?.value, 'all');
+  rowSelect().value = 'node';
+  document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
+  await settle(window, 60);
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'narrowing out of all asks for a danger confirmation');
+  dialog.querySelector('[data-dialog-ok]').click();
+  await settle(window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'node', 'the definition is node-scope now');
+  assert.equal(graph.graphCustom?.metric, undefined, 'the graph value is discarded');
+  assert.equal(graph.nodes[0].custom?.metric, 'node-value', 'the node value — still applicable — is kept');
+  assert.equal(graph.edges[0].custom?.metric, undefined, 'the edge value is discarded');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('cancelling the narrowing confirmation leaves every value untouched', async () => {
+  const saved = { title: 'narrow-cancel',
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { metric: 'node-value' } }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
+  rowSelect().value = 'node';
+  document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
+  await settle(window, 60);
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'narrowing asks for confirmation');
+  dialog.querySelector('[data-dialog-cancel]').click();
+  await settle(window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'all', 'the definition stays all-scope');
+  assert.equal(graph.graphCustom?.metric, 'graph-value', 'the graph value is kept');
+  assert.equal(graph.nodes[0].custom?.metric, 'node-value', 'the node value is kept');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

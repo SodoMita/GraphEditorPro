@@ -295,13 +295,14 @@ const I18N: I18nService = {
 
     // --- Data tab ---
     'custom_attributes': { en: 'Custom attributes', ru: 'Пользовательские атрибуты' },
-    'custom_attributes_help': { en: 'Define GraphML attributes for the graph, nodes, or edges.', ru: 'Определите атрибуты GraphML для графа, узлов или рёбер.' },
+    'custom_attributes_help': { en: 'Define GraphML attributes for the graph, nodes, edges, or all of them.', ru: 'Определите атрибуты GraphML для графа, узлов, рёбер или всех сразу.' },
     'attribute_id': { en: 'Attribute ID (required)', ru: 'ID атрибута (обязательно)' },
     'attribute_scope': { en: 'Applies to', ru: 'Объект' },
     'attribute_type': { en: 'Type', ru: 'Тип' },
     'scope_graph': { en: 'Graph', ru: 'Граф' },
     'scope_node': { en: 'Node', ru: 'Узел' },
     'scope_edge': { en: 'Edge', ru: 'Ребро' },
+    'scope_all': { en: 'All (graph, node, edge)', ru: 'Все (граф, узлы, рёбра)' },
     'add_attribute': { en: 'Add attribute', ru: 'Добавить атрибут' },
     'save_attribute': { en: 'Save', ru: 'Сохранить' },
     'attribute_id_empty': { en: 'Attribute ID cannot be empty.', ru: 'ID атрибута не может быть пустым.' },

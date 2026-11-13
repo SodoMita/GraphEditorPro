@@ -912,17 +912,18 @@
       .filter(isRecord)
       .map(def => {
         const id = String(def.id ?? '').trim().slice(0, 128);
-        const scope = ['graph','node','edge'].includes(String(def.scope)) ? String(def.scope) : 'node';
+        const scope = ['graph','node','edge','all'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
         if(!id) return null;
         const name = String(def.name ?? '').trim().slice(0, 128);
         const origin = String((def as AnyRecord).origin ?? '').trim().slice(0, 128);
-        return { id, scope: scope as 'graph' | 'node' | 'edge', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
+        return { id, scope: scope as 'graph' | 'node' | 'edge' | 'all', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
       })
-      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string; origin?: string } => def !== null);
+      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string } => def !== null);
     const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
     const existingPairs = new Set(defsByPair.keys());
-    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string; origin?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedScopeById = new Map<string, 'graph' | 'node' | 'edge' | 'all'>(carriedDefs.map(def => [def.id, def.scope]));
     const carriedTypeById = new Map<string, string>(carriedDefs.map(def => [def.id, def.type]));
     // Ids that may not be handed out during this paste. A pair's own carried
     // id stays available for its own direct creation; every existing
@@ -940,8 +941,8 @@
     // the same payload would mint a duplicate.
     const handledPairs = new Set<string>();
     const renameByPair = new Map<string, string>();
-    const defsToAdd: { id: string; scope: 'node' | 'edge'; type: string; name?: string; origin?: string }[] = [];
-    const addDef = (newId: string, scope: 'node' | 'edge', type: string, carriedId: string, provenance?: { name: string }) => {
+    const defsToAdd: { id: string; scope: 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }[] = [];
+    const addDef = (newId: string, scope: 'node' | 'edge' | 'all', type: string, carriedId: string, provenance?: { name: string }) => {
       defsToAdd.push({ id: newId, scope, type, origin: carriedId, ...provenance });
       existingPairs.add(newId + '|' + scope);
       createdIds.add(newId);
@@ -958,7 +959,7 @@
       if(!existingName && !carriedName) return true; // both unrecorded — same property
       return existingName === carriedName;
     };
-    const ensurePair = (id: string, scope: 'node' | 'edge') => {
+    const ensurePair = (id: string, scope: 'node' | 'edge' | 'all') => {
       const key = id + '|' + scope;
       if(failedPairs.has(key) || handledPairs.has(key)) return;
       if(existingPairs.has(key) && provenanceMatches(defsByPair.get(key), carriedByPair.get(key))) {
@@ -1028,7 +1029,13 @@
     const ensureEntityPairs = (entities: AnyRecord[], scope: 'node' | 'edge') => {
       for(const entity of entities){
         if(!isRecord(entity?.custom)) continue;
-        for(const key of Object.keys(entity.custom)) ensurePair(key, scope);
+        for(const key of Object.keys(entity.custom)){
+          // A carried 'all' definition owns its values on every scope — an
+          // entity value keyed by it must resolve against the 'all' pair,
+          // never mint a competing per-scope twin. Other carried scopes keep
+          // today's per-scope handling (a cross-scope id forks losslessly).
+          ensurePair(key, carriedScopeById.get(key) === 'all' ? 'all' : scope);
+        }
       }
     };
     ensureEntityPairs(data.nodes, 'node');
@@ -1041,7 +1048,9 @@
         if(!isRecord(entity?.custom)) return;
         const out: Record<string, CustomAttributeValue> = Object.create(null);
         for(const [key, value] of Object.entries(entity.custom)){
-          out[renameByPair.get(key + '|' + scope) || key] = value as CustomAttributeValue;
+          // Values of an all-scope definition are keyed under 'all|' — look
+          // there before the per-scope entry.
+          out[renameByPair.get(key + '|all') || renameByPair.get(key + '|' + scope) || key] = value as CustomAttributeValue;
         }
         entity.custom = out;
       };

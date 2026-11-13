@@ -10,7 +10,11 @@
       // built-in key of that name.
       if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       if(state.customAttributes.length >= CUSTOM_DEFINITIONS_MAX){ toast(I18N.t('attribute_limit_reached')); return; }
-      state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
+      const scopeValue = String($('#customAttributeScope').value || '');
+      const scope = ['graph','node','edge','all'].includes(scopeValue) ? scopeValue : 'graph';
+      const typeValue = String($('#customAttributeType').value || '');
+      const type = CUSTOM_ATTRIBUTE_TYPES.includes(typeValue) ? typeValue : 'string';
+      state.customAttributes.push({id, scope: scope as GraphState['customAttributes'][number]['scope'], type});
       idInput.value = '';
       renderCustomAttributes(); renderCustomPropHosts(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
     });
@@ -37,20 +41,25 @@
       if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
       const type = row.querySelector('[data-attribute-field="type"]').value;
       const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
-      const resolvedScope = ['graph','node','edge'].includes(scope) ? scope : 'graph';
+      const resolvedScope = ['graph','node','edge','all'].includes(scope) ? scope : 'graph';
       const oldScope = oldDef.scope;
       const scopeChanged = oldScope !== resolvedScope;
-      // A scope change away from a scope that holds values cannot carry them
-      // over (a node value is meaningless on an edge, and N values cannot
-      // collapse into one graph value). Graph scope is the one lossless
-      // direction (promoted below); everything else needs an explicit danger
-      // confirmation — or the whole save is aborted, values untouched.
-      if(scopeChanged && oldScope !== 'graph'){
-        const scopeValues = countCustomAttributeValues(oldId, oldScope);
-        if(scopeValues > 0){
-          const proceed = await uiConfirm(I18N.t('attribute_scope_values', { n: scopeValues }), { danger: true, confirmLabel: I18N.t('save_attribute') });
-          if(!proceed) return; // nothing changes: values, definition and history untouched
-        }
+      // Growing into 'all' loses nothing: the definition starts applying
+      // everywhere and the existing values stay in their stores under the
+      // same id — nothing moves, nothing is discarded, no confirmation.
+      // Narrowing (or moving between single scopes) drops the stores the
+      // definition no longer covers — their values are counted and, after an
+      // explicit danger confirmation, discarded. The one lossless exception
+      // is graph -> node/edge, which promotes the graph value instead.
+      const scopesOf = (s: string): string[] => s === 'all' ? ['graph','node','edge'] : [s];
+      const promote = oldScope === 'graph' && (resolvedScope === 'node' || resolvedScope === 'edge');
+      const lostScopes = scopeChanged ? scopesOf(oldScope).filter(s => !scopesOf(resolvedScope).includes(s)) : [];
+      const lostValues = lostScopes
+        .filter(s => !(promote && s === 'graph'))
+        .reduce((sum, s) => sum + countCustomAttributeValues(oldId, s as 'graph' | 'node' | 'edge'), 0);
+      if(lostValues > 0){
+        const proceed = await uiConfirm(I18N.t('attribute_scope_values', { n: lostValues }), { danger: true, confirmLabel: I18N.t('save_attribute') });
+        if(!proceed) return; // nothing changes: values, definition and history untouched
       }
       // Editing something else (type, scope) must not drop the attr.name a
       // re-created definition carries — the next export would otherwise rename
@@ -61,8 +70,8 @@
       state.customAttributes[index] = nextDef;
       if(oldId !== id) renameCustomAttributeValues(oldId, id);
       if(scopeChanged){
-        if(oldScope === 'graph') promoteGraphCustomAttribute(id, resolvedScope as 'node' | 'edge');
-        else discardCustomAttributeValues(id, oldScope);
+        if(promote) promoteGraphCustomAttribute(id, resolvedScope as 'node' | 'edge');
+        else for(const s of lostScopes) discardCustomAttributeValues(id, s as 'graph' | 'node' | 'edge');
       }
       // A type change rewrites every stored value; values that cannot be
       // represented in the new type are dropped (undo restores all of them).

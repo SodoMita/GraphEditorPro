@@ -89,7 +89,11 @@ interface GraphState {
    *  use the id as the key name). Ids are stable in the editor, so graphs can
    *  match definitions across imports by their own id. */
   /** `origin` is the carried key id a definition was minted from, recorded so re-imports bind to the same property. */
-  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string; origin?: string }[];
+  /** `scope` is 'graph' | 'node' | 'edge', or 'all' — one definition that
+   *  applies on every scope (GraphML `for="all"`), storing values per scope
+   *  under the same id. A legacy document may still carry one definition per
+   *  scope instead; both shapes are valid and neither is migrated. */
+  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }[];
   /** Values of user-defined customAttributes with scope 'graph', keyed by attribute id. */
   graphCustom: Record<string, CustomAttributeValue>;
   selected: { type: 'node' | 'edge'; id: string } | null;
