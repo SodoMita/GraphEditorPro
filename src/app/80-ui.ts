@@ -290,7 +290,7 @@
       if(vrNote){
         const total = state.nodes.length;
         const visCount = visibleNodes().length;
-        vrNote.textContent = `(${visCount}/${total} ` + (I18N.current === 'ru' ? 'видимо)' : 'visible)');
+        vrNote.textContent = I18N.t('visible_count', {n: visCount, total});
       }
     }
     $('#btnVisRangeApply').addEventListener('click', applyVisibleRange);

@@ -303,7 +303,7 @@
     if(vrNote){
       const total = state.nodes.length;
       const visCount = vr.start >= 0 || vr.end >= 0 ? visibleNodes().length : total;
-      vrNote.textContent = vr.start >= 0 || vr.end >= 0 ? `(${visCount}/${total} ` + (I18N.current === 'ru' ? 'видимо)' : 'visible)') : '';
+      vrNote.textContent = vr.start >= 0 || vr.end >= 0 ? I18N.t('visible_count', {n: visCount, total}) : '';
     }
     set('defNodeType', nd.type);
     set('defNodeShape', nd.shape);
