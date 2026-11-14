@@ -3738,3 +3738,96 @@ test('integer literals convert exactly; out-of-range and asymmetry boundaries ho
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('an empty <data> in a non-string GraphML property is a stated value, not silently discarded', async () => {
+  // Every declared attr type: a stated empty suppresses the declared default
+  // AND survives import + save/load sanitization verbatim — previously the
+  // load path dropped it, so the stated value silently turned into "unset",
+  // while a node without <data> received the declared default.
+  const saved = { title: 'empty-data', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    '  <key id="tInt" for="node" attr.name="tInt" attr.type="int" qvge:kind="custom-attribute"><default>7</default></key>',
+    '  <key id="tLong" for="node" attr.name="tLong" attr.type="long" qvge:kind="custom-attribute"><default>8</default></key>',
+    '  <key id="tFloat" for="node" attr.name="tFloat" attr.type="float" qvge:kind="custom-attribute"><default>1.5</default></key>',
+    '  <key id="tDouble" for="node" attr.name="tDouble" attr.type="double" qvge:kind="custom-attribute"><default>2.5</default></key>',
+    '  <key id="tBool" for="node" attr.name="tBool" attr.type="boolean" qvge:kind="custom-attribute"><default>true</default></key>',
+    '  <key id="tString" for="node" attr.name="tString" attr.type="string" qvge:kind="custom-attribute"><default>x</default></key>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="a"><data key="tInt"></data><data key="tLong"></data><data key="tFloat"></data><data key="tDouble"></data><data key="tBool"></data><data key="tString"></data></node>',
+    '    <node id="b"></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const a = graph.nodes.find(n => n.id === 'a');
+  const b = graph.nodes.find(n => n.id === 'b');
+  for(const key of ['tInt', 'tLong', 'tFloat', 'tDouble', 'tBool', 'tString'])
+    assert.equal(a?.custom?.[key], '', `an empty <data> for ${key} is a stated value, not "unset"`);
+  // A node without <data> receives the declared default for every type.
+  assert.equal(b?.custom?.tInt, 7, 'the node without <data> receives the declared int default');
+  assert.equal(b?.custom?.tLong, 8, 'the node without <data> receives the declared long default');
+  assert.equal(b?.custom?.tFloat, 1.5, 'the node without <data> receives the declared float default');
+  assert.equal(b?.custom?.tDouble, 2.5, 'the node without <data> receives the declared double default');
+  assert.equal(b?.custom?.tBool, true, 'the node without <data> receives the declared boolean default');
+  assert.equal(b?.custom?.tString, 'x', 'the node without <data> receives the declared string default');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an empty <default> on a non-string key is a stated default, not an absent one', async () => {
+  // The declared default itself may be the stated empty: a node without
+  // <data> must then receive the stated empty — and it must survive the
+  // sanitizer instead of becoming "unset" (which also dropped the definition).
+  const saved = { title: 'empty-default', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    '  <key id="tInt" for="node" attr.name="tInt" attr.type="int" qvge:kind="custom-attribute"><default></default></key>',
+    '  <key id="tBool" for="node" attr.name="tBool" attr.type="boolean" qvge:kind="custom-attribute"><default></default></key>',
+    '  <key id="tFloat" for="node" attr.name="tFloat" attr.type="float" qvge:kind="custom-attribute"><default></default></key>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="b"></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const b = graph.nodes.find(n => n.id === 'b');
+  assert.equal(b?.custom?.tInt, '', 'the stated empty int default survives, never dropped or 0');
+  assert.equal(b?.custom?.tBool, '', 'the stated empty boolean default survives, never dropped');
+  assert.equal(b?.custom?.tFloat, '', 'the stated empty float default survives, never dropped or 0');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a stated empty survives a save/load round trip for every declared type', async () => {
+  // The load-path sanitizer is where the stated empty used to disappear;
+  // persisting and reloading must keep it.
+  const saved = { title: 'empty-roundtrip',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0,
+      custom: { tInt: '', tLong: '', tFloat: '', tDouble: '', tBool: '', tString: '' } }],
+    edges: [],
+    customAttributes: [
+      { id: 'tInt', scope: 'node', type: 'int' },
+      { id: 'tLong', scope: 'node', type: 'long' },
+      { id: 'tFloat', scope: 'node', type: 'float' },
+      { id: 'tDouble', scope: 'node', type: 'double' },
+      { id: 'tBool', scope: 'node', type: 'boolean' },
+      { id: 'tString', scope: 'node', type: 'string' },
+    ] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graph = exportedGraph(document);
+  for(const key of ['tInt', 'tLong', 'tFloat', 'tDouble', 'tBool', 'tString'])
+    assert.equal(graph.nodes[0]?.custom?.[key], '', `the stated empty ${key} survives save/load`);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

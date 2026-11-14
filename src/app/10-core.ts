@@ -763,7 +763,7 @@
     if(type === 'boolean'){
       if(value === true || /^(true|1|yes|on)$/i.test(text)) return true;
       if(value === false || /^(false|0|no|off)$/i.test(text)) return false;
-      return text.slice(0, CUSTOM_VALUE_MAX);
+      return raw.slice(0, CUSTOM_VALUE_MAX); // unparseable: the exact text as written
     }
     if(type === 'int' || type === 'long'){
       // Validate the TEXT as an integer literal before any numeric conversion
@@ -771,25 +771,28 @@
       const parsed = parseIntegerText(text, type);
       if(parsed.kind === 'empty') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
       if(parsed.kind === 'number') return parsed.value;
-      return text.slice(0, CUSTOM_VALUE_MAX); // fractions, out-of-range, non-numeric: the exact text
+      return raw.slice(0, CUSTOM_VALUE_MAX); // fractions, out-of-range, non-numeric: the exact text as written
     }
     if(type === 'float' || type === 'double'){
       if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
       const numeric = Number(text);
       if(Number.isFinite(numeric)) return numeric;
-      return text.slice(0, CUSTOM_VALUE_MAX);
+      return raw.slice(0, CUSTOM_VALUE_MAX);
     }
     return raw.slice(0, CUSTOM_VALUE_MAX);
   }
-  // Migrates stored values of one attribute to a new type. Unlike
-  // coerceCustomValue (the import path, which keeps unrepresentable text),
-  // this returns undefined for values that cannot be represented in the target
-  // type, so the caller can drop them explicitly.
+  // Migrates stored values of one attribute to a new type. A stated empty is
+  // a stated value for every target type and survives migration verbatim
+  // (never becomes 0). Unlike coerceCustomValue (the import path, which keeps
+  // unrepresentable text), this returns undefined for values that are not
+  // stated empties and cannot be represented in the target type, so the
+  // caller can drop them explicitly.
   function coerceCustomValueForType(value: CustomAttributeValue, type: string): CustomAttributeValue | undefined {
     if(type === 'string') return String(value).slice(0, CUSTOM_VALUE_MAX);
     if(type === 'boolean'){
       if(typeof value === 'boolean') return value;
       const text = String(value ?? '').trim();
+      if(text === '') return ''; // a stated empty survives verbatim
       if(/^(true|1|yes|on)$/i.test(text)) return true;
       if(/^(false|0|no|off)$/i.test(text)) return false;
       return undefined;
@@ -797,9 +800,10 @@
     if(type === 'int' || type === 'long'){
       if(typeof value === 'boolean') return undefined; // a truthy flag is not a number
       const text = String(value ?? '').trim();
-      if(text === '') return undefined;
-      const parsed = parseIntegerText(text, type);
-      if(parsed.kind === 'invalid' || parsed.kind === 'empty') return undefined; // text is non-empty here, so 'empty' cannot occur
+      if(text === '') return ''; // a stated empty survives verbatim, never 0
+      const parsed = parseIntegerText(text, type); // text is non-empty, so 'empty' is unreachable here
+      if(parsed.kind === 'empty') return ''; // unreachable, but keeps the types honest
+      if(parsed.kind === 'invalid') return undefined; // not a stated empty and not representable — drop as before
       // A stated fraction cannot be represented as an int/long, and an
       // out-of-range one is not either — both are kept as the exact text,
       // mirroring the input and import paths.
@@ -808,7 +812,9 @@
     }
     if(type === 'float' || type === 'double'){
       if(typeof value === 'boolean') return undefined;
-      const numeric = Number(String(value ?? '').trim());
+      const text = String(value ?? '').trim();
+      if(text === '') return ''; // a stated empty survives verbatim, never Number('')===0
+      const numeric = Number(text);
       return Number.isFinite(numeric) ? numeric : undefined;
     }
     return String(value).slice(0, CUSTOM_VALUE_MAX);
@@ -852,12 +858,6 @@
         continue;
       }
       if(raw == null) continue;
-      if(typeof raw === 'string' && raw.trim() === ''){
-        // An explicitly empty/whitespace string is a stated value for
-        // string-typed attributes (it beats a declared <default> and must
-        // survive save/load); for other types it is not a value.
-        if(type !== 'string') continue;
-      }
       out[key] = coerceCustomValue(raw, type);
       count++;
     }
