@@ -1112,3 +1112,55 @@ test('applying a single edited camera field via Enter preserves an in-flight whe
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a queued pass over an unchanged canvas skips the per-node work entirely', async () => {
+  // Committing a custom property queues a full render, but nothing the pass
+  // paints changed: no selection is involved and no entity- or style-relevant
+  // field moves. The pass must skip every element instead of re-measuring the
+  // canvas or rebuilding styles per node. This is the guard for the old
+  // documentDirty blanket flag, which forced the traversal to re-run
+  // nodeHitPixelsPerWorld() (one unmemoized getBoundingClientRect on the SVG)
+  // for every clean node on every queued pass — 40 here. The few reads that
+  // remain are the fixed per-camera-sync constants (camera grid, hit-target
+  // signature, edge-label visibility), not per-node work.
+  const nodes = [];
+  for (let i = 0; i < 40; i++) nodes.push({ id: 'n' + i, label: 'N' + i, x: (i % 8) * 150 - 500, y: Math.floor(i / 8) * 120 - 200 });
+  const graphWithProps = {
+    title: 'unchanged-pass', mode: 'select', nextNode: 100, nextEdge: 3,
+    nodes,
+    edges: [{ id: 'e1', from: 'n0', to: 'n39', directed: true, weight: '2' }],
+    customAttributes: [{ id: 'notes', scope: 'node', type: 'string' }],
+    graphCustom: {}, settings: {},
+    viewBox: { x: -620, y: -420, w: 1240, h: 840 },
+  };
+  const { dom, errors } = createEditorDom(graphWithProps);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+
+  const input = document.querySelector('#newNodeCustomProps [data-custom-attribute="notes"]');
+  assert.ok(input, 'the new-node defaults render the custom property');
+
+  // setCanvasRect() installs an own getBoundingClientRect on the SVG element,
+  // so only counting that element's own function sees the pass's reads — a
+  // prototype spy never would.
+  let svgRectReads = 0;
+  const originalSvgRect = svg.getBoundingClientRect;
+  svg.getBoundingClientRect = function (...args) {
+    svgRectReads++;
+    return originalSvgRect.apply(this, args);
+  };
+
+  input.value = 'after';
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  await nextFrame(window);
+  await settle(window, 120);
+
+  assert.ok(svgRectReads <= 4, `an unchanged canvas is not re-measured per node (got ${svgRectReads})`);
+  // The commit still applied to the pending new-node defaults.
+  assert.equal(input.value, 'after');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

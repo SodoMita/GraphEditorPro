@@ -698,7 +698,9 @@
     renderOriginMoved = false;
     rebaseInteractionOverlays();
     invalidateStyleCache();
-    documentDirty = true;
+    // No documentDirty: the pass frame keys off renderOriginX/renderOriginY/
+    // renderScale, all of which moved here, so the passes rewrite every SVG
+    // number that could have changed.
     if(renderCanvasActive) return;
     beginRenderPass();
     renderGen++;
@@ -709,12 +711,11 @@
     paintedStyleRev = styleRev;
     paintedNodeStyle = styleFingerprint('node');
     paintedEdgeStyle = styleFingerprint('edge');
-    documentDirty = false;
     lastPaintedGen = renderGen;
     endRenderPass();
   }
   function queueRender(includeMatrix=false, includeSidebar=false){
-    invalidateStyleCache(); documentDirty = true;
+    invalidateStyleCache();
     if(includeMatrix){ clearTimeout(matrixTimer); matrixTimer = setTimeout(renderMatrixAndList, 60); }
     if(renderQueued) return;
     renderQueued = true;
@@ -748,15 +749,6 @@
   let styleRev = 0;
   let paintedStyleRev = -1;
   function invalidateStyleCache(){ styleRev++; }
-  // Whether the document may have changed since the last pass. A repaint
-  // request is a declaration that *something* changed, and the document is the
-  // common case (edits are written straight into node/edge objects, which no
-  // revision counter can observe). A pass may only skip elements while this is
-  // false, and it is cleared at the end of every full pass, so the flag means
-  // "nothing has been edited since the layers were last painted" — exactly the
-  // condition each element's own checks (geometry signature, label text,
-  // selection) need in order to be trusted.
-  let documentDirty = true;
   // Which *kind* of style work that revision implies. A node colour edit must
   // repaint nodes, but edges keep their own colours and widths: repainting them
   // too would write nothing and still cost a walk of every edge. These two
@@ -821,7 +813,6 @@
     paintedStyleRev = styleRev;
     paintedNodeStyle = styleFingerprint('node');
     paintedEdgeStyle = styleFingerprint('edge');
-    documentDirty = false;
     lastPaintedGen = renderGen;
     renderGizmo();
     updateUndoRedo();
@@ -1163,7 +1154,12 @@
     // A node outside the safe window has no DOM, but its edges may still cross
     // the viewport and must be clipped/updated.
     if(isRenderablePoint(n.x, n.y)){
-      const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+      const el = nodeEl(id); if(el){
+        setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+        // This element was rewritten outside a pass; the next pass must not
+        // treat it as already painted.
+        if(el.__ent) el.__ent.gen = -1;
+      }
     }
     if(drag && drag.liveEdges === false) return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
@@ -1175,7 +1171,12 @@
       const nodes = src.nodes || (src.node ? [src.node] : []);
       for(const n of nodes){
         if(!isRenderablePoint(n.x, n.y)) continue;
-        const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+        const el = nodeEl(n.id); if(el){
+          setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+          // Rewritten outside a pass; stamp the spine so a later pass cannot
+          // skip this element on the strength of an older paint.
+          if(el.__ent) el.__ent.gen = -1;
+        }
       }
       followGizmoForPlainDrag(src);
       if(src.liveEdges === false) return;
@@ -1372,6 +1373,15 @@
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    // Everything the pass renders from that is not an entity field, packed into
+    // one string: a floating-origin rebase or a render-scale change moves
+    // every SVG number this pass writes; a label-policy flip or a visible-range
+    // edit changes which paint this pass owes; the bulk-accent threshold flips
+    // how a large selection decorates. Camera pans/zooms that do not rebase
+    // rewrite neither, and the label visibility they flip is maintained by
+    // syncEdgeLabelVisibility() outside the pass, so they are deliberately
+    // absent: a repainted frame that drew the same pixels must skip.
+    const passFrame = `${renderOriginX}|${renderOriginY}|${renderScale}|${showLabels ? 1 : 0}|${bulkAccents ? 1 : 0}${rangeActive ? '|vr:' + vr.start + '-' + vr.end : ''}`;
     // A pass whose document revision matches the last painted one has nothing
     // geometric or label-related to recompute; `genAtStart` lets an element
     // whose stamp is already current skip its frame entirely.
@@ -1387,19 +1397,12 @@
       const ent = existing.get(e.id);
       // `alive` was cleared on the whole spine at the top of this pass, so it
       // says nothing here: presence in `existing` is what marks an element as
-      // the one this id had before the pass started.
-      if(ent && !documentDirty && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected){
-        // Painted this generation, from this revision, with this selection:
-        // the element's DOM is already exactly what this pass would write.
-        ent.alive = true;
-        live.add(e.id);
-        continue;
-      }
-      // The merged style of an edge is a pure function of the edge and the
-      // style settings, so it is cached on the element and recomputed only when
-      // either could have changed: a style pass, or the edge's own style
-      // fields. Rebuilding it every time an *unrelated* style edit repaints a
-      // 2,500-edge layer was pure overhead — and the result would be identical.
+      // the one this id had before the pass started. The merged style of an
+      // edge is a pure function of the edge and the style settings, so it is
+      // cached on the element and recomputed only when either could have
+      // changed: a style pass, or the edge's own style fields. Rebuilding it
+      // every time an *unrelated* style edit repaints a 2,500-edge layer was
+      // pure overhead — and the result would be identical.
       const edgeStyleKey = e.type + '\u0001' + e.color + '\u0001' + e.strokeSize + '\u0001' + e.strokeStyle
         + '\u0001' + (e.arrowSize ?? '') + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
         + '\u0001' + e.weight + '\u0001' + edgeDirection(e);
@@ -1407,6 +1410,25 @@
       if(!v){
         v = edgeRenderStyleC(e);
         if(ent){ ent.el.__styleKey = edgeStyleKey; ent.el.__style = v; }
+      }
+      const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
+      const lane = edgeSiblingOffset(e);
+      // Include the floating origin: absolute world endpoints unchanged by a
+      // camera move still produce different SVG numbers after a rebase, so the
+      // geometry cache must not hand back a path from the previous origin.
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${v.arrowSize}|${renderOriginX},${renderOriginY}|${renderScale}`;
+      // e.label reaches paintEdgeText without touching the style merge (the
+      // text itself is not a style input), so it is part of the frame key.
+      const frameKey = passFrame + '|' + (e.label ?? '') + '|' + (e.order ?? '') + '|' + edgeStyleKey + '|' + geoSig;
+      // An element is skipped only when everything this pass would write is
+      // provably unchanged: the pass frame (origin, scale, label policy,
+      // visible range, accent threshold), the merged style, the geometry
+      // signature, the selection state, and the generation stamp — any
+      // in-place writer stamps `gen = -1`, so nothing painted earlier can skip.
+      if(ent && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && ent.frameKey === frameKey){
+        ent.alive = true;
+        live.add(e.id);
+        continue;
       }
       let g: any = ent ? ent.el : null;
       if(!g){
@@ -1447,12 +1469,6 @@
       // radii, the parallel-edge lane, and direction. When none of these
       // changed (style-only or unrelated renders), the previous edgePath
       // result is reused without recomputation.
-      const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
-      const lane = edgeSiblingOffset(e);
-      // Include the floating origin: absolute world endpoints unchanged by a
-      // camera move still produce different SVG numbers after a rebase, so the
-      // geometry cache must not hand back a path from the previous origin.
-      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${v.arrowSize}|${renderOriginX},${renderOriginY}|${renderScale}`;
       let d = g.__geoSig === geoSig ? g.__geoData : null;
       if(!d){
         d = edgePath(a,b,e, passVisuals);
@@ -1523,7 +1539,7 @@
       paintEdgeText(g, d, v, texts.labelText, texts.weightText, labelVisible && showLabels);
       // This element now matches the document at this generation.
       const painted = existing.get(e.id);
-      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
+      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; painted.frameKey = frameKey; }
       live.add(e.id);
     }
     sweepLayer(spine, existing, live, edgeEls);
@@ -1788,6 +1804,12 @@
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    // Everything the pass renders from that is not an entity field — see the
+    // edge pass for what belongs here and why the camera does not: pans that
+    // do not rebase move only the camera matrix and syncEdgeLabelVisibility
+    // maintains label visibility outside the pass, so they must not cost a
+    // single attribute write.
+    const passFrame = `${renderOriginX}|${renderOriginY}|${renderScale}|${showLabels ? 1 : 0}|${bulkAccents ? 1 : 0}${rangeActive ? '|vr:' + vr.start + '-' + vr.end : ''}`;
     const draggingId = drag?.nodeId;
     const stylePass = paintedNodeStyle !== styleFingerprint('node');
     const gen = renderGen;
@@ -1802,10 +1824,19 @@
       const selected = selectedNodes.has(n.id);
       const ent = existing.get(n.id);
       const dragging = draggingId === n.id;
-      if(ent && !documentDirty && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && !dragging){
-        // Same reasoning as the edge pass: the element was painted in the
-        // previous generation from this revision, with this selection, and no
-        // in-place writer has touched it since.
+      // The entity half of the key: every field this pass turns into an SVG
+      // attribute or class, with the merged type/default resolution covered by
+      // the style pass (a defaults/type-style edit flips styleFingerprint).
+      const frameKey = passFrame
+        + '|' + n.x + '|' + n.y + '|' + (n.shape ?? '') + '|' + (n.type ?? '')
+        + '|' + (n.color ?? '') + '|' + (n.width ?? '') + '|' + (n.height ?? '')
+        + '|' + (n.strokeColor ?? '') + '|' + (n.strokeSize ?? '') + '|' + (n.strokeStyle ?? '')
+        + '|' + (n.label ?? '') + '|' + (n.labelColor ?? '') + '|' + (n.labelSize ?? '')
+        + '|' + (n.labelFont ?? '') + '|' + (n.labelPosition ?? '') + '|' + (n.order ?? '');
+      // Same reasoning as the edge pass: the element is painted only when the
+      // pass frame, the merged style, the entity fields, the selection and the
+      // generation stamp all match what it was painted from.
+      if(ent && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && !dragging && ent.frameKey === frameKey){
         ent.alive = true;
         live.add(n.id);
         continue;
@@ -1908,7 +1939,7 @@
       }
       syncNodeHitTarget(g, v);
       const painted = existing.get(n.id);
-      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
+      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; painted.frameKey = frameKey; }
       live.add(n.id);
     }
     sweepLayer(spine, existing, live, nodeEls);
