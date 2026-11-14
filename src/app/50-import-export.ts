@@ -823,7 +823,8 @@
       // every value bound to the surviving definition went to whichever was
       // remapped last.
       const origId = String(raw.id ?? '');
-      const id = origId.trim().slice(0, 128);
+      const fullId = origId.trim();
+      const id = fullId.slice(0, 128);
       if(!id) continue; // no id: sanitize drops it too
       const scope = scopeOf(raw);
       const pairKey = id + '|' + scope;
@@ -847,7 +848,7 @@
         // it falls through to minting; a definition without a recorded
         // origin keeps the committed contract and merges for free.
         const pairOrigin = String((pairHit as AnyRecord)?.origin ?? '').trim();
-        const incOriginPair = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+        const incOriginPair = String((inc as AnyRecord)?.origin ?? '').trim() || fullId;
         const originsMerge = !pairOrigin || pairOrigin === incOriginPair;
         if(namesMerge && originsMerge){ // merges without capacity
           renameByPair.set(scope + '|' + origId, String(pairHit.id));
@@ -870,7 +871,7 @@
       // specific key id and may not drift onto a different one. A
       // definition claimed by an earlier property in this file is likewise
       // no longer a candidate.
-      const incOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+      const incOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || fullId;
       const incNameLc = String(inc.name ?? '').trim().toLowerCase();
       const nameAgreement = (e: AnyRecord | undefined) => {
         const en = String(e?.name ?? '').trim().toLowerCase();
@@ -929,9 +930,14 @@
       // earlier definition keeps the origin it was minted from; a fresh
       // mint defaults it to the carried id. The recorded name stays the
       // attr.name for export spelling.
-      const keepOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || id;
-      kept.push({ ...def, origin: keepOrigin });
-      byPair.set(finalId + '|' + scope, def);
+      const keepOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || fullId;
+      // Register the origin-bearing copy in byPair too — the exact-pair
+      // branch above compares recorded origins to tell same-named keys
+      // apart, and a minted definition without its origin in the pair map
+      // silently merges every later key sharing its truncated id.
+      const finalDef = { ...def, origin: keepOrigin };
+      kept.push(finalDef);
+      byPair.set(finalId + '|' + scope, finalDef);
       claimed.add(pairOf2(finalId, scope));
     }
     return { defs: kept, skipped, renameByPair, renamed };

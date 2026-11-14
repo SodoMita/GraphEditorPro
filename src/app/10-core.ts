@@ -1392,8 +1392,11 @@
         // re-created definition still exports under the property name it was
         // read with. Keep `origin` for the same reason: it is the carried key
         // id the definition was minted from, which re-imports match against.
+        // The name is a display heuristic (capped); the origin is identity —
+        // capping it at 128 would merge two long foreign keys that share a
+        // prefix on the next round-trip.
         const rawName = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128);
-        const rawOrigin = String((attribute as AnyRecord).origin ?? '').trim().slice(0, 128);
+        const rawOrigin = String((attribute as AnyRecord).origin ?? '').trim().slice(0, CUSTOM_VALUE_MAX);
         const out: AnyRecord = {id, scope, type};
         if(rawName && rawName !== id) out.name = rawName;
         if(rawOrigin) out.origin = rawOrigin;

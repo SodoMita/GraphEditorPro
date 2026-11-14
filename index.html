@@ -4060,8 +4060,11 @@ function sanitizeState(input) {
         // re-created definition still exports under the property name it was
         // read with. Keep `origin` for the same reason: it is the carried key
         // id the definition was minted from, which re-imports match against.
+        // The name is a display heuristic (capped); the origin is identity —
+        // capping it at 128 would merge two long foreign keys that share a
+        // prefix on the next round-trip.
         const rawName = String(attribute.name ?? '').trim().slice(0, 128);
-        const rawOrigin = String(attribute.origin ?? '').trim().slice(0, 128);
+        const rawOrigin = String(attribute.origin ?? '').trim().slice(0, CUSTOM_VALUE_MAX);
         const out = { id, scope, type };
         if (rawName && rawName !== id)
             out.name = rawName;
@@ -8866,14 +8869,18 @@ function pasteClipboardInternal(fromSystemClipboard) {
     const carriedDefs = (Array.isArray(data.customAttributes) ? data.customAttributes : [])
         .filter(isRecord)
         .map(def => {
-        const id = String(def.id ?? '').trim().slice(0, 128);
+        const fullId = String(def.id ?? '').trim();
+        const id = fullId.slice(0, 128);
         const scope = ['graph', 'node', 'edge', 'all'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
         if (!id)
             return null;
         const name = String(def.name ?? '').trim().slice(0, 128);
-        const origin = String(def.origin ?? '').trim().slice(0, 128);
-        return { id, scope: scope, type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
+        // The origin is identity data (the carried key id the definition was
+        // minted from) — capped only by the value limit, never at the id cap,
+        // or two long foreign keys sharing a prefix merge on the next paste.
+        const origin = String(def.origin ?? '').trim().slice(0, CUSTOM_VALUE_MAX);
+        return { id, fullId, scope: scope, type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
     })
         .filter((def) => def !== null);
     const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
@@ -8932,7 +8939,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         const existingOrigin = String(existing?.origin ?? '').trim();
         if (!existingOrigin)
             return true; // origin-less definition — merges for free
-        const carriedOrigin = String(carried?.origin ?? '').trim() || String(carried?.id ?? '').trim();
+        const carriedOrigin = String(carried?.origin ?? '').trim() || String(carried?.fullId ?? carried?.id ?? '').trim();
         return existingOrigin === carriedOrigin;
     };
     const ensurePair = (id, scope) => {
@@ -8971,7 +8978,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         // candidate.
         const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
         const carriedNameRaw = String(carriedPair?.name ?? '').trim().toLowerCase();
-        const incOrigin = (String(carriedPair?.origin ?? '').trim() || id);
+        const incOrigin = (String(carriedPair?.origin ?? '').trim() || String(carriedPair?.fullId ?? '').trim() || id);
         const nameAgreement = (a) => {
             const an = String(a?.name ?? '').trim().toLowerCase();
             return !an || !carriedNameRaw || an === carriedNameRaw;
@@ -9014,7 +9021,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         }
         if (!createdIds.has(id)) {
             remaining--;
-            addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || id), carriedPair?.name ? { name: carriedPair.name } : undefined);
+            addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || String(carriedPair?.fullId ?? '').trim() || id), carriedPair?.name ? { name: carriedPair.name } : undefined);
             handledPairs.add(key);
             return;
         }
@@ -9025,7 +9032,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         // has none, record the carried id as the name so the next paste (or a
         // round-trip of an export of it) finds THIS definition instead of
         // minting a second one for the same property.
-        addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || id), { name: carriedPair?.name || id });
+        addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || String(carriedPair?.fullId ?? '').trim() || id), { name: carriedPair?.name || id });
         renameByPair.set(key, newId);
         handledPairs.add(key);
     };
@@ -12851,7 +12858,8 @@ function capCustomDefinitions(defs, existingDefs) {
         // every value bound to the surviving definition went to whichever was
         // remapped last.
         const origId = String(raw.id ?? '');
-        const id = origId.trim().slice(0, 128);
+        const fullId = origId.trim();
+        const id = fullId.slice(0, 128);
         if (!id)
             continue; // no id: sanitize drops it too
         const scope = scopeOf(raw);
@@ -12876,7 +12884,7 @@ function capCustomDefinitions(defs, existingDefs) {
             // it falls through to minting; a definition without a recorded
             // origin keeps the committed contract and merges for free.
             const pairOrigin = String(pairHit?.origin ?? '').trim();
-            const incOriginPair = String(inc?.origin ?? '').trim() || id;
+            const incOriginPair = String(inc?.origin ?? '').trim() || fullId;
             const originsMerge = !pairOrigin || pairOrigin === incOriginPair;
             if (namesMerge && originsMerge) { // merges without capacity
                 renameByPair.set(scope + '|' + origId, String(pairHit.id));
@@ -12899,7 +12907,7 @@ function capCustomDefinitions(defs, existingDefs) {
         // specific key id and may not drift onto a different one. A
         // definition claimed by an earlier property in this file is likewise
         // no longer a candidate.
-        const incOrigin = String(inc?.origin ?? '').trim() || id;
+        const incOrigin = String(inc?.origin ?? '').trim() || fullId;
         const incNameLc = String(inc.name ?? '').trim().toLowerCase();
         const nameAgreement = (e) => {
             const en = String(e?.name ?? '').trim().toLowerCase();
@@ -12966,9 +12974,14 @@ function capCustomDefinitions(defs, existingDefs) {
         // earlier definition keeps the origin it was minted from; a fresh
         // mint defaults it to the carried id. The recorded name stays the
         // attr.name for export spelling.
-        const keepOrigin = String(inc?.origin ?? '').trim() || id;
-        kept.push({ ...def, origin: keepOrigin });
-        byPair.set(finalId + '|' + scope, def);
+        const keepOrigin = String(inc?.origin ?? '').trim() || fullId;
+        // Register the origin-bearing copy in byPair too — the exact-pair
+        // branch above compares recorded origins to tell same-named keys
+        // apart, and a minted definition without its origin in the pair map
+        // silently merges every later key sharing its truncated id.
+        const finalDef = { ...def, origin: keepOrigin };
+        kept.push(finalDef);
+        byPair.set(finalId + '|' + scope, finalDef);
         claimed.add(pairOf2(finalId, scope));
     }
     return { defs: kept, skipped, renameByPair, renamed };

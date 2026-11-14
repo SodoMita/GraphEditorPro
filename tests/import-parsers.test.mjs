@@ -3831,3 +3831,51 @@ test('a stated empty survives a save/load round trip for every declared type', a
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('two long GraphML keys sharing their first 128 characters and attr.name do not merge', async () => {
+  const prefix = 'K' + 'x'.repeat(127); // exactly 128 characters
+  const idA = prefix + 'A', idB = prefix + 'B'; // 129 characters, identical 128-char head
+  assert.equal(idA.slice(0, 128), idB.slice(0, 128));
+  const saved = { title: 'long-keys-collide', nodes: [], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const {window} = dom;
+  await settle(window, 60);
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    `  <key id="${idA}" for="node" attr.name="sharedprop" attr.type="string" qvge:kind="custom-attribute"/>`,
+    `  <key id="${idB}" for="node" attr.name="sharedprop" attr.type="string" qvge:kind="custom-attribute"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="a"><data key="${idA}">value-A</data></node>`,
+    `    <node id="b"><data key="${idB}">value-B</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes.filter(d => d.name === 'sharedprop');
+  assert.equal(defs.length, 2, 'the two long keys mint two definitions, never one merged');
+  const a = graph.nodes.find(n => n.id === 'a');
+  const b = graph.nodes.find(n => n.id === 'b');
+  assert.deepEqual(Object.values(a?.custom || {}), ['value-A'], 'the first key keeps its value');
+  assert.deepEqual(Object.values(b?.custom || {}), ['value-B'], 'the second key keeps its own value');
+  assert.notEqual(Object.keys(a?.custom || {})[0], Object.keys(b?.custom || {})[0], 'the properties live under distinct ids');
+
+  // Round-trip through our export: the two definitions re-bind to their own values.
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  const {dom: dom2, errors: errors2} = createEditorDom({ title: 'long-keys-rt', nodes: [], edges: [] });
+  const document2 = dom2.window.document;
+  await settle(dom2.window, 60);
+  await paste(document2, dom2.window, '#btnPasteGraphml', exported);
+  const graph2 = exportedGraph(document2);
+  const defs2 = graph2.customAttributes.filter(d => d.name === 'sharedprop');
+  assert.equal(defs2.length, 2, 'the round-trip keeps two definitions, never one merged');
+  assert.deepEqual(Object.values(graph2.nodes.find(n => n.id === 'a')?.custom || {}), ['value-A']);
+  assert.deepEqual(Object.values(graph2.nodes.find(n => n.id === 'b')?.custom || {}), ['value-B']);
+  assert.deepEqual(errors.map(e => e.message), []);
+  assert.deepEqual(errors2.map(e => e.message), []);
+  dom.window.close();
+  dom2.window.close();
+});
