@@ -1845,3 +1845,91 @@ test('two distinct same-name properties cannot both claim one all-scope definiti
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a pasted definition with a conflicting recorded origin cannot merge into the same-id definition', async () => {
+  // The document records its 'metric' definition with origin 'a' (created by
+  // an earlier import of key a). The clipboard carries a node property
+  // 'metric' recorded with origin 'b' — a different property that merely
+  // shares the id. The exact-pair merge must refuse to bind them: one claim
+  // for a different property would put both unrelated values under one
+  // definition.
+  const payload = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'p1', label: 'Carried', x: 0, y: 0, order: 0, custom: { metric: 'from-b' } }],
+    edges: [],
+    externalEdges: [],
+    customAttributes: [{ id: 'metric', scope: 'node', type: 'string', origin: 'b' }],
+  };
+  const target = { title: 'target', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [{ id: 'keep', label: 'Keep', x: 50, y: 0, order: 0, custom: { metric: 'from-a' } }],
+    edges: [],
+    customAttributes: [{ id: 'metric', scope: 'node', type: 'string', origin: 'a' }],
+    graphCustom: {}, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(target);
+  const { window } = dom; const { document } = window;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => JSON.stringify(payload) },
+  });
+  await nextFrame(window);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window); await settle(window, 60);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.customAttributes.filter(d => d.id === 'metric' && d.origin === 'a').length, 1,
+    'the document keeps its origin-a definition');
+  const minted = graph.customAttributes.find(d => d.origin === 'b');
+  assert.ok(minted, 'the origin-b property is re-created as its own definition');
+  assert.notEqual(minted.id, 'metric', 'minted under a fresh id, never the taken one');
+  const pasted = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(pasted.custom?.[minted.id], 'from-b', 'the carried value binds the minted definition');
+  assert.equal(pasted.custom?.metric, undefined, 'and never the origin-a definition');
+  assert.equal(graph.nodes.find(n => n.id === 'keep')?.custom?.metric, 'from-a',
+    'the pre-existing values stay on the origin-a definition');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a carried narrower pair with a conflicting origin cannot merge into the covering all-scope definition', async () => {
+  // Same identity question as the exact-pair branch, one level up: an
+  // all-scope definition is the document's definition for this id on every
+  // scope — but only when the two recorded origins allow it. A carried
+  // node-scope 'metric' from origin 'b' must not bind the all-scope 'metric'
+  // from origin 'a'; it mints its own per-scope definition instead.
+  const payload = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'p1', label: 'Carried', x: 0, y: 0, order: 0, custom: { metric: 'from-b' } }],
+    edges: [],
+    externalEdges: [],
+    customAttributes: [{ id: 'metric', scope: 'node', type: 'string', origin: 'b' }],
+  };
+  const target = { title: 'target', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [], edges: [],
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string', origin: 'a' }],
+    graphCustom: {}, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(target);
+  const { window } = dom; const { document } = window;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => JSON.stringify(payload) },
+  });
+  await nextFrame(window);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window); await settle(window, 60);
+
+  const graph = exportGraph(document);
+  const allDef = graph.customAttributes.find(d => d.scope === 'all');
+  assert.equal(allDef?.origin, 'a', 'the all-scope definition stays the origin-a property');
+  const minted = graph.customAttributes.find(d => d.origin === 'b');
+  assert.ok(minted, 'the origin-b property is re-created as its own definition');
+  const pasted = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(pasted.custom?.[minted.id], 'from-b', 'the carried value binds the minted definition');
+  assert.equal(pasted.custom?.metric, undefined, 'and never the origin-a all-scope definition');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+

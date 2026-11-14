@@ -980,14 +980,28 @@
     };
     // Two definitions sharing id+scope are the same property ONLY when both
     // carry no recorded name (created manually — nothing else to go on) or
-    // both carry the same recorded one. Anything else is a different property
-    // sharing the id: it must be re-created under a fresh id and the carried
-    // values remapped, never merged into the existing definition.
+    // both carry the same recorded one, AND both record compatible origins
+    // (a re-export keeps the key id its definition was minted from; an
+    // older one defaults it to the carried id). Anything else is a different
+    // property sharing the id: it must be re-created under a fresh id and
+    // the carried values remapped, never merged into the existing definition.
     const provenanceMatches = (existing: AnyRecord | undefined, carried: AnyRecord | undefined) => {
       const existingName = String(existing?.name ?? '').trim().toLowerCase();
       const carriedName = String(carried?.name ?? '').trim().toLowerCase();
-      if(!existingName && !carriedName) return true; // both unrecorded — same property
-      return existingName === carriedName;
+      if(existingName || carriedName){
+        if(existingName !== carriedName) return false;
+      }
+      // The exact-pair branch is the same identity question as the import's
+      // exact-pair branch, so it applies the same rule there would: both
+      // sides recording conflicting origins proves a different property
+      // sharing the id. A definition without a recorded origin keeps the
+      // committed contract and merges for free; a carried definition without
+      // one defaults its origin to its own key id, exactly as the import's
+      // `incOrigin` fallback does.
+      const existingOrigin = String(existing?.origin ?? '').trim();
+      if(!existingOrigin) return true; // origin-less definition — merges for free
+      const carriedOrigin = String(carried?.origin ?? '').trim() || String(carried?.id ?? '').trim();
+      return existingOrigin === carriedOrigin;
     };
     const ensurePair = (id: string, scope: 'node' | 'edge' | 'all') => {
       const key = id + '|' + scope;
