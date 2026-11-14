@@ -1439,7 +1439,11 @@
       // signature, the selection state, and the generation stamp — any
       // in-place writer stamps `gen = -1`, so nothing painted earlier can skip.
       if(ent && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && ent.frameKey === frameKey){
-        ent.alive = true;
+        // The skip is a valid "nothing to write" proof — advance the element's
+        // generation so the NEXT pass can skip it too. Without this, the skip
+        // leaves ent.gen one generation behind lastPaintedGen and the next
+        // pass reprocesses the element again, alternating every other pass.
+        ent.alive = true; ent.gen = gen;
         live.add(e.id);
         continue;
       }
@@ -1853,7 +1857,9 @@
       // pass frame, the merged style, the entity fields, the selection and the
       // generation stamp all match what it was painted from.
       if(ent && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && !dragging && ent.frameKey === frameKey){
-        ent.alive = true;
+        // Same as the edge pass: a valid skip stamps the current generation,
+        // so successive passes keep skipping instead of alternating.
+        ent.alive = true; ent.gen = gen;
         live.add(n.id);
         continue;
       }
