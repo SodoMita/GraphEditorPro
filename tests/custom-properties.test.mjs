@@ -1933,3 +1933,44 @@ test('a carried narrower pair with a conflicting origin cannot merge into the co
   dom.window.close();
 });
 
+test('graph property controls rebuild when a same-shaped import changes the values', async () => {
+  // The custom-property section cache keys on a signature of the stored
+  // values. Plain 'key=value;' concatenation made {a: "x;b=y"} and
+  // {a: "x", b: "y"} hash alike, so a replace-import kept the cached section
+  // showing the previous document's controls (a = "x;b=y", b blank) although
+  // the imported state held a = "x" and b = "y".
+  const defs = [
+    { id: 'a', scope: 'graph', type: 'string' },
+    { id: 'b', scope: 'graph', type: 'string' },
+  ];
+  const saved = { title: 'sig', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [], edges: [],
+    customAttributes: defs,
+    graphCustom: { a: 'x;b=y' }, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(saved);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  const aValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="a"]')?.value;
+  const bValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="b"]')?.value;
+  assert.equal(aValue(), 'x;b=y', 'the host renders the current values');
+  assert.equal(bValue(), '');
+
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = JSON.stringify({
+    title: 'sig', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [], edges: [],
+    customAttributes: defs,
+    graphCustom: { a: 'x', b: 'y' }, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  });
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  assert.equal(aValue(), 'x', 'the a control shows the imported value');
+  assert.equal(bValue(), 'y', 'the b control shows the imported value');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

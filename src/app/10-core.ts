@@ -1068,18 +1068,25 @@
     if(uid === undefined){ uid = customPropTargetUid++; customPropTargetUids.set(target, uid); }
     return 'e' + uid;
   }
+  // Length-framed, total framing: one JSON array per entry. Plain
+  // concatenation made '{a: "x;b=y"}' and '{a: "x", b: "y"}' produce the
+  // same bytes, so a replace-import could keep a cached section showing the
+  // previous document's values. JSON framing is unambiguous by construction.
   function customStoreSignature(store: AnyRecord | undefined): string {
     if(!isRecord(store)) return '';
     const keys = Object.keys(store).sort();
     let out = '';
-    for(const key of keys) out += key + '=' + String(store[key]) + ';';
+    for(const key of keys) out += JSON.stringify([key, store[key]]) + ',';
     return out;
   }
   function customPropsSectionKey(scope: 'graph' | 'node' | 'edge', defs: readonly { id: string; type: string; scope: string }[], targets: readonly CustomPropTarget[], multi: boolean): string {
     let h = 2166136261 >>> 0;
     const mix = (text: string) => { for(let i = 0; i < text.length; i++){ h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } };
     mix(I18N.current + '|' + scope + '|' + (multi ? '1' : '0') + '|');
-    for(const def of defs){ mix(def.scope); mix(':'); mix(def.type); mix(':'); mix(def.id); mix(';'); }
+    // Scope and type are fixed enums, but an id is user input and may itself
+    // contain the separators — one JSON array per definition keeps the
+    // definition sequence unambiguous, exactly like the store framing above.
+    for(const def of defs){ mix(JSON.stringify([def.scope, def.type, def.id]) + ';'); }
     mix('#');
     for(const target of targets) mix(customPropTargetKey(target) + '{' + customStoreSignature(customStoreOf(target)) + '}');
     return String(h);

@@ -3691,13 +3691,17 @@ function customPropTargetKey(target) {
     }
     return 'e' + uid;
 }
+// Length-framed, total framing: one JSON array per entry. Plain
+// concatenation made '{a: "x;b=y"}' and '{a: "x", b: "y"}' produce the
+// same bytes, so a replace-import could keep a cached section showing the
+// previous document's values. JSON framing is unambiguous by construction.
 function customStoreSignature(store) {
     if (!isRecord(store))
         return '';
     const keys = Object.keys(store).sort();
     let out = '';
     for (const key of keys)
-        out += key + '=' + String(store[key]) + ';';
+        out += JSON.stringify([key, store[key]]) + ',';
     return out;
 }
 function customPropsSectionKey(scope, defs, targets, multi) {
@@ -3707,13 +3711,11 @@ function customPropsSectionKey(scope, defs, targets, multi) {
         h = Math.imul(h, 16777619);
     } };
     mix(I18N.current + '|' + scope + '|' + (multi ? '1' : '0') + '|');
+    // Scope and type are fixed enums, but an id is user input and may itself
+    // contain the separators — one JSON array per definition keeps the
+    // definition sequence unambiguous, exactly like the store framing above.
     for (const def of defs) {
-        mix(def.scope);
-        mix(':');
-        mix(def.type);
-        mix(':');
-        mix(def.id);
-        mix(';');
+        mix(JSON.stringify([def.scope, def.type, def.id]) + ';');
     }
     mix('#');
     for (const target of targets)
