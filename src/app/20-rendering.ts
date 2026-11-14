@@ -2003,11 +2003,46 @@
     const selectedNode = state.selected?.type === 'node' ? state.selected.id : current;
     if(selectedNode && state.nodes.some(n => n.id === selectedNode)) sel.value = selectedNode;
   }
+  // Byte-identical repaint guard for the selection panel. The panel embeds
+  // every value it displays, so identical markup plus an identical selection
+  // key means an equivalent panel — re-parsing 2000 custom rows to reproduce
+  // the same DOM is pure waste. Entity identity goes into the key (undo
+  // replaces entity objects wholesale) so a same-value, different-object
+  // selection can never reuse listeners bound to orphans.
+  let lastSelectionPanelHtml: string | null = null;
+  let lastSelectionPanelKey: string | null = null;
+  const selectionPanelUids = new WeakMap<object, number>();
+  let selectionPanelUid = 1;
+  function selectionEntityUid(entity: object): number {
+    let uid = selectionPanelUids.get(entity);
+    if(uid === undefined){ uid = selectionPanelUid++; selectionPanelUids.set(entity, uid); }
+    return uid;
+  }
+  function panelEntityKey(id: string, entity: { } | null | undefined): string {
+    return entity ? 'e' + selectionEntityUid(entity) : 'id:' + id;
+  }
+  function selectionPanelKey(): string {
+    const selected = state.selected;
+    if(!selected) return 'none';
+    const sel = state.selection;
+    const nodeKeys = (sel?.nodes || []).map(id => panelEntityKey(id, nodeById(id))).sort().join(',');
+    const edgeKeys = (sel?.edges || []).map(id => panelEntityKey(id, edgeById(id))).sort().join(',');
+    return selected.type + '|n:' + nodeKeys + '|e:' + edgeKeys;
+  }
+  function applySelectionPanelHtml(host: HTMLElement, html: string): boolean {
+    const key = selectionPanelKey();
+    if(html === lastSelectionPanelHtml && key === lastSelectionPanelKey) return false;
+    host.innerHTML = html;
+    lastSelectionPanelHtml = html;
+    lastSelectionPanelKey = key;
+    return true;
+  }
+
   function renderSelectionPanel(){
     const host = $('#selectionPanel');
     const nodeCount = state.selection?.nodes?.length || 0;
     const edgeCount = state.selection?.edges?.length || 0;
-    if(!state.selected){ host.innerHTML = '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>'; return; }
+    if(!state.selected){ if(applySelectionPanelHtml(host, '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>')) { /* repainted */ } return; }
     if(nodeCount + edgeCount > 1){
       const parts = [];
       parts.push(`<div class="tiny muted" style="margin-bottom:8px">${I18N.t('selected_n_m', {n: nodeCount, m: edgeCount})}</div>`);
@@ -2043,8 +2078,7 @@
           <div class="row" style="margin-top:6px">
             <button id="mulResetNodeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
-        const mulNodeTargets = state.selection.nodes.map(id => nodeById(id)).filter(Boolean);
-        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('node', mulNodeTargets, true)}`;
+        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div><div data-cp-ph="sel-node"></div>`;
       }
       // Edge editing section (if any edges selected)
       if(edgeCount > 0){
@@ -2066,12 +2100,21 @@
           <div class="row" style="margin-top:6px">
             <button id="mulResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
-        const mulEdgeTargets = state.selection.edges.map(id => edgeById(id)).filter(Boolean);
-        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('edge', mulEdgeTargets, true)}`;
+        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div><div data-cp-ph="sel-edge"></div>`;
       }
-      host.innerHTML = html;
-      wireCustomProps(host, 'node', state.selection.nodes.map(id => nodeById(id)).filter(Boolean), true);
-      wireCustomProps(host, 'edge', state.selection.edges.map(id => edgeById(id)).filter(Boolean), true);
+      const multiNodeTargets = nodeCount > 0 ? state.selection.nodes.map(id => nodeById(id)).filter(Boolean) : [];
+      const multiEdgeTargets = edgeCount > 0 ? state.selection.edges.map(id => edgeById(id)).filter(Boolean) : [];
+      if(!applySelectionPanelHtml(host, html)){
+        // Outer panel reused byte-identically; only the cached custom sections
+        // can have moved on (definition edits). Swap those, keep the rest.
+        if(nodeCount > 0) refreshSelectionCustomSection(host, 'sel-node', 'node', multiNodeTargets, true);
+        if(edgeCount > 0) refreshSelectionCustomSection(host, 'sel-edge', 'edge', multiEdgeTargets, true);
+        return;
+      }
+      // Mount the custom sections: cached live elements — untouched
+      // definitions/values keep their DOM, listeners and focus.
+      if(nodeCount > 0) mountCustomProps(host, 'sel-node', 'sel-node', 'node', multiNodeTargets, true);
+      if(edgeCount > 0) mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', multiEdgeTargets, true);
       $('#selAdjacent').addEventListener('click', () => expandSelection(false));
       $('#selDirectedAdjacent').addEventListener('click', () => expandSelection(true));
       $('#selClear').addEventListener('click', deselect);
@@ -2149,7 +2192,7 @@
       const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
       const typeList = existingNodeTypes().filter(t => t !== n.type);
       const v = nodeVisual(n);
-      host.innerHTML = `
+      const singleNodeHtml = `
         <div class="grid2">
           <label class="field" for="selNodeLabel">${I18N.t('label')} <input id="selNodeLabel" value="${esc(n.label)}"></label>
           <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList">${typeList.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
@@ -2177,13 +2220,14 @@
           <label class="field" for="selNodeLabelFont">${I18N.t('label_font')} <input id="selNodeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
         <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
-        ${customPropsSectionHtml('node', [n], false)}
+        <div data-cp-ph="sel-node"></div>
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_btn')}</button>
           <button id="selResetStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
         </div>
         <p class="drag-hint">${I18N.t('drag_hint')}</p>`;
-      wireCustomProps(host, 'node', [n], false);
+      if(!applySelectionPanelHtml(host, singleNodeHtml)){ refreshSelectionCustomSection(host, 'sel-node', 'node', [n], false); return; }
+      mountCustomProps(host, 'sel-node', 'sel-node', 'node', [n], false);
       $('#selNodeShape').value = n.shape || '';
       $('#selNodeStrokeStyle').value = n.strokeStyle || '';
       $('#selNodeLabelPos').value = n.labelPosition || '';
@@ -2241,7 +2285,7 @@
       const typeList = existingEdgeTypes().filter(t => t !== e.type);
       const v = edgeVisual(e);
       const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
-      host.innerHTML = `
+      const singleEdgeHtml = `
         <div class="tiny muted" style="margin-bottom:8px">${esc(a?.label || e.from)} → ${esc(b?.label || e.to)}</div>
         <div class="grid2">
           <label class="field" for="selEdgeWeight">${I18N.t('weight')} <input id="selEdgeWeight" value="${esc(e.weight)}"></label>
@@ -2260,12 +2304,13 @@
           <label class="field" for="selEdgeLabelFont">${I18N.t('label_font')} <input id="selEdgeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
         <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
-        ${customPropsSectionHtml('edge', [e], false)}
+        <div data-cp-ph="sel-edge"></div>
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_edge')}</button>
           <button id="selResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
         </div>`;
-      wireCustomProps(host, 'edge', [e], false);
+      if(!applySelectionPanelHtml(host, singleEdgeHtml)){ refreshSelectionCustomSection(host, 'sel-edge', 'edge', [e], false); return; }
+      mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', [e], false);
       $('#selEdgeStrokeStyle').value = e.strokeStyle || '';
       $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory(); queueRender(true); });
       $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0,80); pushHistory(); queueRender(true); });

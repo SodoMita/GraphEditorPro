@@ -728,13 +728,9 @@
   function renderGraphCustomProps(){
     const host = $('#graphCustomProps');
     if(!host) return;
-    const defs = definedCustomAttributes('graph');
-    if(!defs.length){
-      host.innerHTML = `<div class="tiny muted">${esc(I18N.t('graph_values_none'))}</div>`;
-      return;
-    }
-    host.innerHTML = customPropsSectionHtml('graph', ['graph'], false);
-    wireCustomProps(host, 'graph', ['graph'], false);
+    // The section element is cached by content key and moved in place — an
+    // unrelated repaint no longer re-parses hundreds of rows.
+    mountCustomProps(host, null, 'graph', 'graph', ['graph'], false);
   }
   // Custom property editors for the two new-element default sections. The
   // chosen values apply to nodes/edges created afterwards and are stored on
@@ -742,26 +738,27 @@
   // sanitizer like every other new-element default.
   function renderNewElementCustomProps(){
     const nodeHost = $('#newNodeCustomProps');
-    if(nodeHost){
-      nodeHost.innerHTML = customPropsSectionHtml('node', ['node-defaults'], false);
-      wireCustomProps(nodeHost, 'node', ['node-defaults'], false);
-    }
+    if(nodeHost) mountCustomProps(nodeHost, null, 'new-node', 'node', ['node-defaults'], false);
     const edgeHost = $('#newEdgeCustomProps');
-    if(edgeHost){
-      edgeHost.innerHTML = customPropsSectionHtml('edge', ['edge-defaults'], false);
-      wireCustomProps(edgeHost, 'edge', ['edge-defaults'], false);
-    }
+    if(edgeHost) mountCustomProps(edgeHost, null, 'new-edge', 'edge', ['edge-defaults'], false);
   }
+  // Rebuilding the definitions list costs one innerHTML parse of ~2.5 MB at
+  // CUSTOM_DEFINITIONS_MAX. When re-entrant syncs produce the same markup
+  // (common: a no-op save, or a re-sync after unrelated edits), keep the
+  // live DOM — rows carry no per-row listeners (actions are delegated), so
+  // skipping is safe. The cached string is the only state kept.
+  let lastCustomAttributesHtml: string | null = null;
   function renderCustomAttributes(){
     renderGraphCustomProps();
     renderNewElementCustomProps();
     const host = $('#customAttributesList');
     if(!host) return;
     if(!state.customAttributes.length){
-      host.innerHTML = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
+      const emptyHtml = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
+      if(lastCustomAttributesHtml !== emptyHtml){ host.innerHTML = emptyHtml; lastCustomAttributesHtml = emptyHtml; }
       return;
     }
-    host.innerHTML = state.customAttributes.map((attribute, index) => `
+    const listHtml = state.customAttributes.map((attribute, index) => `
       <div class="custom-attribute-row" data-custom-attribute="${index}">
         <div class="custom-attribute-fields">
           <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(attribute.id)}" data-attribute-field="id"></label>
@@ -778,4 +775,7 @@
           <button type="button" class="btn small danger" data-attribute-action="delete" title="${esc(I18N.t('delete_btn'))}" aria-label="${esc(I18N.t('delete_btn'))}">${esc(I18N.t('delete_btn'))}</button>
         </div>
       </div>`).join('');
+    if(listHtml === lastCustomAttributesHtml) return;
+    host.innerHTML = listHtml;
+    lastCustomAttributesHtml = listHtml;
   }

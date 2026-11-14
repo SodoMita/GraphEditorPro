@@ -998,19 +998,46 @@
     }
     return { value: first, mixed: false };
   }
+  // Batched counterpart of sharedCustomPropValue: one pass over the targets'
+  // stores for every definition at once. Asking one definition at a time is
+  // O(definitions x targets) — quadratic for a multi-selection at
+  // CUSTOM_DEFINITIONS_MAX — and this is the same result either way.
+  function sharedCustomPropValues(targets: readonly CustomPropTarget[], defs: readonly { id: string }[]): Map<string, { value?: CustomAttributeValue; mixed: boolean }> {
+    const acc = new Map<string, { first: CustomAttributeValue | undefined; count: number; mixed: boolean }>();
+    for(const def of defs) acc.set(def.id, { first: undefined, count: 0, mixed: false });
+    for(const target of targets){
+      const store = customStoreOf(target);
+      if(!isRecord(store)) continue;
+      for(const key of Object.keys(store)){
+        const a = acc.get(key);
+        if(!a) continue;
+        if(a.count === 0){ a.first = store[key]; a.count = 1; continue; }
+        a.count++;
+        if(!a.mixed && store[key] !== a.first) a.mixed = true;
+      }
+    }
+    const total = targets.length;
+    const out = new Map<string, { value?: CustomAttributeValue; mixed: boolean }>();
+    for(const [id, a] of acc){
+      // A target without the key stores undefined; a stored scalar (never
+      // undefined) differing from that makes the set mixed.
+      if(a.count < total && a.first !== undefined) a.mixed = true;
+      out.set(id, a.mixed ? { mixed: true } : { value: a.first, mixed: false });
+    }
+    return out;
+  }
   // One row per attribute: an escaped label (id + type badge) and the typed
   // control. All user-visible text goes through esc()/I18N — attribute ids are
-  // user input.
-  function customPropControlHtml(attr: { id: string; type: string }, targets: CustomPropTarget[], multi: boolean): string {
-    const { value, mixed } = sharedCustomPropValue(targets, attr.id);
+  // user input. The loop invariants (title, placeholder, option markup) are
+  // built once per section, not once per definition.
+  function customPropControlHtml(attr: { id: string; type: string }, shown: { value?: CustomAttributeValue; mixed: boolean }, invariants: { propTitle: string; keepPlaceholder: string; boolKeepOption: string; boolUnsetOption: string }): string {
+    const { value, mixed } = shown;
     const safeId = esc(attr.id);
-    const common = `class="custom-prop-input" data-custom-attribute="${safeId}" data-custom-type="${esc(attr.type)}" title="${esc(I18N.t('custom_prop_title'))}"`;
+    const common = `class="custom-prop-input" data-custom-attribute="${safeId}" data-custom-type="${esc(attr.type)}" title="${invariants.propTitle}"`;
     if(attr.type === 'boolean'){
-      const keepOption = multi ? `<option value="">${esc(I18N.t('keep'))}</option>` : `<option value="">${esc(I18N.t('custom_prop_unset'))}</option>`;
-      const unsetOption = multi ? `<option value="__unset__">${esc(I18N.t('custom_prop_unset'))}</option>` : '';
       const trueSel = value === true && !mixed ? ' selected' : '';
       const falseSel = value === false && !mixed ? ' selected' : '';
-      return `<select ${common}>${keepOption}${unsetOption}<option value="true"${trueSel}>true</option><option value="false"${falseSel}>false</option></select>`;
+      return `<select ${common}>${invariants.boolKeepOption}${invariants.boolUnsetOption}<option value="true"${trueSel}>true</option><option value="false"${falseSel}>false</option></select>`;
     }
     // Text inputs with a decimal/numeric inputmode, not type=number: a browser
     // number field silently reports "" for anything it cannot parse, which
@@ -1019,22 +1046,105 @@
     // field reverts to the stored value.
     const isNumeric = attr.type !== 'string';
     const integer = attr.type === 'int' || attr.type === 'long';
-    const shown = !mixed && value !== undefined ? esc(formatCustomValue(value)) : '';
-    const placeholder = multi ? `placeholder="${esc(I18N.t('keep'))}" data-i18n-placeholder="keep"` : '';
+    const shownText = !mixed && value !== undefined ? esc(formatCustomValue(value)) : '';
     const maxlength = isNumeric ? ' maxlength="32"' : ` maxlength="${CUSTOM_VALUE_MAX}"`;
-    return `<input type="text"${maxlength} ${common} value="${shown}" ${placeholder} inputmode="${integer ? 'numeric' : isNumeric ? 'decimal' : 'text'}" autocomplete="off" spellcheck="false">`;
+    return `<input type="text"${maxlength} ${common} value="${shownText}" ${invariants.keepPlaceholder} inputmode="${integer ? 'numeric' : isNumeric ? 'decimal' : 'text'}" autocomplete="off" spellcheck="false">`;
   }
-  function customPropsSectionHtml(scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): string {
+  // A live custom-property section. Rendering the rows at
+  // CUSTOM_DEFINITIONS_MAX costs hundreds of milliseconds and several hundred
+  // kilobytes of innerHTML parsing, and the parser is the disproportionate
+  // part — so each surface caches its section by a content key and moves the
+  // SAME element between renders. When the key is unchanged (same language,
+  // same definitions, same targets, same stored values) the live element —
+  // its listeners, its focus, its in-progress edits — is reused untouched.
+  const customPropSections = new Map<string, { key: string; element: HTMLElement }>();
+  let customPropTargetUid = 1;
+  const customPropTargetUids = new WeakMap<object, number>();
+  function customPropTargetKey(target: CustomPropTarget): string {
+    if(target === 'graph') return 'g';
+    if(target === 'node-defaults') return 'nd';
+    if(target === 'edge-defaults') return 'ed';
+    let uid = customPropTargetUids.get(target);
+    if(uid === undefined){ uid = customPropTargetUid++; customPropTargetUids.set(target, uid); }
+    return 'e' + uid;
+  }
+  function customStoreSignature(store: AnyRecord | undefined): string {
+    if(!isRecord(store)) return '';
+    const keys = Object.keys(store).sort();
+    let out = '';
+    for(const key of keys) out += key + '=' + String(store[key]) + ';';
+    return out;
+  }
+  function customPropsSectionKey(scope: 'graph' | 'node' | 'edge', defs: readonly { id: string; type: string; scope: string }[], targets: readonly CustomPropTarget[], multi: boolean): string {
+    let h = 2166136261 >>> 0;
+    const mix = (text: string) => { for(let i = 0; i < text.length; i++){ h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } };
+    mix(I18N.current + '|' + scope + '|' + (multi ? '1' : '0') + '|');
+    for(const def of defs){ mix(def.scope); mix(':'); mix(def.type); mix(':'); mix(def.id); mix(';'); }
+    mix('#');
+    for(const target of targets) mix(customPropTargetKey(target) + '{' + customStoreSignature(customStoreOf(target)) + '}');
+    return String(h);
+  }
+  // Returns the live section element for one surface. cacheKey identifies the
+  // surface (one cache entry per mounted placeholder/host); the content key
+  // decides whether the element can be reused or must be rebuilt.
+  function customPropsSection(cacheKey: string, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): HTMLElement {
     const defs = definedCustomAttributes(scope);
+    const key = customPropsSectionKey(scope, defs, targets, multi);
+    const cached = customPropSections.get(cacheKey);
+    if(cached && cached.key === key) return cached.element;
+    const element = document.createElement('div');
     if(!defs.length){
-      return `<div class="custom-props custom-props-empty tiny muted" data-scope="${scope}">${esc(I18N.t('custom_prop_none'))}</div>`;
+      element.className = 'custom-props custom-props-empty tiny muted';
+      element.dataset.scope = scope;
+      element.textContent = I18N.t(scope === 'graph' ? 'graph_values_none' : 'custom_prop_none');
+    }else{
+      const i18nKeep = esc(I18N.t('keep'));
+      const invariants = {
+        propTitle: esc(I18N.t('custom_prop_title')),
+        keepPlaceholder: multi ? `placeholder="${i18nKeep}" data-i18n-placeholder="keep"` : '',
+        boolKeepOption: multi ? `<option value="">${i18nKeep}</option>` : `<option value="">${esc(I18N.t('custom_prop_unset'))}</option>`,
+        boolUnsetOption: multi ? `<option value="__unset__">${esc(I18N.t('custom_prop_unset'))}</option>` : '',
+      };
+      const shared = sharedCustomPropValues(targets, defs);
+      element.className = 'custom-props';
+      element.dataset.scope = scope;
+      element.innerHTML = defs.map(attr => {
+        const shown = shared.get(attr.id) || { mixed: false };
+        return `<label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, shown, invariants)}</label>`;
+      }).join('');
+      wireCustomProps(element, scope, targets, multi);
     }
-    const rows = defs.map(attr => `
-      <label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, targets, multi)}</label>`).join('');
-    return `<div class="custom-props" data-scope="${scope}">${rows}</div>`;
+    customPropSections.set(cacheKey, { key, element });
+    return element;
   }
-  // Wires the freshly built custom property controls (both the selection panel
-  // and the graph values block rebuild their inputs before calling this).
+  // Skip path of the selection panel: the outer panel was reused byte-for-byte,
+  // so nothing needs re-wiring — only the cached custom sections can have
+  // changed underneath it (definition edits, value migration at import time).
+  // Swap in the rebuilt element when their content key moved on; otherwise
+  // this is a no-op.
+  function refreshSelectionCustomSection(host: HTMLElement, cacheKey: string, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): void {
+    const element = customPropsSection(cacheKey, scope, targets, multi);
+    if(element.parentNode === host) return; // still mounted and current
+    const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
+    if(current && current !== element) current.replaceWith(element);
+  }
+  // Mounts the section into a host. With a placeholder (selection panel), the
+  // freshly built outer HTML carries a [data-cp-ph] marker that gets swapped
+  // for the live element; without one (standalone graph/defaults hosts), the
+  // host's whole content becomes the section element — unless it already is.
+  function mountCustomProps(host: HTMLElement, placeholder: string | null, cacheKey: string, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): void {
+    const element = customPropsSection(cacheKey, scope, targets, multi);
+    if(placeholder){
+      const marker = host.querySelector(`[data-cp-ph="${placeholder}"]`);
+      if(marker){ marker.replaceWith(element); return; }
+    }
+    if(host.childElementCount === 1 && host.firstElementChild === element) return;
+    host.replaceChildren(element);
+  }
+
+  // Wires the custom property controls of one freshly built section. The
+  // cached sections created by customPropsSection are wired exactly once —
+  // when their DOM is built — not on every mount.
   function wireCustomProps(host: ParentNode, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean){
     host.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`.custom-props[data-scope="${scope}"] .custom-prop-input`).forEach(input => {
       input.addEventListener('change', () => {
@@ -1042,7 +1152,14 @@
         const def = state.customAttributes.find(attribute => attribute.id === id && defAppliesTo(attribute, scope));
         if(!def) return;
         const result = applyCustomPropValue(def, targets, String(input.value ?? ''), multi);
-        if(result === 'invalid'){ toast(I18N.t('attribute_invalid_number')); renderCustomPropHosts(); return; }
+        if(result === 'invalid'){
+          toast(I18N.t('attribute_invalid_number'));
+          // Revert the field to the stored value in place — never rebuild
+          // here: the section element is cached and the input may hold focus.
+          const stored = sharedCustomPropValue(targets, def.id);
+          input.value = !stored.mixed && stored.value !== undefined ? formatCustomValue(stored.value) : '';
+          return;
+        }
         if(result === 'noop') return;
         // Reflect what was actually stored — '042' commits to 42, and a
         // stated fraction on an integer-typed property is stored verbatim
@@ -1056,9 +1173,9 @@
       });
     });
   }
-  // Repaint every surface that shows custom property values (cheap: just the
-  // fields, not the canvas). Used after invalid input reverts and after def
-  // edits re-render the data panel.
+  // Repaint every surface that shows custom property values. With the section
+  // cache this is a cheap no-op when nothing shown changed; it rebuilds only
+  // what actually differs (def edits, value migration at import/paste time).
   function renderCustomPropHosts(){
     renderGraphCustomProps();
     renderNewElementCustomProps();

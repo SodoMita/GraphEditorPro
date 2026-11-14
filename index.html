@@ -1031,7 +1031,7 @@
                   </label>
                 </div>
                 <div class="section-title" style="margin-top:10px"><span data-i18n="custom_properties">Custom properties</span> <span class="tiny muted" data-i18n="custom_props_new_nodes">(applied to new nodes)</span></div>
-                <div id="newNodeCustomProps" class="custom-props"></div>
+                <div id="newNodeCustomProps"></div>
               </div>
             </details>
 
@@ -1101,7 +1101,7 @@
                   <label class="field" for="edgeArrowSize"><span data-i18n="arrow_size">Arrow size</span><input id="edgeArrowSize" type="number" min="4" max="40" step="1" value="12" inputmode="decimal" /></label><label class="field" for="edgeDirected" style="align-self:end"><span data-i18n="direction">Direction</span><select id="edgeDirected"><option value="directed" data-i18n="directed_edge_short">Directed</option><option value="mutual" data-i18n="mutual_edge_short">Mutual</option><option value="undirected" data-i18n="undirected_edge_short">Undirected</option></select></label>
                 </div>
                 <div class="section-title" style="margin-top:10px"><span data-i18n="custom_properties">Custom properties</span> <span class="tiny muted" data-i18n="custom_props_new_edges">(applied to new edges)</span></div>
-                <div id="newEdgeCustomProps" class="custom-props"></div>
+                <div id="newEdgeCustomProps"></div>
               </div>
             </details>
 
@@ -1370,7 +1370,7 @@
                 <div id="graphCustomPropsWrap" style="margin-top:10px">
                   <div class="section-title" data-i18n="graph_values">Graph values</div>
                   <p class="tiny muted" style="margin:2px 0 6px" data-i18n="graph_values_help">Values of graph-scope attributes. They apply to the whole document.</p>
-                  <div id="graphCustomProps" class="custom-props"></div>
+                  <div id="graphCustomProps"></div>
                 </div>
               </div>
             </details>
@@ -3606,19 +3606,55 @@ function sharedCustomPropValue(targets, id) {
     }
     return { value: first, mixed: false };
 }
+// Batched counterpart of sharedCustomPropValue: one pass over the targets'
+// stores for every definition at once. Asking one definition at a time is
+// O(definitions x targets) — quadratic for a multi-selection at
+// CUSTOM_DEFINITIONS_MAX — and this is the same result either way.
+function sharedCustomPropValues(targets, defs) {
+    const acc = new Map();
+    for (const def of defs)
+        acc.set(def.id, { first: undefined, count: 0, mixed: false });
+    for (const target of targets) {
+        const store = customStoreOf(target);
+        if (!isRecord(store))
+            continue;
+        for (const key of Object.keys(store)) {
+            const a = acc.get(key);
+            if (!a)
+                continue;
+            if (a.count === 0) {
+                a.first = store[key];
+                a.count = 1;
+                continue;
+            }
+            a.count++;
+            if (!a.mixed && store[key] !== a.first)
+                a.mixed = true;
+        }
+    }
+    const total = targets.length;
+    const out = new Map();
+    for (const [id, a] of acc) {
+        // A target without the key stores undefined; a stored scalar (never
+        // undefined) differing from that makes the set mixed.
+        if (a.count < total && a.first !== undefined)
+            a.mixed = true;
+        out.set(id, a.mixed ? { mixed: true } : { value: a.first, mixed: false });
+    }
+    return out;
+}
 // One row per attribute: an escaped label (id + type badge) and the typed
 // control. All user-visible text goes through esc()/I18N — attribute ids are
-// user input.
-function customPropControlHtml(attr, targets, multi) {
-    const { value, mixed } = sharedCustomPropValue(targets, attr.id);
+// user input. The loop invariants (title, placeholder, option markup) are
+// built once per section, not once per definition.
+function customPropControlHtml(attr, shown, invariants) {
+    const { value, mixed } = shown;
     const safeId = esc(attr.id);
-    const common = `class="custom-prop-input" data-custom-attribute="${safeId}" data-custom-type="${esc(attr.type)}" title="${esc(I18N.t('custom_prop_title'))}"`;
+    const common = `class="custom-prop-input" data-custom-attribute="${safeId}" data-custom-type="${esc(attr.type)}" title="${invariants.propTitle}"`;
     if (attr.type === 'boolean') {
-        const keepOption = multi ? `<option value="">${esc(I18N.t('keep'))}</option>` : `<option value="">${esc(I18N.t('custom_prop_unset'))}</option>`;
-        const unsetOption = multi ? `<option value="__unset__">${esc(I18N.t('custom_prop_unset'))}</option>` : '';
         const trueSel = value === true && !mixed ? ' selected' : '';
         const falseSel = value === false && !mixed ? ' selected' : '';
-        return `<select ${common}>${keepOption}${unsetOption}<option value="true"${trueSel}>true</option><option value="false"${falseSel}>false</option></select>`;
+        return `<select ${common}>${invariants.boolKeepOption}${invariants.boolUnsetOption}<option value="true"${trueSel}>true</option><option value="false"${falseSel}>false</option></select>`;
     }
     // Text inputs with a decimal/numeric inputmode, not type=number: a browser
     // number field silently reports "" for anything it cannot parse, which
@@ -3627,22 +3663,131 @@ function customPropControlHtml(attr, targets, multi) {
     // field reverts to the stored value.
     const isNumeric = attr.type !== 'string';
     const integer = attr.type === 'int' || attr.type === 'long';
-    const shown = !mixed && value !== undefined ? esc(formatCustomValue(value)) : '';
-    const placeholder = multi ? `placeholder="${esc(I18N.t('keep'))}" data-i18n-placeholder="keep"` : '';
+    const shownText = !mixed && value !== undefined ? esc(formatCustomValue(value)) : '';
     const maxlength = isNumeric ? ' maxlength="32"' : ` maxlength="${CUSTOM_VALUE_MAX}"`;
-    return `<input type="text"${maxlength} ${common} value="${shown}" ${placeholder} inputmode="${integer ? 'numeric' : isNumeric ? 'decimal' : 'text'}" autocomplete="off" spellcheck="false">`;
+    return `<input type="text"${maxlength} ${common} value="${shownText}" ${invariants.keepPlaceholder} inputmode="${integer ? 'numeric' : isNumeric ? 'decimal' : 'text'}" autocomplete="off" spellcheck="false">`;
 }
-function customPropsSectionHtml(scope, targets, multi) {
-    const defs = definedCustomAttributes(scope);
-    if (!defs.length) {
-        return `<div class="custom-props custom-props-empty tiny muted" data-scope="${scope}">${esc(I18N.t('custom_prop_none'))}</div>`;
+// A live custom-property section. Rendering the rows at
+// CUSTOM_DEFINITIONS_MAX costs hundreds of milliseconds and several hundred
+// kilobytes of innerHTML parsing, and the parser is the disproportionate
+// part — so each surface caches its section by a content key and moves the
+// SAME element between renders. When the key is unchanged (same language,
+// same definitions, same targets, same stored values) the live element —
+// its listeners, its focus, its in-progress edits — is reused untouched.
+const customPropSections = new Map();
+let customPropTargetUid = 1;
+const customPropTargetUids = new WeakMap();
+function customPropTargetKey(target) {
+    if (target === 'graph')
+        return 'g';
+    if (target === 'node-defaults')
+        return 'nd';
+    if (target === 'edge-defaults')
+        return 'ed';
+    let uid = customPropTargetUids.get(target);
+    if (uid === undefined) {
+        uid = customPropTargetUid++;
+        customPropTargetUids.set(target, uid);
     }
-    const rows = defs.map(attr => `
-      <label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, targets, multi)}</label>`).join('');
-    return `<div class="custom-props" data-scope="${scope}">${rows}</div>`;
+    return 'e' + uid;
 }
-// Wires the freshly built custom property controls (both the selection panel
-// and the graph values block rebuild their inputs before calling this).
+function customStoreSignature(store) {
+    if (!isRecord(store))
+        return '';
+    const keys = Object.keys(store).sort();
+    let out = '';
+    for (const key of keys)
+        out += key + '=' + String(store[key]) + ';';
+    return out;
+}
+function customPropsSectionKey(scope, defs, targets, multi) {
+    let h = 2166136261 >>> 0;
+    const mix = (text) => { for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    } };
+    mix(I18N.current + '|' + scope + '|' + (multi ? '1' : '0') + '|');
+    for (const def of defs) {
+        mix(def.scope);
+        mix(':');
+        mix(def.type);
+        mix(':');
+        mix(def.id);
+        mix(';');
+    }
+    mix('#');
+    for (const target of targets)
+        mix(customPropTargetKey(target) + '{' + customStoreSignature(customStoreOf(target)) + '}');
+    return String(h);
+}
+// Returns the live section element for one surface. cacheKey identifies the
+// surface (one cache entry per mounted placeholder/host); the content key
+// decides whether the element can be reused or must be rebuilt.
+function customPropsSection(cacheKey, scope, targets, multi) {
+    const defs = definedCustomAttributes(scope);
+    const key = customPropsSectionKey(scope, defs, targets, multi);
+    const cached = customPropSections.get(cacheKey);
+    if (cached && cached.key === key)
+        return cached.element;
+    const element = document.createElement('div');
+    if (!defs.length) {
+        element.className = 'custom-props custom-props-empty tiny muted';
+        element.dataset.scope = scope;
+        element.textContent = I18N.t(scope === 'graph' ? 'graph_values_none' : 'custom_prop_none');
+    }
+    else {
+        const i18nKeep = esc(I18N.t('keep'));
+        const invariants = {
+            propTitle: esc(I18N.t('custom_prop_title')),
+            keepPlaceholder: multi ? `placeholder="${i18nKeep}" data-i18n-placeholder="keep"` : '',
+            boolKeepOption: multi ? `<option value="">${i18nKeep}</option>` : `<option value="">${esc(I18N.t('custom_prop_unset'))}</option>`,
+            boolUnsetOption: multi ? `<option value="__unset__">${esc(I18N.t('custom_prop_unset'))}</option>` : '',
+        };
+        const shared = sharedCustomPropValues(targets, defs);
+        element.className = 'custom-props';
+        element.dataset.scope = scope;
+        element.innerHTML = defs.map(attr => {
+            const shown = shared.get(attr.id) || { mixed: false };
+            return `<label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, shown, invariants)}</label>`;
+        }).join('');
+        wireCustomProps(element, scope, targets, multi);
+    }
+    customPropSections.set(cacheKey, { key, element });
+    return element;
+}
+// Skip path of the selection panel: the outer panel was reused byte-for-byte,
+// so nothing needs re-wiring — only the cached custom sections can have
+// changed underneath it (definition edits, value migration at import time).
+// Swap in the rebuilt element when their content key moved on; otherwise
+// this is a no-op.
+function refreshSelectionCustomSection(host, cacheKey, scope, targets, multi) {
+    const element = customPropsSection(cacheKey, scope, targets, multi);
+    if (element.parentNode === host)
+        return; // still mounted and current
+    const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
+    if (current && current !== element)
+        current.replaceWith(element);
+}
+// Mounts the section into a host. With a placeholder (selection panel), the
+// freshly built outer HTML carries a [data-cp-ph] marker that gets swapped
+// for the live element; without one (standalone graph/defaults hosts), the
+// host's whole content becomes the section element — unless it already is.
+function mountCustomProps(host, placeholder, cacheKey, scope, targets, multi) {
+    const element = customPropsSection(cacheKey, scope, targets, multi);
+    if (placeholder) {
+        const marker = host.querySelector(`[data-cp-ph="${placeholder}"]`);
+        if (marker) {
+            marker.replaceWith(element);
+            return;
+        }
+    }
+    if (host.childElementCount === 1 && host.firstElementChild === element)
+        return;
+    host.replaceChildren(element);
+}
+// Wires the custom property controls of one freshly built section. The
+// cached sections created by customPropsSection are wired exactly once —
+// when their DOM is built — not on every mount.
 function wireCustomProps(host, scope, targets, multi) {
     host.querySelectorAll(`.custom-props[data-scope="${scope}"] .custom-prop-input`).forEach(input => {
         input.addEventListener('change', () => {
@@ -3653,7 +3798,10 @@ function wireCustomProps(host, scope, targets, multi) {
             const result = applyCustomPropValue(def, targets, String(input.value ?? ''), multi);
             if (result === 'invalid') {
                 toast(I18N.t('attribute_invalid_number'));
-                renderCustomPropHosts();
+                // Revert the field to the stored value in place — never rebuild
+                // here: the section element is cached and the input may hold focus.
+                const stored = sharedCustomPropValue(targets, def.id);
+                input.value = !stored.mixed && stored.value !== undefined ? formatCustomValue(stored.value) : '';
                 return;
             }
             if (result === 'noop')
@@ -3673,9 +3821,9 @@ function wireCustomProps(host, scope, targets, multi) {
         });
     });
 }
-// Repaint every surface that shows custom property values (cheap: just the
-// fields, not the canvas). Used after invalid input reverts and after def
-// edits re-render the data panel.
+// Repaint every surface that shows custom property values. With the section
+// cache this is a cheap no-op when nothing shown changed; it rebuilds only
+// what actually differs (def edits, value migration at import/paste time).
 function renderCustomPropHosts() {
     renderGraphCustomProps();
     renderNewElementCustomProps();
@@ -6574,12 +6722,51 @@ function renderStartSelect() {
     if (selectedNode && state.nodes.some(n => n.id === selectedNode))
         sel.value = selectedNode;
 }
+// Byte-identical repaint guard for the selection panel. The panel embeds
+// every value it displays, so identical markup plus an identical selection
+// key means an equivalent panel — re-parsing 2000 custom rows to reproduce
+// the same DOM is pure waste. Entity identity goes into the key (undo
+// replaces entity objects wholesale) so a same-value, different-object
+// selection can never reuse listeners bound to orphans.
+let lastSelectionPanelHtml = null;
+let lastSelectionPanelKey = null;
+const selectionPanelUids = new WeakMap();
+let selectionPanelUid = 1;
+function selectionEntityUid(entity) {
+    let uid = selectionPanelUids.get(entity);
+    if (uid === undefined) {
+        uid = selectionPanelUid++;
+        selectionPanelUids.set(entity, uid);
+    }
+    return uid;
+}
+function panelEntityKey(id, entity) {
+    return entity ? 'e' + selectionEntityUid(entity) : 'id:' + id;
+}
+function selectionPanelKey() {
+    const selected = state.selected;
+    if (!selected)
+        return 'none';
+    const sel = state.selection;
+    const nodeKeys = (sel?.nodes || []).map(id => panelEntityKey(id, nodeById(id))).sort().join(',');
+    const edgeKeys = (sel?.edges || []).map(id => panelEntityKey(id, edgeById(id))).sort().join(',');
+    return selected.type + '|n:' + nodeKeys + '|e:' + edgeKeys;
+}
+function applySelectionPanelHtml(host, html) {
+    const key = selectionPanelKey();
+    if (html === lastSelectionPanelHtml && key === lastSelectionPanelKey)
+        return false;
+    host.innerHTML = html;
+    lastSelectionPanelHtml = html;
+    lastSelectionPanelKey = key;
+    return true;
+}
 function renderSelectionPanel() {
     const host = $('#selectionPanel');
     const nodeCount = state.selection?.nodes?.length || 0;
     const edgeCount = state.selection?.edges?.length || 0;
     if (!state.selected) {
-        host.innerHTML = '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>';
+        if (applySelectionPanelHtml(host, '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>')) { /* repainted */ }
         return;
     }
     if (nodeCount + edgeCount > 1) {
@@ -6617,8 +6804,7 @@ function renderSelectionPanel() {
           <div class="row" style="margin-top:6px">
             <button id="mulResetNodeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
-            const mulNodeTargets = state.selection.nodes.map(id => nodeById(id)).filter(Boolean);
-            html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('node', mulNodeTargets, true)}`;
+            html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div><div data-cp-ph="sel-node"></div>`;
         }
         // Edge editing section (if any edges selected)
         if (edgeCount > 0) {
@@ -6640,12 +6826,25 @@ function renderSelectionPanel() {
           <div class="row" style="margin-top:6px">
             <button id="mulResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
-            const mulEdgeTargets = state.selection.edges.map(id => edgeById(id)).filter(Boolean);
-            html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>${customPropsSectionHtml('edge', mulEdgeTargets, true)}`;
+            html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div><div data-cp-ph="sel-edge"></div>`;
         }
-        host.innerHTML = html;
-        wireCustomProps(host, 'node', state.selection.nodes.map(id => nodeById(id)).filter(Boolean), true);
-        wireCustomProps(host, 'edge', state.selection.edges.map(id => edgeById(id)).filter(Boolean), true);
+        const multiNodeTargets = nodeCount > 0 ? state.selection.nodes.map(id => nodeById(id)).filter(Boolean) : [];
+        const multiEdgeTargets = edgeCount > 0 ? state.selection.edges.map(id => edgeById(id)).filter(Boolean) : [];
+        if (!applySelectionPanelHtml(host, html)) {
+            // Outer panel reused byte-identically; only the cached custom sections
+            // can have moved on (definition edits). Swap those, keep the rest.
+            if (nodeCount > 0)
+                refreshSelectionCustomSection(host, 'sel-node', 'node', multiNodeTargets, true);
+            if (edgeCount > 0)
+                refreshSelectionCustomSection(host, 'sel-edge', 'edge', multiEdgeTargets, true);
+            return;
+        }
+        // Mount the custom sections: cached live elements — untouched
+        // definitions/values keep their DOM, listeners and focus.
+        if (nodeCount > 0)
+            mountCustomProps(host, 'sel-node', 'sel-node', 'node', multiNodeTargets, true);
+        if (edgeCount > 0)
+            mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', multiEdgeTargets, true);
         $('#selAdjacent').addEventListener('click', () => expandSelection(false));
         $('#selDirectedAdjacent').addEventListener('click', () => expandSelection(true));
         $('#selClear').addEventListener('click', deselect);
@@ -6866,7 +7065,7 @@ function renderSelectionPanel() {
         const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
         const typeList = existingNodeTypes().filter(t => t !== n.type);
         const v = nodeVisual(n);
-        host.innerHTML = `
+        const singleNodeHtml = `
         <div class="grid2">
           <label class="field" for="selNodeLabel">${I18N.t('label')} <input id="selNodeLabel" value="${esc(n.label)}"></label>
           <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList">${typeList.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
@@ -6894,13 +7093,17 @@ function renderSelectionPanel() {
           <label class="field" for="selNodeLabelFont">${I18N.t('label_font')} <input id="selNodeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
         <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
-        ${customPropsSectionHtml('node', [n], false)}
+        <div data-cp-ph="sel-node"></div>
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_btn')}</button>
           <button id="selResetStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
         </div>
         <p class="drag-hint">${I18N.t('drag_hint')}</p>`;
-        wireCustomProps(host, 'node', [n], false);
+        if (!applySelectionPanelHtml(host, singleNodeHtml)) {
+            refreshSelectionCustomSection(host, 'sel-node', 'node', [n], false);
+            return;
+        }
+        mountCustomProps(host, 'sel-node', 'sel-node', 'node', [n], false);
         $('#selNodeShape').value = n.shape || '';
         $('#selNodeStrokeStyle').value = n.strokeStyle || '';
         $('#selNodeLabelPos').value = n.labelPosition || '';
@@ -6978,7 +7181,7 @@ function renderSelectionPanel() {
         const typeList = existingEdgeTypes().filter(t => t !== e.type);
         const v = edgeVisual(e);
         const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
-        host.innerHTML = `
+        const singleEdgeHtml = `
         <div class="tiny muted" style="margin-bottom:8px">${esc(a?.label || e.from)} → ${esc(b?.label || e.to)}</div>
         <div class="grid2">
           <label class="field" for="selEdgeWeight">${I18N.t('weight')} <input id="selEdgeWeight" value="${esc(e.weight)}"></label>
@@ -6997,12 +7200,16 @@ function renderSelectionPanel() {
           <label class="field" for="selEdgeLabelFont">${I18N.t('label_font')} <input id="selEdgeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
         <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
-        ${customPropsSectionHtml('edge', [e], false)}
+        <div data-cp-ph="sel-edge"></div>
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_edge')}</button>
           <button id="selResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
         </div>`;
-        wireCustomProps(host, 'edge', [e], false);
+        if (!applySelectionPanelHtml(host, singleEdgeHtml)) {
+            refreshSelectionCustomSection(host, 'sel-edge', 'edge', [e], false);
+            return;
+        }
+        mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', [e], false);
         $('#selEdgeStrokeStyle').value = e.strokeStyle || '';
         $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0, 50); if (v === '')
             delete e.weight;
@@ -14977,13 +15184,9 @@ function renderGraphCustomProps() {
     const host = $('#graphCustomProps');
     if (!host)
         return;
-    const defs = definedCustomAttributes('graph');
-    if (!defs.length) {
-        host.innerHTML = `<div class="tiny muted">${esc(I18N.t('graph_values_none'))}</div>`;
-        return;
-    }
-    host.innerHTML = customPropsSectionHtml('graph', ['graph'], false);
-    wireCustomProps(host, 'graph', ['graph'], false);
+    // The section element is cached by content key and moved in place — an
+    // unrelated repaint no longer re-parses hundreds of rows.
+    mountCustomProps(host, null, 'graph', 'graph', ['graph'], false);
 }
 // Custom property editors for the two new-element default sections. The
 // chosen values apply to nodes/edges created afterwards and are stored on
@@ -14991,16 +15194,18 @@ function renderGraphCustomProps() {
 // sanitizer like every other new-element default.
 function renderNewElementCustomProps() {
     const nodeHost = $('#newNodeCustomProps');
-    if (nodeHost) {
-        nodeHost.innerHTML = customPropsSectionHtml('node', ['node-defaults'], false);
-        wireCustomProps(nodeHost, 'node', ['node-defaults'], false);
-    }
+    if (nodeHost)
+        mountCustomProps(nodeHost, null, 'new-node', 'node', ['node-defaults'], false);
     const edgeHost = $('#newEdgeCustomProps');
-    if (edgeHost) {
-        edgeHost.innerHTML = customPropsSectionHtml('edge', ['edge-defaults'], false);
-        wireCustomProps(edgeHost, 'edge', ['edge-defaults'], false);
-    }
+    if (edgeHost)
+        mountCustomProps(edgeHost, null, 'new-edge', 'edge', ['edge-defaults'], false);
 }
+// Rebuilding the definitions list costs one innerHTML parse of ~2.5 MB at
+// CUSTOM_DEFINITIONS_MAX. When re-entrant syncs produce the same markup
+// (common: a no-op save, or a re-sync after unrelated edits), keep the
+// live DOM — rows carry no per-row listeners (actions are delegated), so
+// skipping is safe. The cached string is the only state kept.
+let lastCustomAttributesHtml = null;
 function renderCustomAttributes() {
     renderGraphCustomProps();
     renderNewElementCustomProps();
@@ -15008,10 +15213,14 @@ function renderCustomAttributes() {
     if (!host)
         return;
     if (!state.customAttributes.length) {
-        host.innerHTML = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
+        const emptyHtml = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
+        if (lastCustomAttributesHtml !== emptyHtml) {
+            host.innerHTML = emptyHtml;
+            lastCustomAttributesHtml = emptyHtml;
+        }
         return;
     }
-    host.innerHTML = state.customAttributes.map((attribute, index) => `
+    const listHtml = state.customAttributes.map((attribute, index) => `
       <div class="custom-attribute-row" data-custom-attribute="${index}">
         <div class="custom-attribute-fields">
           <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(attribute.id)}" data-attribute-field="id"></label>
@@ -15028,6 +15237,10 @@ function renderCustomAttributes() {
           <button type="button" class="btn small danger" data-attribute-action="delete" title="${esc(I18N.t('delete_btn'))}" aria-label="${esc(I18N.t('delete_btn'))}">${esc(I18N.t('delete_btn'))}</button>
         </div>
       </div>`).join('');
+    if (listHtml === lastCustomAttributesHtml)
+        return;
+    host.innerHTML = listHtml;
+    lastCustomAttributesHtml = listHtml;
 }
 function wireUi() {
     renderCustomAttributes();
