@@ -1267,3 +1267,36 @@ test('a brush sweep does not probe the stroke for every element per frame', asyn
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a brush stroke keeps its initial press point in the hit test', async () => {
+  // The brush stroke hash is seeded from the press point as well as from
+  // move samples — otherwise a node sitting on the press origin is invisible
+  // to the hash-based probe once any move lands.
+  const nodes = [{ id: 'n1', label: 'n1', x: 0, y: 0 }];
+  for (let i = 0; i < 20; i++) nodes.push({ id: 'far' + i, label: 'f' + i, x: -480 + (i % 5) * 240, y: (i < 10 ? -320 : 320) + (i % 3) * 20 });
+  const { dom, errors } = createEditorDom({
+    title: 'brush-press-point', mode: 'select', nextNode: 100, nextEdge: 100,
+    nodes, edges: [],
+    viewBox: { x: -500, y: -350, w: 1000, h: 700 },
+  });
+  const window = dom.window, document = window.document;
+  await nextFrame(window);
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  document.elementFromPoint = () => document.querySelector('#node-n1');
+  document.querySelector('[data-selecttool="brush"]').click();
+  await nextFrame(window);
+
+  // Press on n1 (world origin -> client 500,330), then jump the stroke far
+  // away in a single move: the press point must still hit n1.
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
+  dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 700, clientY: 330 });
+  await settle(window, 120);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 700, clientY: 330 });
+  await nextFrame(window);
+
+  const selectedIds = [...document.querySelectorAll('.node.selected')].map(el => el.id);
+  assert.ok(selectedIds.includes('node-n1'), `the pressed node is selected (got: ${selectedIds.join(', ') || 'none'})`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

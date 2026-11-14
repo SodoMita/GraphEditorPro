@@ -133,11 +133,23 @@
 
   function selectionToolNeedsDrag(){ return state.mode === 'select' && ['rect','brush','lasso','line'].includes(state.selectTool); }
   function polygonToolActive(){ return state.mode === 'select' && state.selectTool === 'polygon'; }
+  // Spatial hash of the stroke points, brush only. Every point pushed into
+  // points must also land in the hash — including the initial press point,
+  // or a hit test that consults the hash can no longer see the stroke's
+  // start (a node pressed at the origin of the gesture went unselected).
+  function insertStrokeCell(draft, p){
+    const cell = Math.max(1, (state.settings.brushDiameter || 80) / 2);
+    if(!draft.strokeCells) draft.strokeCells = new Map();
+    const key = Math.floor(p.x / cell) + ',' + Math.floor(p.y / cell);
+    const bucket = draft.strokeCells.get(key);
+    if(bucket) bucket.push(p); else draft.strokeCells.set(key, [p]);
+  }
   function beginSelectionDraft(ev){
     ev.preventDefault();
     try{ canvasWrap.setPointerCapture(ev.pointerId); }catch{}
     const p = pointFromEvent(ev);
     selectDraft = { tool:state.selectTool, pointerId:ev.pointerId, start:p, end:p, points:[p], combine:effectiveSelectCombine(ev), moved:false };
+    if(selectDraft.tool === 'brush') insertStrokeCell(selectDraft, p);
     $('#canvasWrap').classList.add('fast-interaction');
     renderSelectionDraft();
     renderGizmo(); // hidden while a selection draft is live
@@ -157,13 +169,7 @@
         // every frame. A spatial hash keeps that probe local, so the test
         // cost per frame grows with the points near each element, not with
         // the length of the whole stroke.
-        if(selectDraft.tool === 'brush'){
-          const cell = Math.max(1, (state.settings.brushDiameter || 80) / 2);
-          if(!selectDraft.strokeCells) selectDraft.strokeCells = new Map();
-          const key = Math.floor(p.x / cell) + ',' + Math.floor(p.y / cell);
-          const bucket = selectDraft.strokeCells.get(key);
-          if(bucket) bucket.push(p); else selectDraft.strokeCells.set(key, [p]);
-        }
+        if(selectDraft.tool === 'brush') insertStrokeCell(selectDraft, p);
       }
     }
   }
