@@ -112,14 +112,17 @@ test('a byte-identical repaint at 2000 definitions reuses the panel and its cust
   modal.remove();
   assert.equal(graph.nodes[0].custom.attr0, '42.6', 'the reused input still commits its value');
 
-  // A definition edit that migrates (drops) the stored value must refresh the
-  // panel: switch attr0 to int, its non-integer value cannot survive.
+  // A definition edit that migrates must refresh the panel: switch attr0 to
+  // int. '42.6' cannot be an int, and the type-migration path preserves the
+  // stated text verbatim (the same contract as import and editing), so the
+  // panel re-renders with the value it kept — proving the definition edit
+  // propagated through the cache path rather than being swallowed by it.
   const defRows = [...document.querySelectorAll('#customAttributesList .custom-attribute-row')];
   const attr0Row = defRows.find(r => r.querySelector('[data-attribute-field="id"]').value === 'attr0');
   attr0Row.querySelector('[data-attribute-field="type"]').value = 'int';
   attr0Row.querySelector('[data-attribute-action="save"]').click();
   await settle(window, 250);
-  assert.equal(row().value, '', 'the migrated-away value disappears from the panel');
+  assert.equal(row().value, '42.6', 'the migrated definition keeps the stated text verbatim');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

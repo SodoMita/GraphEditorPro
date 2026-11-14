@@ -3674,3 +3674,67 @@ test('long GraphML key ids sharing a prefix keep their values bound to their own
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('a GraphML long fraction beyond double precision survives import verbatim, not rounded to 1', async () => {
+  // 1.0000000000000001 is not representable as a double — Number('1.0000000000000001')
+  // is exactly 1, so a validate-after-conversion order destroys the stated value.
+  // The original text must be validated as an integer literal BEFORE conversion.
+  const saved = { title: 'frac-import', nodes: [], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    '  <key id="exact" for="node" attr.name="exact" attr.type="long" qvge:kind="custom-attribute"><default>1.0000000000000001</default></key>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="a"><data key="exact">1.0000000000000001</data></node>',
+    '    <node id="b"></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const a = graph.nodes.find(n => n.id === 'a');
+  const b = graph.nodes.find(n => n.id === 'b');
+  assert.equal(a?.custom?.exact, '1.0000000000000001', 'the stated fraction imports verbatim, never rounded to 1');
+  assert.equal(b?.custom?.exact, '1.0000000000000001', 'the declared default imports verbatim, never rounded to 1');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('integer literals convert exactly; out-of-range and asymmetry boundaries hold', async () => {
+  // int is asymmetric (−2147483648 valid, 2147483648 not); long is 2^53−1.
+  const saved = { title: 'int-literals', nodes: [], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    '  <key id="capacity" for="node" attr.name="capacity" attr.type="int" qvge:kind="custom-attribute"/>',
+    '  <key id="big" for="node" attr.name="big" attr.type="long" qvge:kind="custom-attribute"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="neg"><data key="capacity">-2147483648</data></node>',
+    '    <node id="pos"><data key="capacity">2147483647</data></node>',
+    '    <node id="bigneg"><data key="big">-9007199254740991</data></node>',
+    '    <node id="bigpos"><data key="big">9007199254740991</data></node>',
+    '    <node id="toolarge"><data key="capacity">2147483648</data></node>',
+    '    <node id="longtoolarge"><data key="big">9007199254740992</data></node>',
+    '    <node id="scientific"><data key="big">1e15</data></node>',
+    '    <node id="exactsci"><data key="big">9007199254740991e0</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const byId = id => graph.nodes.find(n => n.id === id)?.custom;
+  assert.equal(byId('neg')?.capacity, -2147483648, 'int min bound converts exactly');
+  assert.equal(byId('pos')?.capacity, 2147483647, 'int max bound converts exactly');
+  assert.equal(byId('bigneg')?.big, -9007199254740991, 'long min bound converts exactly');
+  assert.equal(byId('bigpos')?.big, 9007199254740991, 'long max bound converts exactly');
+  assert.equal(byId('toolarge')?.capacity, '2147483648', 'one past int max is preserved verbatim');
+  assert.equal(byId('longtoolarge')?.big, '9007199254740992', 'one past long max is preserved verbatim');
+  assert.equal(byId('scientific')?.big, 1000000000000000, 'an exact scientific-notation integer converts');
+  assert.equal(byId('exactsci')?.big, 9007199254740991, '2^53−1 written as 9007199254740991e0 converts exactly');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

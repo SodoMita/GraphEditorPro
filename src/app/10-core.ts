@@ -703,6 +703,60 @@
     for(const attribute of definitions) map.set(attribute.id, attribute.type);
     return map;
   }
+  const INTEGER_TEXT_RE = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:[eE]([+-]?\d+))?$/;
+  const ABS_INT_MAX = '2147483647';        // 2^31 - 1
+  const ABS_INT_MIN = '2147483648';        // |−2^31| — one past the positive bound
+  const ABS_LONG_MAX = '9007199254740991'; // 2^53 - 1 (Number.MAX_SAFE_INTEGER)
+  // Magnitude comparison for decimal digit strings without leading zeros.
+  const cmpMagnitude = (a: string, b: string) => a.length !== b.length ? a.length - b.length : (a < b ? -1 : a > b ? 1 : 0);
+  // Exact integer handling for int/long custom values.
+  //
+  // `Number(text)` rounds to the nearest double BEFORE any integer check can
+  // run — '1.0000000000000001' becomes 1 and the stated value is silently
+  // destroyed. The text is therefore validated as a decimal integer literal
+  // first; the exact integer (when there is one) is assembled digit-by-digit
+  // and only then converted — never through a rounding conversion.
+  //   'number'   — exact integer text within the type's range → convert
+  //   'verbatim' — stated, but fraction-bearing or out of range → keep the exact text
+  //   'empty'    — whitespace-only (a stated empty)
+  //   'invalid'  — not a number at all
+  // This is the one policy every int/long path shares: editing, import,
+  // sanitization and type migration all convert exactly this set and preserve
+  // exactly this other set.
+  function parseIntegerText(text: string, type: 'int' | 'long'):
+      | { kind: 'number'; value: number }
+      | { kind: 'verbatim'; text: string }
+      | { kind: 'empty' }
+      | { kind: 'invalid' } {
+    const trimmed = text.trim();
+    if(trimmed === '') return { kind: 'empty' };
+    const m = INTEGER_TEXT_RE.exec(trimmed);
+    if(!m) return { kind: 'invalid' };
+    const [, sign, mantissa, expText] = m;
+    const dot = mantissa.indexOf('.');
+    const intPart = dot === -1 ? mantissa : mantissa.slice(0, dot);
+    const fracPart = dot === -1 ? '' : mantissa.slice(dot + 1);
+    let exp = 0;
+    if(expText){
+      exp = parseInt(expText, 10);
+      // Beyond this the magnitude is unusable in either direction anyway.
+      if(!Number.isFinite(exp) || Math.abs(exp) > 400) return { kind: 'verbatim', text: trimmed };
+    }
+    const digits = intPart + fracPart;
+    // Effective position of the decimal point within `digits`.
+    const point = intPart.length + exp;
+    // Integer iff everything at or after the point is '0'.
+    if([...digits.slice(Math.max(point, 0))].some(d => d !== '0')) return { kind: 'verbatim', text: trimmed };
+    const integerDigits = (point <= digits.length
+      ? digits.slice(0, Math.max(point, 0))
+      : digits + '0'.repeat(point - digits.length)).replace(/^0+(?=\d)/, '') || '0';
+    // int is asymmetric: −2147483648 is valid but 2147483648 is not.
+    const bound = type === 'int' ? (sign === '-' ? ABS_INT_MIN : ABS_INT_MAX) : ABS_LONG_MAX;
+    if(cmpMagnitude(integerDigits, bound) > 0) return { kind: 'verbatim', text: trimmed };
+    // In range: the conversion is exact (|value| <= 2^53 - 1). -0 normalises to 0.
+    const value = Number((sign === '-' ? '-' : '') + integerDigits);
+    return { kind: 'number', value: value === 0 ? 0 : value };
+  }
   function coerceCustomValue(value: unknown, type: string): CustomAttributeValue {
     const raw = typeof value === 'number' || typeof value === 'boolean' ? String(value) : String(value ?? '');
     const text = raw.trim();
@@ -712,20 +766,12 @@
       return text.slice(0, CUSTOM_VALUE_MAX);
     }
     if(type === 'int' || type === 'long'){
-      if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
-      const numeric = Number(text);
-      if(Number.isFinite(numeric)){
-        // A stated fraction is not an int/long — kept as the exact text,
-        // never silently truncated (same lenient rule as out-of-range input).
-        if(!Number.isInteger(numeric)) return text.slice(0, CUSTOM_VALUE_MAX);
-        // Out-of-range values are kept as the exact text the user typed or the
-        // file contains (never silently clamped) — same lenient rule as for
-        // unparseable input, so a valid 64-bit long round-trips intact.
-        if(type === 'int' && (numeric < -2147483648 || numeric > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
-        if(type === 'long' && Math.abs(numeric) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
-        return numeric;
-      }
-      return text.slice(0, CUSTOM_VALUE_MAX);
+      // Validate the TEXT as an integer literal before any numeric conversion
+      // — see parseIntegerText: '1.0000000000000001' must not collapse to 1.
+      const parsed = parseIntegerText(text, type);
+      if(parsed.kind === 'empty') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
+      if(parsed.kind === 'number') return parsed.value;
+      return text.slice(0, CUSTOM_VALUE_MAX); // fractions, out-of-range, non-numeric: the exact text
     }
     if(type === 'float' || type === 'double'){
       if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
@@ -752,16 +798,13 @@
       if(typeof value === 'boolean') return undefined; // a truthy flag is not a number
       const text = String(value ?? '').trim();
       if(text === '') return undefined;
-      const numeric = Number(text);
-      if(!Number.isFinite(numeric)) return undefined;
-      // A stated fraction cannot be represented as an int/long.
-      if(!Number.isInteger(numeric)) return undefined;
-      // Out-of-range values are preserved as the exact text, mirroring the
-      // input and import paths — a 64-bit long the JS number line cannot hold
-      // is stored as text, never dropped or clamped.
-      if(type === 'int' && (numeric < -2147483648 || numeric > 2147483647)) return text.slice(0, CUSTOM_VALUE_MAX);
-      if(type === 'long' && Math.abs(numeric) > Number.MAX_SAFE_INTEGER) return text.slice(0, CUSTOM_VALUE_MAX);
-      return numeric;
+      const parsed = parseIntegerText(text, type);
+      if(parsed.kind === 'invalid' || parsed.kind === 'empty') return undefined; // text is non-empty here, so 'empty' cannot occur
+      // A stated fraction cannot be represented as an int/long, and an
+      // out-of-range one is not either — both are kept as the exact text,
+      // mirroring the input and import paths.
+      if(parsed.kind === 'verbatim') return parsed.text.slice(0, CUSTOM_VALUE_MAX);
+      return parsed.value;
     }
     if(type === 'float' || type === 'double'){
       if(typeof value === 'boolean') return undefined;
@@ -979,17 +1022,19 @@
     // value the user sees stored, and re-submitting the field must not
     // silently change it. Only the blank-means-unset rule trims.
     if(def.type === 'string'){ setAll(raw.slice(0, CUSTOM_VALUE_MAX)); return 'ok'; }
+    // Same exact-integer policy as import and migration — '1.0000000000000001'
+    // typed into an integer field is stored as the text, never rounded to 1.
+    if(def.type === 'int' || def.type === 'long'){
+      const parsed = parseIntegerText(text, def.type);
+      if(parsed.kind === 'invalid') return 'invalid';
+      if(parsed.kind === 'empty') return 'noop'; // text is non-empty here, so 'empty' cannot occur
+      if(parsed.kind === 'verbatim'){ setAll(parsed.text.slice(0, CUSTOM_VALUE_MAX)); return 'ok'; }
+      setAll(parsed.value);
+      return 'ok';
+    }
     const numeric = Number(text);
     if(!Number.isFinite(numeric)) return 'invalid';
-    // A stated fraction is not an int/long — stored as the exact text,
-    // never silently truncated (same lenient rule as out-of-range input).
-    // Out-of-range input is likewise stored as the exact text; it
-    // round-trips unchanged and the field keeps showing what was typed.
-    if((def.type === 'int' || def.type === 'long') && !Number.isInteger(numeric)) setAll(text.slice(0, CUSTOM_VALUE_MAX));
-    else if(def.type === 'int' && (numeric < -2147483648 || numeric > 2147483647)) setAll(text.slice(0, CUSTOM_VALUE_MAX));
-    else if(def.type === 'long' && Math.abs(numeric) > Number.MAX_SAFE_INTEGER) setAll(text.slice(0, CUSTOM_VALUE_MAX));
-    else if(def.type === 'int' || def.type === 'long') setAll(numeric);
-    else setAll(numeric); // float / double
+    setAll(numeric); // float / double
     return 'ok';
   }
   // Whether every target holds the identical value (used to prefill single
