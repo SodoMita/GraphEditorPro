@@ -1452,17 +1452,21 @@
     const appliesTo = (forWhom: string): readonly KeyScope[] =>
       (forWhom === 'all' ? KEY_SCOPES : KEY_SCOPES.filter(s => s === forWhom)) as readonly KeyScope[];
 
-    // Which key ids carry a non-empty <data> on each scope — computed up
+    // Which key ids carry a <data> on each scope — computed up
     // front because the classification decides per declaration which scopes
     // become definitions. A mixed-role declaration (built-in on one scope,
     // this user's property on another) only defines the scopes that actually
     // hold a value or a default; anything else would be a phantom definition.
+    // Presence, not truthiness: an explicit blank <data>/> is a stated value,
+    // exactly as it is for element <data> everywhere else — a mixed-role key
+    // whose only evidence is a blank graph-level <data> is still a graph-scoped
+    // property, and skipping it silently discarded the user's blank string.
     const dataKeyIdsByScope: Record<KeyScope, Set<string>> = { graph: new Set(), node: new Set(), edge: new Set() };
     for(const d of Array.from(doc.querySelectorAll('data'))){
       const parentTag = ((d as Element).parentElement?.tagName || '').toLowerCase();
       const dataScope = parentTag === 'graph' ? 'graph' : parentTag === 'node' ? 'node' : parentTag === 'edge' ? 'edge' : null;
       const keyId = d.getAttribute('key') || '';
-      if(dataScope && keyId && (d.textContent || '').trim() !== '') dataKeyIdsByScope[dataScope].add(keyId);
+      if(dataScope && keyId) dataKeyIdsByScope[dataScope].add(keyId);
     }
     // -- Classification --------------------------------------------------------
     const keyInfos: KeyInfo[] = keyEls.map(k => {
@@ -1556,10 +1560,14 @@
         // first and the rest mint afresh; the attr.name is recorded on each
         // so a re-import resolves back to them.
         const defEl = keyEls[index].querySelector('default');
-        // Verbatim: a custom default is user data (' padded ' is not 'padded').
-        // All-whitespace means unset; anything else is stored as written.
+        // Presence, not truthiness — the same rule as <data> everywhere else:
+        // a blank <default>/> is a stated value (an empty string), not an
+        // absent one; treating it as absent silently dropped the declared
+        // empty-string default and, for a mixed-role key, the whole scope's
+        // definition. Verbatim: a custom default is user data
+        // (' padded ' is not 'padded').
         const defVal = defEl ? (defEl.textContent ?? '') : '';
-        const hasDefault = defVal.trim() !== '';
+        const hasDefault = !!defEl;
         const defaultValue = hasDefault ? coerceCustomValue(defVal, info.type) : undefined;
         // A declared foreign or stamped key always defines (it declares a
         // property, values or not). A mixed-role key defines only the scopes

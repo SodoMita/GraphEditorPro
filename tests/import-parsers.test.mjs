@@ -3550,3 +3550,85 @@ test('Ctrl+Z behind a modal confirm does not revert history (the narrowing-confi
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('a blank <default> is a stated value, not an absent one', async () => {
+  // A mixed-role key (label feeds the built-in node/edge label fields) whose
+  // only declaration of a graph-scope property is an explicitly empty
+  // <default>/>. Presence of the element is the stated value; treating it as
+  // absent dropped the declared empty-string default and the graph definition
+  // itself, while the import reported success.
+  const saved = { title: 'blank-default', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="extLabel" for="all" attr.name="label" attr.type="string"><default></default></key>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes;
+  assert.equal(defs.length, 1, 'the blank default still mints the graph-scope definition');
+  assert.equal(defs[0].scope, 'graph');
+  assert.equal(graph.graphCustom?.extLabel, '', 'the stated blank default binds the empty string');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a declared-empty default on a marked custom key reaches the element', async () => {
+  // The same presence rule for an eager (stamped) definition: a node without
+  // explicit <data> must receive the declared empty-string default, not
+  // nothing — the file said the value is blank.
+  const saved = { title: 'blank-default-marked', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    '  <key id="note" for="node" attr.name="note" attr.type="string" qvge:kind="custom-attribute"><default></default></key>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 1);
+  assert.equal(graph.customAttributes[0].scope, 'node');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.note, '', 'the stated blank default is stored as the empty string');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a blank graph-level <data> is stated evidence of a graph-scoped property', async () => {
+  // Mixed-role key: label feeds the built-in fields on nodes and edges; the
+  // graph has no such field, so its graph-level <data> — even a blank one —
+  // declares the user's own property. Ignoring blank <data> in the
+  // classification dropped the definition and the empty-string value with it.
+  const saved = { title: 'blank-data', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="extLabel" for="all" attr.name="label" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <data key="extLabel"></data>',
+    '    <node id="n1"><data key="extLabel">node-label</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes;
+  assert.equal(defs.length, 1, 'the blank graph data still mints the graph-scope definition');
+  assert.equal(defs[0].scope, 'graph');
+  assert.equal(graph.graphCustom?.extLabel, '', 'the stated blank value is preserved');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.label, 'node-label', 'the node label field is unaffected');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
