@@ -1082,17 +1082,22 @@
     for(const key of keys) out += JSON.stringify([key, store[key]]) + ',';
     return out;
   }
+  // One framed, unambiguous key — no hashing. A 32-bit FNV hash of an
+  // unambiguous signature still let two different documents collide into the
+  // same cache slot (item-201ey9 vs item-1leqr9t), reusing a section whose
+  // controls showed the previous document's values. Every part here is
+  // either an internal enum or one JSON array per definition, so two
+  // different states can never produce the same string — comparison is
+  // exact, collision impossible.
   function customPropsSectionKey(scope: 'graph' | 'node' | 'edge', defs: readonly { id: string; type: string; scope: string }[], targets: readonly CustomPropTarget[], multi: boolean): string {
-    let h = 2166136261 >>> 0;
-    const mix = (text: string) => { for(let i = 0; i < text.length; i++){ h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } };
-    mix(I18N.current + '|' + scope + '|' + (multi ? '1' : '0') + '|');
-    // Scope and type are fixed enums, but an id is user input and may itself
+    // Scope and multi are internal enums; an id is user input and may itself
     // contain the separators — one JSON array per definition keeps the
-    // definition sequence unambiguous, exactly like the store framing above.
-    for(const def of defs){ mix(JSON.stringify([def.scope, def.type, def.id]) + ';'); }
-    mix('#');
-    for(const target of targets) mix(customPropTargetKey(target) + '{' + customStoreSignature(customStoreOf(target)) + '}');
-    return String(h);
+    // definition sequence unambiguous, exactly like the store framing below.
+    let out = I18N.current + '|' + scope + '|' + (multi ? '1' : '0') + '|';
+    for(const def of defs) out += JSON.stringify([def.scope, def.type, def.id]) + ';';
+    out += '#';
+    for(const target of targets) out += customPropTargetKey(target) + '{' + customStoreSignature(customStoreOf(target)) + '}';
+    return out;
   }
   // Returns the live section element for one surface. cacheKey identifies the
   // surface (one cache entry per mounted placeholder/host); the content key

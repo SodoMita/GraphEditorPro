@@ -1999,3 +1999,67 @@ test('editing a whitespace-preserving string property keeps its surrounding spac
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('graph property controls rebuild on store signature hash collisions', async () => {
+  // item-201ey9 and item-1leqr9t hash to the same 32-bit FNV-1a of the
+  // framed signature, so a replace-import that only swaps one for the other
+  // kept the cached section showing the old value. The cache key is now the
+  // framed signature itself — comparison is exact.
+  const defs = [{ id: 'a', scope: 'graph', type: 'string' }];
+  const mkGraph = value => ({
+    title: 'sig', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [], edges: [],
+    customAttributes: defs,
+    graphCustom: { a: value }, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  });
+  const { dom, errors } = createEditorDom(mkGraph('item-201ey9'));
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  const aValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="a"]')?.value;
+  assert.equal(aValue(), 'item-201ey9');
+
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = JSON.stringify(mkGraph('item-1leqr9t'));
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  assert.equal(aValue(), 'item-1leqr9t', 'the control shows the imported value');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('graph property controls rebuild on the azcclx/50grip cache collision', async () => {
+  // Regression for the reported repro: with one graph string property 'a',
+  // 'azcclx' and '50grip' hash to the same 32-bit value (2687864463) under
+  // the framed signature. Loading 'azcclx' and replacing the document with
+  // '50grip' left the Graph values control showing 'azcclx' while the
+  // exported state held '50grip'. The cache key is the framed signature
+  // itself, so exact comparison rebuilds the controls.
+  const defs = [{ id: 'a', scope: 'graph', type: 'string' }];
+  const mkGraph = value => ({
+    title: 'sig2', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [], edges: [],
+    customAttributes: defs,
+    graphCustom: { a: value }, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  });
+  const { dom, errors } = createEditorDom(mkGraph('azcclx'));
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  const aValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="a"]')?.value;
+  assert.equal(aValue(), 'azcclx');
+
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = JSON.stringify(mkGraph('50grip'));
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  assert.equal(aValue(), '50grip', 'the control shows the imported value');
+  const graph = exportGraph(document);
+  assert.equal(graph.graphCustom?.a, '50grip', 'the state held the imported value all along');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
