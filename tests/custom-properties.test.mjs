@@ -1975,4 +1975,27 @@ test('graph property controls rebuild when a same-shaped import changes the valu
   dom.window.close();
 });
 
+test('editing a whitespace-preserving string property keeps its surrounding spaces', async () => {
+  const saved = { title: 'strings', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 0, custom: { note: ' keep ' } }],
+    edges: [],
+    customAttributes: [{ id: 'note', scope: 'node', type: 'string' }],
+    graphCustom: {}, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(saved);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await selectNode(window, document, 'a', 300, 330);
 
+  const input = document.querySelector('#selectionPanel [data-custom-attribute="note"]');
+  assert.ok(input, 'selection panel renders the string property');
+  assert.equal(input.value, ' keep ', 'the stored value loads verbatim');
+
+  changeValue(window, input, '  padded  ');
+  await nextFrame(window);
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes[0].custom.note, '  padded  ', 'the edit stores the verbatim string, spaces included');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

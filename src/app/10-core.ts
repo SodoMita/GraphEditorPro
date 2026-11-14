@@ -975,7 +975,10 @@
     }
     const text = raw.trim();
     if(text === ''){ if(multi) return 'noop'; unsetAll(); return 'ok'; }
-    if(def.type === 'string'){ setAll(text.slice(0, CUSTOM_VALUE_MAX)); return 'ok'; }
+    // String values are user data and round-trip verbatim — ' keep ' is the
+    // value the user sees stored, and re-submitting the field must not
+    // silently change it. Only the blank-means-unset rule trims.
+    if(def.type === 'string'){ setAll(raw.slice(0, CUSTOM_VALUE_MAX)); return 'ok'; }
     const numeric = Number(text);
     if(!Number.isFinite(numeric)) return 'invalid';
     // A stated fraction is not an int/long — stored as the exact text,

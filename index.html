@@ -3573,8 +3573,11 @@ function applyCustomPropValue(def, targets, raw, multi) {
         unsetAll();
         return 'ok';
     }
+    // String values are user data and round-trip verbatim — ' keep ' is the
+    // value the user sees stored, and re-submitting the field must not
+    // silently change it. Only the blank-means-unset rule trims.
     if (def.type === 'string') {
-        setAll(text.slice(0, CUSTOM_VALUE_MAX));
+        setAll(raw.slice(0, CUSTOM_VALUE_MAX));
         return 'ok';
     }
     const numeric = Number(text);
