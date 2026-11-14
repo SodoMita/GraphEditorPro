@@ -7105,14 +7105,28 @@ function renderSelectionPanel() {
           <button id="selResetStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
         </div>
         <p class="drag-hint">${I18N.t('drag_hint')}</p>`;
+        // The shape/stroke/label-position selects are deliberately not part of
+        // the cached HTML (so repaints never clobber an open dropdown) — which
+        // means the reuse path has to sync them itself. A bare early return
+        // left the previous values showing after, e.g., Reset Style.
+        const syncSelects = () => {
+            const shape = $('#selNodeShape');
+            if (shape && document.activeElement !== shape)
+                shape.value = n.shape || '';
+            const stroke = $('#selNodeStrokeStyle');
+            if (stroke && document.activeElement !== stroke)
+                stroke.value = n.strokeStyle || '';
+            const pos = $('#selNodeLabelPos');
+            if (pos && document.activeElement !== pos)
+                pos.value = n.labelPosition || '';
+        };
         if (!applySelectionPanelHtml(host, singleNodeHtml)) {
+            syncSelects();
             refreshSelectionCustomSection(host, 'sel-node', 'node', [n], false);
             return;
         }
         mountCustomProps(host, 'sel-node', 'sel-node', 'node', [n], false);
-        $('#selNodeShape').value = n.shape || '';
-        $('#selNodeStrokeStyle').value = n.strokeStyle || '';
-        $('#selNodeLabelPos').value = n.labelPosition || '';
+        syncSelects();
         const syncCoordInputs = () => {
             const x = Math.round(n.x), y = Math.round(n.y);
             const xEl = $('#selNodeX'), yEl = $('#selNodeY');
@@ -7211,12 +7225,20 @@ function renderSelectionPanel() {
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_edge')}</button>
           <button id="selResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
         </div>`;
+        // The stroke-style select is not part of the cached HTML either —
+        // same sync on the reuse path as the single-node selects.
+        const syncEdgeSelects = () => {
+            const stroke = $('#selEdgeStrokeStyle');
+            if (stroke && document.activeElement !== stroke)
+                stroke.value = e.strokeStyle || '';
+        };
         if (!applySelectionPanelHtml(host, singleEdgeHtml)) {
+            syncEdgeSelects();
             refreshSelectionCustomSection(host, 'sel-edge', 'edge', [e], false);
             return;
         }
         mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', [e], false);
-        $('#selEdgeStrokeStyle').value = e.strokeStyle || '';
+        syncEdgeSelects();
         $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0, 50); if (v === '')
             delete e.weight;
         else
