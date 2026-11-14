@@ -112,6 +112,9 @@
         tab.setAttribute('aria-selected', String(selected));
         tab.tabIndex = selected ? 0 : -1;
       });
+      // A newly revealed panel may have deferred custom-property sections —
+      // mount them now, synchronously, so the panel is complete on first paint.
+      flushPendingCustomPropHosts();
     };
     // The sheet is sized by content (up to 60dvh), so its height cannot be
     // assumed in CSS. Publish the measured height as --sheet-h; the floating

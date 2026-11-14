@@ -698,6 +698,12 @@
   // into the document.
   const CUSTOM_VALUE_MAX = 1000;
   const CUSTOM_VALUE_KEYS_MAX = CUSTOM_DEFINITIONS_MAX; // one value per definition, never more
+  // Rendering every row of a 2000-definition section costs hundreds of
+  // milliseconds and several hundred kilobytes of innerHTML parsing, every
+  // time the selection changes. Rows are paginated instead: only the visible
+  // page is built, and the rest are one click or arrow-key away.
+  const CUSTOM_PROPS_PAGE_SIZE = 100;
+  const customPropsPages = new Map<string, number>(); // surface cacheKey → current page
   function customAttributeTypeMap(definitions: readonly { id: string; type: string }[]): Map<string, string> {
     const map = new Map<string, string>();
     for(const attribute of definitions) map.set(attribute.id, attribute.type);
@@ -1144,6 +1150,40 @@
     for(const target of targets) out += customPropTargetKey(target) + '{' + customStoreSignature(customStoreOf(target)) + '}';
     return out;
   }
+  // Some custom-property hosts live in panels the user cannot see right now:
+  // an inactive sidebar tab, or a <details> the user closed. Building rows for
+  // a hidden panel is wasted work, so the mount is deferred until the panel
+  // reveals itself; the latest request for a host wins. Mounting is idempotent
+  // (the section element is cached), so opening a panel always shows current
+  // values.
+  const pendingCustomPropHosts: { host: HTMLElement; placeholder: string | null; cacheKey: string; scope: 'graph' | 'node' | 'edge'; targets: readonly CustomPropTarget[]; multi: boolean }[] = [];
+  let lazyFlushArmed = false;
+  function customPropHostHidden(host: HTMLElement): boolean {
+    const panel = host.closest ? host.closest('.tab-panel') : null;
+    if(panel && !panel.classList.contains('active')) return true;
+    const details = host.closest ? host.closest('details.section') as HTMLDetailsElement | null : null;
+    if(details && !details.open) return true;
+    return false;
+  }
+  function flushPendingCustomPropHosts(): void {
+    if(!pendingCustomPropHosts.length) return;
+    for(let index = pendingCustomPropHosts.length - 1; index >= 0; index--){
+      const pending = pendingCustomPropHosts[index];
+      if(!pending.host.isConnected){ pendingCustomPropHosts.splice(index, 1); continue; }
+      if(customPropHostHidden(pending.host)) continue;
+      pendingCustomPropHosts.splice(index, 1);
+      mountCustomProps(pending.host, pending.placeholder, pending.cacheKey, pending.scope, pending.targets as CustomPropTarget[], pending.multi);
+    }
+  }
+  function armLazyFlush(): void {
+    if(lazyFlushArmed) return;
+    lazyFlushArmed = true;
+    // 'toggle' fires on <details> open/close; the click fallback dispatches the
+    // flush after activation handlers have run, which keeps the mechanism
+    // working where toggle semantics are uncertain (jsdom).
+    document.addEventListener('toggle', () => flushPendingCustomPropHosts(), true);
+    document.addEventListener('click', () => { setTimeout(flushPendingCustomPropHosts, 0); });
+  }
   // Returns the live section element for one surface. cacheKey identifies the
   // surface (one cache entry per mounted placeholder/host); the content key
   // decides whether the element can be reused or must be rebuilt.
@@ -1168,11 +1208,65 @@
       const shared = sharedCustomPropValues(targets, defs);
       element.className = 'custom-props';
       element.dataset.scope = scope;
-      element.innerHTML = defs.map(attr => {
+      const rowsHost = document.createElement('div');
+      rowsHost.className = 'custom-props-rows';
+      element.appendChild(rowsHost);
+      const pageCount = Math.max(1, Math.ceil(defs.length / CUSTOM_PROPS_PAGE_SIZE));
+      const needsPager = pageCount > 1;
+      let pager: HTMLElement | null = null;
+      if(needsPager){
+        pager = document.createElement('div');
+        pager.className = 'custom-props-pager';
+        pager.setAttribute('role', 'navigation');
+        pager.setAttribute('aria-label', esc(I18N.t('custom_props_pager_label')));
+        pager.innerHTML = `<button type="button" class="btn small" data-cp-page="prev" aria-label="${esc(I18N.t('custom_props_prev_page'))}">${esc(I18N.t('custom_props_prev_page'))}</button><span class="custom-props-page-status tiny" role="status" aria-live="polite"></span><button type="button" class="btn small" data-cp-page="next" aria-label="${esc(I18N.t('custom_props_next_page'))}">${esc(I18N.t('custom_props_next_page'))}</button>`;
+        element.appendChild(pager);
+      }
+      const rowHtml = (attr: { id: string; type: string }) => {
         const shown = shared.get(attr.id) || { mixed: false };
         return `<label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, shown, invariants)}</label>`;
-      }).join('');
-      wireCustomProps(element, scope, targets, multi);
+      };
+      // Rows are rebuilt per page change — the pager buttons and their
+      // listeners persist, so focus never jumps and the user's place survives
+      // a page flip. The enabled/disabled state tracks the page bounds.
+      const renderPage = (page: number): void => {
+        const clamped = Math.min(Math.max(0, page), pageCount - 1);
+        customPropsPages.set(cacheKey, clamped);
+        const start = clamped * CUSTOM_PROPS_PAGE_SIZE;
+        const slice = defs.slice(start, start + CUSTOM_PROPS_PAGE_SIZE);
+        rowsHost.innerHTML = slice.map(rowHtml).join('');
+        wireCustomProps(element, scope, targets, multi);
+        if(pager){
+          const status = pager.querySelector('.custom-props-page-status');
+          if(status) status.textContent = I18N.t('custom_props_page_status', { from: start + 1, to: start + slice.length, n: defs.length });
+          const prev = pager.querySelector<HTMLButtonElement>('[data-cp-page="prev"]');
+          const next = pager.querySelector<HTMLButtonElement>('[data-cp-page="next"]');
+          if(prev) prev.disabled = clamped === 0;
+          if(next) next.disabled = clamped === pageCount - 1;
+        }
+      };
+      if(pager){
+        pager.addEventListener('click', ev => {
+          const btn = (ev.target as HTMLElement)?.closest?.('[data-cp-page]') as HTMLButtonElement | null;
+          if(!btn || btn.disabled) return;
+          const dir = btn.dataset.cpPage === 'prev' ? -1 : 1;
+          renderPage((customPropsPages.get(cacheKey) ?? 0) + dir);
+        });
+        // Arrow keys and Home/End page without leaving the control; the
+        // buttons stay in place, so keyboard focus is never lost.
+        pager.addEventListener('keydown', ev => {
+          const current = customPropsPages.get(cacheKey) ?? 0;
+          let page: number | null = null;
+          if(ev.key === 'ArrowLeft') page = current - 1;
+          else if(ev.key === 'ArrowRight') page = current + 1;
+          else if(ev.key === 'Home') page = 0;
+          else if(ev.key === 'End') page = pageCount - 1;
+          if(page == null) return;
+          ev.preventDefault();
+          renderPage(page);
+        });
+      }
+      renderPage(customPropsPages.get(cacheKey) ?? 0);
     }
     customPropSections.set(cacheKey, { key, element });
     return element;
@@ -1193,6 +1287,16 @@
   // for the live element; without one (standalone graph/defaults hosts), the
   // host's whole content becomes the section element — unless it already is.
   function mountCustomProps(host: HTMLElement, placeholder: string | null, cacheKey: string, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): void {
+    if(customPropHostHidden(host)){
+      // Defer until the host's panel becomes visible; keep only the latest
+      // request per (host, cacheKey) so a hidden panel never accumulates work.
+      const pending = { host, placeholder, cacheKey, scope, targets, multi };
+      const index = pendingCustomPropHosts.findIndex(entry => entry.host === host && entry.cacheKey === cacheKey);
+      if(index >= 0) pendingCustomPropHosts[index] = pending;
+      else pendingCustomPropHosts.push(pending);
+      armLazyFlush();
+      return;
+    }
     const element = customPropsSection(cacheKey, scope, targets, multi);
     if(placeholder){
       const marker = host.querySelector(`[data-cp-ph="${placeholder}"]`);

@@ -27,6 +27,11 @@ function createEditorDom(savedGraph = null) {
   return { dom, errors };
 }
 
+// The Data tab is inactive at boot; its graph-values host mounts lazily on
+// first activation. Activate it (activatePanel flushes the pending mounts
+// synchronously) before querying #graphCustomProps.
+const openDataTab = document => { document.querySelector('#tab-data').click(); };
+
 const nextFrame = window => new Promise(resolve => window.setTimeout(resolve, 30));
 const settle = (window, ms) => new Promise(resolve => window.setTimeout(resolve, ms));
 
@@ -107,6 +112,7 @@ test('graph-scope values render in the Data tab, persist and unset cleanly', asy
   const { window } = dom; const { document } = window;
   await nextFrame(window);
 
+  openDataTab(document);
   const docTag = document.querySelector('#graphCustomProps [data-custom-attribute="docTag"]');
   const rating = document.querySelector('#graphCustomProps [data-custom-attribute="rating"]');
   assert.ok(docTag && rating, 'graph values block renders for graph-scope attributes');
@@ -245,6 +251,7 @@ test('GraphML export carries values and re-import restores them', async () => {
   modal.querySelector('#expImportBtn').click();
   await nextFrame(window); await settle(window, 60);
 
+  openDataTab(document);
   const docTag = document.querySelector('#graphCustomProps [data-custom-attribute="docTag"]');
   assert.equal(docTag?.value, 'hello', 'graph value survives the round-trip');
   assert.equal(document.querySelector('#graphCustomProps [data-custom-attribute="rating"]')?.value, '4.5');
@@ -306,6 +313,7 @@ test('graph values and node customs survive a localStorage reload', async () => 
   const first = createEditorDom(customPropertiesGraph());
   const { window } = first.dom; const { document } = window;
   await nextFrame(window);
+  openDataTab(document);
   changeValue(window, document.querySelector('#graphCustomProps [data-custom-attribute="rating"]'), '9.25');
   // Flush the debounced autosave.
   await settle(window, 400);
@@ -373,8 +381,12 @@ test('GraphML import tolerates externally authored mixed-case keys and round-tri
   modal.querySelector('#expImportBtn').click();
   await nextFrame(window); await settle(window, 60);
 
+  openDataTab(document);
   const graphInput = document.querySelector('#graphCustomProps [data-custom-attribute="DocTag"]');
   assert.equal(graphInput?.value, 'hello-world', 'graph-scope value imports from a mixed-case attr.name');
+  // The selection panel lives in the Edit tab — reactivate it (this flushes
+  // its lazily mounted custom section) before selecting the node.
+  document.querySelector('#tab-edit').click();
   await selectNode(window, document, 'a', 300, 330);
   const nodeInput = document.querySelector('#selectionPanel [data-custom-attribute="MyKey"]');
   assert.equal(nodeInput?.value, '42', 'node value imports');
@@ -754,6 +766,7 @@ test('adding a definition refreshes an open selection panel; append import repai
   assert.ok([...document.querySelectorAll('#customAttributesList .custom-attribute-row')]
     .some(row => row.querySelector('[data-attribute-field="id"]').value === 'appendedDef'),
     'the Data tab lists the appended definition');
+  openDataTab(document);
   assert.equal(document.querySelector('#graphCustomProps [data-custom-attribute="appendedDef"]')?.value,
     'from-append', 'the imported graph value is visible without further interaction');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -888,6 +901,7 @@ test('changing a definition from string to long keeps a 64-bit value the number 
 
   const exported = exportGraph(document);
   assert.equal(exported.graphCustom.big, '9223372036854775807', 'the exact 64-bit value survives the type change');
+  openDataTab(document);
   const input = document.querySelector('#graphCustomProps [data-custom-attribute="big"]');
   assert.equal(input.value, '9223372036854775807', 'the field shows the exact value');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -963,6 +977,7 @@ test('a __proto__ custom property works like any other: own-key storage end to e
   document.querySelector('#btnAddCustomAttribute').click();
   await nextFrame(window);
 
+  openDataTab(document);
   const input = document.querySelector('#graphCustomProps [data-custom-attribute="__proto__"]');
   assert.ok(input, 'the graph values block renders the new property');
   assert.equal(input.value, '', 'a fresh property renders empty, not [object Object]');
@@ -982,6 +997,7 @@ test('a __proto__ custom property works like any other: own-key storage end to e
   const seededDom = createEditorDom(seeded);
   const seededWindow = seededDom.dom.window; const seededDocument = seededWindow.document;
   await nextFrame(seededWindow);
+  openDataTab(seededDocument);
   const loaded = seededDocument.querySelector('#graphCustomProps [data-custom-attribute="__proto__"]');
   assert.equal(loaded.value, 'hello', 'the stored own key survives the load, not the prototype');
   const roundTripped = exportGraph(seededDocument);
@@ -1952,6 +1968,7 @@ test('graph property controls rebuild when a same-shaped import changes the valu
   const { dom, errors } = createEditorDom(saved);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  openDataTab(document);
   const aValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="a"]')?.value;
   const bValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="b"]')?.value;
   assert.equal(aValue(), 'x;b=y', 'the host renders the current values');
@@ -2016,6 +2033,7 @@ test('graph property controls rebuild on store signature hash collisions', async
   const { dom, errors } = createEditorDom(mkGraph('item-201ey9'));
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  openDataTab(document);
   const aValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="a"]')?.value;
   assert.equal(aValue(), 'item-201ey9');
 
@@ -2048,6 +2066,7 @@ test('graph property controls rebuild on the azcclx/50grip cache collision', asy
   const { dom, errors } = createEditorDom(mkGraph('azcclx'));
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  openDataTab(document);
   const aValue = () => document.querySelector('#graphCustomProps [data-custom-attribute="a"]')?.value;
   assert.equal(aValue(), 'azcclx');
 

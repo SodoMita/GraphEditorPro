@@ -126,3 +126,111 @@ test('a byte-identical repaint at 2000 definitions reuses the panel and its cust
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+function bigGraphTwoNodes() {
+  const customAttributes = [];
+  for (let i = 0; i < 2000; i++) customAttributes.push({ id: 'attr' + i, scope: 'all', type: 'string' });
+  return {
+    title: 'custom-props-paginate', mode: 'select', nextNode: 3, nextEdge: 2,
+    nodes: [
+      { id: 'n1', label: 'n1', x: -200, y: 0, type: '', order: 0, custom: { attr0: 'keep-n1' } },
+      { id: 'n2', label: 'n2', x: 200, y: 0, type: '', order: 1, custom: { attr0: 'keep-n2' } },
+    ],
+    edges: [],
+    customAttributes,
+    viewBox: { x: -500, y: -350, w: 1000, h: 700 },
+  };
+}
+
+test('a selection switch at 2000 definitions builds only the visible page of rows', async () => {
+  const { dom, errors, stats } = createEditorDom(bigGraphTwoNodes());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  await selectNode(window, document, 'n1', 300, 350);
+  const rows = () => [...document.querySelectorAll('#selectionPanel .custom-prop-row')];
+  assert.equal(rows().length, 100, 'only the first page of rows is mounted');
+  const pager = document.querySelector('#selectionPanel .custom-props-pager');
+  assert.ok(pager, 'the pager is rendered when definitions exceed the page size');
+  assert.equal(pager.getAttribute('role'), 'navigation');
+  const status = () => pager.querySelector('.custom-props-page-status').textContent;
+  assert.equal(status(), 'Showing 1–100 of 2000');
+  assert.equal(pager.querySelector('[data-cp-page="prev"]').disabled, true, 'prev is disabled on the first page');
+  assert.equal(pager.querySelector('[data-cp-page="next"]').disabled, false);
+  assert.equal(pager.querySelector('.custom-props-page-status').getAttribute('aria-live'), 'polite', 'the page status is announced');
+
+  // A selection switch is a full section rebuild (the target changed) — but it
+  // must rebuild only the visible page, never all 2000 rows.
+  stats.totalBytes = 0; stats.customRowBytes = 0;
+  await selectNode(window, document, 'n2', 700, 350);
+  assert.ok(stats.customRowBytes < 100000, `the rebuilt section stays bounded (got ${stats.customRowBytes} custom-row bytes)`);
+  assert.equal(rows().length, 100, 'the switched section still mounts one page');
+  assert.equal(document.querySelector('#selectionPanel [data-custom-attribute="attr0"]').value, 'keep-n2', 'the new node\u2019s values are shown');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('the custom property pager is keyboard-accessible with stable focus', async () => {
+  const { dom, errors } = createEditorDom(bigGraphTwoNodes());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  await selectNode(window, document, 'n1', 300, 350);
+
+  const pager = document.querySelector('#selectionPanel .custom-props-pager');
+  const next = pager.querySelector('[data-cp-page="next"]');
+  const prev = pager.querySelector('[data-cp-page="prev"]');
+  const firstId = () => document.querySelector('#selectionPanel .custom-prop-id').textContent;
+  const status = () => pager.querySelector('.custom-props-page-status').textContent;
+
+  // Keyboard navigation: ArrowRight pages forward without leaving the control.
+  next.focus();
+  assert.equal(document.activeElement, next);
+  pager.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+  assert.equal(status(), 'Showing 101–200 of 2000');
+  assert.equal(firstId(), 'attr100', 'the second page shows the next definitions');
+  assert.equal(document.activeElement, next, 'focus stays on the control after paging');
+  assert.equal(prev.disabled, false, 'prev is enabled away from the first page');
+
+  // End jumps to the last page; Home returns to the first.
+  pager.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+  assert.equal(status(), 'Showing 1901–2000 of 2000');
+  assert.equal(firstId(), 'attr1900');
+  assert.equal(next.disabled, true, 'next is disabled on the last page');
+  pager.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+  assert.equal(status(), 'Showing 1–100 of 2000');
+  assert.equal(firstId(), 'attr0');
+
+  // The stated value on a page is committed through the same input contract.
+  document.querySelector('#selectionPanel [data-custom-attribute="attr0"]').value = 'edited-value';
+  document.querySelector('#selectionPanel [data-custom-attribute="attr0"]')
+    .dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#selectionPanel [data-custom-attribute="attr0"]').value, 'edited-value');
+
+  // A definition beyond page one is reachable by paging, not by building all rows.
+  pager.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+  const attr150 = document.querySelector('#selectionPanel [data-custom-attribute="attr150"]');
+  assert.ok(attr150, 'the second page exposes attr150');
+  attr150.value = 'deep-value';
+  attr150.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#selectionPanel [data-custom-attribute="attr150"]').value, 'deep-value');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('closed panels mount their custom properties lazily on first open', async () => {
+  const { dom, errors } = createEditorDom(bigGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  // The Data tab is inactive at boot: its host must not have been built yet.
+  assert.equal(document.querySelectorAll('#graphCustomProps .custom-prop-row').length, 0, 'a hidden panel builds nothing');
+
+  // First activation of the Data tab mounts the section synchronously.
+  document.querySelector('#tab-data').click();
+  assert.equal(document.querySelectorAll('#graphCustomProps .custom-prop-row').length, 100, 'opening the tab mounts the visible page');
+  assert.ok(document.querySelector('#graphCustomProps .custom-props-pager'), 'the pager mounts with the rows');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
