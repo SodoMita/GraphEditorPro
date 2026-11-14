@@ -303,7 +303,7 @@
     if(vrNote){
       const total = state.nodes.length;
       const visCount = vr.start >= 0 || vr.end >= 0 ? visibleNodes().length : total;
-      vrNote.textContent = vr.start >= 0 || vr.end >= 0 ? `(${visCount}/${total} ` + (I18N.current === 'ru' ? 'видимо)' : 'visible)') : '';
+      vrNote.textContent = vr.start >= 0 || vr.end >= 0 ? I18N.t('visible_count', {n: visCount, total}) : '';
     }
     set('defNodeType', nd.type);
     set('defNodeShape', nd.shape);
@@ -722,14 +722,43 @@
     }
   }
   const CUSTOM_ATTRIBUTE_TYPES = ['boolean','int','long','float','double','string'];
+  // Graph-scope custom property values (document-wide). Node/edge values live in
+  // the selection panel; graph values have no "selection", so they are edited
+  // here, right under the definitions they belong to.
+  function renderGraphCustomProps(){
+    const host = $('#graphCustomProps');
+    if(!host) return;
+    // The section element is cached by content key and moved in place — an
+    // unrelated repaint no longer re-parses hundreds of rows.
+    mountCustomProps(host, null, 'graph', 'graph', ['graph'], false);
+  }
+  // Custom property editors for the two new-element default sections. The
+  // chosen values apply to nodes/edges created afterwards and are stored on
+  // settings (nodeCustom/edgeCustom) so they ride history, autosave and the
+  // sanitizer like every other new-element default.
+  function renderNewElementCustomProps(){
+    const nodeHost = $('#newNodeCustomProps');
+    if(nodeHost) mountCustomProps(nodeHost, null, 'new-node', 'node', ['node-defaults'], false);
+    const edgeHost = $('#newEdgeCustomProps');
+    if(edgeHost) mountCustomProps(edgeHost, null, 'new-edge', 'edge', ['edge-defaults'], false);
+  }
+  // Rebuilding the definitions list costs one innerHTML parse of ~2.5 MB at
+  // CUSTOM_DEFINITIONS_MAX. When re-entrant syncs produce the same markup
+  // (common: a no-op save, or a re-sync after unrelated edits), keep the
+  // live DOM — rows carry no per-row listeners (actions are delegated), so
+  // skipping is safe. The cached string is the only state kept.
+  let lastCustomAttributesHtml: string | null = null;
   function renderCustomAttributes(){
+    renderGraphCustomProps();
+    renderNewElementCustomProps();
     const host = $('#customAttributesList');
     if(!host) return;
     if(!state.customAttributes.length){
-      host.innerHTML = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
+      const emptyHtml = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
+      if(lastCustomAttributesHtml !== emptyHtml){ host.innerHTML = emptyHtml; lastCustomAttributesHtml = emptyHtml; }
       return;
     }
-    host.innerHTML = state.customAttributes.map((attribute, index) => `
+    const listHtml = state.customAttributes.map((attribute, index) => `
       <div class="custom-attribute-row" data-custom-attribute="${index}">
         <div class="custom-attribute-fields">
           <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(attribute.id)}" data-attribute-field="id"></label>
@@ -737,6 +766,7 @@
             <option value="graph" ${attribute.scope === 'graph' ? 'selected' : ''}>${esc(I18N.t('scope_graph'))}</option>
             <option value="node" ${attribute.scope === 'node' ? 'selected' : ''}>${esc(I18N.t('scope_node'))}</option>
             <option value="edge" ${attribute.scope === 'edge' ? 'selected' : ''}>${esc(I18N.t('scope_edge'))}</option>
+            <option value="all" ${attribute.scope === 'all' ? 'selected' : ''}>${esc(I18N.t('scope_all'))}</option>
           </select></label>
           <label class="field col"><span>${esc(I18N.t('attribute_type'))}</span><select data-attribute-field="type">${CUSTOM_ATTRIBUTE_TYPES.map(type => `<option value="${type}" ${attribute.type === type ? 'selected' : ''}>${type}</option>`).join('')}</select></label>
         </div>
@@ -745,4 +775,7 @@
           <button type="button" class="btn small danger" data-attribute-action="delete" title="${esc(I18N.t('delete_btn'))}" aria-label="${esc(I18N.t('delete_btn'))}">${esc(I18N.t('delete_btn'))}</button>
         </div>
       </div>`).join('');
+    if(listHtml === lastCustomAttributesHtml) return;
+    host.innerHTML = listHtml;
+    lastCustomAttributesHtml = listHtml;
   }

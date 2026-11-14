@@ -9,37 +9,82 @@
       // namespace, so a definition called `direction` cannot collide with the
       // built-in key of that name.
       if(state.customAttributes.some(attribute => attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
-      state.customAttributes.push({id, scope: $('#customAttributeScope').value, type: $('#customAttributeType').value});
+      if(state.customAttributes.length >= CUSTOM_DEFINITIONS_MAX){ toast(I18N.t('attribute_limit_reached')); return; }
+      const scopeValue = String($('#customAttributeScope').value || '');
+      const scope = ['graph','node','edge','all'].includes(scopeValue) ? scopeValue : 'graph';
+      const typeValue = String($('#customAttributeType').value || '');
+      const type = CUSTOM_ATTRIBUTE_TYPES.includes(typeValue) ? typeValue : 'string';
+      state.customAttributes.push({id, scope: scope as GraphState['customAttributes'][number]['scope'], type});
       idInput.value = '';
-      renderCustomAttributes(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
+      renderCustomAttributes(); renderCustomPropHosts(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
     });
-    $('#customAttributesList').addEventListener('click', ev => {
+    $('#customAttributesList').addEventListener('click', async ev => {
       const button = ev.target.closest('[data-attribute-action]');
       if(!button) return;
       const row = button.closest('[data-custom-attribute]');
       const index = Number(row?.dataset.customAttribute);
       if(!Number.isInteger(index) || !state.customAttributes[index]) return;
       if(button.dataset.attributeAction === 'delete'){
+        const removedId = state.customAttributes[index].id;
         state.customAttributes.splice(index, 1);
-        renderCustomAttributes(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
+        stripCustomAttributeValues(removedId);
+        renderCustomAttributes(); renderCustomPropHosts(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
       }
+      const oldDef = state.customAttributes[index];
+      const oldId = oldDef.id, oldType = oldDef.type;
       const idInput = row.querySelector('[data-attribute-field="id"]');
       const id = String(idInput.value || '').trim();
       if(!id){ idInput.setCustomValidity(I18N.t('attribute_id_empty')); idInput.reportValidity(); return; }
       idInput.setCustomValidity('');
-      const scope = row.querySelector('[data-attribute-field="scope"]').value;
       if(state.customAttributes.some((attribute, itemIndex) => itemIndex !== index && attribute.id === id)){ toast(I18N.t('attribute_id_duplicate')); return; }
+      const scope = row.querySelector('[data-attribute-field="scope"]').value;
       const type = row.querySelector('[data-attribute-field="type"]').value;
-      const previous = state.customAttributes[index];
-      const next = {id, scope: ['graph','node','edge'].includes(scope) ? scope : 'graph', type: CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string'} as AnyRecord;
-      // Editing something else (type, scope) must not drop the GraphML attr.name
-      // a migrated definition carries, or the next export would rename it back
-      // to the custom id. Renaming the definition does drop it: the name
-      // belonged to the old key.
-      const keepName = previous && previous.name && id === previous.id;
-      if(keepName) next.name = previous.name;
-      state.customAttributes[index] = next as GraphState['customAttributes'][number];
-      renderCustomAttributes(); pushHistory('edit custom attribute'); toast(I18N.t('attribute_updated'));
+      const resolvedType = CUSTOM_ATTRIBUTE_TYPES.includes(type) ? type : 'string';
+      const resolvedScope = ['graph','node','edge','all'].includes(scope) ? scope : 'graph';
+      const oldScope = oldDef.scope;
+      const scopeChanged = oldScope !== resolvedScope;
+      // Growing into 'all' loses nothing: the definition starts applying
+      // everywhere and the existing values stay in their stores under the
+      // same id — nothing moves, nothing is discarded, no confirmation.
+      // Narrowing (or moving between single scopes) drops the stores the
+      // definition no longer covers — their values are counted and, after an
+      // explicit danger confirmation, discarded. The one lossless exception
+      // is graph -> node/edge, which promotes the graph value instead.
+      const scopesOf = (s: string): string[] => s === 'all' ? ['graph','node','edge'] : [s];
+      const promote = oldScope === 'graph' && (resolvedScope === 'node' || resolvedScope === 'edge');
+      const lostScopes = scopeChanged ? scopesOf(oldScope).filter(s => !scopesOf(resolvedScope).includes(s)) : [];
+      const lostValues = lostScopes
+        .filter(s => !(promote && s === 'graph'))
+        .reduce((sum, s) => sum + countCustomAttributeValues(oldId, s as 'graph' | 'node' | 'edge'), 0);
+      if(lostValues > 0){
+        const proceed = await uiConfirm(I18N.t('attribute_scope_values', { n: lostValues }), { danger: true, confirmLabel: I18N.t('save_attribute') });
+        if(!proceed) return; // nothing changes: values, definition and history untouched
+      }
+      // Editing something else (type, scope) must not drop the attr.name a
+      // re-created definition carries — the next export would otherwise rename
+      // it back to the custom id. Renaming the definition drops both the name
+      // and the origin: both belonged to the old key, and keeping the origin
+      // would let a later import of an unrelated file with the same key id
+      // merge its values into the renamed property.
+      const nextDef = { ...oldDef, id, scope: resolvedScope, type: resolvedType } as GraphState['customAttributes'][number];
+      if(oldId === id){
+        if(oldDef.name) nextDef.name = oldDef.name; else delete nextDef.name;
+        if((oldDef as AnyRecord).origin) nextDef.origin = (oldDef as AnyRecord).origin; else delete nextDef.origin;
+      } else {
+        delete nextDef.name;
+        delete nextDef.origin;
+      }
+      state.customAttributes[index] = nextDef;
+      if(oldId !== id) renameCustomAttributeValues(oldId, id);
+      if(scopeChanged){
+        if(promote) promoteGraphCustomAttribute(id, resolvedScope as 'node' | 'edge');
+        else for(const s of lostScopes) discardCustomAttributeValues(id, s as 'graph' | 'node' | 'edge');
+      }
+      // A type change rewrites every stored value; values that cannot be
+      // represented in the new type are dropped (undo restores all of them).
+      const dropped = oldType !== resolvedType ? migrateCustomValuesForType(id, resolvedType) : 0;
+      renderCustomAttributes(); renderCustomPropHosts(); pushHistory('edit custom attribute');
+      toast(dropped > 0 ? I18N.t('attribute_type_changed', { n: dropped }) : I18N.t('attribute_updated'));
     });
     canvasWrap.addEventListener('selectstart', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
     canvasWrap.addEventListener('contextmenu', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
@@ -68,12 +113,23 @@
         tab.tabIndex = selected ? 0 : -1;
       });
     };
+    // The sheet is sized by content (up to 60dvh), so its height cannot be
+    // assumed in CSS. Publish the measured height as --sheet-h; the floating
+    // mode switcher and tool rows lift by exactly that while it is open.
+    const syncSheetHeightVar = () => {
+      try{ document.documentElement.style.setProperty('--sheet-h', `${Math.max(0, sidebarEl.offsetHeight)}px`); }catch{}
+    };
+    if(typeof window !== 'undefined' && typeof window.ResizeObserver === 'function'){
+      try{ new window.ResizeObserver(syncSheetHeightVar).observe(sidebarEl); }catch{}
+    }
     const openPanels = (target = activePanelName(), trigger: HTMLElement | null = null) => {
       panelReturnFocus = trigger || document.activeElement as HTMLElement;
       activatePanel(target);
       sidebarEl.inert = false;
       sidebarEl.setAttribute('aria-hidden', 'false');
       sidebarEl.classList.add('open');
+      canvasWrap.classList.add('sheet-open');
+      syncSheetHeightVar();
       menuBtn.classList.add('active');
       menuBtn.setAttribute('aria-expanded', 'true');
       menuBtn.setAttribute('aria-label', I18N.t('panel_close'));
@@ -84,6 +140,8 @@
     const closePanels = (restoreFocus = true) => {
       if(!sidebarEl.classList.contains('open')) return;
       sidebarEl.classList.remove('open');
+      canvasWrap.classList.remove('sheet-open');
+      try{ document.documentElement.style.setProperty('--sheet-h', '0px'); }catch{}
       sidebarEl.setAttribute('aria-hidden', 'true');
       sidebarEl.inert = true;
       menuBtn.classList.remove('active');
@@ -232,7 +290,7 @@
       if(vrNote){
         const total = state.nodes.length;
         const visCount = visibleNodes().length;
-        vrNote.textContent = `(${visCount}/${total} ` + (I18N.current === 'ru' ? 'видимо)' : 'visible)');
+        vrNote.textContent = I18N.t('visible_count', {n: visCount, total});
       }
     }
     $('#btnVisRangeApply').addEventListener('click', applyVisibleRange);
@@ -378,6 +436,7 @@
     }
     // Keyboard shortcuts for clipboard (Ctrl/Cmd + C/X/V/D), ignore when typing in inputs
     document.addEventListener('keydown', ev => {
+      if(uiDialogOpen()) return; // a modal dialog owns the keyboard
       const mod = ev.ctrlKey || ev.metaKey;
       if(!mod) return;
       const target = ev.target as HTMLElement;
@@ -604,6 +663,7 @@
     $('#btnBfs').addEventListener('click', runBfs); $('#btnDfs').addEventListener('click', runDfs); $('#btnDijkstra').addEventListener('click', runDijkstra); $('#btnComponents').addEventListener('click', runComponents); $('#btnTopo').addEventListener('click', runTopo); $('#btnStats').addEventListener('click', runStats);
     $('#btnCopyResults').addEventListener('click', () => copyText($('#algoOutput').textContent));
     window.addEventListener('keydown', ev => {
+      if(uiDialogOpen()) return; // a modal dialog owns the keyboard (Escape handled by the dialog itself)
       const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '');
       const ctrl = ev.ctrlKey || ev.metaKey;
       // Undo/Redo work even when typing in inputs (Ctrl+Z is universal)

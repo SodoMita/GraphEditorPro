@@ -301,13 +301,22 @@
   // A pan/wheel/pinch changes only the camera matrix. Re-evaluate midpoint
   // visibility in that same task so hidden labels reappear without waiting for
   // a document render that may never be scheduled.
+  let lastLabelSyncSig = '';
   function syncEdgeLabelVisibility(){
     const showLabels = shouldShowLabels();
+    const viewport = edgeLabelViewport();
+    // The walk exists for camera moves. Two calls in the same camera state
+    // with the same label policy would write the same display attributes;
+    // skipping them keeps back-to-back camera commits free of the walk.
+    const syncSig = viewport.sig + '|' + (showLabels ? 1 : 0);
+    if(syncSig === lastLabelSyncSig) return;
+    lastLabelSyncSig = syncSig;
+    const bounds = viewport.bounds;
     for(const [id, g] of edgeEls){
       const e = edgeById(id); if(!e) continue;
       const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) continue;
       const d = g.__geoData;
-      const visible = showLabels && Boolean(d && d.path) && edgeLabelVisible(a, b);
+      const visible = showLabels && Boolean(d && d.path) && edgeLabelVisible(a, b, bounds);
       setEdgeTextHidden(g, !visible);
     }
   }
@@ -698,7 +707,9 @@
     renderOriginMoved = false;
     rebaseInteractionOverlays();
     invalidateStyleCache();
-    documentDirty = true;
+    // No documentDirty: the pass frame keys off renderOriginX/renderOriginY/
+    // renderScale, all of which moved here, so the passes rewrite every SVG
+    // number that could have changed.
     if(renderCanvasActive) return;
     beginRenderPass();
     renderGen++;
@@ -709,12 +720,11 @@
     paintedStyleRev = styleRev;
     paintedNodeStyle = styleFingerprint('node');
     paintedEdgeStyle = styleFingerprint('edge');
-    documentDirty = false;
     lastPaintedGen = renderGen;
     endRenderPass();
   }
   function queueRender(includeMatrix=false, includeSidebar=false){
-    invalidateStyleCache(); documentDirty = true;
+    invalidateStyleCache();
     if(includeMatrix){ clearTimeout(matrixTimer); matrixTimer = setTimeout(renderMatrixAndList, 60); }
     if(renderQueued) return;
     renderQueued = true;
@@ -748,15 +758,6 @@
   let styleRev = 0;
   let paintedStyleRev = -1;
   function invalidateStyleCache(){ styleRev++; }
-  // Whether the document may have changed since the last pass. A repaint
-  // request is a declaration that *something* changed, and the document is the
-  // common case (edits are written straight into node/edge objects, which no
-  // revision counter can observe). A pass may only skip elements while this is
-  // false, and it is cleared at the end of every full pass, so the flag means
-  // "nothing has been edited since the layers were last painted" — exactly the
-  // condition each element's own checks (geometry signature, label text,
-  // selection) need in order to be trusted.
-  let documentDirty = true;
   // Which *kind* of style work that revision implies. A node colour edit must
   // repaint nodes, but edges keep their own colours and widths: repainting them
   // too would write nothing and still cost a walk of every edge. These two
@@ -821,7 +822,6 @@
     paintedStyleRev = styleRev;
     paintedNodeStyle = styleFingerprint('node');
     paintedEdgeStyle = styleFingerprint('edge');
-    documentDirty = false;
     lastPaintedGen = renderGen;
     renderGizmo();
     updateUndoRedo();
@@ -1163,11 +1163,17 @@
     // A node outside the safe window has no DOM, but its edges may still cross
     // the viewport and must be clipped/updated.
     if(isRenderablePoint(n.x, n.y)){
-      const el = nodeEl(id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+      const el = nodeEl(id); if(el){
+        setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+        // This element was rewritten outside a pass; the next pass must not
+        // treat it as already painted.
+        if(el.__ent) el.__ent.gen = -1;
+      }
     }
     if(drag && drag.liveEdges === false) return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
-    for(const edge of edges) updateEdgeFast(edge);
+    const labelBounds = edges.length ? edgeLabelViewport().bounds : null;
+    for(const edge of edges) updateEdgeFast(edge, null, labelBounds);
   }
   function moveDragFast(src=drag){
     if(!src) return;
@@ -1175,15 +1181,21 @@
       const nodes = src.nodes || (src.node ? [src.node] : []);
       for(const n of nodes){
         if(!isRenderablePoint(n.x, n.y)) continue;
-        const el = nodeEl(n.id); if(el) setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+        const el = nodeEl(n.id); if(el){
+          setAttr(el, 'transform', `translate(${renderX(n.x)},${renderY(n.y)})`);
+          // Rewritten outside a pass; stamp the spine so a later pass cannot
+          // skip this element on the strength of an older paint.
+          if(el.__ent) el.__ent.gen = -1;
+        }
       }
       followGizmoForPlainDrag(src);
       if(src.liveEdges === false) return;
       const vc = src.vc || (src.vc = newVisualCache());
-      for(const edge of (src.affectedEdges || [])) updateEdgeFast(edge, vc);
+      const labelBounds = (src.affectedEdges || []).length ? edgeLabelViewport().bounds : null;
+      for(const edge of (src.affectedEdges || [])) updateEdgeFast(edge, vc, labelBounds);
     } catch(e) { /* fail-safe */ }
   }
-  function updateEdgeFast(edgeOrId, vc=null){
+  function updateEdgeFast(edgeOrId, vc=null, bounds=null){
     const e = typeof edgeOrId === 'object' ? edgeOrId : edgeById(edgeOrId); if(!e) return;
     // nodeById is an indexed O(1) lookup now; node positions are mutated in
     // place, so the index always returns the live objects during a drag.
@@ -1211,7 +1223,7 @@
     }
     // The fast writer must CREATE text elements too: dragging an endpoint into
     // view can turn an empty/edge-hidden midpoint into a visible one.
-    const labelVisible = edgeLabelVisible(a, b);
+    const labelVisible = edgeLabelVisible(a, b, bounds ?? edgeLabelViewport().bounds);
     const texts = edgeLabelWeightText(e);
     paintEdgeText(g, d, edgeVisualC(e, vc), texts.labelText, texts.weightText, labelVisible);
     // Update arrow tip position/angle during drag
@@ -1243,7 +1255,8 @@
   function refreshFrozenEdges(edges){
     if(!edges || !edges.length) return;
     const vc = newVisualCache();
-    for(const edge of edges) updateEdgeFast(edge, vc);
+    const labelBounds = edgeLabelViewport().bounds;
+    for(const edge of edges) updateEdgeFast(edge, vc, labelBounds);
   }
   // The release itself stays free of that work: on a very high degree node it
   // is thousands of patched edges, which must not delay the frame that settles
@@ -1372,10 +1385,20 @@
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    // Everything the pass renders from that is not an entity field, packed into
+    // one string: a floating-origin rebase or a render-scale change moves
+    // every SVG number this pass writes; a label-policy flip or a visible-range
+    // edit changes which paint this pass owes; the bulk-accent threshold flips
+    // how a large selection decorates. Camera pans/zooms that do not rebase
+    // rewrite neither, and the label visibility they flip is maintained by
+    // syncEdgeLabelVisibility() outside the pass, so they are deliberately
+    // absent: a repainted frame that drew the same pixels must skip.
+    const passFrame = `${renderOriginX}|${renderOriginY}|${renderScale}|${showLabels ? 1 : 0}|${bulkAccents ? 1 : 0}${rangeActive ? '|vr:' + vr.start + '-' + vr.end : ''}`;
     // A pass whose document revision matches the last painted one has nothing
     // geometric or label-related to recompute; `genAtStart` lets an element
     // whose stamp is already current skip its frame entirely.
     const stylePass = paintedEdgeStyle !== styleFingerprint('edge');
+    const passLabelBounds = edgeLabelViewport().bounds;
     const gen = renderGen;
     for(const e of state.edges){
       const a = nodeById(e.from), b = nodeById(e.to);
@@ -1387,19 +1410,12 @@
       const ent = existing.get(e.id);
       // `alive` was cleared on the whole spine at the top of this pass, so it
       // says nothing here: presence in `existing` is what marks an element as
-      // the one this id had before the pass started.
-      if(ent && !documentDirty && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected){
-        // Painted this generation, from this revision, with this selection:
-        // the element's DOM is already exactly what this pass would write.
-        ent.alive = true;
-        live.add(e.id);
-        continue;
-      }
-      // The merged style of an edge is a pure function of the edge and the
-      // style settings, so it is cached on the element and recomputed only when
-      // either could have changed: a style pass, or the edge's own style
-      // fields. Rebuilding it every time an *unrelated* style edit repaints a
-      // 2,500-edge layer was pure overhead — and the result would be identical.
+      // the one this id had before the pass started. The merged style of an
+      // edge is a pure function of the edge and the style settings, so it is
+      // cached on the element and recomputed only when either could have
+      // changed: a style pass, or the edge's own style fields. Rebuilding it
+      // every time an *unrelated* style edit repaints a 2,500-edge layer was
+      // pure overhead — and the result would be identical.
       const edgeStyleKey = e.type + '\u0001' + e.color + '\u0001' + e.strokeSize + '\u0001' + e.strokeStyle
         + '\u0001' + (e.arrowSize ?? '') + '\u0001' + e.labelColor + '\u0001' + e.labelSize + '\u0001' + e.labelFont
         + '\u0001' + e.weight + '\u0001' + edgeDirection(e);
@@ -1407,6 +1423,25 @@
       if(!v){
         v = edgeRenderStyleC(e);
         if(ent){ ent.el.__styleKey = edgeStyleKey; ent.el.__style = v; }
+      }
+      const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
+      const lane = edgeSiblingOffset(e);
+      // Include the floating origin: absolute world endpoints unchanged by a
+      // camera move still produce different SVG numbers after a rebase, so the
+      // geometry cache must not hand back a path from the previous origin.
+      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${v.arrowSize}|${renderOriginX},${renderOriginY}|${renderScale}`;
+      // e.label reaches paintEdgeText without touching the style merge (the
+      // text itself is not a style input), so it is part of the frame key.
+      const frameKey = passFrame + '|' + (e.label ?? '') + '|' + (e.order ?? '') + '|' + edgeStyleKey + '|' + geoSig;
+      // An element is skipped only when everything this pass would write is
+      // provably unchanged: the pass frame (origin, scale, label policy,
+      // visible range, accent threshold), the merged style, the geometry
+      // signature, the selection state, and the generation stamp — any
+      // in-place writer stamps `gen = -1`, so nothing painted earlier can skip.
+      if(ent && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && ent.frameKey === frameKey){
+        ent.alive = true;
+        live.add(e.id);
+        continue;
       }
       let g: any = ent ? ent.el : null;
       if(!g){
@@ -1447,12 +1482,6 @@
       // radii, the parallel-edge lane, and direction. When none of these
       // changed (style-only or unrelated renders), the previous edgePath
       // result is reused without recomputation.
-      const ra = nodeRadiusC(a, passVisuals), rb = nodeRadiusC(b, passVisuals);
-      const lane = edgeSiblingOffset(e);
-      // Include the floating origin: absolute world endpoints unchanged by a
-      // camera move still produce different SVG numbers after a rebase, so the
-      // geometry cache must not hand back a path from the previous origin.
-      const geoSig = `${a.x},${a.y}|${b.x},${b.y}|${ra},${rb}|${lane}|${edgeDirection(e)}|${v.arrowSize}|${renderOriginX},${renderOriginY}|${renderScale}`;
       let d = g.__geoSig === geoSig ? g.__geoData : null;
       if(!d){
         d = edgePath(a,b,e, passVisuals);
@@ -1518,12 +1547,12 @@
       // Labels/weights are created whenever the edge has a visible path, then
       // hidden (not removed) when the ORIGINAL midpoint is off-screen. A camera
       // pan can therefore re-show them without a full render pass.
-      const labelVisible = edgeVisible && edgeLabelVisible(a, b);
+      const labelVisible = edgeVisible && edgeLabelVisible(a, b, passLabelBounds);
       const texts = edgeLabelWeightText(e, showLabels);
       paintEdgeText(g, d, v, texts.labelText, texts.weightText, labelVisible && showLabels);
       // This element now matches the document at this generation.
       const painted = existing.get(e.id);
-      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
+      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; painted.frameKey = frameKey; }
       live.add(e.id);
     }
     sweepLayer(spine, existing, live, edgeEls);
@@ -1601,6 +1630,10 @@
   // bounds are cached per camera/scale so a large render pass computes them
   // once rather than per edge.
   let labelViewportCache = { sig: '', bounds: null as any };
+  // The world-space bounds an edge midpoint must lie inside for its label to
+  // be visible. Computing it costs one rect read and one camera clamp, so the
+  // result is cached on the camera signature; every caller in the same camera
+  // state shares the cached bounds instead of each edge re-measuring.
   function edgeLabelViewport(){
     const cam = boundedCamera(currentCamera());
     const rect = canvasViewportRect();
@@ -1613,12 +1646,11 @@
         y0: cam.y - offY / pitch, y1: cam.y + cam.h + offY / pitch
       }} : { sig, bounds: null };
     }
-    return labelViewportCache.bounds;
+    return { bounds: labelViewportCache.bounds, sig };
   }
-  function edgeLabelVisible(a, b){
+  function edgeLabelVisible(a, b, bounds = edgeLabelViewport().bounds){
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     if(!isRenderablePoint(mx, my)) return false;
-    const bounds = edgeLabelViewport();
     return Boolean(bounds) && mx >= bounds.x0 && mx <= bounds.x1 && my >= bounds.y0 && my <= bounds.y1;
   }
   function edgePath(a,b,e,vc=null){
@@ -1788,6 +1820,12 @@
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     const visIds = rangeActive ? visibleNodeIds() : null;
+    // Everything the pass renders from that is not an entity field — see the
+    // edge pass for what belongs here and why the camera does not: pans that
+    // do not rebase move only the camera matrix and syncEdgeLabelVisibility
+    // maintains label visibility outside the pass, so they must not cost a
+    // single attribute write.
+    const passFrame = `${renderOriginX}|${renderOriginY}|${renderScale}|${showLabels ? 1 : 0}|${bulkAccents ? 1 : 0}${rangeActive ? '|vr:' + vr.start + '-' + vr.end : ''}`;
     const draggingId = drag?.nodeId;
     const stylePass = paintedNodeStyle !== styleFingerprint('node');
     const gen = renderGen;
@@ -1802,10 +1840,19 @@
       const selected = selectedNodes.has(n.id);
       const ent = existing.get(n.id);
       const dragging = draggingId === n.id;
-      if(ent && !documentDirty && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && !dragging){
-        // Same reasoning as the edge pass: the element was painted in the
-        // previous generation from this revision, with this selection, and no
-        // in-place writer has touched it since.
+      // The entity half of the key: every field this pass turns into an SVG
+      // attribute or class, with the merged type/default resolution covered by
+      // the style pass (a defaults/type-style edit flips styleFingerprint).
+      const frameKey = passFrame
+        + '|' + n.x + '|' + n.y + '|' + (n.shape ?? '') + '|' + (n.type ?? '')
+        + '|' + (n.color ?? '') + '|' + (n.width ?? '') + '|' + (n.height ?? '')
+        + '|' + (n.strokeColor ?? '') + '|' + (n.strokeSize ?? '') + '|' + (n.strokeStyle ?? '')
+        + '|' + (n.label ?? '') + '|' + (n.labelColor ?? '') + '|' + (n.labelSize ?? '')
+        + '|' + (n.labelFont ?? '') + '|' + (n.labelPosition ?? '') + '|' + (n.order ?? '');
+      // Same reasoning as the edge pass: the element is painted only when the
+      // pass frame, the merged style, the entity fields, the selection and the
+      // generation stamp all match what it was painted from.
+      if(ent && !stylePass && ent.gen === lastPaintedGen && ent.sel === selected && !dragging && ent.frameKey === frameKey){
         ent.alive = true;
         live.add(n.id);
         continue;
@@ -1908,7 +1955,7 @@
       }
       syncNodeHitTarget(g, v);
       const painted = existing.get(n.id);
-      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; }
+      if(painted){ painted.alive = true; painted.gen = gen; painted.sel = selected; painted.frameKey = frameKey; }
       live.add(n.id);
     }
     sweepLayer(spine, existing, live, nodeEls);
@@ -1956,11 +2003,46 @@
     const selectedNode = state.selected?.type === 'node' ? state.selected.id : current;
     if(selectedNode && state.nodes.some(n => n.id === selectedNode)) sel.value = selectedNode;
   }
+  // Byte-identical repaint guard for the selection panel. The panel embeds
+  // every value it displays, so identical markup plus an identical selection
+  // key means an equivalent panel — re-parsing 2000 custom rows to reproduce
+  // the same DOM is pure waste. Entity identity goes into the key (undo
+  // replaces entity objects wholesale) so a same-value, different-object
+  // selection can never reuse listeners bound to orphans.
+  let lastSelectionPanelHtml: string | null = null;
+  let lastSelectionPanelKey: string | null = null;
+  const selectionPanelUids = new WeakMap<object, number>();
+  let selectionPanelUid = 1;
+  function selectionEntityUid(entity: object): number {
+    let uid = selectionPanelUids.get(entity);
+    if(uid === undefined){ uid = selectionPanelUid++; selectionPanelUids.set(entity, uid); }
+    return uid;
+  }
+  function panelEntityKey(id: string, entity: { } | null | undefined): string {
+    return entity ? 'e' + selectionEntityUid(entity) : 'id:' + id;
+  }
+  function selectionPanelKey(): string {
+    const selected = state.selected;
+    if(!selected) return 'none';
+    const sel = state.selection;
+    const nodeKeys = (sel?.nodes || []).map(id => panelEntityKey(id, nodeById(id))).sort().join(',');
+    const edgeKeys = (sel?.edges || []).map(id => panelEntityKey(id, edgeById(id))).sort().join(',');
+    return selected.type + '|n:' + nodeKeys + '|e:' + edgeKeys;
+  }
+  function applySelectionPanelHtml(host: HTMLElement, html: string): boolean {
+    const key = selectionPanelKey();
+    if(html === lastSelectionPanelHtml && key === lastSelectionPanelKey) return false;
+    host.innerHTML = html;
+    lastSelectionPanelHtml = html;
+    lastSelectionPanelKey = key;
+    return true;
+  }
+
   function renderSelectionPanel(){
     const host = $('#selectionPanel');
     const nodeCount = state.selection?.nodes?.length || 0;
     const edgeCount = state.selection?.edges?.length || 0;
-    if(!state.selected){ host.innerHTML = '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>'; return; }
+    if(!state.selected){ if(applySelectionPanelHtml(host, '<span class="muted">' + esc(I18N.t('nothing_selected')) + '</span>')) { /* repainted */ } return; }
     if(nodeCount + edgeCount > 1){
       const parts = [];
       parts.push(`<div class="tiny muted" style="margin-bottom:8px">${I18N.t('selected_n_m', {n: nodeCount, m: edgeCount})}</div>`);
@@ -1996,6 +2078,7 @@
           <div class="row" style="margin-top:6px">
             <button id="mulResetNodeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
+        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div><div data-cp-ph="sel-node"></div>`;
       }
       // Edge editing section (if any edges selected)
       if(edgeCount > 0){
@@ -2017,8 +2100,21 @@
           <div class="row" style="margin-top:6px">
             <button id="mulResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
           </div>`;
+        html += `<div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div><div data-cp-ph="sel-edge"></div>`;
       }
-      host.innerHTML = html;
+      const multiNodeTargets = nodeCount > 0 ? state.selection.nodes.map(id => nodeById(id)).filter(Boolean) : [];
+      const multiEdgeTargets = edgeCount > 0 ? state.selection.edges.map(id => edgeById(id)).filter(Boolean) : [];
+      if(!applySelectionPanelHtml(host, html)){
+        // Outer panel reused byte-identically; only the cached custom sections
+        // can have moved on (definition edits). Swap those, keep the rest.
+        if(nodeCount > 0) refreshSelectionCustomSection(host, 'sel-node', 'node', multiNodeTargets, true);
+        if(edgeCount > 0) refreshSelectionCustomSection(host, 'sel-edge', 'edge', multiEdgeTargets, true);
+        return;
+      }
+      // Mount the custom sections: cached live elements — untouched
+      // definitions/values keep their DOM, listeners and focus.
+      if(nodeCount > 0) mountCustomProps(host, 'sel-node', 'sel-node', 'node', multiNodeTargets, true);
+      if(edgeCount > 0) mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', multiEdgeTargets, true);
       $('#selAdjacent').addEventListener('click', () => expandSelection(false));
       $('#selDirectedAdjacent').addEventListener('click', () => expandSelection(true));
       $('#selClear').addEventListener('click', deselect);
@@ -2096,7 +2192,7 @@
       const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
       const typeList = existingNodeTypes().filter(t => t !== n.type);
       const v = nodeVisual(n);
-      host.innerHTML = `
+      const singleNodeHtml = `
         <div class="grid2">
           <label class="field" for="selNodeLabel">${I18N.t('label')} <input id="selNodeLabel" value="${esc(n.label)}"></label>
           <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList">${typeList.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
@@ -2123,11 +2219,15 @@
           <label class="field" for="selNodeLabelPos">${I18N.t('label_pos')} <select id="selNodeLabelPos"><option value="">${I18N.t('stroke_inherit')}</option><option value="center">${I18N.t('pos_center')}</option><option value="top">${I18N.t('pos_top')}</option><option value="bottom">${I18N.t('pos_bottom')}</option><option value="left">${I18N.t('pos_left')}</option><option value="right">${I18N.t('pos_right')}</option></select></label>
           <label class="field" for="selNodeLabelFont">${I18N.t('label_font')} <input id="selNodeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
+        <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
+        <div data-cp-ph="sel-node"></div>
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_btn')}</button>
           <button id="selResetStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_style_title')}">${I18N.t('reset_style')}</button>
         </div>
         <p class="drag-hint">${I18N.t('drag_hint')}</p>`;
+      if(!applySelectionPanelHtml(host, singleNodeHtml)){ refreshSelectionCustomSection(host, 'sel-node', 'node', [n], false); return; }
+      mountCustomProps(host, 'sel-node', 'sel-node', 'node', [n], false);
       $('#selNodeShape').value = n.shape || '';
       $('#selNodeStrokeStyle').value = n.strokeStyle || '';
       $('#selNodeLabelPos').value = n.labelPosition || '';
@@ -2185,7 +2285,7 @@
       const typeList = existingEdgeTypes().filter(t => t !== e.type);
       const v = edgeVisual(e);
       const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
-      host.innerHTML = `
+      const singleEdgeHtml = `
         <div class="tiny muted" style="margin-bottom:8px">${esc(a?.label || e.from)} → ${esc(b?.label || e.to)}</div>
         <div class="grid2">
           <label class="field" for="selEdgeWeight">${I18N.t('weight')} <input id="selEdgeWeight" value="${esc(e.weight)}"></label>
@@ -2203,10 +2303,14 @@
           <label class="field" for="selEdgeLabelSize">${I18N.t('label_size')} <input id="selEdgeLabelSize" type="number" min="4" max="72" value="${v.labelSize}" inputmode="decimal"></label>
           <label class="field" for="selEdgeLabelFont">${I18N.t('label_font')} <input id="selEdgeLabelFont" list="fontList" type="text" value="${esc(v.labelFont)}" placeholder="Inter"></label>
         </div>
+        <div class="section-title" style="margin-top:10px">${I18N.t('custom_properties')}</div>
+        <div data-cp-ph="sel-edge"></div>
         <div class="row" style="margin-top:8px">
           <button id="selDelete" class="btn danger" style="flex:1">${I18N.t('delete_edge')}</button>
           <button id="selResetEdgeStyle" class="btn small warn" style="flex:1" title="${I18N.t('reset_edge_style_title')}">${I18N.t('reset_style')}</button>
         </div>`;
+      if(!applySelectionPanelHtml(host, singleEdgeHtml)){ refreshSelectionCustomSection(host, 'sel-edge', 'edge', [e], false); return; }
+      mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', [e], false);
       $('#selEdgeStrokeStyle').value = e.strokeStyle || '';
       $('#selEdgeWeight').addEventListener('change', ev => { const v = ev.target.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory(); queueRender(true); });
       $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0,80); pushHistory(); queueRender(true); });

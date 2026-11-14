@@ -50,30 +50,16 @@ async function paste(document, window, buttonId, text) {
 
 const toasts = document => [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ');
 
+// === General helpers ===
+// Boot the editor on `saved`, paste `text` as DOT, and return the resulting
+// state for assertions. The default saved document is a 2-node, 1-edge graph.
+const DEFAULT_SAVED = () => ({ title: 'keep-general', nodes: [
+  {id:'n1', label:'One', x:0, y:0, order:0},
+  {id:'n2', label:'Two', x:120, y:0, order:1},
+], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] });
 // === DOT ===
-test('DOT import keeps hex colours and "#" inside labels instead of truncating lines', async () => {
-  const {dom, errors} = createEditorDom();
-  const {document} = dom.window;
-  const dot = [
-    'digraph G {',
-    '  /* block comment with #hash */',
-    '  // line comment',
-    '# preprocessor comment',
-    '  a [label="C# docs", fillcolor="#ff0000"];',
-    '  b [label="Beta"];',
-    '  a -> b [weight="2"];',
-    '}',
-  ].join('\n');
-  await paste(document, dom.window, '#btnPasteDot', dot);
-  const graph = exportedGraph(document);
-  assert.equal(graph.nodes.length, 2, 'both node declarations are parsed');
-  const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
-  assert.equal(byId.a.label, 'C# docs', 'a # inside a quoted label is not a comment');
-  assert.equal(byId.a.color, '#ff0000', 'hex colour survives comment stripping');
-  assert.equal(byId.b.label, 'Beta');
-  assert.equal(graph.edges.length, 1);
-  assert.equal(errors.length, 0);
-});
+// Parser-structure cases live in dot-core.test.mjs (fast, no jsdom); the
+// tests here cover only the end-to-end paths through the real paste flow.
 
 test('DOT export and import round-trip labels, shapes, colours, types and weights', async () => {
   const saved = {
@@ -112,6 +98,7 @@ test('DOT export and import round-trip labels, shapes, colours, types and weight
 });
 
 // === CSV ===
+
 test('matrix CSV import drops cells whose node labels are unknown instead of inventing dangling edges', async () => {
   const saved = { title:'m', nodes:[{id:'n1',label:'A',x:0,y:0},{id:'n2',label:'B',x:100,y:0}], edges:[] };
   const {dom} = createEditorDom(saved);
@@ -129,6 +116,7 @@ test('matrix CSV import drops cells whose node labels are unknown instead of inv
   // instead of letting the sanitizer drop invented ids.
   assert.match(toasts(document), /skipped 1/i);
 });
+
 
 test('replace-mode nodes CSV import drops the previous graph\'s edges', async () => {
   const saved = {
@@ -158,6 +146,7 @@ test('replace-mode nodes CSV import drops the previous graph\'s edges', async ()
   assert.equal(kept.edges.length, 1, 'append mode keeps the existing edge');
   assert.equal(kept.nodes.length, 4);
 });
+
 
 test('replace-mode nodes CSV keeps explicit orders, including 0', async () => {
   const saved = {
@@ -190,6 +179,7 @@ test('replace-mode nodes CSV keeps explicit orders, including 0', async () => {
   assert.deepEqual(header, ['p1', 'p2', 'p3'], 'the matrix keeps the imported order');
 });
 
+
 test('nodes CSV import enforces the document size cap and reports it', async () => {
   const {dom} = createEditorDom();
   const {document} = dom.window;
@@ -200,6 +190,7 @@ test('nodes CSV import enforces the document size cap and reports it', async () 
   assert.equal(graph.nodes.length, 3000, 'capped at the sanitizer limit, not silently oversized');
   assert.match(toasts(document), /3000/, 'the truncation is reported to the user');
 });
+
 
 test('CSV imports are sanitised like every other import (labels, colours, sizes)', async () => {
   const saved = { title:'v', nodes:[{id:'n1',label:'A',x:0,y:0},{id:'n2',label:'B',x:100,y:0}], edges:[] };
@@ -214,6 +205,7 @@ test('CSV imports are sanitised like every other import (labels, colours, sizes)
   assert.notEqual(graph.edges[0].color, 'javascript:bad', 'invalid colours are rejected');
   assert.ok(!graph.edges[0].strokeSize || graph.edges[0].strokeSize <= 20);
 });
+
 
 test('CSV export neutralises spreadsheet formula injection but keeps numbers intact', async () => {
   const saved = {
@@ -241,6 +233,7 @@ test('CSV export neutralises spreadsheet formula injection but keeps numbers int
   assert.ok(edgesCsv.includes(',-5,') || edgesCsv.includes(',-5\r'), 'negative weights stay numeric');
 });
 
+
 test('exported formula-guarded cells come back unchanged on import', async () => {
   const saved = {
     title: 'formulas',
@@ -263,37 +256,6 @@ test('exported formula-guarded cells come back unchanged on import', async () =>
   assert.deepEqual(graph.nodes.map(n => n.label), ['=1+1', '@SUM(A1)', '-note'], 'one apostrophe in, none out');
 });
 
-test('DOT comments survive CRLF and CR-only files without eating the next declaration', async () => {
-  const dotLf = [
-    'digraph G {',
-    '  # leading hash comment',
-    '  a [label="Alpha", fillcolor="#ff0000"];',
-    '  b [label="Beta"];',
-    '  a -> b;',
-    '}',
-  ].join('\n');
-  const expected = await (async () => {
-    const {dom} = createEditorDom();
-    await settle(dom.window, 40);
-    await paste(dom.window.document, dom.window, '#btnPasteDot', dotLf);
-    const graph = exportedGraph(dom.window.document);
-    dom.window.close();
-    return graph;
-  })();
-  assert.deepEqual(expected.nodes.map(n => n.label), ['Alpha', 'Beta']);
-  assert.equal(expected.edges.length, 1);
-
-  for (const eol of ['\r\n', '\r']) {
-    const {dom, errors} = createEditorDom();
-    await settle(dom.window, 40);
-    await paste(dom.window.document, dom.window, '#btnPasteDot', dotLf.split('\n').join(eol));
-    const graph = exportedGraph(dom.window.document);
-    assert.deepEqual(graph.nodes.map(n => n.label), ['Alpha', 'Beta'], `comments survive ${JSON.stringify(eol)} line endings`);
-    assert.equal(graph.edges.length, 1, `edges survive ${JSON.stringify(eol)} line endings`);
-    assert.deepEqual(errors.map(e => e.message), []);
-    dom.window.close();
-  }
-});
 
 test('DOT labels round-trip newline escapes, literal backslashes and quotes', async () => {
   const labels = ['a\nb', 'a\\nb', 'a"b', "a'b", 'a\\', 'a\\nb\\'];
@@ -315,6 +277,7 @@ test('DOT labels round-trip newline escapes, literal backslashes and quotes', as
     'a newline, a literal backslash-n and a trailing backslash all survive');
 });
 
+
 test('CSV export and import preserve labels that start with an apostrophe', async () => {
   const labels = ['=1+1', "'=1+1", "''=1+1", "'plain", '-note', 'plain'];
   const saved = {
@@ -334,6 +297,7 @@ test('CSV export and import preserve labels that start with an apostrophe', asyn
   assert.deepEqual(exportedGraph(document).nodes.map(n => n.label), labels,
     'guarded text is unescaped exactly once per round-trip');
 });
+
 
 test('CSV apostrophe handling is iterative and stays exact for many markers', async () => {
   // A user-reachable cell: thousands of leading apostrophes used to recurse in
@@ -362,6 +326,7 @@ test('CSV apostrophe handling is iterative and stays exact for many markers', as
 });
 
 // === Performance guards ===
+
 test('matrix rendering is hard-capped at 14,400 cells regardless of the row limit', async () => {
   const nodes = Array.from({ length: 350 }, (_, i) => ({ id: 'n' + i, label: 'N' + i, x: i * 10, y: 0, order: i }));
   const {dom} = createEditorDom({ title: 'big', nodes, edges: [], settings: { matrixLimit: 5, matrixDimension: 0 } });
@@ -378,6 +343,7 @@ test('matrix rendering is hard-capped at 14,400 cells regardless of the row limi
   assert.doesNotMatch(hidden, /300 nodes/, 'no claim that the graph has 300 nodes');
 });
 
+
 test('a saved matrix dimension above the render ceiling is clamped on load', async () => {
   const nodes = Array.from({ length: 3 }, (_, i) => ({ id: 'n' + i, label: 'N' + i, x: i * 10, y: 0, order: i }));
   const {dom} = createEditorDom({ title: 'dim', nodes, edges: [], settings: { matrixDimension: 300, matrixLimit: 999 } });
@@ -388,6 +354,7 @@ test('a saved matrix dimension above the render ceiling is clamped on load', asy
 });
 
 // === Persistence and accessibility ===
+
 test('a pending autosave is flushed when the page is hidden', async () => {
   const {dom} = createEditorDom();
   const {document, window} = dom.window;
@@ -403,6 +370,7 @@ test('a pending autosave is flushed when the page is hidden', async () => {
   assert.equal(saved.nodes.length, 1, 'the node is persisted synchronously on pagehide');
 });
 
+
 test('the page exposes one h1, named tables and a language button whose name contains its visible code', async () => {
   const {dom} = createEditorDom();
   const {document} = dom.window;
@@ -414,6 +382,82 @@ test('the page exposes one h1, named tables and a language button whose name con
   const code = document.querySelector('#langCode').textContent.trim();
   assert.ok(langButton.getAttribute('aria-label').includes(code), 'accessible name contains the visible text');
   assert.equal(dom.window.I18N, undefined, 'no debug global is exposed');
+});
+
+
+test('malformed graph input never destroys the document and reports the failure', async () => {
+  const saved = { title: 'keep-me', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [] };
+  const cases = [
+    ['#btnPasteDot', 'hello'],
+    ['#btnPasteDot', 'digraph {'],
+    ['#btnPasteDot', 'a; b;'],
+    ['#btnPasteDot', '{}'],
+    ['#btnPasteJson', '{}'],
+    ['#btnPasteJson', '[]'],
+    ['#btnPasteJson', '{"edges":[]}'],
+    ['#btnPasteGraphml', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"></graphml>'],
+  ];
+  for(const [button, text] of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, button, text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 3, `document survives ${JSON.stringify(text)} via ${button}`);
+    assert.match(toasts(document), /fail|no graph/i, `a failure is reported for ${JSON.stringify(text)}`);
+    assert.deepEqual(errors.map(error => error.message), [], `no uncaught errors for ${JSON.stringify(text)}`);
+    dom.window.close();
+  }
+});
+
+
+test('a replace-mode import can be undone back to the pre-import document', async () => {
+  const saved = { title: 'undoable', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const dot = 'digraph G {\n  x [label="Replacement"];\n}';
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'the replace import went through');
+  assert.equal(graph.nodes[0].label, 'Replacement');
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'undo restores the pre-import document');
+  assert.deepEqual(graph.nodes.map(n => n.label), ['One', 'Two', 'Three']);
+  assert.equal(graph.edges.length, 1, 'the pre-import edges are restored too');
+  dom.window.close();
+});
+
+
+test('a bare GraphML <graph> is a valid empty document (round 10) and undo restores the original', async () => {
+  // Round 8 treated this as "an error"; round 10 defines a zero-node <graph>
+  // with no dangling edges as a valid empty document that must round-trip.
+  const saved = { title: 'keep-me-2', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"><graph id="g" edgedefault="directed"></graph></graphml>');
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'the bare graph imports as a valid empty document');
+  assert.match(toasts(document), /imported/i);
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'undo restores the replaced document');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
 });
 
 test('DOT export of a mixed graph stays valid: digraph uses only -> and direction lives in dir', async () => {
@@ -449,6 +493,1018 @@ test('DOT export of a mixed graph stays valid: digraph uses only -> and directio
   dom.window.close();
 });
 
+// === Round 9 ===
+
+test('valid empty documents (the editor’s own exports) round-trip instead of being rejected', async () => {
+  // 1) JSON: an explicitly empty nodes array is a valid empty document.
+  const saved = { title: 'keep-me-r9', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const emptyJson = JSON.stringify({ title:'empty-doc', mode:'select', selectTool:'nodes', selectCombine:false,
+    nextNode:1, nextEdge:1, nodes:[], edges:[], customAttributes:[], graphCustom:{}, settings:{}, viewBox:{x:0,y:0,w:100,h:100} });
+  await paste(document, dom.window, '#btnPasteJson', emptyJson);
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'the empty document replaces the canvas');
+  assert.equal(graph.title, 'empty-doc');
+  assert.match(toasts(document), /imported/i);
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'undo restores the replaced document');
+  assert.deepEqual(graph.nodes.map(n => n.label), ['One', 'Two', 'Three']);
+
+  // 2) GraphML: graph-scoped values with zero nodes round-trip too.
+  const {dom: dom2, errors: errors2} = createEditorDom(saved);
+  const {document: document2} = dom2.window;
+  await settle(dom2.window, 60);
+  const emptyGraphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    '  <key id="note" for="graph" attr.name="note" attr.type="string" qvge:kind="custom-attribute"/>',
+    '  <graph id="empty-doc" edgedefault="directed">',
+    '    <data key="note">graph-scoped value</data>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document2, dom2.window, '#btnPasteGraphml', emptyGraphml);
+  const graph2 = exportedGraph(document2);
+  assert.equal(graph2.nodes.length, 0, 'a graph-scoped-value GraphML with zero nodes imports');
+  assert.equal(graph2.graphCustom?.note, 'graph-scoped value', 'the graph-scoped custom value survives');
+  assert.match(toasts(document2), /imported/i);
+
+  // 3) GraphML: the plain editor empty export (built-in keys + built-in
+  // graph-level <data>) is a valid empty document, likewise.
+  const {dom: dom3, errors: errors3} = createEditorDom(saved);
+  const {document: document3} = dom3.window;
+  await settle(dom3.window, 60);
+  const plainEmpty = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="labelsPolicy" for="graph" attr.name="labels.policy" attr.type="string"/>',
+    '  <key id="canvasBgColor" for="graph" attr.name="canvas.bg.color" attr.type="string"/>',
+    '  <graph id="empty-doc" edgedefault="directed">',
+    '    <data key="labelsPolicy">auto</data>',
+    '    <data key="canvasBgColor">#020617</data>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document3, dom3.window, '#btnPasteGraphml', plainEmpty);
+  const graph3 = exportedGraph(document3);
+  assert.equal(graph3.nodes.length, 0, 'the plain editor empty GraphML imports');
+  assert.match(toasts(document3), /imported/i);
+
+  assert.deepEqual(errors.map(e => e.message), []);
+  assert.deepEqual(errors2.map(e => e.message), []);
+  assert.deepEqual(errors3.map(e => e.message), []);
+  dom.window.close(); dom2.window.close(); dom3.window.close();
+});
+
+
+test('a nonempty node array in which every entry is malformed is rejected, not imported', async () => {
+  const saved = { title: 'keep-me-r9b', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [] };
+  const cases = [
+    '{"nodes":[null],"edges":[]}',
+    '{"nodes":[null, 42, "x", true, false],"edges":[]}',
+    '{"nodes":[null, "n"],"title":"sneaky"}',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteJson', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `document survives ${text}`);
+    assert.match(toasts(document), /fail|no graph/i, `a failure is reported for ${text}`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+  // A nonempty array with at least one real record imports (the junk entries
+  // are dropped by sanitization, as always).
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteJson',
+    '{"nodes":[null, {"id":"keep1","label":"Kept","x":5,"y":5,"order":0}],"edges":[]}');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1);
+  assert.equal(graph.nodes[0].label, 'Kept');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+
+test('at the definition limit, repeated pastes reuse the remapped definition instead of dropping the value', async () => {
+  // 1998 filler node-scope definitions + one graph-scoped 'tag' = 1999.
+  // The carried clipboard definition 'tag' (node scope) conflicts on paste.
+  const fillers = Array.from({ length: 1998 }, (_, i) => ({ id: 'fill_' + i, scope: 'node', type: 'string' }));
+  const saved = { title: 'at-cap', nodes: [{id:'n1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [...fillers, { id: 'tag', scope: 'graph', type: 'string' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { tag: 'hello' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'tag', scope: 'node', type: 'string' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const clip = () => Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  clip();
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  clip();
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 2000, 'the limit is still respected exactly');
+  const tag1 = graph.customAttributes.find(d => d.id === 'tag_1');
+  assert.equal(tag1?.name, 'tag', 'the first paste re-created the conflict as tag_1 with the carried id recorded as its name');
+  const carrieds = graph.nodes.filter(n => n.label === 'Carried');
+  assert.equal(carrieds.length, 2, 'both pastes landed their nodes');
+  for(const n of carrieds){
+    assert.equal(n.custom?.tag_1, 'hello', 'the carried value is bound to tag_1 on every paste, never under the graph-scoped tag');
+    assert.equal(n.custom?.tag, undefined, 'the value is never left under the graph-scoped id');
+  }
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+
+test('empty-nodes JSON with a non-empty edge list is rejected, not imported as an empty document', async () => {
+  // Every edge would dangle and be dropped; the editor can never export
+  // this shape, so it is not a valid empty document.
+  const saved = { title: 'keep-me-r9c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [] };
+  const cases = [
+    '{"nodes":[],"edges":[{"id":"e1","from":"n1","to":"n2","weight":"1","directed":true}]}',
+    '{"nodes":[],"edges":[{"from":"a","to":"b"}]}',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteJson', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `document survives ${text}`);
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+
+test('GraphML without a <graph> element is rejected even when it defines keys', async () => {
+  const saved = { title: 'keep-me-r9d', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const noGraph = '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">'
+    + '<key id="note" for="graph" attr.name="note" attr.type="string"/>'
+    + '</graphml>';
+  await paste(document, dom.window, '#btnPasteGraphml', noGraph);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'document survives a GraphML without <graph>');
+  // The explicit rejection (not an accidental TypeError in the parser) must
+  // produce the structured empty-graph error.
+  assert.match(toasts(document), /contains no graph/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+
+test('zero-node GraphML carrying only edge-scoped <data> is rejected', async () => {
+  // Edge-scoped values never belong to a document root; every edge dangles.
+  const saved = { title: 'keep-me-r9e', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const edgeDataOnly = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph id="g" edgedefault="directed">',
+    '    <edge id="e1" source="a" target="b">',
+    '      <data key="weight">1</data>',
+    '    </edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteGraphml', edgeDataOnly);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'edge-scoped <data> does not make a zero-node file a valid document');
+  assert.match(toasts(document), /fail|no graph/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+
+test('zero-node GraphML with only graph-scoped direct-child <data> still round-trips', async () => {
+  // Positive control for the tightened gate: graph-scoped <data> is document content.
+  const saved = { title: 'keep-me-r9f', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graphDataOnly = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="canvasBgColor">#020617</data>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteGraphml', graphDataOnly);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'graph-scoped <data> makes it a valid empty document');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// === Round 10 ===
+
+test('the editor’s own empty DOT export round-trips', async () => {
+  // Seed an empty document, export it as DOT, then paste that exact text
+  // into a 3-node document — the empty export must import cleanly.
+  const {dom: domEmpty} = createEditorDom({ title: 'empty-dot-src', nodes: [], edges: [] });
+  const emptyDoc = domEmpty.window.document;
+  await settle(domEmpty.window, 60);
+  emptyDoc.querySelector('#btnExportDot').click();
+  const dotText = emptyDoc.querySelector('.export-modal textarea').value;
+  emptyDoc.querySelector('#expCloseBtn').click();
+  assert.match(dotText, /digraph/i, 'the exporter writes a digraph');
+  domEmpty.window.close();
+
+  const saved = { title: 'keep-me-r10', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', dotText);
+  let graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 0, 'the empty DOT export imports');
+  assert.match(toasts(document), /imported/i);
+  document.querySelector('#btnUndo').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 2, 'undo restores the replaced document');
+  assert.equal(graph.edges.length, 1);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+
+test('zero-node GraphML with an edge whose endpoints are absent is rejected', async () => {
+  // Finding 1: an edge key + a dangling edge must NOT import as an empty
+  // document behind an import toast.
+  const saved = { title: 'keep-me-r10c', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+    {id:'n3', label:'Three', x:0, y:120, order:2},
+  ], edges: [] };
+  const cases = [
+    // with an <key> declaration for the edge (the reported repro)
+    ['<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+     '  <key id="w" for="edge" attr.name="weight" attr.type="string"/>',
+     '  <graph id="g" edgedefault="directed">',
+     '    <edge id="e1" source="a" target="b">',
+     '      <data key="w">1</data>',
+     '    </edge>',
+     '  </graph>',
+     '</graphml>'].join('\n'),
+    // without any key
+    ['<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+     '  <graph id="g" edgedefault="directed">',
+     '    <edge id="e1" source="a" target="b"/>',
+     '  </graph>',
+     '</graphml>'].join('\n'),
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteGraphml', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 3, 'document survives the dangling-edge GraphML');
+    assert.match(toasts(document), /fail|no graph/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+// === Round 11 ===
+
+test('a conflicting paste keeps the recorded name so re-paste and import-append reuse the definition', async () => {
+  // Target document: graph-scope x_1 already exists, forcing a mint when the
+  // carried node-scope x_1 (a foreign key "x" with attr.name "fill color",
+  // kept under the name it was read with) is pasted.
+  const saved = { title: 'cap-provenance', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'x_1', scope: 'graph', type: 'string' }] };
+  // The clipboard payload carries a re-export of the definition — including
+  // the foreign key id it was minted from (our payloads always re-export it).
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 30, y: 30, order: 0, custom: { x_1: 'red' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', name: 'fill color', origin: 'x' }] });
+  const originalGraphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="x" for="node" attr.name="fill color" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="m2"><data key="x">blue</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const clip = () => Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+
+  clip(); document.querySelector('#btnPaste2').click(); await settle(dom.window, 80);
+  let graph = exportedGraph(document);
+  const minted = graph.customAttributes.find(d => d.id === 'x_1_1');
+  assert.equal(minted?.scope, 'node', 'the conflicting paste minted x_1_1');
+  assert.equal(minted?.name, 'fill color', 'the minted definition keeps the name recorded by the source key');
+
+  // A second identical paste must reuse x_1_1, never mint x_1_2.
+  clip(); document.querySelector('#btnPaste2').click(); await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 2, 're-pasting creates no new definition');
+  assert.equal(graph.customAttributes.some(d => d.id === 'x_1_2'), false, 'no x_1_2 is minted');
+
+  // Appending the original GraphML must find x_1_1 via its recorded name and
+  // reuse it — never create x_2.
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => originalGraphml } });
+  const appendChk = document.querySelector('#optImportAppend');
+  assert.ok(appendChk, 'the append option exists');
+  appendChk.checked = true;
+  document.querySelector('#btnPasteGraphml').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 2, 'appending the source file reuses the definition, no x_2 is created');
+  assert.equal(graph.customAttributes.some(d => d.id === 'x_2'), false, 'x_2 is never minted');
+  const carrieds = graph.nodes.filter(n => n.label === 'Carried');
+  assert.equal(carrieds.length, 2);
+  for(const n of carrieds) assert.equal(n.custom?.x_1_1, 'red', 'carried values stay bound to x_1_1');
+  const imported = graph.nodes.find(n => n.id === 'm2' || n.id.startsWith('n'));
+  assert.equal(graph.customAttributes.filter(d => d.id === 'x_1_1').length, 1);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// === Round 12 ===
+
+test('a batch paste with conflicting provenance mints one definition for the whole batch', async () => {
+  // Fresh document has a FRUIT property x_1 whose recorded name is fruit.
+  const saved = { title: 'batch-provenance', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', name: 'fruit' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [
+      { id: 'c1', label: 'CarriedA', x: 30, y: 30, order: 0, custom: { x_1: 'red' } },
+      { id: 'c2', label: 'CarriedB', x: 90, y: 30, order: 1, custom: { x_1: 'blue' } },
+    ],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', name: 'vehicle' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const minted = graph.customAttributes.filter(d => d.scope === 'node' && d.id !== 'x_1');
+  assert.equal(minted.length, 1, 'exactly one node-scope definition was minted for the whole batch');
+  assert.equal(minted[0].id, 'x_1_1');
+  assert.equal(minted[0].name, 'vehicle', 'the minted definition keeps the carried name');
+  assert.equal(graph.customAttributes.find(d => d.id === 'x_1')?.name, 'fruit', 'the fruit definition is untouched');
+  const carrieds = graph.nodes.filter(n => n.label.startsWith('Carried'));
+  assert.equal(carrieds.length, 2);
+  for(const n of carrieds) assert.equal(n.custom?.x_1_1, n.label === 'CarriedA' ? 'red' : 'blue', 'each value lands on the minted definition');
+  assert.equal(graph.customAttributes.length, 2, 'no orphaned or duplicated definitions');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+
+test('a matching id with different provenance is never merged into the existing definition', async () => {
+  // The document's node x_1 came from a key named fruit (recorded name).
+  const saved = { title: 'fruit-doc', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', name: 'fruit' }] };
+  // The clipboard carries a node property x_1 from a key named vehicle.
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 30, y: 30, order: 0, custom: { x_1: 'vehicle-value' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'x_1', scope: 'node', type: 'string', name: 'vehicle' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  let graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'x_1')?.name, 'fruit', 'the fruit definition is untouched');
+  const vehicle = graph.customAttributes.find(d => d.name === 'vehicle');
+  assert.ok(vehicle, 'a vehicle definition was created for the carried property');
+  assert.equal(vehicle.id, 'x_1_1');
+  const carried = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(carried?.custom?.x_1_1, 'vehicle-value', 'the carried value is bound to the vehicle definition');
+  assert.equal(carried?.custom?.x_1, undefined, 'the vehicle value never lands on the fruit definition');
+  // Re-paste: still no duplicate
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 2, 're-paste creates no additional definitions');
+  assert.equal(graph.customAttributes.some(d => d.id === 'x_1_2'), false);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+
+test('a truncated DOT import is rejected and the document is preserved', async () => {
+  // End-to-end sentinel for the parse-reject path: parseDot returning null
+  // must leave the document untouched and report the failure. The unit
+  // matrix for which inputs are rejected lives in dot-core.test.mjs.
+  const saved = { title: 'keep-me-r14a', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+  ], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteDot', 'digraph G { subgraph child { }');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'the truncated input does not import as an empty document');
+  assert.match(toasts(document), /fail|no graph/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a CSV replace import that parses nothing preserves the document', async () => {
+  const saved = DEFAULT_SAVED();
+  const cases = [
+    ['#btnPasteNodesCsv', 'id,label\n\n\n'],
+    ['#btnPasteEdgesCsv', 'source_id,target_id\n\n\n'],
+    ['#btnPasteMatrixCsv', 'label,A,B\n\n\n'],
+  ];
+  for(const [button, text] of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, button, text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `${button} preserves the nodes`);
+    assert.equal(graph.edges.length, 1, `${button} preserves the edges`);
+    assert.match(toasts(document), /nothing could be imported/i);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+
+test('the editor’s own empty matrix export imports in replace mode and clears the edges', async () => {
+  // The zero-parse guard added for garbage input must not refuse a valid
+  // empty adjacency matrix: replacing with it is how a document’s edges are
+  // cleared, and the previous head correctly did so.
+  const saved = { title: 'keep-matrix-empty', nodes: [
+    {id:'n1', label:'One', x:0, y:0, order:0},
+    {id:'n2', label:'Two', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  // Exactly what matrixCsv() writes for this document once it has no edges:
+  // BOM + header row of labels + one all-empty row per node, CRLF separated.
+  const emptyMatrix = '\ufeff,One,Two\r\nOne,,\r\nTwo,,\r\n';
+  await paste(document, dom.window, '#btnPasteMatrixCsv', emptyMatrix);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 2, 'the nodes survive');
+  assert.equal(graph.edges.length, 0, 'the empty matrix replace clears the stale edge');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  // The freshly edgeless document exports the same file it imported. (The
+  // export modal shows the payload in a <textarea>, whose value normalises
+  // CRLF to LF — compare with line endings normalised too.)
+  document.querySelector('#btnExportMatrixCsv').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  assert.equal(exported, emptyMatrix.replace(/\r\n/g, '\n'), 'the empty import round-trips through the exporter');
+  document.querySelector('#expCloseBtn').click();
+  dom.window.close();
+});
+
+test('a matrix whose columns do not resolve preserves the document', async () => {
+  // Audit repro: label,Unknown / A,5 has a row whose endpoint resolves but
+  // no column that can hold one. Committing zero edges from it would clear
+  // the existing edge — the import must be refused as unrecognizable.
+  const saved = { title: 'keep-matrix-unknown-cols', nodes: [
+    {id:'n1', label:'A', x:0, y:0, order:0},
+    {id:'n2', label:'B', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  // Audit repro (round B): a row endpoint resolves but the only value
+  // targets an unknown column. Audit repro (round C): one column resolves
+  // and one does not — every populated cell is skipped, so the matrix is
+  // not a coherent empty graph for this document. All must be refused.
+  const cases = [
+    'label,Unknown\nA,5\n',
+    'label,Unknown\nA,\n',
+    'label,A,Unknown\nA,,5\n',
+    'label,A,Unknown\nA,\n',
+    'label,X,Unknown\nA,1,2\n',
+    'label,A\nX,5\nA,\n',
+    // A populated cell beyond the header width (row wider than the header):
+    // never an empty matrix — refuse.
+    'label,A\nA,,5\n',
+    // A separator-only cell splits into no weights — populated, unhonorable.
+    'label,A\nA,";"\n',
+    'label,A\nA,";;,;"\n',
+  ];
+  for(const text of cases){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    await paste(document, dom.window, '#btnPasteMatrixCsv', text);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `${JSON.stringify(text)} keeps the nodes`);
+    assert.equal(graph.edges.length, 1, `${JSON.stringify(text)} keeps the existing edge`);
+    assert.match(toasts(document), /nothing could be imported/i, `${JSON.stringify(text)} reports the refusal`);
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+
+test('a populated cell beyond the header width is reported as skipped, not ignored', async () => {
+  // General accounting, not just the zero-edge guard: the editor never
+  // writes cells past the header width, so such a cell cannot be honored —
+  // it must count in the skipped tally instead of vanishing from the toast.
+  const saved = { title: 'keep-matrix-wide-row', nodes: [
+    {id:'n1', label:'A', x:0, y:0, order:0},
+    {id:'n2', label:'B', x:120, y:0, order:1},
+  ], edges: [{ id:'e1', from:'n1', to:'n2', weight:'1', label:'', directed:true }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteMatrixCsv', 'label,A\nA,1,5\n');
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges.length, 1, 'the honored cell becomes an edge');
+  assert.equal(graph.edges[0].weight, '1');
+  assert.match(toasts(document), /skipped/i, 'the extra populated cell is counted as skipped');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('appending a GraphML key whose id matches an existing definition of another scope remaps instead of stranding values', async () => {
+  // The document has a graph-scoped "score". The appended file carries a
+  // node-scoped "score" with values. The value must stay reachable: a
+  // node-scope definition must exist, the value must bind to it, and a
+  // subsequent GraphML export must carry both.
+  const saved = { title: 'keep-scope', nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id:'score', scope:'graph', type:'string' }],
+    graphCustom: { score: 'graph-value' } };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="n2"><data key="score">42</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.graphCustom?.score, 'graph-value', 'the existing graph-scope definition keeps serving the graph value');
+  const nodeDefs = graph.customAttributes.filter(d => d.scope === 'node');
+  assert.equal(nodeDefs.length, 1, 'the incoming node-scope definition survives the merge');
+  assert.notEqual(nodeDefs[0].id, 'score', 'it was remapped away from the graph-scope id');
+  const imported = graph.nodes.find(n => n.id !== 'n1');
+  assert.equal(imported.custom?.[nodeDefs[0].id], '42', 'the value is bound to the remapped node-scope definition');
+  assert.equal(imported.custom?.score, undefined, 'the value does not bind to the graph-scope definition');
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  assert.ok(exported.includes(nodeDefs[0].id), 'the export carries the remapped definition');
+  assert.ok(exported.includes('42'), 'the export carries the value');
+  document.querySelector('#expCloseBtn').click();
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('GraphML custom keys for="all" and with no for import into every scope', async () => {
+  // A key declared without `for` (or explicitly for "all") is one declaration
+  // covering every scope — dropping the node and edge values on import is
+  // silent data loss while the toast says success. GraphML's scope is kept
+  // 1:1 in the stored document: ONE definition with scope 'all' carries the
+  // property on every scope under the same id.
+  const saved = { title: 'keep-allkeys',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0}],
+    edges: [{ id:'e1', from:'n1', to:'n1', weight:'', label:'', directed:true }] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="mood" for="all" attr.name="mood" attr.type="string"><default>alright</default></key>',
+    '  <key id="flag" attr.name="flag" attr.type="boolean"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="mood">calm</data>',
+    '    <data key="flag">true</data>',
+    '    <node id="n2"><data key="mood">happy</data><data key="flag">false</data></node>',
+    '    <edge id="e2" source="n2" target="n2"><data key="flag">true</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const byKey = (g, name, scope) => g.customAttributes.find(d => (d.name ?? d.id) === name && d.scope === scope);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  for(const name of ['mood', 'flag']){
+    assert.ok(byKey(graph, name, 'all'), `${name} has an all-scope definition`);
+  }
+  assert.equal(graph.customAttributes.length, 2, 'one definition per key, scope all');
+  assert.equal(graph.graphCustom?.mood, 'calm', 'graph value imported');
+  assert.equal(graph.graphCustom?.flag, true, 'graph boolean coerced');
+  const allMood = byKey(graph, 'mood', 'all').id;
+  const allFlag = byKey(graph, 'flag', 'all').id;
+  const n2 = graph.nodes.find(n => n.id !== 'n1');
+  assert.equal(n2.custom?.[allMood], 'happy', 'node value imported under the shared id');
+  assert.equal(n2.custom?.[allFlag], false, 'node boolean coerced');
+  const e2 = graph.edges.find(e => e.id !== 'e1');
+  assert.equal(e2.custom?.[allFlag], true, 'edge value imported');
+  assert.equal(e2.custom?.[allMood], 'alright', 'the for="all" key default applies where no value is given');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  // Re-appending the same file must not grow the definition set: the
+  // recorded names resolve each definition back to itself.
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph2 = exportedGraph(document);
+  assert.equal(graph2.customAttributes.length, 2, 're-importing reuses the all-scope definitions');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a persisted document with the same custom id in two scopes is collapsed at load', async () => {
+  // A hand-edited or legacy save can hold "score" as both a graph-scope and
+  // a node-scope definition. Two definitions cannot share an id — values are
+  // keyed by id alone — so the first definition wins and the duplicate is
+  // dropped, whatever scope it claimed. The stored values all survive load;
+  // the loser simply has no definition left to bind them.
+  const saved = { title: 'cross-scope-load',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0, custom:{score:'7'}}],
+    edges: [],
+    customAttributes: [
+      { id:'score', scope:'graph', type:'string' },
+      { id:'score', scope:'node', type:'int' },
+    ],
+    graphCustom: { score: 'graph-value' } };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 1, 'the duplicate definition is collapsed');
+  assert.equal(graph.customAttributes[0].scope, 'graph', 'the first definition keeps the id');
+  assert.equal(graph.customAttributes[0].type, 'string');
+  assert.equal(graph.graphCustom.score, 'graph-value', 'graph value stays bound to the graph definition');
+  assert.equal(graph.nodes[0].custom?.score, '7', 'the orphaned value is kept, not destroyed');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('appending the same node-scoped GraphML twice reuses one definition instead of splitting the property', async () => {
+  // A graph-scoped definition already occupies the id "score". The first
+  // append mints a fresh id for the incoming node-scope property; the second
+  // append of the SAME file must resolve to that mint instead of minting
+  // another one — otherwise one property splits across definitions and the
+  // definition limit drains.
+  const saved = { title: 'keep-find1', nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id:'score', scope:'graph', type:'string' }],
+    graphCustom: { score: 'graph-value' } };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="n2"><data key="score">42</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const first = exportedGraph(document);
+  assert.equal(first.customAttributes.length, 2, 'the incoming definition survived the merge');
+  const nodeDef = first.customAttributes.find(d => d.scope === 'node');
+  assert.ok(nodeDef, 'a node-scope definition exists');
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const second = exportedGraph(document);
+  assert.equal(second.customAttributes.length, 2, 'the second append reuses the minted definition');
+  const nodeDefs = second.customAttributes.filter(d => d.scope === 'node');
+  assert.equal(nodeDefs.length, 1, 'still exactly one node-scope score definition');
+  const importedNodes = second.nodes.filter(n => n.custom);
+  assert.equal(importedNodes.length, 2, 'both imports added nodes carrying the value');
+  for(const node of importedNodes){
+    assert.equal(node.custom?.[nodeDef.id], '42', 'both nodes bind the value to the same definition');
+    assert.equal(node.custom?.score, undefined, 'the value never binds to the graph-scope id');
+  }
+  assert.equal(second.graphCustom?.score, 'graph-value', 'the graph-scope property is untouched');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('replacing the same for="all" GraphML twice keeps recorded names, so a later append reuses the definitions', async () => {
+  // Replace import is wholesale; the second replace of the same file must
+  // resolve to the SAME definitions. Then appending the file must not create
+  // new node or edge definitions.
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="mood" for="all" attr.name="mood" attr.type="string"><default>alright</default></key>',
+    '  <key id="flag" attr.name="flag" attr.type="boolean"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="mood">calm</data>',
+    '    <node id="n1"><data key="mood">happy</data></node>',
+    '    <edge id="e1" source="n1" target="n1"><data key="flag">true</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const byKey = (g, name, scope) => g.customAttributes.find(d => (d.name ?? d.id) === name && d.scope === scope);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace
+  const first = exportedGraph(document);
+  const idsBefore = first.customAttributes.map(d => d.id + ':' + d.scope).sort();
+  assert.ok(byKey(first, 'mood', 'all'), 'the for="all" key mints an all-scope definition');
+  assert.ok(first.customAttributes.every(d => (d.name ?? d.id) === 'mood' || (d.name ?? d.id) === 'flag'), 'every definition records the property name it was made from');
+  assert.equal(first.graphCustom?.mood, 'calm', 'the graph value is imported');
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace again
+  const second = exportedGraph(document);
+  assert.deepEqual(second.customAttributes.map(d => d.id + ':' + d.scope).sort(), idsBefore, 'the second replace resolves to the same definitions');
+  assert.ok(second.customAttributes.every(d => (d.name ?? d.id) === 'mood' || (d.name ?? d.id) === 'flag'), 'recorded names survive the reuse');
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // append
+  const third = exportedGraph(document);
+  assert.equal(third.customAttributes.length, idsBefore.length, 'the append creates no new definitions');
+  const edgeMood = byKey(third, 'mood', 'all');
+  const importedEdges = third.edges.filter(e => e.custom);
+  assert.ok(importedEdges.length >= 1, 'the appended edge carries its custom values');
+  for(const edge of importedEdges){
+    assert.equal(edge.custom?.[edgeMood.id], 'alright', 'the edge value binds the same all-scope definition (the key default applies)');
+  }
+  assert.ok(third.graphCustom?.mood !== undefined, 'the graph value is retained');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a persisted cross-scope same-id pair is collapsed to the first definition', async () => {
+  // A saved document can carry "shape" as both a graph-scope and a
+  // node-scope definition. Two definitions cannot share an id — values are
+  // keyed by id alone — so the first wins and the duplicate is dropped,
+  // whatever scope it claimed (the load path never renames). The stored
+  // values all survive load; the loser simply has no definition left.
+  const saved = { title: 'shape-xscope',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0, custom:{shape:'node-value'}}],
+    edges: [],
+    customAttributes: [
+      { id:'shape', scope:'graph', type:'string' },
+      { id:'shape', scope:'node', type:'string' },
+    ],
+    graphCustom: { shape: 'graph-value' } };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graph = exportedGraph(document);
+  const graphDef = graph.customAttributes.find(d => d.scope === 'graph');
+  assert.equal(graph.customAttributes.length, 1, 'the pair collapses to the first definition');
+  assert.equal(graphDef.id, 'shape', 'the first definition keeps the id');
+  assert.equal(graph.graphCustom?.shape, 'graph-value', 'the graph value binds the surviving definition');
+  assert.equal(graph.nodes[0].custom?.shape, 'node-value', 'the orphaned node value is kept, not destroyed');
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  // `shape` is also a built-in key id, so the definition exports de-collided
+  // (`shape2`) with qvge:id pointing back at its own id.
+  assert.match(exported, /<key id="shape2" for="graph"[^>]*qvge:id="shape"/, 'the GraphML export carries the surviving definition');
+  assert.ok(/<data key="shape2">graph-value<\/data>/.test(exported), 'the GraphML export carries the graph value');
+  document.querySelector('#expCloseBtn').click();
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a JSON replace import binds values to the definitions after a scope rename', async () => {
+  // One document carries "score" as both a graph- and a node-scope definition.
+  // The node definition is re-created under a fresh id on import — its values
+  // must follow onto that id, in the document and in the GraphML export.
+  const payload = { title: 'json-replace',
+    nodes: [{id:'m1', label:'M', x:0, y:0, order:0, custom:{score:'node-value'}}],
+    edges: [],
+    customAttributes: [
+      { id:'score', scope:'graph', type:'string' },
+      { id:'score', scope:'node', type:'string' },
+    ],
+    graphCustom: { score: 'graph-value' } };
+  const saved = { title: 'before', nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteJson', JSON.stringify(payload)); // replace
+  const graph = exportedGraph(document);
+  const graphDef = graph.customAttributes.find(d => d.scope === 'graph');
+  const nodeDef = graph.customAttributes.find(d => d.scope === 'node');
+  assert.equal(graph.customAttributes.length, 2, 'both definitions survive the replace');
+  assert.notEqual(nodeDef.id, graphDef.id, 'the node definition is re-created under a fresh id');
+  assert.equal(graph.graphCustom?.[graphDef.id], 'graph-value', 'the graph value binds the graph definition');
+  const m1 = graph.nodes.find(n => n.label === 'M');
+  assert.equal(m1.custom?.[nodeDef.id], 'node-value', 'the node value binds the renamed definition');
+  assert.equal(m1.custom?.score, undefined, 'no value strands on the carried id');
+  document.querySelector('#btnExportGraphml').click();
+  const exported = document.querySelector('.export-modal textarea').value;
+  assert.ok(exported.includes(graphDef.id) && exported.includes('graph-value'), 'the export carries the graph property');
+  assert.ok(exported.includes(nodeDef.id) && exported.includes('node-value'), 'the export carries the node property');
+  document.querySelector('#expCloseBtn').click();
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('appending an import that carries score and score_1 keeps both properties distinct', async () => {
+  // With a graph-scope "score" present, appending a node whose custom
+  // properties are "score" and "score_1" must keep both: the minted id for
+  // "score" has to dodge the incoming "score_1", and the two values must not
+  // overwrite each other.
+  const saved = { title: 'keep-mint',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id:'score', scope:'graph', type:'string' }],
+    graphCustom: { score: 'graph-value' } };
+  const payload = { title: 'append-mint',
+    nodes: [{id:'m1', label:'M', x:0, y:0, order:0, custom:{score:'sc', score_1:'sc1'}}],
+    edges: [],
+    customAttributes: [
+      { id:'score', scope:'node', type:'string' },
+      { id:'score_1', scope:'node', type:'string' },
+    ] };
+  // --- JSON append
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteJson', JSON.stringify(payload));
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 3, 'all three definitions survive');
+  const nodeDefs = Object.fromEntries(graph.customAttributes.filter(d => d.scope === 'node').map(d => [d.id, true]));
+  assert.equal(Object.keys(nodeDefs).length, 2, 'two distinct node-scope definitions');
+  assert.ok(!nodeDefs['score'], 'the minted definition did not capture the graph-scope id');
+  const m1 = graph.nodes.find(n => n.label === 'M');
+  const custom = m1.custom ?? {};
+  assert.equal(Object.keys(custom).length, 2, 'both values survive, none overwritten');
+  // The incoming "score_1" definition keeps its id (it was free); the minted
+  // id for "score" had to dodge it, so it is not "score_1".
+  assert.equal(custom['score_1'], 'sc1', 'the score_1 property keeps its definition and value');
+  const mintedId = Object.keys(custom).find(k => k !== 'score_1');
+  assert.ok(mintedId && mintedId !== 'score', 'the score property was re-created under a fresh id');
+  assert.equal(custom[mintedId], 'sc', 'its value followed onto the fresh id');
+  assert.equal(graph.graphCustom?.score, 'graph-value', 'the graph-scope property is untouched');
+  assert.deepEqual(errors.map(e => e.message), []);
+  // --- GraphML append, same expectation
+  const dom2ctx = createEditorDom(saved);
+  const {document: document2} = dom2ctx.dom.window;
+  await settle(dom2ctx.dom.window, 60);
+  document2.querySelector('#optImportAppend').checked = true;
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="string"/>',
+    '  <key id="score_1" for="node" attr.name="score_1" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="m1"><data key="score">sc</data><data key="score_1">sc1</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document2, dom2ctx.dom.window, '#btnPasteGraphml', graphml);
+  const graph2 = exportedGraph(document2);
+  assert.equal(graph2.customAttributes.length, 3, 'all three definitions survive the GraphML append');
+  const m1g = graph2.nodes.find(n => n.label !== 'One');
+  assert.equal(Object.keys(m1g.custom ?? {}).length, 2, 'both values survive the GraphML append');
+  const values = Object.fromEntries(Object.entries(m1g.custom ?? {}));
+  assert.deepEqual(new Set(Object.values(values)), new Set(['sc', 'sc1']), 'neither value is overwritten');
+  assert.deepEqual(dom2ctx.errors.map(e => e.message), []);
+  dom2ctx.dom.window.close();
+  dom.window.close();
+});
+
+test('a re-created key reused for two incoming properties never overwrites the other', async () => {
+  // Step 1: a graph-scoped score exists; appending a node-scoped score mints
+  // score_1 for it. Step 2: a file with DISTINCT node keys score and score_1
+  // is appended. The migrated score_1 may not be reused for either incoming
+  // key — the file's own score_1 is a different property, and the incoming
+  // score may not reuse an id the file itself declares — so both keys get
+  // their own definitions. The file must arrive lossless in both key orders,
+  // and re-appending it must not grow the definitions.
+  const saved = { title: 'keep-claim',
+    nodes: [{id:'n1', label:'One', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id:'score', scope:'graph', type:'string' }],
+    graphCustom: { score: 'graph-value' } };
+  const file1 = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="score" for="node" attr.name="score" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="n2"><data key="score">42</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const step2For = keys => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    ...keys.map(k => `  <key id="${k}" for="node" attr.name="${k}" attr.type="string"/>`),
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="m"><data key="score">73</data><data key="score_1">99</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  for(const keys of [['score', 'score_1'], ['score_1', 'score']]){
+    const {dom, errors} = createEditorDom(saved);
+    const {document} = dom.window;
+    await settle(dom.window, 60);
+    document.querySelector('#optImportAppend').checked = true;
+    await paste(document, dom.window, '#btnPasteGraphml', file1);
+    const after1 = exportedGraph(document);
+    const migrated = after1.customAttributes.find(d => d.scope === 'node');
+    assert.equal(migrated.id, 'score_1', `re-created definition id (key order: ${keys.join(',')})`);
+    await paste(document, dom.window, '#btnPasteGraphml', step2For(keys));
+    const after2 = exportedGraph(document);
+    assert.equal(after2.customAttributes.length, 4, `the migrated definition survives and both incoming properties get their own (key order: ${keys.join(',')})`);
+    const n2 = after2.nodes.find(n => n.id === 'n2');
+    assert.equal(n2?.custom?.[migrated.id], '42', `the migrated definition keeps its original value (key order: ${keys.join(',')})`);
+    const m = after2.nodes.find(n => n.id === 'm');
+    const bound = Object.entries(m.custom ?? {});
+    assert.equal(bound.length, 2, `no value overwritten (key order: ${keys.join(',')})`);
+    assert.deepEqual(new Set(Object.values(Object.fromEntries(bound))), new Set(['73', '99']), `both values present (key order: ${keys.join(',')})`);
+    assert.ok(!Object.prototype.hasOwnProperty.call(m.custom ?? {}, migrated.id), `the migrated id is not re-used for this file's properties (key order: ${keys.join(',')})`);
+    assert.equal(after2.graphCustom?.score, 'graph-value', 'the graph-scope property is untouched');
+    // Re-appending the same file resolves to the same four definitions.
+    await paste(document, dom.window, '#btnPasteGraphml', step2For(keys));
+    const after3 = exportedGraph(document);
+    assert.equal(after3.customAttributes.length, 4, `re-appending creates no new definitions (key order: ${keys.join(',')})`);
+    document.querySelector('#btnExportGraphml').click();
+    const exported = document.querySelector('.export-modal textarea').value;
+    assert.ok(exported.includes('73') && exported.includes('99'), 'the export carries both values');
+    document.querySelector('#expCloseBtn').click();
+    assert.deepEqual(errors.map(e => e.message), []);
+    dom.window.close();
+  }
+});
+test('two distinct incoming keys named like an existing property never merge into one definition', async () => {
+  // Regression: the reuse scan used to match by name and scope without ever
+  // marking the match as claimed, so two distinct key ids of one file both
+  // remapped onto the same existing definition and the first value was
+  // overwritten by the second.
+  const file1 = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="metric" for="node" attr.name="metric" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="a"><data key="metric">zero</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  // The appended file declares two distinct keys, both recorded as "metric",
+  // with a value each on one node. Both are different properties: the file
+  // key ids are what distinguish them.
+  const file2 = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="m1" for="node" attr.name="metric" attr.type="string"/>',
+    '  <key id="m2" for="node" attr.name="metric" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="b"><data key="m1">first</data><data key="m2">second</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', file1);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', file2);
+  const graph = exportedGraph(document);
+  const values = graph.nodes.find(n => n.id === 'b')?.custom ?? {};
+  assert.equal(Object.values(values).filter(v => v === 'first').length, 1, 'the first value survives');
+  assert.equal(Object.values(values).filter(v => v === 'second').length, 1, 'the second value survives');
+  assert.equal(Object.keys(values).length, 2, 'the two keys keep their own definitions, neither overwrites the other');
+  assert.ok(!Object.prototype.hasOwnProperty.call(values, 'metric'), 'neither incoming property is folded into the existing same-named definition');
+  assert.equal(graph.nodes.find(n => n.id === 'a')?.custom?.metric, 'zero', 'the existing property is untouched');
+  assert.equal(graph.customAttributes.length, 3, 'the existing definition plus one new definition per incoming key id');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
 test('DOT export of a fully undirected graph still uses graph and --', async () => {
   const saved = {
     nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
@@ -793,7 +1849,10 @@ test('a definition cannot capture a built-in value or default', async () => {
   // Data under the marked key must not reach the node label: the data map falls
   // back to the raw key when it is unknown, so "unknown" has to mean empty.
   const node = exported.match(/<node id="n1"[\s\S]*?<\/node>/)[0];
-  assert.ok(!/secret/.test(node), 'the definition value does not become the node label');
+  // The definition's value round-trips under its own key (de-collided to
+  // `label2` on the way out), never on the built-in label key.
+  assert.match(node, /<data key="label2">secret<\/data>/, 'the definition value round-trips under its own key');
+  assert.equal((node.match(/<data key="label">([^<]*)<\/data>/) || [])[1], '', 'the built-in label key does not carry it');
   // And a definition's <default> must not become the built-in default.
   assert.ok(!/<key id="shape" [^>]*>\s*<default>/.test(exported), 'the custom shape default stays out of the node defaults');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -850,7 +1909,9 @@ test('a marked key whose id is a bare field name cannot set a built-in value', a
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
   const node = exported.match(/<node id="n1"[\s\S]*?<\/node>/)[0];
-  assert.ok(!/secret/.test(node), 'the definition value does not become any built-in field');
+  // The definition's value round-trips under its own marked key, never on the
+  // built-in label key.
+  assert.match(node, /<data key="name">secret<\/data>/, 'the definition value round-trips under its own key');
   assert.equal((node.match(/<data key="label">([^<]*)<\/data>/) || [])[1], '',
     'the label is untouched');
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
@@ -885,9 +1946,10 @@ test('a foreign file reusing our key ids for other attributes keeps its definiti
 });
 
 test('a key declared without `for` is kept, not dropped (GraphML default is "all")', async () => {
-  // `for` is optional and defaults to "all". The editor only models three
-  // concrete scopes, and dropping a definition because its scope is the
-  // spec's wildcard is silent data loss.
+  // `for` is optional and defaults to "all". The declaration imports as ONE
+  // definition with scope 'all' — GraphML's scope kept 1:1 — which applies
+  // on every scope instead of being dropped or collapsed onto the graph and
+  // losing the rest of the data.
   const graphml = [
     '<?xml version="1.0"?>',
     '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
@@ -902,7 +1964,8 @@ test('a key declared without `for` is kept, not dropped (GraphML default is "all
     id: row.querySelector('[data-attribute-field="id"]').value,
     scope: row.querySelector('[data-attribute-field="scope"]').value,
   }));
-  assert.deepEqual(rows, [{id:'tag', scope:'graph'}], 'the definition survives with the widest scope');
+  assert.deepEqual(rows, [{id:'tag', scope:'all'}],
+    'the definition imports as a single all-scope definition');
 
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
@@ -1801,5 +2864,771 @@ test('a type default reaches the elements and survives export', async () => {
   assert.equal(graph.nodes[0].type, 'server', 'the node takes the type default');
   assert.equal(graph.edges[0].type, 'link', 'and the edge takes its own');
   assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+// === Audit round: three P2 regressions (2026-11) ===
+
+test('re-importing same-name properties in reverse declaration order keeps each value with its own definition', async () => {
+  // Two graph-scope definitions share the recorded name 'metric', so the
+  // node keys 'a' and 'b' (also both named 'metric') must mint afresh.
+  // Re-importing the same keys with the <key> declarations reversed must
+  // still bind each key to ITS definition — the key identity recorded at
+  // creation (`origin`) is what disambiguates them; name+order does not.
+  const saved = { title: 'order-independent-reuse', nodes: [], edges: [],
+    customAttributes: [
+      { id: 'a', scope: 'graph', type: 'int', name: 'metric' },
+      { id: 'b', scope: 'graph', type: 'int', name: 'metric' },
+    ] };
+  const graphml = (first, second) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="${first}" for="node" attr.name="metric" attr.type="int"/>`,
+    `  <key id="${second}" for="node" attr.name="metric" attr.type="int"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="m1"><data key="${first}">100</data><data key="${second}">200</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml('a', 'b'));
+  let graph = exportedGraph(document);
+  const byOrigin = (g, origin) => g.customAttributes.find(d => d.origin === origin);
+  assert.equal(byOrigin(graph, 'a')?.id, 'a_1', 'the first key mints a_1');
+  assert.equal(byOrigin(graph, 'b')?.id, 'b_1', 'the second key mints b_1');
+  const m1 = graph.nodes.find(n => n.id === 'm1');
+  assert.equal(m1?.custom?.a_1, 100, 'a binds a_1');
+  assert.equal(m1?.custom?.b_1, 200, 'b binds b_1');
+  // Append the same file with the <key> declarations reversed: neither a
+  // new definition nor swapped values may happen.
+  await paste(document, dom.window, '#btnPasteGraphml', graphml('b', 'a'));
+  graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.filter(d => d.origin === 'a').length, 1, 'no new definition is minted for key a');
+  assert.equal(graph.customAttributes.filter(d => d.origin === 'b').length, 1, 'no new definition is minted for key b');
+  assert.equal(graph.customAttributes.length, 4, 'the document keeps the two graph and two node definitions');
+  const customs = graph.nodes.map(n => n.custom).filter(Boolean);
+  assert.ok(customs.some(c => c.a_1 === 100 && c.b_1 === 200), 'the re-imported values stay bound to the same definitions');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a mixed-role for="all" key keeps its graph-level value as a definition; built-in scopes stay fields', async () => {
+  // A foreign key named `label` for the whole file: label is a built-in
+  // field on nodes and edges — those data bind to the built-ins as usual.
+  // The graph has no such field, so its graph-level value is the user's
+  // own property and must survive — before this fix it was silently
+  // dropped while the import reported success.
+  const saved = { title: 'mixed-role', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="extLabel" for="all" attr.name="label" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="extLabel">graph-note</data>',
+    '    <node id="n1"><data key="extLabel">node-label</data></node>',
+    '    <edge id="e1" source="n1" target="n1"><data key="extLabel">edge-label</data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);   // replace import
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes;
+  assert.equal(defs.length, 1, 'exactly one definition — on the graph scope only');
+  assert.equal(defs[0].scope, 'graph');
+  assert.equal(graph.graphCustom?.extLabel, 'graph-note', 'the graph-level value is preserved as a custom property');
+  const n = graph.nodes.find(n => n.id === 'n1');
+  const e = graph.edges.find(e => e.id === 'e1');
+  assert.equal(n?.label, 'node-label', 'the node label field received its value');
+  assert.equal(e?.label, 'edge-label', 'the edge label field received its value');
+  assert.ok(!n?.custom, 'no node-scope definition is created for a built-in field');
+  assert.ok(!e?.custom, 'no edge-scope definition is created for a built-in field');
+  assert.match(toasts(document), /imported/i);
+  assert.deepEqual(errors.map(e2 => e2.message), []);
+  dom.window.close();
+});
+
+test('GraphML round-trips custom string values verbatim, spaces included', async () => {
+  const saved = { title: 'verbatim-strings',
+    customAttributes: [{ id: 'note', scope: 'node', type: 'string' }],
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { note: ' keep me ' } }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  // The stored value carries its spaces through the exporter…
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const graphml = modal.querySelector('textarea').value;
+  assert.match(graphml, /<data key="note"> keep me <\/data>/, 'the exported value carries its spaces');
+  modal.remove();
+  // …and through re-importing that file into the same document.
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const imported = graph.nodes.find(n => n.custom && Object.keys(n.custom).length && n.label === 'One');
+  assert.equal(imported?.custom?.note, ' keep me ', 'the spaces survive the round-trip');
+  // A foreign <default> with surrounding padding is stored verbatim too.
+  const padded = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="pad" for="node" attr.name="pad" attr.type="string"><default>  padded  </default></key>',
+    '  <graph edgedefault="directed"><node id="p1"/></graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, window, '#btnPasteGraphml', padded);
+  const withPad = exportedGraph(document);
+  const p1 = withPad.nodes.find(n => n.id === 'p1');
+  assert.equal(p1?.custom?.pad, '  padded  ', 'the padded default is stored verbatim');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// === The multi-scope ('all') definition model ===
+
+test('pasting a payload carrying an all-scope definition does not fork a per-scope twin', async () => {
+  // The entity values are keyed by the definition's id; the payload declares
+  // it once, scope 'all'. The paste must resolve against the 'all|' pair —
+  // minting a node-scope twin would silently move the values off the shared id.
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { metric: 'm' } }],
+    edges: [{ id: 'c2', from: 'c1', to: 'c1', directed: true, custom: { metric: 'e' } }],
+    externalEdges: [],
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }] });
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes.filter(d => d.id === 'metric');
+  assert.equal(defs.length, 1, 'exactly one definition is created for the carried all-scope definition');
+  assert.equal(defs[0].scope, 'all', 'and it is an all-scope definition');
+  const node = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(node.custom?.metric, 'm', 'the node value binds the shared id');
+  const edge = graph.edges.find(e => e.from === node.id);
+  assert.equal(edge.custom?.metric, 'e', 'the edge value binds the same shared id');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('pasting an all-scope definition whose id is taken mints an all-scope twin, never a per-scope one', async () => {
+  const saved = { title: 'all-twin', nodes: [{id:'b1', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'metric', scope: 'graph', type: 'string' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { metric: 'm' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const alls = graph.customAttributes.filter(d => d.scope === 'all');
+  assert.equal(alls.length, 1, 'one fresh all-scope definition is minted');
+  assert.equal(alls[0].origin, 'metric', 'it records the carried id as its origin');
+  const node = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(node.custom?.[alls[0].id], 'm', 'the carried value binds the fresh all-scope id');
+  assert.equal(node.custom?.metric, undefined, 'and never the taken graph-scope id');
+  assert.equal(graph.customAttributes.filter(d => d.scope === 'graph').length, 1, 'the original graph definition is untouched');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an all-scope definition exports for="all" and re-imports as all-scope, values intact', async () => {
+  const saved = { title: 'all-roundtrip',
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { metric: 'node-value' } }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  // The stored 'all' scope survives the load path.
+  assert.equal(exportedGraph(document).customAttributes[0]?.scope, 'all', 'the saved document loads with an all-scope definition');
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const graphml = modal.querySelector('textarea').value;
+  modal.remove();
+  assert.match(graphml, /<key id="metric" for="all"[^>]*qvge:kind="custom-attribute"/, 'the definition exports for="all"');
+  assert.match(graphml, /<data key="metric">graph-value<\/data>/, 'the graph value is written');
+  assert.match(graphml, /<data key="metric">node-value<\/data>/, 'the node value is written');
+  // Replace-import the export: one all-scope definition comes back.
+  document.querySelector('#btnExportGraphml').click();
+  const modal2 = document.querySelector('.export-modal');
+  modal2.querySelector('textarea').value = graphml;
+  modal2.querySelector('#expImportBtn').click();
+  await settle(window, 60);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes.filter(d => d.id === 'metric');
+  assert.equal(defs.length, 1, 'a single definition survives the round-trip');
+  assert.equal(defs[0].scope, 'all', 'and it comes back all-scope');
+  assert.equal(graph.graphCustom?.metric, 'graph-value', 'the graph value survives');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.metric, 'node-value', 'the node value survives');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('growing a graph definition to all is additive — no confirmation, the value stays graph-level', async () => {
+  const saved = { title: 'grow-to-all',
+    customAttributes: [{ id: 'metric', scope: 'graph', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0 }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
+  assert.equal(rowSelect()?.value, 'graph');
+  rowSelect().value = 'all';
+  document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
+  await settle(window, 60);
+  assert.equal(document.querySelector('.app-dialog'), null, 'no confirmation is asked when growing to all');
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'all', 'the definition is all-scope now');
+  assert.equal(graph.graphCustom?.metric, 'graph-value', 'and the graph value stayed where it was');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('narrowing an all definition asks for confirmation and drops only the lost scopes', async () => {
+  const saved = { title: 'narrow-from-all',
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { metric: 'node-value' } }],
+    edges: [{ id: 'e1', from: 'n1', to: 'n1', directed: true, custom: { metric: 'edge-value' } }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
+  assert.equal(rowSelect()?.value, 'all');
+  rowSelect().value = 'node';
+  document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
+  await settle(window, 60);
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'narrowing out of all asks for a danger confirmation');
+  dialog.querySelector('[data-dialog-ok]').click();
+  await settle(window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'node', 'the definition is node-scope now');
+  assert.equal(graph.graphCustom?.metric, undefined, 'the graph value is discarded');
+  assert.equal(graph.nodes[0].custom?.metric, 'node-value', 'the node value — still applicable — is kept');
+  assert.equal(graph.edges[0].custom?.metric, undefined, 'the edge value is discarded');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('cancelling the narrowing confirmation leaves every value untouched', async () => {
+  const saved = { title: 'narrow-cancel',
+    customAttributes: [{ id: 'metric', scope: 'all', type: 'string' }],
+    graphCustom: { metric: 'graph-value' },
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { metric: 'node-value' } }],
+    edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
+  rowSelect().value = 'node';
+  document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
+  await settle(window, 60);
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'narrowing asks for confirmation');
+  dialog.querySelector('[data-dialog-cancel]').click();
+  await settle(window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'all', 'the definition stays all-scope');
+  assert.equal(graph.graphCustom?.metric, 'graph-value', 'the graph value is kept');
+  assert.equal(graph.nodes[0].custom?.metric, 'node-value', 'the node value is kept');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// === Audit round (2026-11): origin provenance & verbatim empties ===
+
+test('identity reuse does not bind a same-key-id property with a different recorded name', async () => {
+  // A graph-scope 'a' takes the bare id, so the first file's node key mints
+  // a_1 (name fruit). A second file declaring node key a with name owner is
+  // the same key id but a DIFFERENT property — it must mint afresh.
+  const saved = { title: 'origin-name-guard', nodes: [], edges: [],
+    customAttributes: [{ id: 'a', scope: 'graph', type: 'string' }] };
+  const file = (name, value) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="a" for="node" attr.name="${name}" attr.type="string"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="n1"><data key="a">${value}</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', file('fruit', 'apple'));
+  await paste(document, dom.window, '#btnPasteGraphml', file('owner', 'bob'));
+  const graph = exportedGraph(document);
+  const fruit = graph.customAttributes.find(d => d.name === 'fruit');
+  const owner = graph.customAttributes.find(d => d.name === 'owner');
+  assert.ok(fruit && owner, 'two distinct definitions exist for the two properties');
+  assert.notEqual(fruit.id, owner.id, 'a distinct property is never bound to the fruit definition');
+  const imported = graph.nodes.filter(n => n.custom);
+  const values = imported.flatMap(n => Object.entries(n.custom));
+  assert.ok(values.some(([id, v]) => id === fruit.id && v === 'apple'), 'the fruit value stays on the fruit definition');
+  assert.ok(values.some(([id, v]) => id === owner.id && v === 'bob'), 'bob binds the owner definition, not the fruit one');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('JSON round-trip preserves origin, so a later reverse-order append cannot swap same-name properties', async () => {
+  const saved = { title: 'origin-json', nodes: [], edges: [],
+    customAttributes: [
+      { id: 'a', scope: 'graph', type: 'int', name: 'metric' },
+      { id: 'b', scope: 'graph', type: 'int', name: 'metric' },
+    ] };
+  const graphml = (first, second, v1, v2) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="${first}" for="node" attr.name="metric" attr.type="int"/>`,
+    `  <key id="${second}" for="node" attr.name="metric" attr.type="int"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="m1"><data key="${first}">${v1}</data><data key="${second}">${v2}</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('a', 'b', 100, 200));
+  // Export the JSON document, then replace-import it (origin must survive)…
+  const json = exportedGraph(document);
+  assert.ok(json.customAttributes.some(d => d.id === 'a_1' && d.origin === 'a'), 'the minted definition exports its origin');
+  const jsonText = JSON.stringify(json);
+  document.querySelector('#optImportAppend').checked = false;
+  await paste(document, window, '#btnPasteJson', jsonText);               // clean replace
+  // …then append the same keys reversed — values must not swap.
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('b', 'a', 200, 100));
+  const graph = exportedGraph(document);
+  const a1 = graph.customAttributes.find(d => d.origin === 'a' && d.scope === 'node');
+  const b1 = graph.customAttributes.find(d => d.origin === 'b' && d.scope === 'node');
+  assert.ok(a1 && b1, 'both original definitions survive the round-trips');
+  const customs = graph.nodes.map(n => n.custom).filter(Boolean);
+  assert.ok(customs.some(c => c[a1.id] === 100 && c[b1.id] === 200), 'the values stay bound to the same definitions in both key orders');
+  assert.equal(graph.customAttributes.length, 4, 'no definitions are minted by the round-trip');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('GraphML round-trip preserves origin, so reverse-order reimport cannot swap same-name properties', async () => {
+  const saved = { title: 'origin-graphml', nodes: [], edges: [],
+    customAttributes: [
+      { id: 'a', scope: 'graph', type: 'int', name: 'metric' },
+      { id: 'b', scope: 'graph', type: 'int', name: 'metric' },
+    ] };
+  const graphml = (first, second) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="${first}" for="node" attr.name="metric" attr.type="int"/>`,
+    `  <key id="${second}" for="node" attr.name="metric" attr.type="int"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="m1"><data key="${first}">100</data><data key="${second}">200</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('a', 'b'));
+  // Export GraphML and reimport it (replace), then append reversed.
+  const exporter = document.querySelector('#btnExportGraphml');
+  exporter.click();
+  const modal = document.querySelector('.export-modal');
+  const text = modal.querySelector('textarea').value;
+  modal.remove();
+  document.querySelector('#optImportAppend').checked = false;
+  exporter.click();
+  const modal2 = document.querySelector('.export-modal');
+  modal2.querySelector('textarea').value = text;
+  modal2.querySelector('#expImportBtn').click();
+  await settle(window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml('b', 'a'));
+  const graph = exportedGraph(document);
+  const a1 = graph.customAttributes.find(d => d.origin === 'a' && d.scope === 'node');
+  const b1 = graph.customAttributes.find(d => d.origin === 'b' && d.scope === 'node');
+  assert.ok(a1 && b1, 'both original definitions survive the GraphML round-trip');
+  const customs = graph.nodes.map(n => n.custom).filter(Boolean);
+  assert.ok(customs.some(c => c[a1.id] === 100 && c[b1.id] === 200), 'the values stay bound to the same definitions in both key orders');
+  assert.equal(graph.customAttributes.length, 4, 'no definitions are minted by the round-trip');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('one clipboard paste never binds two carried properties to one existing definition', async () => {
+  // The document already holds k2_1 (node, name 'tag', origin 'k2'). The
+  // payload carries two NEW properties with distinct ids and the same name.
+  // The k3 value must not be stolen by k2_1 (and k3 must not mint onto it) —
+  // and the k2 value must still resolve to k2_1 via its origin.
+  const saved = { title: 'paste-claimed', nodes: [{id:'keep', label:'Keep', x:0, y:0, order:0}], edges: [],
+    customAttributes: [{ id: 'k2_1', scope: 'node', type: 'string', name: 'tag', origin: 'k2' }] };
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'c1', label: 'Carried', x: 20, y: 20, order: 0, custom: { k3: 'VAL_K3', k2: 'VAL_K2' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [
+      { id: 'k3', scope: 'node', type: 'string', name: 'tag' },
+      { id: 'k2', scope: 'node', type: 'string', name: 'tag' },
+    ] });
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard',
+    { configurable: true, value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  const carried = graph.nodes.find(n => n.label === 'Carried');
+  assert.equal(carried.custom?.k2_1, 'VAL_K2', 'the k2 value reuses the k2_1 definition via its origin');
+  assert.equal(carried.custom?.k3, 'VAL_K3', 'the k3 value keeps its own definition, never collapses onto k2_1');
+  const defs = graph.customAttributes.filter(d => (d.name ?? d.id) === 'tag');
+  assert.equal(defs.length, 2, 'one reused definition (k2_1) and one fresh one for the distinct property');
+  assert.ok(defs.some(d => d.id === 'k2_1'), 'the existing definition is reused');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an explicitly empty or whitespace-only custom string beats the declared default, and round-trips', async () => {
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="note" for="node" attr.name="note" attr.type="string"><default>fallback</default></key>',
+    '  <key id="gNote" for="graph" attr.name="gNote" attr.type="string"><default>gfallback</default></key>',
+    '  <key id="eNote" for="edge" attr.name="eNote" attr.type="string"><default>efallback</default></key>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <data key="gNote"></data>',
+    '    <node id="n1"><data key="note"></data></node>',
+    '    <node id="n2"><data key="note"> </data></node>',
+    '    <node id="n3"/>',
+    '    <edge id="e1" source="n1" target="n2"><data key="eNote"></data></edge>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom();
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 60);
+  await paste(document, window, '#btnPasteGraphml', graphml);
+  let graph = exportedGraph(document);
+  assert.equal(graph.graphCustom?.gNote, '', 'an explicitly empty graph-level value beats the default');
+  const byId = id => graph.nodes.find(n => n.id === id);
+  assert.equal(byId('n1')?.custom?.note, '', 'an explicitly empty node value beats the default');
+  assert.equal(byId('n2')?.custom?.note, ' ', 'a whitespace-only node value is stored verbatim');
+  assert.equal(byId('n3')?.custom?.note, 'fallback', 'an absent value takes the default');
+  assert.equal(graph.edges[0]?.custom?.eNote, '', 'an explicitly empty edge value beats the default');
+  // The empty values must survive the export verbatim…
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const exported = modal.querySelector('textarea').value;
+  modal.remove();
+  assert.match(exported, /<data key="note"><\/data>/, 'the empty node value is written');
+  assert.match(exported, /<data key="note"> <\/data>/, 'the whitespace node value is written');
+  assert.match(exported, /<data key="gNote"><\/data>/, 'the empty graph value is written');
+  assert.match(exported, /<data key="eNote"><\/data>/, 'the empty edge value is written');
+  // …and the reimport.
+  document.querySelector('#btnExportGraphml').click();
+  const modal2 = document.querySelector('.export-modal');
+  modal2.querySelector('textarea').value = exported;
+  modal2.querySelector('#expImportBtn').click();
+  await settle(window, 60);
+  graph = exportedGraph(document);
+  assert.equal(graph.graphCustom?.gNote, '', 'the empty graph value survives the round-trip');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.note, '', 'the empty node value survives the round-trip');
+  assert.equal(graph.nodes.find(n => n.id === 'n2')?.custom?.note, ' ', 'the whitespace node value survives the round-trip');
+  assert.equal(graph.edges.find(e => e.id === 'e1')?.custom?.eNote, '', 'the empty edge value survives the round-trip');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('DOT round-trip preserves bracketed labels and self-exported node attributes', async () => {
+  const labels = ['arr[0]', 'say "hi" [1]', 'x]y'];
+  const saved = {
+    title: 'brackets',
+    nodes: labels.map((label, i) => ({ id: 'n' + i, label, x: i * 120, y: 0, order: i })),
+    edges: [{ id: 'e1', from: 'n0', to: 'n1', label: 'link[0]', weight: '3', directed: true }],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, labels.length, 'every node survives the round-trip');
+  assert.deepEqual(graph.nodes.map(n => n.label), labels, 'bracketed labels round-trip');
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].label, 'link[0]', 'bracketed edge labels round-trip');
+  dom.window.close();
+});
+
+test('DOT import applies stacked attribute lists (node colour after label, edge direction after weight)', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot',
+    'digraph G {\n  n1 [label="first"][color="#ff0000"];\n  n2 [label="second"];\n  n1 -> n2 [weight="2"][dir="none"];\n}');
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.find(n => n.label === 'first')?.color, '#ff0000', 'the second node list is applied');
+  assert.equal(graph.edges[0]?.weight, '2', 'the first edge list is applied');
+  assert.equal(graph.edges[0]?.direction, 'undirected', 'the second edge list is applied');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an append import reuses an all-scope definition for a narrower incoming scope instead of minting', async () => {
+  const saved = { title: 'all-cover',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { mood: 'calm' } }],
+    edges: [],
+    customAttributes: [{ id: 'mood', scope: 'all', type: 'string' }],
+    graphCustom: {} };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="mood" for="node" attr.name="mood" attr.type="string"/>',
+    '  <graph id="g" edgedefault="directed">',
+    '    <node id="n2"><data key="mood">happy</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 1, 'the all-scope definition covers the incoming node-scope property');
+  assert.equal(graph.customAttributes[0].scope, 'all');
+  assert.equal(graph.nodes.find(n => n.id === 'n2')?.custom?.mood, 'happy', 'the imported node binds the all-scope definition');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.mood, 'calm', 'the carried value stays bound');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a replace import that carries no settings does not inherit the replaced document\'s pending custom defaults', async () => {
+  const saved = { title: 'old',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0 }],
+    edges: [],
+    customAttributes: [{ id: 'score', scope: 'all', type: 'string' }],
+    graphCustom: {},
+    settings: { nodeCustom: { score: 'carried-node-default' }, edgeCustom: { score: 'carried-edge-default' } } };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  assert.equal(exportedGraph(document).settings.nodeCustom?.score, 'carried-node-default', 'the seed default is in place');
+  assert.equal(exportedGraph(document).settings.edgeCustom?.score, 'carried-edge-default', 'the seed edge default is in place');
+  // A JSON file without settings must not drag the replaced document's pending
+  // defaults along — they would stamp onto elements created in the new document.
+  const payload = JSON.stringify({ title: 'new',
+    nodes: [{ id: 'n1', label: 'A', x: 0, y: 0, order: 0 }], edges: [],
+    customAttributes: [{ id: 'score', scope: 'all', type: 'string' }] });
+  await paste(document, dom.window, '#btnPasteJson', payload);
+  const replaced = exportedGraph(document);
+  assert.equal(replaced.settings.nodeCustom?.score, undefined, 'the replaced document\'s pending node default is gone');
+  assert.equal(replaced.settings.edgeCustom?.score, undefined, 'the replaced document\'s pending edge default is gone');
+  // …while a file that carries its own pending defaults still applies them.
+  const payload2 = JSON.stringify({ title: 'newer',
+    nodes: [{ id: 'n1', label: 'A', x: 0, y: 0, order: 0 }], edges: [],
+    customAttributes: [{ id: 'score', scope: 'all', type: 'string' }],
+    settings: { nodeCustom: { score: 'file-node-default' } } });
+  await paste(document, dom.window, '#btnPasteJson', payload2);
+  assert.equal(exportedGraph(document).settings.nodeCustom?.score, 'file-node-default', 'a carried pending default is applied');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an external edge that cannot materialize mints no definition (one that can, does)', async () => {
+  // The clipboard carries a node and an external edge reaching from it to a
+  // node that is in neither the selection nor the target document — the edge
+  // can never be pasted, so minting a definition for it would strand a
+  // phantom property in the document forever.
+  const payload = JSON.stringify({ type: 'graph-editor-clipboard',
+    nodes: [{ id: 'keep', label: 'Kept', x: 0, y: 0, order: 0 }],
+    edges: [],
+    externalEdges: [{ id: 'e9', from: 'keep', to: 'outside', weight: '1', directed: true, custom: { ew: 'stray' } }],
+    customAttributes: [{ id: 'ew', scope: 'edge', type: 'string' }] });
+
+  // Target without the missing endpoint: the edge is dropped, no definition.
+  const {dom, errors} = createEditorDom({ title: 'p2-5', nodes: [{ id: 'stay', label: 'Stay', x: 0, y: 0, order: 0 }], edges: [], customAttributes: [] });
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  Object.defineProperty(dom.window.navigator, 'clipboard', { configurable: true,
+    value: { writeText: async () => {}, readText: async () => payload } });
+  document.querySelector('#btnPaste2').click();
+  await settle(dom.window, 80);
+  const dropped = exportedGraph(document);
+  assert.equal(dropped.nodes.some(n => n.label === 'Kept'), true, 'the node is pasted');
+  assert.equal(dropped.edges.length, 0, 'the external edge is not pasted');
+  assert.equal(dropped.customAttributes.length, 0, 'no definition is minted for a dropped edge');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+
+  // Target that has the endpoint: the edge materializes and mints its definition.
+  const seed = { title: 'p2-5-b', nodes: [{ id: 'outside', label: 'Outside', x: 300, y: 0, order: 0 }], edges: [], customAttributes: [] };
+  const positive = createEditorDom(seed);
+  const document2 = positive.dom.window.document;
+  await settle(positive.dom.window, 60);
+  Object.defineProperty(positive.dom.window.navigator, 'clipboard', { configurable: true,
+    value: { writeText: async () => {}, readText: async () => payload } });
+  document2.querySelector('#btnPaste2').click();
+  await settle(positive.dom.window, 80);
+  const pasted = exportedGraph(document2);
+  assert.equal(pasted.edges.length, 1, 'the edge is pasted onto the existing endpoint');
+  const ew = pasted.customAttributes.find(d => d.id === 'ew');
+  assert.ok(ew && ew.scope === 'edge', 'the materialized edge minted its definition');
+  assert.equal(pasted.edges[0]?.custom?.ew, 'stray', 'the value stays bound to the minted definition');
+  positive.dom.window.close();
+});
+
+test('a persisted fractional value in an integer-typed definition survives verbatim instead of truncating', async () => {
+  const saved = { title: 'frac',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0, custom: { capacity: '7.5', exact: 42.9 } }],
+    edges: [],
+    customAttributes: [{ id: 'capacity', scope: 'node', type: 'int' }, { id: 'exact', scope: 'node', type: 'long' }] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].custom?.capacity, '7.5', 'a stated fraction of an int property round-trips verbatim');
+  assert.equal(graph.nodes[0].custom?.exact, '42.9', 'a stated fraction of a long property round-trips verbatim');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('Ctrl+Z behind a modal confirm does not revert history (the narrowing-confirm race)', async () => {
+  const saved = { title: 'modal-gate',
+    nodes: [{ id: 'n1', label: 'One', x: 0, y: 0, order: 0 }],
+    edges: [],
+    customAttributes: [
+      { id: 'keepme', scope: 'node', type: 'string' },
+      { id: 'doomed', scope: 'graph', type: 'string' },
+    ],
+    graphCustom: {} };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  const {window} = dom;
+  await settle(window, 60);
+  // Delete "doomed" through the panel button: this pushes a history entry.
+  const rows = () => [...document.querySelectorAll('#customAttributesList [data-custom-attribute]')];
+  const doomedRow = rows().find(row => row.querySelector('[data-attribute-field="id"]')?.value === 'doomed');
+  doomedRow.querySelector('[data-attribute-action="delete"]').click();
+  await settle(window, 40);
+  assert.equal(rows().length, 1, 'the attribute is deleted');
+  // Open the clear-graph confirm (any modal proves the gate).
+  document.querySelector('#btnClear').click();
+  await settle(window, 40);
+  assert.ok(document.querySelector('.app-dialog'), 'the confirm dialog opens');
+  // Ctrl+Z while the dialog is open must not resurrect the deleted attribute.
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true }));
+  await settle(window, 40);
+  assert.equal(rows().length, 1, 'history is not reverted behind the modal');
+  document.querySelector('.app-dialog [data-dialog-cancel]').click();
+  await settle(window, 40);
+  assert.equal(rows().length, 1, 'still deleted after the dialog closes');
+  // And the app shortcut works again once the dialog is gone.
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true }));
+  await settle(window, 40);
+  assert.equal(rows().length, 2, 'undo works again after the dialog closes');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a blank <default> is a stated value, not an absent one', async () => {
+  // A mixed-role key (label feeds the built-in node/edge label fields) whose
+  // only declaration of a graph-scope property is an explicitly empty
+  // <default>/>. Presence of the element is the stated value; treating it as
+  // absent dropped the declared empty-string default and the graph definition
+  // itself, while the import reported success.
+  const saved = { title: 'blank-default', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="extLabel" for="all" attr.name="label" attr.type="string"><default></default></key>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes;
+  assert.equal(defs.length, 1, 'the blank default still mints the graph-scope definition');
+  assert.equal(defs[0].scope, 'graph');
+  assert.equal(graph.graphCustom?.extLabel, '', 'the stated blank default binds the empty string');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a declared-empty default on a marked custom key reaches the element', async () => {
+  // The same presence rule for an eager (stamped) definition: a node without
+  // explicit <data> must receive the declared empty-string default, not
+  // nothing — the file said the value is blank.
+  const saved = { title: 'blank-default-marked', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    '  <key id="note" for="node" attr.name="note" attr.type="string" qvge:kind="custom-attribute"><default></default></key>',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  assert.equal(graph.customAttributes.length, 1);
+  assert.equal(graph.customAttributes[0].scope, 'node');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.custom?.note, '', 'the stated blank default is stored as the empty string');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a blank graph-level <data> is stated evidence of a graph-scoped property', async () => {
+  // Mixed-role key: label feeds the built-in fields on nodes and edges; the
+  // graph has no such field, so its graph-level <data> — even a blank one —
+  // declares the user's own property. Ignoring blank <data> in the
+  // classification dropped the definition and the empty-string value with it.
+  const saved = { title: 'blank-data', nodes: [], edges: [] };
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="extLabel" for="all" attr.name="label" attr.type="string"/>',
+    '  <graph edgedefault="directed">',
+    '    <data key="extLabel"></data>',
+    '    <node id="n1"><data key="extLabel">node-label</data></node>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes;
+  assert.equal(defs.length, 1, 'the blank graph data still mints the graph-scope definition');
+  assert.equal(defs[0].scope, 'graph');
+  assert.equal(graph.graphCustom?.extLabel, '', 'the stated blank value is preserved');
+  assert.equal(graph.nodes.find(n => n.id === 'n1')?.label, 'node-label', 'the node label field is unaffected');
+  assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

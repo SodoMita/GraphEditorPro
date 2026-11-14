@@ -272,3 +272,44 @@ test('every data-i18n key used by the markup has a dictionary entry', async () =
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('the type-change toast declines the value count correctly in both languages', async () => {
+  // The old copy printed the raw number with a broken Russian noun phrase
+  // ("{n} несовместимых значения было удалено" — wrong for every n) and the
+  // English "{n} value(s)". The count now goes through the plural table.
+  const expectations = [
+    { nodes: 1, en: 'removed 1 value', ru: 'несовместимых значений: 1' },
+    { nodes: 3, en: 'removed 3 values', ru: 'несовместимых значений: 3' },
+    { nodes: 5, en: 'removed 5 values', ru: 'несовместимых значений: 5' },
+  ];
+  for (const { nodes, en, ru } of expectations) {
+    const graph = {
+      title: 'counts',
+      nodes: Array.from({ length: nodes }, (_, index) => ({
+        id: 'n' + index, label: 'N' + index, x: index * 30, y: 0, order: index,
+        custom: { cap: 'not-a-number' },
+      })),
+      edges: [],
+      customAttributes: [{ id: 'cap', scope: 'node', type: 'string' }],
+      settings: {},
+    };
+    for (const lang of ['en', 'ru']) {
+      const { dom, errors } = createEditorDom(graph);
+      const { window } = dom;
+      const document = window.document;
+      await settle(window);
+      if (lang === 'ru') await switchToRussian(document, window);
+      const row = [...document.querySelectorAll('.custom-attribute-row')]
+        .find(element => element.querySelector('[data-attribute-field="id"]').value === 'cap');
+      row.querySelector('[data-attribute-field="type"]').value = 'int';
+      row.querySelector('[data-attribute-action="save"]').click();
+      await settle(window);
+      const toastText = [...document.querySelectorAll('.toast')].map(element => element.textContent).join(' | ');
+      const expected = lang === 'ru' ? ru : en;
+      assert.ok(toastText.includes(expected), `${lang}: expected "${expected}" in "${toastText}"`);
+      assert.doesNotMatch(toastText, lang === 'ru' ? /значения было удалено/ : /\(s\)/, 'the old broken phrasing is gone');
+      assert.deepEqual(errors.map(error => error.message), []);
+      dom.window.close();
+    }
+  }
+});

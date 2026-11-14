@@ -410,20 +410,26 @@
   // Prefix used by the previous export format to namespace definitions. Still
   // read, for documents written by that build.
   const CUSTOM_KEY_PREFIX = 'qvge.custom.';
-  // <key> lines for the user's custom definitions.
+  // The <key id> each definition is exported under.
   //
   // GraphML ids are document-unique, and a definition may legitimately share a
   // name with a built-in field (`arrowSize`, `weight`). The marker is what says
   // "this is a definition"; the id only has to be unique, so one that would
-  // collide with a built-in key takes a numbered suffix. The original id stays in
-  // attr.name? No — plain ids are kept exactly, so a definition that does not
-  // collide is written and read back byte-identical.
-  function graphmlCustomKeyLines(): string[]{
-    const builtinIds = new Set(GRAPHML_BUILTIN_KEYS.map(([keyId]) => keyId));
+  // collide with a built-in key takes a numbered suffix, and the definition's
+  // own id rides along in qvge:id so it round-trips without drifting.
+  //
+  // Values are written under the same id, so the <key> lines and the
+  // <data key="..."> emitters both read from this one map — re-deriving it in
+  // two places is how a de-collided definition silently loses its values to a
+  // built-in field on every export.
+  type CustomDef = GraphState['customAttributes'][number];
+  function customExportKeyIds(): Map<CustomDef, string> {
+    const builtinIds = GRAPHML_BUILTIN_KEY_IDS;
     const taken = new Set(builtinIds);
     for(const attribute of state.customAttributes) taken.add(attribute.id);
     const emitted = new Set<string>();
-    return state.customAttributes.map(attribute => {
+    const map = new Map<CustomDef, string>();
+    for(const attribute of state.customAttributes){
       let id = attribute.id;
       if(builtinIds.has(id)){
         // Only the colliding case is rewritten, and deterministically: the first
@@ -434,22 +440,37 @@
         }
       }
       emitted.add(id);
+      map.set(attribute, id);
+    }
+    return map;
+  }
+  function graphmlCustomKeyLines(keyIds: Map<CustomDef, string>): string[]{
+    return state.customAttributes.map(attribute => {
+      const id = keyIds.get(attribute)!;
       const attrName = (attribute as AnyRecord).name || attribute.id;
       // The definition's own id, when the exported key id had to differ. Without
       // it a de-collided `arrowSize` would come back as `arrowSize2` and drift.
       const idAttr = id === attribute.id ? '' : ` qvge:id="${xmlEsc(attribute.id)}"`;
-      return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}/>`;
+      // The key id this definition was minted from, when it is not the
+      // definition's own id (a re-created one). Without it a re-import cannot
+      // tell which carried property to rebind and mints afresh — swapping the
+      // values of same-named keys on a round-trip. When it equals the
+      // definition's own id the default resolution already finds it, so it is
+      // omitted to keep ordinary exports byte-stable.
+      const originAttr = attribute.origin && attribute.origin !== attribute.id ? ` qvge:origin="${xmlEsc(attribute.origin)}"` : '';
+      return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}${originAttr}/>`;
     });
   }
   function exportGraphmlText(){
     const gd = state.settings.graphDefaults;
+    const customKeyIds = customExportKeyIds();
     const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml" qvge:writer="graph-editor-pro" qvge:keys="${GRAPHML_BUILTIN_KEYS.length}">`,
       ...GRAPHML_BUILTIN_KEYS.map(([id, forWhom, attrName, type]) => `  <key id="${id}" for="${forWhom}" attr.name="${attrName}" attr.type="${type}"/>`),
       // Custom definitions come after the built-ins, so a custom id that matches
       // one of them would emit a second <key> with the same id and make every
-      // <data key="..."> reference ambiguous. Rename those to a free id (the
-      // sanitizer does the same on load) so the definition is kept, not dropped.
-      ...graphmlCustomKeyLines(),
+      // <data key="..."> reference ambiguous. Those keys are emitted under a
+      // de-collided id carrying qvge:id back to the definition's own id.
+      ...graphmlCustomKeyLines(customKeyIds),
       `  <graph id="${xmlEsc(fileBase())}" edgedefault="directed">`];
     // Graph-level defaults
     lines.push(`    <data key="labelsPolicy">${xmlEsc(gd.labelsPolicy)}</data>`);
@@ -466,6 +487,19 @@
     lines.push(`    <data key="gridMajorColor">${xmlEsc(state.settings.gridMajorColor)}</data>`);
     lines.push(`    <data key="gridMinorAlpha">${xmlEsc(state.settings.gridMinorAlpha)}</data>`);
     lines.push(`    <data key="gridMajorAlpha">${xmlEsc(state.settings.gridMajorAlpha)}</data>`);
+    // User-defined custom attribute values (definitions are emitted as <key> above).
+    // 'all' definitions apply on every scope and write their values everywhere.
+    const customGraphDefs = state.customAttributes.filter(a => defAppliesTo(a, 'graph'));
+    const customNodeDefs = state.customAttributes.filter(a => defAppliesTo(a, 'node'));
+    const customEdgeDefs = state.customAttributes.filter(a => defAppliesTo(a, 'edge'));
+    if(isRecord(state.graphCustom)){
+      for(const attr of customGraphDefs){
+        if(!Object.prototype.hasOwnProperty.call(state.graphCustom, attr.id)) continue;
+        const value = state.graphCustom[attr.id];
+        if(value === undefined || value === null) continue; // a stored '' is a stated value
+        lines.push(`    <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
+      }
+    }
     // Node defaults are serialised per node below (resolved visuals), so no
     // separate <default> block is emitted.
     // Serialize nodes sorted by order
@@ -491,6 +525,14 @@
       parts.push(`      <data key="labelFont">${xmlEsc(v.labelFont)}</data>`);
       parts.push(`      <data key="labelSize">${xmlEsc(v.labelSize)}</data>`);
       parts.push(`      <data key="labelPosition">${xmlEsc(v.labelPosition)}</data>`);
+      if(n.custom){
+        for(const attr of customNodeDefs){
+          if(!Object.prototype.hasOwnProperty.call(n.custom, attr.id)) continue;
+          const value = n.custom[attr.id];
+          if(value === undefined || value === null) continue; // a stored '' is a stated value
+          parts.push(`      <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
+        }
+      }
       parts.push(`    </node>`);
       lines.push(parts.join('\n'));
     }
@@ -511,6 +553,14 @@
       parts.push(`      <data key="directed">${directedBool ? 'true' : 'false'}</data>`);
       parts.push(`      <data key="direction">${xmlEsc(dir)}</data>`);
       parts.push(`      <data key="arrowSize">${xmlEsc(v.arrowSize)}</data>`);
+      if(e.custom){
+        for(const attr of customEdgeDefs){
+          if(!Object.prototype.hasOwnProperty.call(e.custom, attr.id)) continue;
+          const value = e.custom[attr.id];
+          if(value === undefined || value === null) continue; // a stored '' is a stated value
+          parts.push(`      <data key="${xmlEsc(customKeyIds.get(attr)!)}">${xmlEsc(formatCustomValue(value))}</data>`);
+        }
+      }
       parts.push(`    </edge>`);
       lines.push(parts.join('\n'));
     }
@@ -522,11 +572,19 @@
   function replaceWithImportedGraph(data, label='graph'){
     cancelZoomPreview();
     // Preserve current graph defaults (Style tab) when importing — only override
-    // if the file explicitly carries its own defaults.
-    const mergedSettings = {...state.settings, ...(data.settings || {})};
+    // if the file explicitly carries its own defaults. The pending new-element
+    // custom-value maps are the exception: they are document-local and an
+    // import that does not carry its own must not inherit the replaced
+    // document's (they would stamp onto elements created later).
+    const mergedSettings = {...state.settings, ...(data.settings || {}),
+      nodeCustom: isRecord(data.settings) && isRecord((data.settings as AnyRecord).nodeCustom) ? (data.settings as AnyRecord).nodeCustom : Object.create(null),
+      edgeCustom: isRecord(data.settings) && isRecord((data.settings as AnyRecord).edgeCustom) ? (data.settings as AnyRecord).edgeCustom : Object.create(null) };
     const sane = sanitizeState({...data, title:data.title || fileBase(), settings: mergedSettings});
+    // Snapshot the pre-import document FIRST: after a replace, undo must bring
+    // the old document back instead of starting from a one-entry history.
+    pushHistory('before import ' + label);
     state = {...state, ...sane, selected:null, selection:{nodes:[], edges:[]}};
-    appHistory=[snapshot()]; appHistoryIndex=0;
+    pushHistory('import ' + label);
     syncControls(); updateUndoRedo(); fitView(); queueRender(true, true); saveSoon();
     toast(I18N.t('imported', {label: label}));
   }
@@ -573,13 +631,30 @@
   function appendImportedGraph(data, label='graph'){
     // Append mode: merge imported nodes/edges into the current graph.
     // Keep existing settings (styles, defaults, background, grid colors) unchanged.
-    //
     // The imported document's own defaults are not kept, so they have to be
     // resolved onto its elements first — otherwise those elements inherit the host
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
     materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
-    const sane = sanitizeState({...data, settings: state.settings});
+    // Keep the current graph's attribute definitions while still learning the
+    // import's: values in the imported file reference the imported definitions,
+    // and pruning against the merged set drops nothing legitimate. Document-wide
+    // (graph-scope) values merge with the imported ones taking precedence.
+    // Imported definitions that fit the remaining capacity are merged; the
+    // rest are skipped with a toast. Identity is scope-aware and provenance-
+    // aware (see capCustomDefinitions): an identical property merges or
+    // reuses for free, a different property sharing the id gets a fresh id
+    // here, and same id AND scope with matching provenance — the current
+    // definition wins.
+    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(data.customAttributes, state.customAttributes);
+    if(defsSkipped) toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
+    if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
+    // Definitions re-created under a fresh id (or reused across an earlier
+    // mint) bind their payload's values to the RESOLVED id.
+    data = remapImportedCustomValues(data, renameByPair);
+    const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
+    const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
+    const sane = sanitizeState({...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom});
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -629,19 +704,278 @@
     }
     state.nodes.push(...sane.nodes);
     state.edges.push(...validEdges);
-    const customIds = new Set(state.customAttributes.map(attribute => attribute.id));
-    state.customAttributes.push(...sane.customAttributes.filter(attribute => !customIds.has(attribute.id)));
+    // sanitizeState(merged) is the authoritative definition list: current
+    // definitions first (they win on same-id-and-scope conflicts), imported
+    // definitions after, with scope-aware renames already applied and values
+    // rebound. Assign it wholesale — pushing only the non-cross-scope
+    // remainder would keep a pre-rename straggler in the document.
+    state.customAttributes = sane.customAttributes;
+    if(isRecord(sane.graphCustom)) state.graphCustom = sane.graphCustom;
     state.nextNode = Math.max(state.nextNode, counter);
     state.nextEdge = Math.max(state.nextEdge, edgeCounter);
+    // The append path keeps the current settings, but may contribute new
+    // definitions — repaint every custom-property surface so the Data tab,
+    // the pending-defaults editors and the selection panel show them.
+    renderCustomAttributes(); renderSelectionPanel();
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
     toast(discarded > 0
       ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
       : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
   }
-  function importGraphData(data, label, append){
-    if(append){ appendImportedGraph(data, label); }
-    else { replaceWithImportedGraph(data, label); }
+  // Identity of an imported definition against the current document (and the
+  // payload itself), in one pass over the carried list:
+  //   1) exact id AND scope match — the current definition wins, the carried
+  //      one merges for free (committed contract).
+  //   2) provenance reuse — the same property (same recorded attr.name, same
+  //      scope) already lives under another id minted by an earlier import.
+  //      Rebind the carried values to it. A candidate whose id is a key of
+  //      the incoming file is never reused: that key may well be a different
+  //      property. Reuse requires both sides to record the same name — an
+  //      unnamed definition is never claimed for a foreign property.
+  //   3) otherwise the id is free — no existing definition claims it.
+  //   4) the id is taken in another scope (or pair) — mint a fresh id, record
+  //      the carried id as provenance so the NEXT import resolves here, and
+  //      rebind the carried values.
+  // Definitions beyond the capacity cap are skipped with a toast. Returns
+  // { defs, skipped, renameByPair, renamed }; renameByPair maps
+  // 'scope|carriedId' -> resolved id for reused/minted definitions, so the
+  // caller remaps the carried payload's values to the resolved id.
+  // Remaps the custom-value keys of an IMPORTED payload whose definitions
+  // were re-created or reused by capCustomDefinitions: every
+  // 'scope|carriedId' entry moves the carried values onto the resolved id.
+  // Restricted to the payload — the current document's own values keep their
+  // keys. Also remaps new-element defaults carried in the payload's settings,
+  // which the replace path merges (append ignores them entirely).
+  function remapImportedCustomValues(data, renameByPair){
+    if(!renameByPair || !renameByPair.size || !isRecord(data)) return data;
+    const remapCustom = (map, scope) => {
+      if(!isRecord(map)) return map;
+      const out = Object.create(null);
+      for(const key of Object.keys(map)){
+        // A carried definition may resolve under its own scope or as 'all' —
+        // check both, the exact scope first.
+        out[renameByPair.get(scope + '|' + key) || renameByPair.get('all|' + key) || key] = map[key];
+      }
+      return out;
+    };
+    const remapEntity = (entity, scope) =>
+      isRecord(entity) && isRecord(entity.custom) ? { ...entity, custom: remapCustom(entity.custom, scope) } : entity;
+    const settings = isRecord(data.settings) ? (() => {
+      const s = { ...data.settings };
+      if(isRecord(s.nodeCustom)) s.nodeCustom = remapCustom(s.nodeCustom, 'node');
+      if(isRecord(s.edgeCustom)) s.edgeCustom = remapCustom(s.edgeCustom, 'edge');
+      return s;
+    })() : data.settings;
+    return { ...data,
+      graphCustom: remapCustom(data.graphCustom, 'graph'),
+      nodes: (Array.isArray(data.nodes) ? data.nodes : []).map(node => remapEntity(node, 'node')),
+      edges: (Array.isArray(data.edges) ? data.edges : []).map(edge => remapEntity(edge, 'edge')),
+      settings,
+    };
+  }
+  function capCustomDefinitions(defs, existingDefs){
+    const existing = Array.isArray(existingDefs) ? existingDefs : [];
+    let budget = Math.max(0, CUSTOM_DEFINITIONS_MAX - existing.length);
+    const scopeOf = (a: AnyRecord | null | undefined) => ['graph','node','edge','all'].includes(String(a?.scope)) ? String(a?.scope) : 'node';
+    // Provenance agreement for the reuse scan. The recorded attr.name is the
+    // property's identity across imports; a missing name on either side means
+    // the property cannot be proven different, so it may reuse.
+    const provMatch = (ex: AnyRecord | undefined, inc: AnyRecord | undefined) => {
+      const en = String(ex?.name ?? '').trim().toLowerCase(), inm = String(inc?.name ?? '').trim().toLowerCase();
+      // Reuse only on positive evidence — the same property name recorded on
+      // both sides. An unnamed definition is claimed by whoever created it;
+      // an incoming property may never guess at it.
+      return en !== '' && en === inm;
+    };
+    // Every id the incoming payload itself uses — a mint may never hand one
+    // out to another definition, or a freshly minted id collides with a later
+    // incoming definition that was meant to keep it. Reuse candidates whose id
+    // is one of those keys are likewise never reused.
+    const fileKeys = new Set<string>();
+    for(const raw of Array.isArray(defs) ? defs : []){
+      if(!isRecord(raw)) continue;
+      const carriedId = String(raw.id ?? '').trim().slice(0, 128);
+      if(carriedId) fileKeys.add(carriedId);
+    }
+    const byPair = new Map<string, AnyRecord>();
+    const byId = new Set<string>();
+    for(const a of existing){ byPair.set(String(a?.id) + '|' + scopeOf(a), a); byId.add(String(a?.id)); }
+    // A definition can be claimed at most once per import. Without this, two
+    // incoming properties that merely share a recorded name would both reuse
+    // the first match — remapping both value maps onto one definition and
+    // overwriting one's values with the other's. Claims are tracked by
+    // id|scope; the same pair of pools covers the document's definitions and
+    // the ones kept earlier in this pass.
+    const claimed = new Set<string>();
+    const pairOf2 = (id: unknown, scope: unknown) => String(id ?? '') + '|' + String(scope ?? '');
+    // Reuse is resolved before capacity accounting — a reuse mints nothing and
+    // must never be blocked by a full document.
+    const kept = [];
+    const renameByPair = new Map<string, string>();
+    let skipped = 0, renamed = 0;
+    for(const raw of Array.isArray(defs) ? defs : []){
+      if(!isRecord(raw)) continue; // unparseable: sanitize drops it too
+      const id = String(raw.id ?? '').trim().slice(0, 128);
+      if(!id) continue; // no id: sanitize drops it too
+      const scope = scopeOf(raw);
+      const pairKey = id + '|' + scope;
+      let inc: AnyRecord = {...raw, id, scope};
+      // 1) Exact id AND scope — the current definition wins when the two
+      // definitions cannot be proven different (either side without a recorded
+      // name, or matching names): the carried one merges for free. A recorded
+      // and DIFFERENT name means a different property sharing the id, so it
+      // falls through to minting instead of stranding its values. An 'all'
+      // definition is the document's definition for this id on every scope,
+      // so it covers a narrower incoming pair the same way.
+      const pairHit = byPair.get(pairKey) ?? (scope !== 'all' ? byPair.get(id + '|all') : undefined);
+      if(pairHit){
+        const pn = String(pairHit?.name ?? '').trim().toLowerCase(), inn = String(inc.name ?? '').trim().toLowerCase();
+        const namesMerge = !pn || !inn || pn === inn;
+        // Identity across imports is the recorded origin (a re-exported
+        // payload keeps the key id its definition was minted from; an older
+        // payload defaults it to the carried id) — the exact-pair branch is
+        // the same identity question for the exact id. Both sides recording
+        // conflicting origins proves a different property sharing the id, so
+        // it falls through to minting; a definition without a recorded
+        // origin keeps the committed contract and merges for free.
+        const pairOrigin = String((pairHit as AnyRecord)?.origin ?? '').trim();
+        const incOriginPair = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+        const originsMerge = !pairOrigin || pairOrigin === incOriginPair;
+        if(namesMerge && originsMerge) continue; // merges without capacity
+      }
+      // 2) Provenance reuse — the property already lives under another id.
+      // Identity outranks name: a definition created by an earlier import
+      // records the carried key id it was minted from (`origin`), and a
+      // candidate with the same origin is bound regardless of declaration
+      // order — GraphML key ids distinguish properties even when their
+      // recorded names match. Two guards keep identity from claiming a
+      // DIFFERENT property that merely shares the key id: the recorded
+      // names, when both sides carry one, must agree; and the candidate's
+      // origin must be the incoming definition's origin (a definition the
+      // payload re-exports keeps it, an older document defaults it to its
+      // own id). Failing an identity match, the legacy attr.name rule
+      // applies as it always has and binds only definitions with NO
+      // recorded origin — a provenance-tracked definition was created for a
+      // specific key id and may not drift onto a different one. A
+      // definition claimed by an earlier property in this file is likewise
+      // no longer a candidate.
+      const incOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+      const incNameLc = String(inc.name ?? '').trim().toLowerCase();
+      const nameAgreement = (e: AnyRecord | undefined) => {
+        const en = String(e?.name ?? '').trim().toLowerCase();
+        return !en || !incNameLc || en === incNameLc;
+      };
+      const covers = (e: AnyRecord | undefined) => { const s2 = scopeOf(e); return s2 === scope || s2 === 'all'; };
+      const identity = [...existing, ...kept].find(e => e && covers(e)
+        && !claimed.has(pairOf2(e?.id, scopeOf(e)))
+        && !fileKeys.has(String(e?.id))
+        && e?.origin && String(e.origin) === incOrigin
+        && nameAgreement(e));
+      if(identity){
+        renameByPair.set(scope + '|' + id, String(identity.id));
+        claimed.add(pairOf2(identity.id, scopeOf(identity)));
+        continue; // free reuse
+      }
+      if(inc.name){
+        const reused = [...existing, ...kept].find(e => e && covers(e)
+          && !claimed.has(pairOf2(e?.id, scopeOf(e)))
+          && !fileKeys.has(String(e?.id))
+          && (!e?.origin || String(e.origin) === incOrigin)
+          && provMatch(e, inc));
+        if(reused){
+          renameByPair.set(scope + '|' + id, String(reused.id));
+          claimed.add(pairOf2(reused.id, scopeOf(reused)));
+          continue; // free reuse
+        }
+      }
+      // 3)/4) New definition, under the cap.
+      if(budget <= 0){ skipped++; continue; }
+      budget--;
+      let finalId = id;
+      if(byId.has(id) || pairHit){
+        // The id is taken — in another scope, by a different property with the
+        // same id and scope, or in the incoming payload. The carried definition
+        // needs its own. The mint may not hand out any id used anywhere in the
+        // incoming payload (not just the ones processed so far).
+        const taken = new Set(byId);
+        for(const a of kept) taken.add(String(a?.id));
+        for(const carried of fileKeys) taken.add(carried);
+        finalId = uniqueCustomAttributeId(id, taken);
+        renameByPair.set(scope + '|' + id, finalId);
+        // Record the carried id as the name when there is none — it is the
+        // property's identity across imports, and without it the next import
+        // of the same file cannot find this definition and mints another.
+        if(!inc.name) inc = { ...inc, name: id };
+        renamed++;
+        byId.add(finalId);
+      } else {
+        byId.add(id);
+      }
+      const def = finalId === id ? inc : {...inc, id: finalId};
+      // Record the carried key id this definition was minted from — the
+      // identity a re-import matches against. A payload that re-exports an
+      // earlier definition keeps the origin it was minted from; a fresh
+      // mint defaults it to the carried id. The recorded name stays the
+      // attr.name for export spelling.
+      const keepOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+      kept.push({ ...def, origin: keepOrigin });
+      byPair.set(finalId + '|' + scope, def);
+      claimed.add(pairOf2(finalId, scope));
+    }
+    return { defs: kept, skipped, renameByPair, renamed };
+  }
+  function importGraphData(data: any, label, append){
+    // A blank or non-graph input ({}, an empty <graphml>, bare prose as DOT,
+    // a truncated file) must never reach the document: replacing with zero
+    // nodes destroys it silently. Fail loudly, change nothing.
+    if(!isRecord(data)){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+      return;
+    }
+    // The editor's own JSON exports are records with a nodes array — an
+    // explicitly empty one is a valid empty document and round-trips.
+    if(!Array.isArray(data.nodes)){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+      return;
+    }
+    // A NON-EMPTY nodes array in which not a single entry is a record can
+    // only sanitize down to nothing — reject it instead of wiping the
+    // document. (sanitizeState keeps exactly the record entries, so this
+    // check matches the sanitized outcome without double work.)
+    if(data.nodes.length > 0 && !data.nodes.some(isRecord)){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_no_valid_nodes') }));
+      return;
+    }
+    // A document with zero nodes can never carry edges: dangling edges are
+    // dropped on every path in the app, so the editor's own exports won't
+    // have them either. An empty nodes array with a non-empty edge list is
+    // input whose edges are all meaningless — reject it instead of wiping
+    // the document with a success toast.
+    if(data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0){
+      toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
+      return;
+    }
+    const graph = data as AnyRecord;
+    if(!append && isRecord(graph)){
+      const customAttributes = graph.customAttributes;
+      if(Array.isArray(customAttributes)){
+        const { defs, skipped, renameByPair, renamed } = capCustomDefinitions(customAttributes, []);
+        if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
+        if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
+        // Same rule as append: re-created definitions bind the payload's
+        // values to the resolved id — otherwise the values strand on the
+        // carried id and are lost.
+        const remapped = remapImportedCustomValues(graph, renameByPair);
+        graph.graphCustom = remapped.graphCustom;
+        graph.nodes = remapped.nodes;
+        graph.edges = remapped.edges;
+        graph.settings = remapped.settings;
+        graph.customAttributes = defs;
+      }
+    }
+    if(append){ appendImportedGraph(graph, label); }
+    else { replaceWithImportedGraph(graph, label); }
   }
   async function pasteFromClipboard(format){
     try{
@@ -696,6 +1030,7 @@
       title: state.title, mode: state.mode, selectTool: state.selectTool,
       selectCombine: state.selectCombine, nextNode: state.nextNode, nextEdge: state.nextEdge,
       nodes, edges, customAttributes: state.customAttributes,
+      graphCustom: state.graphCustom,
       settings: state.settings, viewBox: currentCamera()
     });
     const droppedNodes = nodes.length - sane.nodes.length;
@@ -752,6 +1087,7 @@
       if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(parseFloat(row[iArrowSize])||DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       edges.push(e); parsed++;
     }
+    if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }
@@ -773,19 +1109,46 @@
       if(labelToId.has(val)) return labelToId.get(val);
       return null;
     };
+    // A matrix is recognizable for this document only when it is exactly a
+    // (possibly all-empty) adjacency matrix of live nodes: every column's
+    // endpoint resolves and at least one data row's endpoint resolves. This
+    // is the shape of the editor's own export, including its all-empty
+    // cells. Anything else — a header with an unknown column, a populated
+    // cell forcing a skip — is not this document's matrix; committing zero
+    // edges from it would clear the existing ones.
+    const resolvableColumns = labels.reduce((n, l) => n + (resolveNode(l) != null ? 1 : 0), 0);
     const initialEdges = append ? state.edges.length : 0;
     const edges: GraphEdge[] = append ? state.edges.slice() : [];
-    let parsed = 0, skipped = 0;
+    let parsed = 0, skipped = 0, validRows = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length) continue;
       const fromId = resolveNode(row[0]);
       if(!fromId){ if(row.slice(1).some(v => (v || '').trim())) skipped++; continue; }
-      for(let c = 1; c < row.length && c-1 < labels.length; c++){
+      // A data row whose endpoint resolves is a recognizable adjacency row —
+      // an all-empty one is how the editor exports an edgeless document. It
+      // must round-trip in replace mode (zero edges), not be refused.
+      validRows++;
+      for(let c = 1; c < row.length; c++){
         const val = (row[c] || '').trim();
         if(!val) continue;
+        if(c - 1 >= labels.length){
+          // A populated cell beyond the header's width: the editor never
+          // writes one, and silently ignoring it would let a malformed
+          // file commit a zero-edge replace over the existing edges.
+          // Count it as skipped like any other unhonorable cell.
+          skipped++;
+          continue;
+        }
         const toId = resolveNode(labels[c-1]);
         if(!toId){ skipped++; continue; }
         const weights = val.split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
+        if(weights.length === 0){
+          // A separator-only cell (";") splits into no weights at all. It
+          // was populated and unhonorable — count it, never let it vanish
+          // from the accounting (or the empty-graph guard accept it).
+          skipped++;
+          continue;
+        }
         for(const w of weights){
           const dir = normalizeDirection((state.settings as any).direction ?? state.settings.directed);
           edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: (dir !== 'undirected') as any, direction: dir as any, type:'' });
@@ -793,6 +1156,16 @@
         }
       }
     }
+    // Commit zero edges only when the file says "empty graph": rows of live
+    // nodes over live columns, and no populated byte anywhere that was not
+    // honored — every populated cell is parsed into an edge, or counted as
+    // skipped (beyond the header width, unknown column, or a separator-only
+    // cell that splits into no weights). parsed === 0 with skipped === 0
+    // therefore means wholly empty cells: the editor's own edgeless export.
+    // Anything else is refused and the document is preserved.
+    const recognizable = labels.length > 0 && resolvableColumns === labels.length
+      && validRows > 0 && skipped === 0;
+    if(parsed === 0 && !append && !recognizable){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
   }
@@ -833,164 +1206,35 @@
     // attached to nodes that no longer exist — and because the sanitizer only
     // drops *unknown* endpoints, an old edge whose id happens to match a new
     // node survived as a stale connection.
+    if(parsed === 0){ toast(I18N.t('csv_nothing_parsed')); return; }
     const replacedEdges = append ? 0 : state.edges.length;
     const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
     csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
     if(replacedEdges > 0) toast(I18N.t('csv_nodes_replaced_edges', {n: state.nodes.length, e: replacedEdges}));
   }
-  function parseAttrList(text): AnyRecord {
-    const attrs: AnyRecord = {};
-    if(!text) return attrs;
-    const re = /([A-Za-z_][\w.:-]*)\s*=\s*("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\]\s]+)/g;
-    let m;
-    while((m = re.exec(text))){
-      let v = m[2].trim();
-      if((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'")) v = dotUnescape(v.slice(1,-1));
-      attrs[m[1].toLowerCase()] = v;
+
+  // <data> elements that are DIRECT children of el. querySelectorAll('data')
+  // would also match descendants — a node's <data> leaked into the graph map
+  // and could overwrite document-wide values.
+  function graphmlChildData(el): { key: string, text: string }[] {
+    const items: { key: string, text: string }[] = [];
+    const root = el && el.nodeType === 9 ? el.documentElement : el; // document → root element
+    if(!root || !root.children) return items;
+    for(const child of root.children){
+      if((child.localName || child.tagName) === 'data'){
+        // Verbatim: custom values are user data (' keep me ' is not 'keep me').
+        // Numeric and boolean coercion trims for parsing itself; nothing here
+        // may trim, or a round-trip silently edits a stored string.
+        items.push({ key: child.getAttribute('key') || '', text: child.textContent || '' });
+      }
     }
-    return attrs;
+    return items;
   }
-  // DOT string escapes: \\ \" \' and \n. One pass, because chaining
-  // replacements unescaped in the wrong order: "a\\\\nb" (the literal label a\nb)
-  // hit the \n rule first and came back as a backslash plus a newline.
-  function dotUnescape(text: string): string {
-    return text.replace(/\\([\\"'n])/g, (_, ch) => ch === 'n' ? '\n' : ch);
-  }
-  function cleanDotToken(t){
-    t = String(t || '').trim();
-    if((t[0] === '"' && t.at(-1) === '"') || (t[0] === "'" && t.at(-1) === "'")) return dotUnescape(t.slice(1,-1));
-    return t;
-  }
-  // Strip DOT comments without touching quoted strings. A '#' is only a comment
-  // at the start of a line (C-preprocessor style): treating every '#' as one,
-  // as a global /#.*$/ regex does, truncates hex colours (fillcolor="#0ea5e9")
-  // and labels such as "C#" mid-line — which used to swallow the declaration
-  // that followed and silently drop nodes.
-  function stripDotComments(text: string): string {
-    // DOT line comments run to the end of the *line*, and a line may end with
-    // LF, CRLF or a lone CR (files saved on old Macs, or pasted from tools that
-    // normalise to CR). The scanner has to recognise all three: an earlier
-    // version only reset "at line start" on LF, so in a CR-only file a `#`
-    // comment was never recognised, its text stayed in the source, and the
-    // node regex then swallowed the declaration on the next line.
-    let out = '';
-    let i = 0;
-    let atLineStart = true;
-    while(i < text.length){
-      const ch = text[i];
-      if(ch === '"'){                       // copy the whole quoted string verbatim
-        out += ch; i++;
-        while(i < text.length){
-          const c = text[i]; out += c; i++;
-          if(c === '\\'){ if(i < text.length){ out += text[i]; i++; } continue; }
-          if(c === '"') break;
-        }
-        atLineStart = false;
-        continue;
-      }
-      if(ch === '\r' || ch === '\n'){        // keep the terminator, remember the boundary
-        out += ch; i++;
-        if(ch === '\r' && text[i] === '\n'){ out += '\n'; i++; }
-        atLineStart = true;
-        continue;
-      }
-      if(ch === '/' && text[i+1] === '*'){ const end = text.indexOf('*/', i + 2); i = end < 0 ? text.length : end + 2; out += ' '; continue; }
-      if((ch === '#' && atLineStart) || (ch === '/' && text[i+1] === '/')){
-        // Skip the comment text but leave the line terminator to the branch
-        // above, so the following declaration keeps its own line.
-        while(i < text.length && text[i] !== '\n' && text[i] !== '\r') i++;
-        continue;
-      }
-      out += ch; i++;
-      if(ch !== ' ' && ch !== '\t' && ch !== '\ufeff') atLineStart = false;
-    }
-    return out;
-  }
-  function parseDot(text){
-    const directedGraph = /\bdigraph\b/i.test(text);
-    let body = stripDotComments(text);
-    const open = body.indexOf('{'), close = body.lastIndexOf('}'); if(open >= 0 && close > open) body = body.slice(open+1, close);
-    const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
-    const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
-    const id = '("(?:\\.|[^"])+"|[A-Za-z0-9_:.\\-]+)';
-    const edgeRe = new RegExp(id + '\\s*(--|->)\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?', 'g');
-    let m;
-    while((m = edgeRe.exec(body))){
-      const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
-      const a = ensureNode(fromOrig), b = ensureNode(toOrig);
-      const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
-      const initDir = m[2] === '->' || directedGraph ? 'directed' : 'undirected';
-      const e = { id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: (initDir !== 'undirected') as any, direction: initDir as any } as any;
-      if(attrs.directed){ const dd = normalizeDirection(attrs.directed); (e as any).direction = dd; (e as any).directed = dd !== 'undirected'; }
-      // QVGE DOT edge: color, penwidth->strokeSize, style->strokeStyle, dir controls directed flag
-      const ec = parseColor(attrs.color);
-      if(ec) (e as any).color = ec;
-      if(attrs.penwidth != null && Number.isFinite(Number(attrs.penwidth))) (e as any).strokeSize = Math.max(0, Number(attrs.penwidth));
-      if(attrs.style){
-        const ss = parseStrokeStyle(attrs.style);
-        if(ss) (e as any).strokeStyle = ss;
-      }
-      if(attrs.arrowsize != null){
-        const mul = Number(attrs.arrowsize);
-        const m = Number.isFinite(mul) ? mul : 1;
-        // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
-        // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
-        if(m > 5){
-          (e as any).arrowSize = clamp(m, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
-        } else {
-          (e as any).arrowSize = clamp(m * DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
-        }
-      }
-      // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
-      if(attrs.dir){
-        const dir = String(attrs.dir).toLowerCase();
-        if(dir === 'none' || dir === 'undirected'){ (e as any).direction = 'undirected'; (e as any).directed = false; }
-        else if(dir === 'both' || dir === 'mutual'){ (e as any).direction = 'mutual'; (e as any).directed = true; }
-        else if(dir === 'forward' || dir === 'directed' || dir === 'true'){ (e as any).direction = 'directed'; (e as any).directed = true; }
-      }
-      edges.push(e as any);
-    }
-    const withoutEdges = body.replace(edgeRe, '');
-    const nodeRe = new RegExp('(?:^|;|[\\r\\n])\\s*' + id + '\\s*(?:\\[([^\\]]*)\\])?\\s*(?=;|[\\r\\n]|$)', 'g');
-    while((m = nodeRe.exec(withoutEdges))){
-      const name = cleanDotToken(m[1]);
-      if(['graph','node','edge'].includes(name.toLowerCase())) continue;
-      const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
-      if(attrs.label) n.label = attrs.label;
-      if(attrs.fillcolor || attrs.color) n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
-      if(attrs.shape){
-        const shape = parseShape(attrs.shape);
-        if(shape) n.shape = shape;
-        else if(/polygon/i.test(attrs.shape) && String(attrs.sides) === '6') n.shape = 'hexagon';
-      }
-      if(attrs.type) n.type = String(attrs.type).slice(0, 40);
-      if(attrs.order != null && Number.isFinite(Number(attrs.order))) n.order = Math.max(0, Math.trunc(Number(attrs.order)));
-      // QVGE DOT node: fillcolor->fill, color->stroke.color, penwidth->stroke.size, style->stroke.style
-      // DOT may have fillcolor for interior and color for border; respect both
-      if(attrs.fillcolor){
-        const fc = parseColor(attrs.fillcolor);
-        if(fc) n.color = fc;
-      }
-      if(attrs.color){
-        const sc = parseColor(attrs.color);
-        if(sc) (n as any).strokeColor = sc;
-      }
-      if(attrs.penwidth != null && Number.isFinite(Number(attrs.penwidth))) (n as any).strokeSize = Math.max(0, Number(attrs.penwidth));
-      if(attrs.style){
-        const ss = parseStrokeStyle(attrs.style);
-        if(ss) (n as any).strokeStyle = ss;
-      }
-      // width/height from DOT are in inches (72 dpi -> px)
-      if(attrs.width != null && Number.isFinite(Number(attrs.width))) (n as any).width = Math.max(10, Math.round(Number(attrs.width)*72));
-      if(attrs.height != null && Number.isFinite(Number(attrs.height))) (n as any).height = Math.max(10, Math.round(Number(attrs.height)*72));
-      if(attrs.pos){ const parts = attrs.pos.replace('!','').split(',').map(Number); if(Number.isFinite(parts[0])) n.x = parts[0]; if(Number.isFinite(parts[1])) n.y = -parts[1]; }
-    }
-    const arr = [...nodes.values()];
-    if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
-      const r = Math.max(120, arr.length * 24);
-      arr.forEach((n,i) => { const a=-Math.PI/2+i*2*Math.PI/arr.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; });
-    }
-    return {title:'imported-dot', nodes:arr.map(({original,...n}) => n), edges};
+
+  function graphmlDataMapById(el): AnyRecord {
+    const map: AnyRecord = Object.create(null);
+    for(const { key, text } of graphmlChildData(el)) map[key] = text;
+    return map;
   }
   // Read the data belonging to *one element*, on *one scope*.
   //
@@ -1074,38 +1318,6 @@
   function rawField(record, _scope, field){
     return Object.prototype.hasOwnProperty.call(record, field) ? record[field] : undefined;
   }
-  function parseShape(raw){
-    const s = String(raw || '').toLowerCase();
-    if(s.includes('disc') || s.includes('disk') || s.includes('circle') || s.includes('ellipse') || s.includes('oval')) return 'circle';
-    if(s.includes('diamond')) return 'diamond';
-    if(s.includes('square') || s.includes('rect') || s.includes('box')) return 'square';
-    // "invtriangle" is DOT's downward triangle; it must be tested before the
-    // generic "triangle" rule below or every downward triangle becomes upward.
-    if(s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down') return 'triangleDown';
-    if(s.includes('triangleup') || s === 'triangle up' || s === 'triangle-up') return 'triangleUp';
-    if(s.includes('hexagon') || s.includes('hex')) return 'hexagon';
-    if(s.includes('triangle')) return 'triangleUp';
-    return '';
-  }
-  function parseStrokeStyle(raw){
-    const s = String(raw || '').toLowerCase().trim();
-    if(!s) return '';
-    // QVGE/CUtils exact mapping: none, solid, dotted, dashed, dashdot, dashdotdot
-    // Also handle GraphViz DOT style values (dashed/dotted/solid/bold/invis) and
-    // common hyphen variants. Order matters: longest first.
-    if(s === 'none' || s === 'nopen' || s === 'transparent' || s === 'invis' || s === 'invisible' || s.includes('invis')) return 'none';
-    if(s.includes('dashdotdot') || s.includes('dash-dot-dot') || s.includes('dash_dot_dot')) return 'dashdotdot';
-    if(s.includes('dashdot') || s.includes('dash-dot') || s.includes('dash_dot')) return 'dashdot';
-    if(s.includes('dash')) return 'dashed';
-    if(s.includes('dot')) return 'dotted';
-    if(s.includes('solid')) return 'solid';
-    // Qt enum names that may leak through
-    if(s.includes('dashline')) return 'dashed';
-    if(s.includes('dotline')) return 'dotted';
-    if(s.includes('dashdotline') && !s.includes('dashdotdot')) return 'dashdot';
-    if(s.includes('dashdotdotline')) return 'dashdotdot';
-    return '';
-  }
   // Parse QVGE font descriptor: "Family,Size,-1,5,weight,italic,underline,strikeout,0,0"
   // Returns {family, size}
   function parseQvgeFont(raw){
@@ -1117,29 +1329,6 @@
     const family = parts[0] || 'Inter';
     const size = parseInt(parts[1], 10);
     return { family: family.slice(0, 60), size: (size > 0 && size <= 72) ? size : null };
-  }
-  // CSS named colors → hex. Handles common color names.
-  const NAMED_COLORS = {
-    black:'#000000', white:'#ffffff', red:'#ff0000', green:'#008000', blue:'#0000ff',
-    yellow:'#ffff00', cyan:'#00ffff', magenta:'#ff00ff', gray:'#808080', grey:'#808080',
-    silver:'#c0c0c0', maroon:'#800000', olive:'#808000', lime:'#00ff00', aqua:'#00ffff',
-    teal:'#008080', navy:'#000080', fuchsia:'#ff00ff', purple:'#800080',
-    orange:'#ffa500', pink:'#ffc0cb', brown:'#a52a2a', violet:'#ee82ee',
-    indigo:'#4b0082', gold:'#ffd700', coral:'#ff7f50', salmon:'#fa8072',
-    khaki:'#f0e68c', lavender:'#e6e6fa', tan:'#d2b48c', turquoise:'#40e0d0'
-  };
-  function parseColor(raw){
-    if(!raw) return null;
-    const s = String(raw).trim().toLowerCase();
-    if(/^#[0-9a-f]{6}$/i.test(s)) return s;
-    if(/^#[0-9a-f]{3}$/i.test(s)){ // expand #abc → #aabbcc
-      return '#' + s[1]+s[1]+s[2]+s[2]+s[3]+s[3];
-    }
-    if(NAMED_COLORS[s]) return NAMED_COLORS[s];
-    // rgb(r,g,b) format
-    const rgb = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-    if(rgb) return '#' + [rgb[1],rgb[2],rgb[3]].map(n => parseInt(n).toString(16).padStart(2,'0')).join('');
-    return null;
   }
   // QVGE integer enum mappings
   function parseLabelPosition(raw){
@@ -1169,6 +1358,21 @@
   function parseGraphml(text){
     const doc = new DOMParser().parseFromString(text, 'application/xml');
     if(doc.querySelector('parsererror')) throw new Error(I18N.t('err_invalid_graphml'));
+    const graphmlTypes = ['boolean','int','long','float','double','string'];
+    const customAttributes: GraphState['customAttributes'] = [];
+    // Ids the incoming payload itself uses — a mint may never hand one out to
+    // another definition in this file, or a fresh mint collides with a later
+    // key of the file that was meant to keep its id.
+    const fileKeyIds = new Set<string>();
+    // Definition ids handed out by THIS FILE, claiming exactly once: anything
+    // that takes an id takes it through this set (or gets a fresh mint), so
+    // one file can never hand the same id to two distinct properties and
+    // overwrite the first property's values with the second's.
+    const resolvedDefIds = new Set<string>();
+    // What this import learned about its own definitions: which raw key id
+    // carried each property. Values and key defaults are bound through this,
+    // so a re-created definition still collects its <data> values.
+    const defBindings: { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; keyId: string; defaultValue?: CustomAttributeValue }[] = [];
     // ---- GraphML keys: one explicit model, then readers ----
     //
     // Everything about <key> is decided once, here, into `keyRoles`. The readers
@@ -1194,20 +1398,23 @@
       rawName: string;
       /** GraphML `for`, defaulting to "all" as the spec says. */
       forWhom: string | 'all';
-      /** Scope we store a definition under; "all" has no editor equivalent. */
-      scope: KeyScope;
       /** Per scope: what this declaration does there. Absent = does not apply. */
       roles: Partial<Record<KeyScope, KeyRole>>;
       /** Id to record for a definition (a de-collided key remembers its own). */
       definitionId: string;
-      /** True when this declaration contributes a user definition. */
+      /** qvge:origin of a key written by our exporter — the foreign key id the
+          definition was minted from. Empty for everything else. */
+      origin: string;
+      /** True when this declaration contributes a user definition on some scope. */
       isDefinition: boolean;
+      /** True when the declaration is a declared foreign or stamped key — such a
+          key defines eagerly, values or not (it IS a property). */
+      eager: boolean;
       type: string;
     }
     const graphEl = doc.querySelector('graphml');
     const keyEls = [...doc.querySelectorAll('key')];
-    const graphmlTypes = ['boolean','int','long','float','double','string'];
-    const customAttributes: GraphState['customAttributes'] = [];
+    for(const k of keyEls){ const kid = k.getAttribute('id'); if(kid) fileKeyIds.add(kid); }
 
     // -- Provenance: is this document one of ours? ------------------------------
     // Either it says so (qvge:writer, every export since marks were added), or it
@@ -1245,14 +1452,28 @@
     const appliesTo = (forWhom: string): readonly KeyScope[] =>
       (forWhom === 'all' ? KEY_SCOPES : KEY_SCOPES.filter(s => s === forWhom)) as readonly KeyScope[];
 
+    // Which key ids carry a <data> on each scope — computed up
+    // front because the classification decides per declaration which scopes
+    // become definitions. A mixed-role declaration (built-in on one scope,
+    // this user's property on another) only defines the scopes that actually
+    // hold a value or a default; anything else would be a phantom definition.
+    // Presence, not truthiness: an explicit blank <data>/> is a stated value,
+    // exactly as it is for element <data> everywhere else — a mixed-role key
+    // whose only evidence is a blank graph-level <data> is still a graph-scoped
+    // property, and skipping it silently discarded the user's blank string.
+    const dataKeyIdsByScope: Record<KeyScope, Set<string>> = { graph: new Set(), node: new Set(), edge: new Set() };
+    for(const d of Array.from(doc.querySelectorAll('data'))){
+      const parentTag = ((d as Element).parentElement?.tagName || '').toLowerCase();
+      const dataScope = parentTag === 'graph' ? 'graph' : parentTag === 'node' ? 'node' : parentTag === 'edge' ? 'edge' : null;
+      const keyId = d.getAttribute('key') || '';
+      if(dataScope && keyId) dataKeyIdsByScope[dataScope].add(keyId);
+    }
     // -- Classification --------------------------------------------------------
     const keyInfos: KeyInfo[] = keyEls.map(k => {
       const keyId = k.getAttribute('id') || '';
       const rawName = String(k.getAttribute('attr.name') || '') || keyId;
       const name = rawName.toLowerCase();
       const forWhom = k.getAttribute('for') || 'all';
-      // The editor models three scopes; a key for "all" is stored under the widest.
-      const scope: KeyScope = forWhom === 'all' ? 'graph' : forWhom as KeyScope;
       const type = String(k.getAttribute('attr.type') || 'string').toLowerCase();
       const type2 = graphmlTypes.includes(type) ? type : 'string';
       // Read by namespace URI, not by the literal prefix: a document re-serialised
@@ -1286,16 +1507,18 @@
         // key belongs to the user.
         roles[dataScope] = 'definition';
       }
-      // A definition is stored once, under the scope its `for` names — but only
-      // when the key is not a built-in field on *any* scope it applies to. A
-      // for="all" key named `label` is not a graph field, yet it is still a
-      // built-in for nodes and edges, so it is an alias rather than a definition.
-      const feedsAnyScope = appliesTo(forWhom).some(dataScope =>
-        roles[dataScope] === 'canonical' || roles[dataScope] === 'alias');
-      const definitionHere = isDefinition || (!feedsAnyScope && roles[scope] === 'definition');
+      // The definition decision is per scope, never per declaration: a key can
+      // be this user's property on one scope and a built-in field on another.
+      // A for="all" key named `label` feeds the node and edge label fields, yet
+      // the graph has no such field — suppressing the definition because the
+      // key feeds built-ins elsewhere silently dropped its graph-level value
+      // while the import reported success. Each scope whose role is
+      // 'definition' contributes one; scopes feeding a built-in stay built-ins.
+      const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
       const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
         : (marked && recordedId ? recordedId : keyId);
-      return {keyId, rawName, forWhom, scope, roles, definitionId, isDefinition: definitionHere, type: type2};
+      const origin = k.getAttributeNS(QVGE_NS, 'origin') || '';
+      return {keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2, origin};
     });
 
     // -- Derived views: the only things the readers touch -----------------------
@@ -1306,7 +1529,8 @@
     // Precedence per (key, scope): canonical outranks alias. Used by the <data>
     // reader and the <default> reader alike so the two cannot disagree.
     const fieldRank: Record<string, number> = {};
-    for(const info of keyInfos){
+    for(let index = 0; index < keyInfos.length; index++){
+      const info = keyInfos[index];
       const name = info.rawName.toLowerCase();
       for(const dataScope of appliesTo(info.forWhom)){
         const role = info.roles[dataScope];
@@ -1324,8 +1548,74 @@
           : entry && entry.name.toLowerCase() === name ? 1
           : 2;
       }
-      if(info.isDefinition && info.keyId && appliesTo(info.forWhom).includes(info.scope)){
-        customAttributes.push({id: info.definitionId, name: info.rawName, scope: info.scope, type: info.type});
+      if(info.isDefinition && info.keyId){
+        // One declaration defines on every scope its key declares AND reads
+        // as the user's property — a mixed-role for="all" key (a foreign
+        // `label` key) defines only the scopes that are not built-in; the
+        // scopes feeding built-ins stay built-ins. A declaration that
+        // defines on every scope collapses to ONE 'all' definition (see
+        // below) so GraphML's for="all" round-trips 1:1. Definitions cannot
+        // share an id (the load path and the delete semantics key on id
+        // alone), so the widest scope in KEY_SCOPES order claims the bare id
+        // first and the rest mint afresh; the attr.name is recorded on each
+        // so a re-import resolves back to them.
+        const defEl = keyEls[index].querySelector('default');
+        // Presence, not truthiness — the same rule as <data> everywhere else:
+        // a blank <default>/> is a stated value (an empty string), not an
+        // absent one; treating it as absent silently dropped the declared
+        // empty-string default and, for a mixed-role key, the whole scope's
+        // definition. Verbatim: a custom default is user data
+        // (' padded ' is not 'padded').
+        const defVal = defEl ? (defEl.textContent ?? '') : '';
+        const hasDefault = !!defEl;
+        const defaultValue = hasDefault ? coerceCustomValue(defVal, info.type) : undefined;
+        // A declared foreign or stamped key always defines (it declares a
+        // property, values or not). A mixed-role key defines only the scopes
+        // that carry a value or a default — anything else would be a phantom
+        // definition in the Data tab.
+        const scopesForDef = KEY_SCOPES.filter(s => {
+          if(info.roles[s] !== 'definition') return false;
+          if(info.eager) return true;
+          return hasDefault || dataKeyIdsByScope[s].has(info.keyId);
+        });
+        if(scopesForDef.length){
+          // Claim the id once per DECLARATION in this file, not per scope: one
+          // key's expansion writes the same definitionId for every scope that
+          // defines on purpose — the definition merge below (capCustomDefinitions)
+          // disambiguates the scopes deterministically (graph keeps the bare id,
+          // then node, then edge mint afresh) and remaps the values to the
+          // minted ids. A second, different declaration claiming the same id
+          // mints afresh here instead of silently overwriting the first.
+          let defId = info.definitionId;
+          if(resolvedDefIds.has(defId)){
+            const taken = new Set(fileKeyIds);
+            for(const attribute of customAttributes) taken.add(attribute.id);
+            for(const claimed of resolvedDefIds) taken.add(claimed);
+            defId = uniqueCustomAttributeId(defId, taken);
+          }
+          resolvedDefIds.add(defId);
+          // A for="all" declaration whose definition applies on every scope
+          // mints ONE 'all' definition — GraphML's scope is preserved 1:1,
+          // the cap slot is spent once, and values keyed by id still land
+          // per scope. A declaration that defines only on some scopes (a
+          // mixed-role key, e.g. a foreign `label`) keeps the per-scope
+          // definitions: an 'all' definition would surface a custom editor
+          // for a name that is built-in on the other scopes.
+          const originProp = info.origin ? { origin: info.origin } : {};
+          if(info.forWhom === 'all' && scopesForDef.length === KEY_SCOPES.length){
+            customAttributes.push({id: defId, scope: 'all', type: info.type, name: info.rawName, ...originProp} as GraphState['customAttributes'][number]);
+            defBindings.push({id: defId, scope: 'all', type: info.type, keyId: info.keyId, defaultValue});
+            continue;
+          }
+          for(const defScope of scopesForDef){
+            // Always record the attr.name as provenance — the import merge needs
+            // it to recognise a re-created definition across imports. The load
+            // path strips a name that equals the id again, so stored documents
+            // stay clean.
+            customAttributes.push({id: defId, scope: defScope, type: info.type, name: info.rawName, ...originProp} as GraphState['customAttributes'][number]);
+            defBindings.push({id: defId, scope: defScope, type: info.type, keyId: info.keyId, defaultValue});
+          }
+        }
       }
     }
     // <default> values resolve through fieldFor — the same mapping the data values
@@ -1374,6 +1664,17 @@
     const defaultDirected = parseDirection(edgeDefaultAttr);
     // Parse graph-level <data> (may override key defaults)
     const graphData = graphmlDataMap(graph || doc, fieldFor, 'graph', fieldRank);
+    // Graph-scoped custom values: bound through the raw key id, like every
+    // other scope, so a re-created definition still collects its values.
+    const graphDataById = graphmlDataMapById(graph || doc);
+    const graphCustom: AnyRecord = Object.create(null);
+    for(const def of defBindings){
+      if(def.scope !== 'graph' && def.scope !== 'all') continue;
+      // Presence, not truthiness: an explicitly empty (or whitespace) <data>
+      // is a stated value that suppresses the declared <default>.
+      if(Object.prototype.hasOwnProperty.call(graphDataById, def.keyId)) graphCustom[def.id] = coerceCustomValue(graphDataById[def.keyId], def.type);
+      else if(def.defaultValue !== undefined){ graphCustom[def.id] = def.defaultValue; }
+    }
     const graphKeyDefs = keyDefaultsByFor.graph || {};
 
     // Build settings from QVGE key defaults + graph data
@@ -1490,7 +1791,7 @@
 
     const nodes: GraphNode[] = [], idMap = new Map<string, string>();
     doc.querySelectorAll('node').forEach((el,i) => {
-      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node', fieldRank);
+      const raw = el.getAttribute('id') || ('n' + (i+1)), id = safeId(raw, 'n'), d = graphmlDataMap(el, fieldFor, 'node', fieldRank), dById = graphmlDataMapById(el);
       // QVGE: nodes are unlabeled by default. Only use label data if present.
       // A <default> is what an *unset* label resolves to. "Unset" means the
       // element carries no label data at all — an explicit empty
@@ -1523,13 +1824,22 @@
       }
       const nlf = rawField(d, 'node', 'labelFont');
       if(nlf){ const f = parseQvgeFont(nlf); if(f){ node.labelFont = f.family; if(f.size) node.labelSize = f.size; } }
+      const nodeCustom: AnyRecord = Object.create(null);
+      for(const def of defBindings){
+        if(def.scope !== 'node' && def.scope !== 'all') continue;
+        // Presence, not truthiness: an explicitly empty (or whitespace) <data>
+        // is a stated value that suppresses the declared <default>.
+        if(Object.prototype.hasOwnProperty.call(dById, def.keyId)) nodeCustom[def.id] = coerceCustomValue(dById[def.keyId], def.type);
+        else if(def.defaultValue !== undefined){ nodeCustom[def.id] = def.defaultValue; }
+      }
+      if(Object.keys(nodeCustom).length) node.custom = nodeCustom;
       nodes.push(node);
       idMap.set(raw, id);
     });
     const edges: GraphEdge[] = [];
     doc.querySelectorAll('edge').forEach((el,i) => {
       const from = idMap.get(el.getAttribute('source')), to = idMap.get(el.getAttribute('target')); if(!from || !to) return;
-      const d = graphmlDataMap(el, fieldFor, 'edge', fieldRank);
+      const d = graphmlDataMap(el, fieldFor, 'edge', fieldRank), dById = graphmlDataMapById(el);
       const directedAttr = el.getAttribute('directed');
       // QVGE: edge direction can come from data "direction" field or the XML attribute
       let dirStr = directedAttr == null ? defaultDirected : parseDirection(directedAttr);
@@ -1564,13 +1874,29 @@
       }
       const elf = rawField(d, 'edge', 'labelFont');
       if(elf){ const f = parseQvgeFont(elf); if(f){ edge.labelFont = f.family; if(f.size) edge.labelSize = f.size; } }
+      const edgeCustom: AnyRecord = Object.create(null);
+      for(const def of defBindings){
+        if(def.scope !== 'edge' && def.scope !== 'all') continue;
+        // Presence, not truthiness: an explicitly empty (or whitespace) <data>
+        // is a stated value that suppresses the declared <default>.
+        if(Object.prototype.hasOwnProperty.call(dById, def.keyId)) edgeCustom[def.id] = coerceCustomValue(dById[def.keyId], def.type);
+        else if(def.defaultValue !== undefined){ edgeCustom[def.id] = def.defaultValue; }
+      }
+      if(Object.keys(edgeCustom).length) edge.custom = edgeCustom;
       edges.push(edge);
     });
     if(nodes.every(n => n.x === 0 && n.y === 0) && nodes.length > 1){ const r=Math.max(120,nodes.length*24); nodes.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/nodes.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r;}); }
+    if(!graph) return null; // a GraphML file without a <graph> is not a document
+    // Zero nodes with any raw <edge> element means every edge dangles (there
+    // is no node to reference) — importing would silently discard all of
+    // them and wipe the document. Our exports can never produce this shape.
+    if(!nodes.length && doc.querySelectorAll('edge').length > 0) return null;
+    // Otherwise a zero-node <graph> — bare or carrying graph-scoped defaults /
+    // <key> definitions — is a valid empty document and round-trips.
     // QVGE behavior: leave visual properties UNSET when not present in the file.
     // Rendering falls back to graph defaults via nodeVisual()/edgeVisual(), so
     // changing defaults later affects all nodes with unset properties.
-    return {title:'imported-graphml', nodes, edges, customAttributes, settings};
+    return {title:'imported-graphml', nodes, edges, customAttributes, graphCustom, settings};
   }
   function importFile(file, forcedFormat='auto'){
     if(!file) return;

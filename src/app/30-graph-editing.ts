@@ -378,6 +378,10 @@
 
   function applyNewNodeDefaults(n: GraphNode){
     const s = state.settings;
+    // Pending custom property values from "Node placement" apply to every new
+    // node (they are data, so the inherit-mode early return does not skip them).
+    const pendingCustom = s.nodeCustom && typeof s.nodeCustom === 'object' ? cloneCustomMap(s.nodeCustom) : undefined;
+    if(pendingCustom) n.custom = pendingCustom;
     if(s.nodeType) n.type = s.nodeType;
     else if(s.nodeDefaults?.type) n.type = s.nodeDefaults.type;
     // Inherit mode deliberately leaves visual properties unset so later
@@ -430,6 +434,9 @@
     const effectiveType = s.edgeType || defEdgeType;
     const dir = normalizeDirection((s as any).direction ?? s.directed);
     const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: dir !== 'undirected' as any, direction: dir as any, type: effectiveType };
+    // Pending custom property values from "New edge defaults".
+    const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
+    if(pendingCustom) e.custom = pendingCustom;
     if(s.edgeWeight !== '') e.weight = String(s.edgeWeight).slice(0,50);
     if(effectiveType){
       const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[effectiveType];
@@ -608,7 +615,8 @@
       // Add new edges for remaining values, inheriting properties from the first existing edge
       const tpl = existing[0];
       for(let i = 1; i < values.length; i++){
-        state.edges.push({
+        const inherited = cloneCustomMap(tpl.custom);
+        const fresh: GraphEdge = {
           id:'e' + state.nextEdge++, from, to,
           weight: values[i].slice(0, 50),
           label: tpl.label || '',
@@ -619,13 +627,18 @@
           type: tpl.type || '',
           color: tpl.color || '', strokeSize: tpl.strokeSize, strokeStyle: tpl.strokeStyle, arrowSize: (tpl as any).arrowSize,
           labelColor: tpl.labelColor, labelFont: tpl.labelFont, labelSize: tpl.labelSize
-        });
+        };
+        if(inherited) fresh.custom = inherited;
+        state.edges.push(fresh);
       }
     } else {
       // No existing edges — create new ones with default settings
       for(const weight of values){
         const dir = normalizeDirection((s as any).direction ?? s.directed);
         const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, weight:weight.slice(0,50), label:'', directed: dir !== 'undirected' as any, direction: dir as any, type:'' };
+        // Pending custom property values from "New edge defaults", as on the canvas path.
+        const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
+        if(pendingCustom) e.custom = pendingCustom;
         if(s.edgeType) e.type = s.edgeType;
         const ts = e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
         if(ts){
@@ -765,6 +778,27 @@
   }
 
   // === Copy / Paste ===
+  function cloneCustomMap(source){
+    if(!source || typeof source !== 'object') return undefined;
+    const out: AnyRecord = Object.create(null); // own keys only: "__proto__" must survive the clone
+    for(const key of Object.keys(source)){
+      const value = source[key];
+      if(typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') out[key] = value;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+  // The definitions of every custom attribute referenced by the given
+  // entities, so a clipboard payload can be re-instantiated in a document
+  // that lacks them. Same-document pastes re-add nothing (ids already exist).
+  function referencedCustomAttributes(entities){
+    const used = new Set<string>();
+    for(const entity of entities){
+      if(isRecord(entity?.custom)) for(const key of Object.keys(entity.custom)) used.add(key);
+    }
+    return state.customAttributes.filter(attribute => used.has(attribute.id)).map(attribute => ({ ...attribute }));
+  }
+  function cloneNode(n){ const c = {...n}; const custom = cloneCustomMap(n?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
+  function cloneEdge(e){ const c = {...e}; const custom = cloneCustomMap(e?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
   // clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
   function getSelectedNodeIdsForCopy(): Set<string> {
     const ids = new Set(state.selection?.nodes || []);
@@ -786,7 +820,7 @@
     }
     // If no nodes selected but edges selected, copy those edges (both endpoints must exist on paste)
     // If nodes selected, copy nodes + edges between them + candidate external edges
-    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(n => ({...n}));
+    const nodes = state.nodes.filter(n => nodeIds.has(n.id)).map(cloneNode);
     const edges: GraphEdge[] = [];
     const externalEdges: GraphEdge[] = [];
     if(nodeIds.size){
@@ -795,15 +829,15 @@
         const toIn = nodeIds.has(e.to);
         const selected = edgeIds.has(e.id);
         if(fromIn && toIn){
-          edges.push({...e});
+          edges.push(cloneEdge(e));
         } else if(fromIn || toIn){
           // Incident edge: store as external candidate (preserve optionally)
           // If edge was explicitly selected, we also mark it external (it has exactly one endpoint in selection)
           // If edge was not selected but incident, we still store it as external for optional preservation
-          externalEdges.push({...e});
+          externalEdges.push(cloneEdge(e));
         } else if(selected && !fromIn && !toIn){
           // Edge selected without its endpoints selected: treat as external requiring both endpoints exist
-          externalEdges.push({...e});
+          externalEdges.push(cloneEdge(e));
         }
       }
       // If user explicitly selected edges whose both endpoints are in selection but edge wasn't captured above? Already captured as internal.
@@ -811,14 +845,17 @@
     } else {
       // No nodes selected: copy selected edges only
       for(const e of state.edges){
-        if(edgeIds.has(e.id)) edges.push({...e});
+        if(edgeIds.has(e.id)) edges.push(cloneEdge(e));
       }
     }
-    clipboardData = { nodes, edges, externalEdges };
+    // Carry the definitions of the custom attributes this payload references,
+    // so pasting into a document without them can re-create them.
+    const customAttributes = referencedCustomAttributes([...nodes, ...edges, ...externalEdges]);
+    clipboardData = { nodes, edges, externalEdges, customAttributes };
     // Deduplicate externalEdges that are duplicates of internal? Already separated
     // Write to system clipboard as JSON for cross-tab paste
     try {
-      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges });
+      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes });
       if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(payload).catch(()=>{});
     } catch {}
     // Try to use copyText helper if available
@@ -842,13 +879,22 @@
     pasteClipboardInternal();
   }
   function pasteClipboardInternal(fromSystemClipboard?: AnyRecord | null){
-    let data = clipboardData;
+    // Clone the clipboard entities — the definition resolution below may
+    // remap or coerce their custom values, which must never leak back into
+    // the clipboard (a second paste has to start from the copied originals).
+    const cloneClipboardData = (src: AnyRecord) => ({
+      nodes: (Array.isArray(src.nodes) ? src.nodes : []).map((n: AnyRecord) => cloneNode(n)),
+      edges: (Array.isArray(src.edges) ? src.edges : []).map((e: AnyRecord) => cloneEdge(e)),
+      externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).map((e: AnyRecord) => cloneEdge(e)),
+      customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
+        .filter(isRecord)
+        .map((def: AnyRecord) => ({ ...def })),
+    });
+    let data = null;
     if(fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard'){
-      data = {
-        nodes: (fromSystemClipboard.nodes || []).map((n: AnyRecord) => ({...n})),
-        edges: (fromSystemClipboard.edges || []).map((e: AnyRecord) => ({...e})),
-        externalEdges: (fromSystemClipboard.externalEdges || []).map((e: AnyRecord) => ({...e}))
-      };
+      data = cloneClipboardData(fromSystemClipboard);
+    } else if(clipboardData){
+      data = cloneClipboardData(clipboardData);
     }
     if(!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)){
       toast(I18N.t('clipboard_empty'));
@@ -856,6 +902,241 @@
     }
     const preserveExternal = state.settings.copyPreserveExternal !== false;
     const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
+    // An endpoint's fate decides whether a carried edge will be pasted at
+    // all: 'pasted' = it clones with this paste, 'existing' = it stays bound
+    // to a node the document already has, 'absent' = it points nowhere and
+    // the edge is dropped. Definition minting below is limited to the edges
+    // that will actually materialize — a dropped edge must not leave a
+    // phantom definition (and its values) behind.
+    const carriedNodeIds = new Set(data.nodes.map(n => String(n?.id)));
+    const endpointFate = (id: unknown): 'pasted' | 'existing' | 'absent' => {
+      const key = String(id ?? '');
+      return carriedNodeIds.has(key) ? 'pasted' : originalExistingNodeIds.has(key) ? 'existing' : 'absent';
+    };
+    const edgeMaterializes = (orig: AnyRecord, isExternal: boolean): boolean => {
+      if(isExternal && !preserveExternal) return false;
+      const fs = endpointFate(orig?.from), ts = endpointFate(orig?.to);
+      if(fs === 'pasted' && ts === 'pasted') return true;
+      if(fs === 'absent' || ts === 'absent') return false;
+      if(fs === 'existing' && ts === 'existing') return true;
+      // Exactly one pasted side: an external edge reaching into the document.
+      return preserveExternal;
+    };
+    const materializedEdges = [
+      ...data.edges.filter(e => edgeMaterializes(e, false)).map(e => ({ entity: e })),
+      ...(data.externalEdges || []).filter(e => edgeMaterializes(e, true)).map(e => ({ entity: e })),
+    ];
+    // Re-create carried custom-attribute definitions this document lacks.
+    // Definitions are resolved per (id, scope) PAIR, not by id alone: an
+    // existing definition with the same id but a different scope cannot
+    // display or export the pasted values, so in that case the carried
+    // definition is re-created under a fresh unique id and the carried values
+    // are remapped to it (lossless). Same-pair definitions merge (the
+    // existing one wins). Definitions beyond the definition cap are skipped with a
+    // toast and their values are dropped, as on any other load path.
+    const carriedDefs = (Array.isArray(data.customAttributes) ? data.customAttributes : [])
+      .filter(isRecord)
+      .map(def => {
+        const id = String(def.id ?? '').trim().slice(0, 128);
+        const scope = ['graph','node','edge','all'].includes(String(def.scope)) ? String(def.scope) : 'node';
+        const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
+        if(!id) return null;
+        const name = String(def.name ?? '').trim().slice(0, 128);
+        const origin = String((def as AnyRecord).origin ?? '').trim().slice(0, 128);
+        return { id, scope: scope as 'graph' | 'node' | 'edge' | 'all', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
+      })
+      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string } => def !== null);
+    const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
+    const existingPairs = new Set(defsByPair.keys());
+    const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
+    const carriedScopeById = new Map<string, 'graph' | 'node' | 'edge' | 'all'>(carriedDefs.map(def => [def.id, def.scope]));
+    const carriedTypeById = new Map<string, string>(carriedDefs.map(def => [def.id, def.type]));
+    // Ids that may not be handed out during this paste. A pair's own carried
+    // id stays available for its own direct creation; every existing
+    // definition, every carried id (another pair's creation target) and every
+    // definition created here is off-limits for minting a fresh unique id.
+    const createdIds = new Set(state.customAttributes.map(attribute => attribute.id));
+    const mintTaken = new Set([...createdIds, ...carriedTypeById.keys()]);
+    let remaining = Math.max(0, CUSTOM_DEFINITIONS_MAX - state.customAttributes.length);
+    let skipped = 0;
+    let renamed = 0;
+    const failedPairs = new Set<string>();
+    // Per-paste resolution cache: ensurePair runs once per key per entity,
+    // but a freshly created/reused definition only reaches state after the
+    // loop — so the pair must be marked resolved here or the second node in
+    // the same payload would mint a duplicate.
+    const handledPairs = new Set<string>();
+    // One paste = one pass: a definition reused here for one carried property
+    // may not be claimed by another (distinct ids, same recorded name) — the
+    // later remap would overwrite the earlier property's values with its own.
+    const claimed = new Set<string>();
+    const renameByPair = new Map<string, string>();
+    const defsToAdd: { id: string; scope: 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }[] = [];
+    const addDef = (newId: string, scope: 'node' | 'edge' | 'all', type: string, carriedOrigin: string, provenance?: { name: string }) => {
+      defsToAdd.push({ id: newId, scope, type, origin: carriedOrigin, ...provenance });
+      existingPairs.add(newId + '|' + scope);
+      createdIds.add(newId);
+      mintTaken.add(newId);
+    };
+    // Two definitions sharing id+scope are the same property ONLY when both
+    // carry no recorded name (created manually — nothing else to go on) or
+    // both carry the same recorded one, AND both record compatible origins
+    // (a re-export keeps the key id its definition was minted from; an
+    // older one defaults it to the carried id). Anything else is a different
+    // property sharing the id: it must be re-created under a fresh id and
+    // the carried values remapped, never merged into the existing definition.
+    const provenanceMatches = (existing: AnyRecord | undefined, carried: AnyRecord | undefined) => {
+      const existingName = String(existing?.name ?? '').trim().toLowerCase();
+      const carriedName = String(carried?.name ?? '').trim().toLowerCase();
+      if(existingName || carriedName){
+        if(existingName !== carriedName) return false;
+      }
+      // The exact-pair branch is the same identity question as the import's
+      // exact-pair branch, so it applies the same rule there would: both
+      // sides recording conflicting origins proves a different property
+      // sharing the id. A definition without a recorded origin keeps the
+      // committed contract and merges for free; a carried definition without
+      // one defaults its origin to its own key id, exactly as the import's
+      // `incOrigin` fallback does.
+      const existingOrigin = String(existing?.origin ?? '').trim();
+      if(!existingOrigin) return true; // origin-less definition — merges for free
+      const carriedOrigin = String(carried?.origin ?? '').trim() || String(carried?.id ?? '').trim();
+      return existingOrigin === carriedOrigin;
+    };
+    const ensurePair = (id: string, scope: 'node' | 'edge' | 'all') => {
+      const key = id + '|' + scope;
+      if(failedPairs.has(key) || handledPairs.has(key)) return;
+      if(existingPairs.has(key) && provenanceMatches(defsByPair.get(key), carriedByPair.get(key))) {
+        handledPairs.add(key); // merge: existing wins
+        return;
+      }
+      // An existing 'all' definition is the document's definition for this id
+      // on every scope — a carried narrower-scope pair with matching
+      // provenance merges into it (existing wins), never mints an env_1 twin.
+      const allKey = id + '|all';
+      if(scope !== 'all' && existingPairs.has(allKey) && provenanceMatches(defsByPair.get(allKey), carriedByPair.get(key))) {
+        handledPairs.add(key); // merge: the all definition wins
+        return;
+      }
+      // Fall through to the reuse/mint machinery: a key collision between
+      // DIFFERENT properties resolves exactly like a missing pair — the mint
+      // path re-creates the carried definition under a fresh id and remaps
+      // the values, leaving the existing definition untouched.
+      const carriedPair = carriedByPair.get(key);
+      const type = carriedPair ? carriedPair.type : (carriedTypeById.get(id) || 'string');
+      // A reusable mapping already exists in the document. Resolving it
+      // before ANY mint decision matters twice: reuse creates no definition,
+      // so it must never be blocked by a full document; and identity
+      // binding must not depend on the carried id being free — a definition
+      // re-created under a fresh id by an earlier import (origin = the
+      // foreign key id) must be found even when the carried id itself is
+      // unused here. Identity across pastes is the recorded origin (a
+      // re-exported payload keeps it), with the recorded name as a guard:
+      // when both sides carry a name, it must agree — a different
+      // property sharing the key id must never be claimed. A definition
+      // claimed by an earlier property in this paste is no longer a
+      // candidate.
+      const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
+      const carriedNameRaw = String(carriedPair?.name ?? '').trim().toLowerCase();
+      const incOrigin = (String(carriedPair?.origin ?? '').trim() || id);
+      const nameAgreement = (a: AnyRecord | undefined) => {
+        const an = String(a?.name ?? '').trim().toLowerCase();
+        return !an || !carriedNameRaw || an === carriedNameRaw;
+      };
+      const scopeCovered = (a: AnyRecord | undefined) => a?.scope === scope || a?.scope === 'all';
+      const prior = state.customAttributes.find(attribute =>
+        scopeCovered(attribute as AnyRecord) && !carriedTypeById.has(attribute.id)
+        && !claimed.has(attribute.id + '|' + attribute.scope)
+        && attribute.origin && String(attribute.origin) === incOrigin
+        && nameAgreement(attribute as AnyRecord))
+      ?? state.customAttributes.find(attribute => {
+        if(!scopeCovered(attribute as AnyRecord)) return false;
+        if(carriedTypeById.has(attribute.id)) return false;
+        if(claimed.has(attribute.id + '|' + attribute.scope)) return false;
+        // The recorded-name rule binds only origin-less definitions (created
+        // manually); a provenance-tracked definition belongs to a specific
+        // key id and may not drift onto a different one.
+        if(String((attribute as AnyRecord).origin ?? '').trim()) return false;
+        return String(attribute.name ?? '').trim().toLowerCase() === carriedName;
+      });
+      if(prior){
+        renameByPair.set(key, prior.id);
+        // Claim the definition under ITS OWN scope — the exclusion scans in
+        // the two candidate queries probe with the candidate's attribute.scope.
+        // Claiming an 'all' definition adopted for a narrower carried pair
+        // under the carried scope would leave it unclaimed for those scans,
+        // and a second distinct carried property named the same would be
+        // granted the same definition (its values landing on the first's).
+        claimed.add(prior.id + '|' + String((prior as AnyRecord)?.scope ?? scope));
+        handledPairs.add(key);
+        return;
+      }
+      if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
+      if(!createdIds.has(id)){
+        remaining--;
+        addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || id), carriedPair?.name ? { name: carriedPair.name } : undefined);
+        handledPairs.add(key);
+        return;
+      }
+      const newId = uniqueCustomAttributeId(id, mintTaken);
+      remaining--;
+      renamed++;
+      // Keep the carried definition's recorded name when it has one; when it
+      // has none, record the carried id as the name so the next paste (or a
+      // round-trip of an export of it) finds THIS definition instead of
+      // minting a second one for the same property.
+      addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || id), { name: carriedPair?.name || id });
+      renameByPair.set(key, newId);
+      handledPairs.add(key);
+    };
+    const ensureEntityPairs = (entities: AnyRecord[], scope: 'node' | 'edge') => {
+      for(const entity of entities){
+        if(!isRecord(entity?.custom)) continue;
+        for(const key of Object.keys(entity.custom)){
+          // A carried 'all' definition owns its values on every scope — an
+          // entity value keyed by it must resolve against the 'all' pair,
+          // never mint a competing per-scope twin. Other carried scopes keep
+          // today's per-scope handling (a cross-scope id forks losslessly).
+          ensurePair(key, carriedScopeById.get(key) === 'all' ? 'all' : scope);
+        }
+      }
+    };
+    ensureEntityPairs(data.nodes, 'node');
+    ensureEntityPairs(materializedEdges.map(m => m.entity), 'edge');
+    if(defsToAdd.length) state.customAttributes.push(...defsToAdd);
+    // Remap carried values whose definition was re-created under a fresh id.
+    if(renameByPair.size){
+      const remapCustom = (entity: AnyRecord, scope: 'node' | 'edge') => {
+        if(!isRecord(entity?.custom)) return;
+        const out: Record<string, CustomAttributeValue> = Object.create(null);
+        for(const [key, value] of Object.entries(entity.custom)){
+          // Values of an all-scope definition are keyed under 'all|' — look
+          // there before the per-scope entry.
+          out[renameByPair.get(key + '|all') || renameByPair.get(key + '|' + scope) || key] = value as CustomAttributeValue;
+        }
+        entity.custom = out;
+      };
+      for(const node of data.nodes) remapCustom(node, 'node');
+      for(const { entity: edge } of materializedEdges) remapCustom(edge, 'edge');
+    }
+    if(defsToAdd.length){ renderCustomAttributes(); renderCustomPropHosts(); }
+    if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
+    if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
+    // Coerce carried values against the definitions applicable to each
+    // entity's scope. A same-id definition surviving in another scope marks
+    // the value as a collapsed orphan — kept verbatim, never destroyed; an
+    // id with no definition anywhere is dropped.
+    const pasteAllSurvivingTypeById = customAttributeTypeMap(state.customAttributes);
+    const pasteNodeTypeById = customAttributeTypeMap(state.customAttributes.filter(a => defAppliesTo(a, 'node')));
+    const pasteEdgeTypeById = customAttributeTypeMap(state.customAttributes.filter(a => defAppliesTo(a, 'edge')));
+    for(const entity of [...data.nodes]){
+      const resolved = sanitizeCustomValues(entity?.custom, pasteNodeTypeById, pasteAllSurvivingTypeById);
+      if(resolved) entity.custom = resolved; else delete entity?.custom;
+    }
+    for(const { entity } of materializedEdges){
+      const resolved = sanitizeCustomValues(entity?.custom, pasteEdgeTypeById, pasteAllSurvivingTypeById);
+      if(resolved) entity.custom = resolved; else delete entity?.custom;
+    }
     const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
     let nextOrder = maxOrder + 1;
     pasteOffsetCount = (pasteOffsetCount + 1) % 20;
@@ -900,7 +1181,7 @@
         if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
       }
       idMap.set(orig.id, newId);
-      const cloned: GraphNode = {...orig, id: newId, order: nextOrder++};
+      const cloned: GraphNode = cloneNode({...orig, id: newId, order: nextOrder++} as GraphNode);
       let nx = finite(orig.x, 0) + offsetDist;
       let ny = finite(orig.y, 0) + offsetDist;
       // The clone is not in state.nodes yet, so nothing may be ignored:
@@ -928,43 +1209,16 @@
         const num = Number((nid.match(/\d+$/)||[0])[0]);
         if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
       }
-      const ce: GraphEdge = {...orig, id: nid, from, to};
+      const ce: GraphEdge = cloneEdge({...orig, id: nid, from, to} as GraphEdge);
       finalNewEdges.push(ce);
       edgeIdMap.add(nid);
       usedEdgeIds2.add(nid);
     };
-    for(const orig of data.edges){
+    // The set was resolved before the definitions were minted; idMap now
+    // agrees with it one-to-one (an endpoint maps iff it is being pasted).
+    for(const { entity: orig } of materializedEdges){
       const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
-      if(nf && nt){
-        addEdgeWithNewId(orig, nf, nt);
-      } else if(!nf && !nt){
-        if(originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)){
-          addEdgeWithNewId(orig, orig.from, orig.to);
-        }
-      } else {
-        if(!preserveExternal) continue;
-        if(nf && !nt){
-          if(originalExistingNodeIds.has(orig.to)) addEdgeWithNewId(orig, nf, orig.to);
-        } else if(!nf && nt){
-          if(originalExistingNodeIds.has(orig.from)) addEdgeWithNewId(orig, orig.from, nt);
-        }
-      }
-    }
-    if(preserveExternal){
-      for(const orig of data.externalEdges){
-        const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
-        if(nf && nt){
-          addEdgeWithNewId(orig, nf, nt);
-        } else if(nf && !nt){
-          if(originalExistingNodeIds.has(orig.to)) addEdgeWithNewId(orig, nf, orig.to);
-        } else if(!nf && nt){
-          if(originalExistingNodeIds.has(orig.from)) addEdgeWithNewId(orig, orig.from, nt);
-        } else {
-          if(originalExistingNodeIds.has(orig.from) && originalExistingNodeIds.has(orig.to)){
-            addEdgeWithNewId(orig, orig.from, orig.to);
-          }
-        }
-      }
+      addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
     }
     if(newNodes.length) state.nodes.push(...newNodes);
     if(finalNewEdges.length) state.edges.push(...finalNewEdges);

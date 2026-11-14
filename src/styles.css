@@ -256,7 +256,8 @@
     /* ---------- Sidebar: non-modal bottom sheet / drawer over the canvas ---------- */
     .sidebar{
       position:absolute; left:0; right:0; bottom:0; z-index:30;
-      max-height:min(78%, calc(100% - 16px)); display:flex; flex-direction:column;
+      max-height:min(60%, calc(100% - 16px)); /* fallback for browsers without dvh */
+      max-height:min(60dvh, calc(100% - 16px)); display:flex; flex-direction:column;
       background:linear-gradient(180deg,#0d1524,#080d18); border:1px solid var(--line-2);
       border-bottom:0; border-radius:18px 18px 0 0;
       box-shadow:0 -18px 50px rgba(0,0,0,.55);
@@ -284,6 +285,14 @@
     .custom-attribute-row .field{min-width:0}
     .custom-attribute-actions{justify-content:flex-end;margin-top:8px}
     .custom-attribute-fields input,.custom-attribute-fields select{min-width:0;width:100%}
+    /* ---------- Custom property value rows (graph / node / edge) ---------- */
+    .custom-props{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+    .custom-props-empty{margin-top:6px}
+    .custom-prop-row{min-width:0}
+    .custom-prop-label{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:55%}
+    .custom-prop-id{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .custom-prop-type{font-size:11px;font-weight:400;color:var(--muted,#94a3b8);border:1px solid var(--line,#334155);border-radius:999px;padding:0 7px;white-space:nowrap}
+    .custom-prop-row input,.custom-prop-row select{min-width:0;width:100%}
 
     /* ---------- Collapsible sections ---------- */
     .section{
@@ -364,6 +373,13 @@
     .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
     .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0;grid-template-rows:minmax(0,1fr)}
+    /* Vertical split with the canvas hidden: the two visible panes split the
+       full height between them. Without this the content-sized "auto auto"
+       rows (above) win over the single 1fr row and every pixel of leftover
+       height pools below the edge list. The side-by-side arrangements are
+       kept in the landscape/portrait(h)/desktop blocks, which load later
+       with equal specificity. */
+    .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:repeat(2,minmax(0,1fr)); grid-template-columns:1fr}
     .main:not(.v-canvas) .bottom-pane{height:100%;min-height:0}
     .main:not(.v-canvas).v-matrix .bottom-pane:nth-child(1),
     .main:not(.v-canvas).v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; overflow:hidden}
@@ -644,10 +660,25 @@
       .toast-stack{top:calc(160px + var(--sa-top));bottom:auto}
     }
 
-    /* Portrait: canvas on top, panels below — stacked full-width, sized
-       by content (max 50%). The split toggle switches matrix + edge list to
-       side-by-side (and back). */
+    /* Portrait bottom sheet: ~60dvh, leaving a usable canvas strip. The
+       floating mode switcher and tool rows lift above the sheet's top edge
+       while it is open so mode switching never gets covered. They switch to
+       viewport-relative fixed positioning and lift by --sheet-h (the actual
+       sheet height, published by the app) — NOT by a share of the canvas,
+       which can shrink to almost nothing when the matrix and edge list are
+       both enabled. */
     @media (max-width:950px) and (orientation:portrait){
+      /* The lifted tool rows are viewport-fixed and rise with the sheet; on a
+         short phone (matrix and edge list enabled) they can reach above the
+         canvas into the app bar. The app bar must always outrank them in
+         portrait — 35 clears the rows (31) and the sheet (30) while staying
+         below the presets overlay (60), toasts (70), dialogs (90) and the
+         export modal (100). */
+      .appbar{z-index:35}
+      .canvas-wrap.sheet-open .mode-fab{position:fixed; bottom:calc(var(--sheet-h, 0px) + 12px); z-index:31}
+      .canvas-wrap.sheet-open .sel-tools,
+      .canvas-wrap.sheet-open .edge-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 68px); z-index:31}
+      .canvas-wrap.sheet-open .gizmo-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 122px); z-index:31}
       .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
       .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}

@@ -1112,3 +1112,191 @@ test('applying a single edited camera field via Enter preserves an in-flight whe
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a queued pass over an unchanged canvas skips the per-node work entirely', async () => {
+  // Committing a custom property queues a full render, but nothing the pass
+  // paints changed: no selection is involved and no entity- or style-relevant
+  // field moves. The pass must skip every element instead of re-measuring the
+  // canvas or rebuilding styles per node. This is the guard for the old
+  // documentDirty blanket flag, which forced the traversal to re-run
+  // nodeHitPixelsPerWorld() (one unmemoized getBoundingClientRect on the SVG)
+  // for every clean node on every queued pass — 40 here. The few reads that
+  // remain are the fixed per-camera-sync constants (camera grid, hit-target
+  // signature, edge-label visibility), not per-node work.
+  const nodes = [];
+  for (let i = 0; i < 40; i++) nodes.push({ id: 'n' + i, label: 'N' + i, x: (i % 8) * 150 - 500, y: Math.floor(i / 8) * 120 - 200 });
+  const graphWithProps = {
+    title: 'unchanged-pass', mode: 'select', nextNode: 100, nextEdge: 3,
+    nodes,
+    edges: [{ id: 'e1', from: 'n0', to: 'n39', directed: true, weight: '2' }],
+    customAttributes: [{ id: 'notes', scope: 'node', type: 'string' }],
+    graphCustom: {}, settings: {},
+    viewBox: { x: -620, y: -420, w: 1240, h: 840 },
+  };
+  const { dom, errors } = createEditorDom(graphWithProps);
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+
+  const input = document.querySelector('#newNodeCustomProps [data-custom-attribute="notes"]');
+  assert.ok(input, 'the new-node defaults render the custom property');
+
+  // setCanvasRect() installs an own getBoundingClientRect on the SVG element,
+  // so only counting that element's own function sees the pass's reads — a
+  // prototype spy never would.
+  let svgRectReads = 0;
+  const originalSvgRect = svg.getBoundingClientRect;
+  svg.getBoundingClientRect = function (...args) {
+    svgRectReads++;
+    return originalSvgRect.apply(this, args);
+  };
+
+  input.value = 'after';
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  await nextFrame(window);
+  await settle(window, 120);
+
+  assert.ok(svgRectReads <= 4, `an unchanged canvas is not re-measured per node (got ${svgRectReads})`);
+  // The commit still applied to the pending new-node defaults.
+  assert.equal(input.value, 'after');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('pan previews re-sync edge labels without re-measuring the canvas per edge', async () => {
+  // A middle-button drag is a pan. Every preview frame re-evaluates which
+  // edge midpoints are inside the viewport and flips label visibility to
+  // match — without that, labels would pop in only on the commit. The walk
+  // itself is fine; what it cannot afford is one unmemoized SVG measurement
+  // per edge per frame (it measured through boundedCamera + a full rect read
+  // for every edge), so this test both pins the read budget and keeps the
+  // live flip itself honest.
+  const nodes = [];
+  for (let i = 0; i < 20; i++) nodes.push({ id: 'n' + i, label: 'N' + i, x: (i % 5) * 150 - 300, y: Math.floor(i / 5) * 120 - 180 });
+  nodes.push({ id: 'far1', label: 'F1', x: -3150, y: -60 });
+  nodes.push({ id: 'far2', label: 'F2', x: -3150, y: 60 });
+  const edges = [];
+  for (let i = 0; i < 20; i++) edges.push({ id: 'e' + i, from: 'n' + i, to: 'n' + ((i + 3) % 20), directed: true, weight: '1', label: 'L' + i });
+  edges.push({ id: 'far', from: 'far1', to: 'far2', directed: true, weight: '1', label: 'Far' });
+  const { dom, errors } = createEditorDom({
+    title: 'pan-labels', mode: 'select', nodes, edges,
+    viewBox: { x: -400, y: -260, w: 800, h: 520 },
+  });
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+
+  const farLabel = () => document.querySelector('#edge-far .edge-label');
+  assert.equal(farLabel()?.getAttribute('display'), 'none', 'a midpoint outside the viewport starts hidden');
+
+  // setCanvasRect() installs an own getBoundingClientRect on the SVG element;
+  // wrapping it counts every read the pass or the camera makes on that element.
+  let rectReads = 0;
+  const originalSvgRect = svg.getBoundingClientRect;
+  svg.getBoundingClientRect = function (...args) {
+    rectReads++;
+    return originalSvgRect.apply(this, args);
+  };
+
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330, button: 1 });
+  rectReads = 0;
+  // Drag left by 2900 world units (viewBox 800 wide, pitch 1.25 → 3625 px):
+  // the far edge's midpoint comes into the camera.
+  for (let step = 1; step <= 3; step++) {
+    dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 500 + step * 1208, clientY: 330, button: 1 });
+    await nextFrame(window);
+  }
+  assert.ok(rectReads <= 18, `a pan is not re-measured per edge (got ${rectReads} reads for 21 edges over 3 moves)`);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 500 + 3 * 1208, clientY: 330, button: 1 });
+  await nextFrame(window);
+
+  assert.notEqual(farLabel()?.getAttribute('display'), 'none', 'the pan shows the label whose midpoint entered the viewport');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a brush sweep does not probe the stroke for every element per frame', async () => {
+  // The brush hit test runs for every graph element on every sampled frame:
+  // the old arm checked every stroke point with Math.hypot per element, so a
+  // long stroke made the sweep quadratic in stroke length. The probe now goes
+  // through a spatial hash with squared distances; Math.hypot may still be
+  // used for sampling and for the rare near-point segment distance, but the
+  // per-element cost is bounded by the points near that element.
+  const nodes = [];
+  for (let row = 0; row < 6; row++) for (let col = 0; col < 10; col++) {
+    nodes.push({ id: 'n' + (row * 10 + col), label: 'n' + (row * 10 + col), x: col * 90 - 405, y: row * 100 - 250 });
+  }
+  const edges = [];
+  for (let i = 0; i < 59; i++) edges.push({ id: 'e' + i, from: 'n' + i, to: 'n' + (i + 1), directed: true, weight: '1' });
+  const { dom, errors } = createEditorDom({
+    title: 'brush-sweep', mode: 'select', nextNode: 100, nextEdge: 100,
+    nodes, edges,
+    viewBox: { x: -500, y: -350, w: 1000, h: 700 },
+  });
+  const window = dom.window, document = window.document;
+  await nextFrame(window);
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  document.querySelector('[data-selecttool="brush"]').click();
+  await nextFrame(window);
+
+  let hypotCalls = 0;
+  const originalHypot = window.Math.hypot;
+  window.Math.hypot = function (...args) { hypotCalls++; return originalHypot.apply(this, args); };
+
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 330 });
+  for (let x = 120; x <= 700; x += 30) {
+    dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: x, clientY: 330 });
+  }
+  await settle(window, 120);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 700, clientY: 330 });
+  await nextFrame(window);
+  window.Math.hypot = originalHypot;
+
+  // 21 samples → 42 hypot calls from sampling alone. The old per-element
+  // probe added thousands: every move re-tested every element against every
+  // accumulated stroke point.
+  assert.ok(hypotCalls < 800, `a brush sweep stays local to the stroke (got ${hypotCalls} hypot calls)`);
+  // Sanity: the sweep actually selected something through the new probe.
+  assert.equal(document.querySelector('#statsPill').textContent.includes('nodes'), true);
+  const selected = document.querySelectorAll('.node.selected').length;
+  assert.ok(selected >= 3, `the brush selected the swept nodes (got ${selected})`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a brush stroke keeps its initial press point in the hit test', async () => {
+  // The brush stroke hash is seeded from the press point as well as from
+  // move samples — otherwise a node sitting on the press origin is invisible
+  // to the hash-based probe once any move lands.
+  const nodes = [{ id: 'n1', label: 'n1', x: 0, y: 0 }];
+  for (let i = 0; i < 20; i++) nodes.push({ id: 'far' + i, label: 'f' + i, x: -480 + (i % 5) * 240, y: (i < 10 ? -320 : 320) + (i % 3) * 20 });
+  const { dom, errors } = createEditorDom({
+    title: 'brush-press-point', mode: 'select', nextNode: 100, nextEdge: 100,
+    nodes, edges: [],
+    viewBox: { x: -500, y: -350, w: 1000, h: 700 },
+  });
+  const window = dom.window, document = window.document;
+  await nextFrame(window);
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  document.elementFromPoint = () => document.querySelector('#node-n1');
+  document.querySelector('[data-selecttool="brush"]').click();
+  await nextFrame(window);
+
+  // Press on n1 (world origin -> client 500,330), then jump the stroke far
+  // away in a single move: the press point must still hit n1.
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
+  dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 700, clientY: 330 });
+  await settle(window, 120);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 700, clientY: 330 });
+  await nextFrame(window);
+
+  const selectedIds = [...document.querySelectorAll('.node.selected')].map(el => el.id);
+  assert.ok(selectedIds.includes('node-n1'), `the pressed node is selected (got: ${selectedIds.join(', ') || 'none'})`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
