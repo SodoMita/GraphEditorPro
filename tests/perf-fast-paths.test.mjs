@@ -1217,3 +1217,53 @@ test('pan previews re-sync edge labels without re-measuring the canvas per edge'
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a brush sweep does not probe the stroke for every element per frame', async () => {
+  // The brush hit test runs for every graph element on every sampled frame:
+  // the old arm checked every stroke point with Math.hypot per element, so a
+  // long stroke made the sweep quadratic in stroke length. The probe now goes
+  // through a spatial hash with squared distances; Math.hypot may still be
+  // used for sampling and for the rare near-point segment distance, but the
+  // per-element cost is bounded by the points near that element.
+  const nodes = [];
+  for (let row = 0; row < 6; row++) for (let col = 0; col < 10; col++) {
+    nodes.push({ id: 'n' + (row * 10 + col), label: 'n' + (row * 10 + col), x: col * 90 - 405, y: row * 100 - 250 });
+  }
+  const edges = [];
+  for (let i = 0; i < 59; i++) edges.push({ id: 'e' + i, from: 'n' + i, to: 'n' + (i + 1), directed: true, weight: '1' });
+  const { dom, errors } = createEditorDom({
+    title: 'brush-sweep', mode: 'select', nextNode: 100, nextEdge: 100,
+    nodes, edges,
+    viewBox: { x: -500, y: -350, w: 1000, h: 700 },
+  });
+  const window = dom.window, document = window.document;
+  await nextFrame(window);
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  document.querySelector('[data-selecttool="brush"]').click();
+  await nextFrame(window);
+
+  let hypotCalls = 0;
+  const originalHypot = window.Math.hypot;
+  window.Math.hypot = function (...args) { hypotCalls++; return originalHypot.apply(this, args); };
+
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 330 });
+  for (let x = 120; x <= 700; x += 30) {
+    dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: x, clientY: 330 });
+  }
+  await settle(window, 120);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 700, clientY: 330 });
+  await nextFrame(window);
+  window.Math.hypot = originalHypot;
+
+  // 21 samples → 42 hypot calls from sampling alone. The old per-element
+  // probe added thousands: every move re-tested every element against every
+  // accumulated stroke point.
+  assert.ok(hypotCalls < 800, `a brush sweep stays local to the stroke (got ${hypotCalls} hypot calls)`);
+  // Sanity: the sweep actually selected something through the new probe.
+  assert.equal(document.querySelector('#statsPill').textContent.includes('nodes'), true);
+  const selected = document.querySelectorAll('.node.selected').length;
+  assert.ok(selected >= 3, `the brush selected the swept nodes (got ${selected})`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

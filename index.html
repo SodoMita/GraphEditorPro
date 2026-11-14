@@ -8965,8 +8965,24 @@ function sampleSelectionDraftPoint(p) {
         selectDraft.moved = true;
     if (['brush', 'lasso'].includes(selectDraft.tool)) {
         const last = selectDraft.points[selectDraft.points.length - 1];
-        if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 6)
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 6) {
             selectDraft.points.push(p);
+            // The brush hit test probes the stroke for every graph element on
+            // every frame. A spatial hash keeps that probe local, so the test
+            // cost per frame grows with the points near each element, not with
+            // the length of the whole stroke.
+            if (selectDraft.tool === 'brush') {
+                const cell = Math.max(1, (state.settings.brushDiameter || 80) / 2);
+                if (!selectDraft.strokeCells)
+                    selectDraft.strokeCells = new Map();
+                const key = Math.floor(p.x / cell) + ',' + Math.floor(p.y / cell);
+                const bucket = selectDraft.strokeCells.get(key);
+                if (bucket)
+                    bucket.push(p);
+                else
+                    selectDraft.strokeCells.set(key, [p]);
+            }
+        }
     }
 }
 function applySelectionDraft() {
@@ -9135,8 +9151,77 @@ function hitTestSelection(draft, _liveBrush = false) {
     const inRect = p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY;
     const nearLine = p => distToSegment(p, draft.start, draft.end) <= Math.max(22, state.viewBox.w / 220);
     const brushRadius = (state.settings.brushDiameter || 80) / 2;
-    const nearBrush = p => pts.some(q => Math.hypot(p.x - q.x, p.y - q.y) <= brushRadius);
-    const inPoly = p => pts.length > 2 && pointInPolygon(p, pts);
+    // Bounds of the lasso polygon, hoisted out of the per-element loops: an
+    // element outside the polygon's box cannot be inside it.
+    let polyBounds = null;
+    if (pts.length > 2) {
+        let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
+        for (const q of pts) {
+            if (q.x < pMinX)
+                pMinX = q.x;
+            if (q.x > pMaxX)
+                pMaxX = q.x;
+            if (q.y < pMinY)
+                pMinY = q.y;
+            if (q.y > pMaxY)
+                pMaxY = q.y;
+        }
+        polyBounds = { minX: pMinX, maxX: pMaxX, minY: pMinY, maxY: pMaxY };
+    }
+    // Squared-distance probe against the stroke's spatial hash (brush only);
+    // falls back to a plain scan on an empty stroke. Squared comparisons
+    // avoid a square root per probe, which was the bulk of a long brush
+    // sweep's hit-test cost.
+    const strokeCells = draft.strokeCells || null;
+    const strokeCell = Math.max(1, brushRadius);
+    const dist2 = (px, py, qx, qy) => { const dx = px - qx, dy = py - qy; return dx * dx + dy * dy; };
+    const nearStroke = (p, extra) => {
+        const R = brushRadius + extra;
+        const R2 = R * R;
+        if (!strokeCells)
+            return pts.some(q => dist2(p.x, p.y, q.x, q.y) <= R2);
+        // A node much larger than the brush reaches past the 2-cell ring; a
+        // whole-stroke scan is cheaper than covering its radius in cells.
+        const cr = Math.ceil(R / strokeCell);
+        if (cr > 4)
+            return pts.some(q => dist2(p.x, p.y, q.x, q.y) <= R2);
+        const cx = Math.floor(p.x / strokeCell), cy = Math.floor(p.y / strokeCell);
+        for (let dy = -cr; dy <= cr; dy++) {
+            for (let dx = -cr; dx <= cr; dx++) {
+                const bucket = strokeCells.get((cx + dx) + ',' + (cy + dy));
+                if (!bucket)
+                    continue;
+                for (const q of bucket)
+                    if (dist2(p.x, p.y, q.x, q.y) <= R2)
+                        return true;
+            }
+        }
+        return false;
+    };
+    // Exact capsule-vs-stroke test for edges: only stroke points in the
+    // cells the segment's box (plus the radius) covers can qualify.
+    const segNearStroke = (ax, ay, bx, by) => {
+        if (!strokeCells)
+            return pts.some(q => distToSegment(q, { x: ax, y: ay }, { x: bx, y: by }) <= brushRadius);
+        const minCX = Math.floor((Math.min(ax, bx) - brushRadius) / strokeCell), maxCX = Math.floor((Math.max(ax, bx) + brushRadius) / strokeCell);
+        const minCY = Math.floor((Math.min(ay, by) - brushRadius) / strokeCell), maxCY = Math.floor((Math.max(ay, by) + brushRadius) / strokeCell);
+        if ((maxCX - minCX + 1) * (maxCY - minCY + 1) > 512)
+            return pts.some(q => distToSegment(q, { x: ax, y: ay }, { x: bx, y: by }) <= brushRadius);
+        const a = { x: ax, y: ay }, b = { x: bx, y: by };
+        for (let cy = minCY; cy <= maxCY; cy++) {
+            for (let cx = minCX; cx <= maxCX; cx++) {
+                const bucket = strokeCells.get(cx + ',' + cy);
+                if (!bucket)
+                    continue;
+                for (const q of bucket)
+                    if (distToSegment(q, a, b) <= brushRadius)
+                        return true;
+            }
+        }
+        return false;
+    };
+    const nearBrush = p => nearStroke(p, 0);
+    const inPoly = p => polyBounds && p.x >= polyBounds.minX && p.x <= polyBounds.maxX && p.y >= polyBounds.minY && p.y <= polyBounds.maxY && pts.length > 2 && pointInPolygon(p, pts);
     const test = p => tool === 'rect' ? inRect(p) : tool === 'line' ? nearLine(p) : tool === 'brush' ? nearBrush(p) : inPoly(p);
     const hitMode = state.settings.hitTestMode === 'center' ? 'center' : 'any';
     // --- 'any' mode helper geometry ---
@@ -9182,21 +9267,27 @@ function hitTestSelection(draft, _liveBrush = false) {
             hit = circleRectIntersect(n.x, n.y, r, minX, minY, maxX, maxY);
         }
         else if (tool === 'brush') {
-            hit = pts.some(q => Math.hypot(q.x - n.x, q.y - n.y) <= brushRadius + r);
+            hit = nearStroke(n, r);
         }
         else if (tool === 'line') {
             hit = distToSegment(n, draft.start, draft.end) <= r + lineThresh;
         }
-        else if (pts.length > 2) {
+        else if (polyBounds) {
             // Lasso / polygon: node selected if its body overlaps the polygon
-            // (centre inside, or any boundary point inside).
-            hit = pointInPolygon(n, pts);
-            if (!hit) {
-                for (let k = 0; k < 8; k++) {
-                    const ang = k * Math.PI / 4;
-                    if (pointInPolygon({ x: n.x + r * Math.cos(ang), y: n.y + r * Math.sin(ang) }, pts)) {
-                        hit = true;
-                        break;
+            // (centre inside, or any boundary point inside). The polygon's box
+            // expanded by the node radius rejects disjoint candidates up front.
+            if (n.x + r < polyBounds.minX || n.x - r > polyBounds.maxX || n.y + r < polyBounds.minY || n.y - r > polyBounds.maxY) {
+                hit = false;
+            }
+            else {
+                hit = pointInPolygon(n, pts);
+                if (!hit) {
+                    for (let k = 0; k < 8; k++) {
+                        const ang = k * Math.PI / 4;
+                        if (pointInPolygon({ x: n.x + r * Math.cos(ang), y: n.y + r * Math.sin(ang) }, pts)) {
+                            hit = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -9219,7 +9310,7 @@ function hitTestSelection(draft, _liveBrush = false) {
         let hit = test(mid);
         if (!hit) {
             if (tool === 'brush') {
-                hit = pts.some(q => distToSegment(q, a, b) <= brushRadius);
+                hit = segNearStroke(a.x, a.y, b.x, b.y);
             }
             else if (tool === 'line') {
                 hit = segmentNearSegment(draft.start, draft.end, a, b, 20);
@@ -9227,8 +9318,11 @@ function hitTestSelection(draft, _liveBrush = false) {
             else if (tool === 'rect') {
                 hit = segInRect(a.x, a.y, b.x, b.y, 8);
             }
-            else if (pts.length > 2) {
-                hit = segInPoly(a.x, a.y, b.x, b.y, 4, pts);
+            else if (polyBounds) {
+                const sMinX = Math.min(a.x, b.x), sMaxX = Math.max(a.x, b.x), sMinY = Math.min(a.y, b.y), sMaxY = Math.max(a.y, b.y);
+                if (sMaxX >= polyBounds.minX && sMinX <= polyBounds.maxX && sMaxY >= polyBounds.minY && sMinY <= polyBounds.maxY) {
+                    hit = segInPoly(a.x, a.y, b.x, b.y, 4, pts);
+                }
             }
         }
         if (hit)
