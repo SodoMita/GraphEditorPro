@@ -301,13 +301,22 @@
   // A pan/wheel/pinch changes only the camera matrix. Re-evaluate midpoint
   // visibility in that same task so hidden labels reappear without waiting for
   // a document render that may never be scheduled.
+  let lastLabelSyncSig = '';
   function syncEdgeLabelVisibility(){
     const showLabels = shouldShowLabels();
+    const viewport = edgeLabelViewport();
+    // The walk exists for camera moves. Two calls in the same camera state
+    // with the same label policy would write the same display attributes;
+    // skipping them keeps back-to-back camera commits free of the walk.
+    const syncSig = viewport.sig + '|' + (showLabels ? 1 : 0);
+    if(syncSig === lastLabelSyncSig) return;
+    lastLabelSyncSig = syncSig;
+    const bounds = viewport.bounds;
     for(const [id, g] of edgeEls){
       const e = edgeById(id); if(!e) continue;
       const a = nodeById(e.from), b = nodeById(e.to); if(!a || !b) continue;
       const d = g.__geoData;
-      const visible = showLabels && Boolean(d && d.path) && edgeLabelVisible(a, b);
+      const visible = showLabels && Boolean(d && d.path) && edgeLabelVisible(a, b, bounds);
       setEdgeTextHidden(g, !visible);
     }
   }
@@ -1163,7 +1172,8 @@
     }
     if(drag && drag.liveEdges === false) return;
     const edges = drag?.affectedEdges || state.edges.filter(e => e.from === id || e.to === id);
-    for(const edge of edges) updateEdgeFast(edge);
+    const labelBounds = edges.length ? edgeLabelViewport().bounds : null;
+    for(const edge of edges) updateEdgeFast(edge, null, labelBounds);
   }
   function moveDragFast(src=drag){
     if(!src) return;
@@ -1181,10 +1191,11 @@
       followGizmoForPlainDrag(src);
       if(src.liveEdges === false) return;
       const vc = src.vc || (src.vc = newVisualCache());
-      for(const edge of (src.affectedEdges || [])) updateEdgeFast(edge, vc);
+      const labelBounds = (src.affectedEdges || []).length ? edgeLabelViewport().bounds : null;
+      for(const edge of (src.affectedEdges || [])) updateEdgeFast(edge, vc, labelBounds);
     } catch(e) { /* fail-safe */ }
   }
-  function updateEdgeFast(edgeOrId, vc=null){
+  function updateEdgeFast(edgeOrId, vc=null, bounds=null){
     const e = typeof edgeOrId === 'object' ? edgeOrId : edgeById(edgeOrId); if(!e) return;
     // nodeById is an indexed O(1) lookup now; node positions are mutated in
     // place, so the index always returns the live objects during a drag.
@@ -1212,7 +1223,7 @@
     }
     // The fast writer must CREATE text elements too: dragging an endpoint into
     // view can turn an empty/edge-hidden midpoint into a visible one.
-    const labelVisible = edgeLabelVisible(a, b);
+    const labelVisible = edgeLabelVisible(a, b, bounds ?? edgeLabelViewport().bounds);
     const texts = edgeLabelWeightText(e);
     paintEdgeText(g, d, edgeVisualC(e, vc), texts.labelText, texts.weightText, labelVisible);
     // Update arrow tip position/angle during drag
@@ -1244,7 +1255,8 @@
   function refreshFrozenEdges(edges){
     if(!edges || !edges.length) return;
     const vc = newVisualCache();
-    for(const edge of edges) updateEdgeFast(edge, vc);
+    const labelBounds = edgeLabelViewport().bounds;
+    for(const edge of edges) updateEdgeFast(edge, vc, labelBounds);
   }
   // The release itself stays free of that work: on a very high degree node it
   // is thousands of patched edges, which must not delay the frame that settles
@@ -1386,6 +1398,7 @@
     // geometric or label-related to recompute; `genAtStart` lets an element
     // whose stamp is already current skip its frame entirely.
     const stylePass = paintedEdgeStyle !== styleFingerprint('edge');
+    const passLabelBounds = edgeLabelViewport().bounds;
     const gen = renderGen;
     for(const e of state.edges){
       const a = nodeById(e.from), b = nodeById(e.to);
@@ -1534,7 +1547,7 @@
       // Labels/weights are created whenever the edge has a visible path, then
       // hidden (not removed) when the ORIGINAL midpoint is off-screen. A camera
       // pan can therefore re-show them without a full render pass.
-      const labelVisible = edgeVisible && edgeLabelVisible(a, b);
+      const labelVisible = edgeVisible && edgeLabelVisible(a, b, passLabelBounds);
       const texts = edgeLabelWeightText(e, showLabels);
       paintEdgeText(g, d, v, texts.labelText, texts.weightText, labelVisible && showLabels);
       // This element now matches the document at this generation.
@@ -1617,6 +1630,10 @@
   // bounds are cached per camera/scale so a large render pass computes them
   // once rather than per edge.
   let labelViewportCache = { sig: '', bounds: null as any };
+  // The world-space bounds an edge midpoint must lie inside for its label to
+  // be visible. Computing it costs one rect read and one camera clamp, so the
+  // result is cached on the camera signature; every caller in the same camera
+  // state shares the cached bounds instead of each edge re-measuring.
   function edgeLabelViewport(){
     const cam = boundedCamera(currentCamera());
     const rect = canvasViewportRect();
@@ -1629,12 +1646,11 @@
         y0: cam.y - offY / pitch, y1: cam.y + cam.h + offY / pitch
       }} : { sig, bounds: null };
     }
-    return labelViewportCache.bounds;
+    return { bounds: labelViewportCache.bounds, sig };
   }
-  function edgeLabelVisible(a, b){
+  function edgeLabelVisible(a, b, bounds = edgeLabelViewport().bounds){
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     if(!isRenderablePoint(mx, my)) return false;
-    const bounds = edgeLabelViewport();
     return Boolean(bounds) && mx >= bounds.x0 && mx <= bounds.x1 && my >= bounds.y0 && my <= bounds.y1;
   }
   function edgePath(a,b,e,vc=null){

@@ -1164,3 +1164,56 @@ test('a queued pass over an unchanged canvas skips the per-node work entirely', 
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('pan previews re-sync edge labels without re-measuring the canvas per edge', async () => {
+  // A middle-button drag is a pan. Every preview frame re-evaluates which
+  // edge midpoints are inside the viewport and flips label visibility to
+  // match — without that, labels would pop in only on the commit. The walk
+  // itself is fine; what it cannot afford is one unmemoized SVG measurement
+  // per edge per frame (it measured through boundedCamera + a full rect read
+  // for every edge), so this test both pins the read budget and keeps the
+  // live flip itself honest.
+  const nodes = [];
+  for (let i = 0; i < 20; i++) nodes.push({ id: 'n' + i, label: 'N' + i, x: (i % 5) * 150 - 300, y: Math.floor(i / 5) * 120 - 180 });
+  nodes.push({ id: 'far1', label: 'F1', x: -3150, y: -60 });
+  nodes.push({ id: 'far2', label: 'F2', x: -3150, y: 60 });
+  const edges = [];
+  for (let i = 0; i < 20; i++) edges.push({ id: 'e' + i, from: 'n' + i, to: 'n' + ((i + 3) % 20), directed: true, weight: '1', label: 'L' + i });
+  edges.push({ id: 'far', from: 'far1', to: 'far2', directed: true, weight: '1', label: 'Far' });
+  const { dom, errors } = createEditorDom({
+    title: 'pan-labels', mode: 'select', nodes, edges,
+    viewBox: { x: -400, y: -260, w: 800, h: 520 },
+  });
+  await nextFrame(dom.window);
+  const window = dom.window, document = window.document;
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+
+  const farLabel = () => document.querySelector('#edge-far .edge-label');
+  assert.equal(farLabel()?.getAttribute('display'), 'none', 'a midpoint outside the viewport starts hidden');
+
+  // setCanvasRect() installs an own getBoundingClientRect on the SVG element;
+  // wrapping it counts every read the pass or the camera makes on that element.
+  let rectReads = 0;
+  const originalSvgRect = svg.getBoundingClientRect;
+  svg.getBoundingClientRect = function (...args) {
+    rectReads++;
+    return originalSvgRect.apply(this, args);
+  };
+
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330, button: 1 });
+  rectReads = 0;
+  // Drag left by 2900 world units (viewBox 800 wide, pitch 1.25 → 3625 px):
+  // the far edge's midpoint comes into the camera.
+  for (let step = 1; step <= 3; step++) {
+    dispatchPointer(window, svg, 'pointermove', { pointerId: 1, clientX: 500 + step * 1208, clientY: 330, button: 1 });
+    await nextFrame(window);
+  }
+  assert.ok(rectReads <= 18, `a pan is not re-measured per edge (got ${rectReads} reads for 21 edges over 3 moves)`);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 500 + 3 * 1208, clientY: 330, button: 1 });
+  await nextFrame(window);
+
+  assert.notEqual(farLabel()?.getAttribute('display'), 'none', 'the pan shows the label whose midpoint entered the viewport');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
