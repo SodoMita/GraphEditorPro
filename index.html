@@ -3861,7 +3861,6 @@ function customPropsSection(cacheKey, scope, targets, multi) {
             boolKeepOption: multi ? `<option value="">${i18nKeep}</option>` : `<option value="">${esc(I18N.t('custom_prop_unset'))}</option>`,
             boolUnsetOption: multi ? `<option value="__unset__">${esc(I18N.t('custom_prop_unset'))}</option>` : '',
         };
-        const shared = sharedCustomPropValues(targets, defs);
         element.className = 'custom-props';
         element.dataset.scope = scope;
         const rowsHost = document.createElement('div');
@@ -3878,19 +3877,22 @@ function customPropsSection(cacheKey, scope, targets, multi) {
             pager.innerHTML = `<button type="button" class="btn small" data-cp-page="prev" aria-label="${esc(I18N.t('custom_props_prev_page'))}">${esc(I18N.t('custom_props_prev_page'))}</button><span class="custom-props-page-status tiny" role="status" aria-live="polite"></span><button type="button" class="btn small" data-cp-page="next" aria-label="${esc(I18N.t('custom_props_next_page'))}">${esc(I18N.t('custom_props_next_page'))}</button>`;
             element.appendChild(pager);
         }
-        const rowHtml = (attr) => {
-            const shown = shared.get(attr.id) || { mixed: false };
-            return `<label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, shown, invariants)}</label>`;
-        };
         // Rows are rebuilt per page change — the pager buttons and their
         // listeners persist, so focus never jumps and the user's place survives
-        // a page flip. The enabled/disabled state tracks the page bounds.
+        // a page flip. The enabled/disabled state tracks the page bounds. The
+        // displayed values are re-read from the CURRENT store on every render:
+        // a section built before an edit would otherwise page back to stale
+        // values.
         const renderPage = (page) => {
             const clamped = Math.min(Math.max(0, page), pageCount - 1);
             customPropsPages.set(cacheKey, clamped);
             const start = clamped * CUSTOM_PROPS_PAGE_SIZE;
             const slice = defs.slice(start, start + CUSTOM_PROPS_PAGE_SIZE);
-            rowsHost.innerHTML = slice.map(rowHtml).join('');
+            const shared = sharedCustomPropValues(targets, defs);
+            rowsHost.innerHTML = slice.map(attr => {
+                const shown = shared.get(attr.id) || { mixed: false };
+                return `<label class="field custom-prop-row"><span class="custom-prop-label"><span class="custom-prop-id">${esc(attr.id)}</span> <span class="custom-prop-type">${esc(attr.type)}</span></span>${customPropControlHtml(attr, shown, invariants)}</label>`;
+            }).join('');
             wireCustomProps(element, scope, targets, multi);
             if (pager) {
                 const status = pager.querySelector('.custom-props-page-status');

@@ -263,3 +263,36 @@ test('a deferred selection-panel editor never mounts over a cleared selection', 
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+function graphPropsPaged() {
+  const customAttributes = [];
+  for (let i = 0; i < 101; i++) customAttributes.push({ id: 'attr' + i, scope: 'graph', type: 'string' });
+  return {
+    title: 'graph-props-paged', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [{ id: 'n1', label: 'n1', x: 0, y: 0, order: 0 }],
+    edges: [], settings: {}, customAttributes,
+    graphCustom: { attr0: 'persisted' },
+    viewBox: { x: -500, y: -350, w: 1000, h: 700 },
+  };
+}
+
+test('paging away and back shows the value saved after an edit, not the stale one', async () => {
+  const { dom, errors } = createEditorDom(graphPropsPaged());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  document.querySelector('#tab-data').click();
+  const first = () => document.querySelector('#graphCustomProps [data-custom-attribute="attr0"]');
+  assert.equal(first().value, 'persisted');
+  first().value = 'edited';
+  first().dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  const pager = document.querySelector('#graphCustomProps .custom-props-pager');
+  assert.ok(pager, '101 definitions need the pager');
+  pager.querySelector('[data-cp-page="next"]').click();
+  await nextFrame(window);
+  pager.querySelector('[data-cp-page="prev"]').click();
+  await nextFrame(window);
+  assert.equal(document.querySelector('#graphCustomProps [data-custom-attribute="attr0"]').value, 'edited', 'the page re-render reads the live store, not the build-time snapshot');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
