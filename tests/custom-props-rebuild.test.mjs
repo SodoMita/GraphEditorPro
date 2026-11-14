@@ -234,3 +234,32 @@ test('closed panels mount their custom properties lazily on first open', async (
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a deferred selection-panel editor never mounts over a cleared selection', async () => {
+  const { dom, errors } = createEditorDom(bigGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  // Open the Data tab first (the Edit tab — with the selection panel — goes
+  // hidden), THEN select the node: the custom-section mount is deferred while
+  // the panel cannot be seen.
+  document.querySelector('#tab-data').click();
+  await selectNode(window, document, 'n1', 300, 350);
+
+  // Deselect by clicking the empty canvas: the panel becomes "Nothing selected."
+  const svg = document.querySelector('#graphCanvas');
+  document.elementFromPoint = () => null;
+  dispatchPointer(window, svg, 'pointerdown', { pointerId: 1, clientX: 20, clientY: 20 });
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 20, clientY: 20 });
+  await settle(window, 150);
+
+  // Reveal the Edit tab: the stale deferred mount must NOT clobber the empty
+  // state, and no editor for the deselected node may appear.
+  document.querySelector('#tab-edit').click();
+  await settle(window, 60);
+  const panel = document.querySelector('#selectionPanel');
+  assert.match(panel.textContent, /nothing selected/i, 'the cleared panel keeps its empty state');
+  assert.equal(panel.querySelectorAll('[data-custom-attribute]').length, 0, 'no stale editor is mounted over it');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

@@ -3804,6 +3804,12 @@ function customPropHostHidden(host) {
 function flushPendingCustomPropHosts() {
     if (!pendingCustomPropHosts.length)
         return;
+    // Identity sets of the entities the document holds right now. A deferred
+    // request targets object references; undo/import replaces them, so a
+    // pending request whose targets are no longer live would edit a detached
+    // object — it is dropped instead.
+    const liveNodes = new Set(state.nodes);
+    const liveEdges = new Set(state.edges);
     for (let index = pendingCustomPropHosts.length - 1; index >= 0; index--) {
         const pending = pendingCustomPropHosts[index];
         if (!pending.host.isConnected) {
@@ -3812,6 +3818,12 @@ function flushPendingCustomPropHosts() {
         }
         if (customPropHostHidden(pending.host))
             continue;
+        const targetsAlive = pending.targets.every(target => target === 'graph' || target === 'node-defaults' || target === 'edge-defaults'
+            || liveNodes.has(target) || liveEdges.has(target));
+        if (!targetsAlive) {
+            pendingCustomPropHosts.splice(index, 1);
+            continue;
+        }
         pendingCustomPropHosts.splice(index, 1);
         mountCustomProps(pending.host, pending.placeholder, pending.cacheKey, pending.scope, pending.targets, pending.multi);
     }
@@ -3961,6 +3973,10 @@ function mountCustomProps(host, placeholder, cacheKey, scope, targets, multi) {
             marker.replaceWith(element);
             return;
         }
+        // The placeholder vanished since the request was made (e.g. the
+        // selection was cleared): the request is stale and must not clobber
+        // whatever the host shows now — least of all "Nothing selected.".
+        return;
     }
     if (host.childElementCount === 1 && host.firstElementChild === element)
         return;
