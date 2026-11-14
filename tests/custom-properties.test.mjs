@@ -1761,3 +1761,42 @@ test('the integer-typed field resyncs to the stored value after commit (042 comm
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('an appended graph property with a different origin cannot overwrite the existing graph value', async () => {
+  // Identity of a definition across imports is the recorded origin. An
+  // incoming graph property sharing the id AND the name but recording a
+  // different origin is a different property: it must mint its own
+  // definition, never merge onto the existing one and overwrite its value.
+  const graph = { ...customPropertiesGraph(),
+    customAttributes: [{ id: 'capacity', scope: 'graph', type: 'int', name: 'capacity', origin: 'capkey' }],
+    graphCustom: { capacity: 100 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+
+  const appended = {
+    title: 'appended', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [{ id: 'app1', label: 'App', x: 400, y: 200, order: 2 }],
+    edges: [],
+    customAttributes: [{ id: 'capacity', scope: 'graph', type: 'int', name: 'capacity', origin: 'env_9' }],
+    graphCustom: { capacity: 999 },
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  modal.querySelector('textarea').value = JSON.stringify(appended);
+  modal.querySelector('#expAppendChk').click();
+  modal.querySelector('#expImportBtn').click();
+  await nextFrame(window); await settle(window, 60);
+
+  const out = exportGraph(document);
+  assert.equal(out.graphCustom.capacity, 100, 'the existing property keeps its graph value');
+  const minted = (out.customAttributes || []).filter(a => a.id !== 'capacity' && String(a.origin) === 'env_9');
+  assert.equal(minted.length, 1, 'the incoming property mints its own definition');
+  assert.equal(out.graphCustom[minted[0].id], 999, 'its value binds to the new definition');
+  assert.equal(out.customAttributes.filter(a => a.id === 'capacity').length, 1, 'the original definition is untouched');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

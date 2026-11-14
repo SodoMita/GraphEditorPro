@@ -831,7 +831,18 @@
       const pairHit = byPair.get(pairKey) ?? (scope !== 'all' ? byPair.get(id + '|all') : undefined);
       if(pairHit){
         const pn = String(pairHit?.name ?? '').trim().toLowerCase(), inn = String(inc.name ?? '').trim().toLowerCase();
-        if(!pn || !inn || pn === inn) continue; // merges without capacity
+        const namesMerge = !pn || !inn || pn === inn;
+        // Identity across imports is the recorded origin (a re-exported
+        // payload keeps the key id its definition was minted from; an older
+        // payload defaults it to the carried id) — the exact-pair branch is
+        // the same identity question for the exact id. Both sides recording
+        // conflicting origins proves a different property sharing the id, so
+        // it falls through to minting; a definition without a recorded
+        // origin keeps the committed contract and merges for free.
+        const pairOrigin = String((pairHit as AnyRecord)?.origin ?? '').trim();
+        const incOriginPair = String((inc as AnyRecord)?.origin ?? '').trim() || id;
+        const originsMerge = !pairOrigin || pairOrigin === incOriginPair;
+        if(namesMerge && originsMerge) continue; // merges without capacity
       }
       // 2) Provenance reuse — the property already lives under another id.
       // Identity outranks name: a definition created by an earlier import
