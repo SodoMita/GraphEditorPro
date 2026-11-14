@@ -1800,3 +1800,48 @@ test('an appended graph property with a different origin cannot overwrite the ex
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('two distinct same-name properties cannot both claim one all-scope definition on paste', async () => {
+  // A hand-built clipboard payload: one node carrying TWO custom keys
+  // ('metric' and 'load'). Both definitions are named 'metric' and recorded
+  // with the same origin — two distinct properties (different key ids), one
+  // document-wide definition 'allMetric' that matches either of them by
+  // identity. A definition can be claimed at most once per paste; the second
+  // must not also resolve to it — otherwise both value keys remap onto
+  // 'allMetric' and the second assignment overwrites the first.
+  const payload = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { metric: 'val-metric', load: 'val-load' } }],
+    edges: [],
+    externalEdges: [],
+    customAttributes: [
+      { id: 'metric', scope: 'node', type: 'string', name: 'metric', origin: 'env' },
+      { id: 'load', scope: 'node', type: 'string', name: 'metric', origin: 'env' },
+    ],
+  };
+  const target = { title: 'target', mode: 'select', nextNode: 1, nextEdge: 1,
+    nodes: [], edges: [],
+    customAttributes: [{ id: 'allMetric', scope: 'all', type: 'string', name: 'metric', origin: 'env' }],
+    graphCustom: {}, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(target);
+  const { window } = dom; const { document } = window;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => JSON.stringify(payload) },
+  });
+  await nextFrame(window);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window); await settle(window, 60);
+
+  const exported = exportGraph(document);
+  const node = exported.nodes[0];
+  const defs = exported.customAttributes || [];
+  assert.equal(node.custom.allMetric, 'val-metric', 'the first property keeps its value on the shared definition');
+  assert.equal(node.custom.load, 'val-load', 'the second property keeps its value under its own key');
+  assert.ok(defs.some(a => a.scope === 'all' && a.id === 'allMetric'), 'the shared definition survives');
+  assert.ok(defs.some(a => a.id === 'load' && a.scope === 'node'), 'the second property is defined on its own id');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

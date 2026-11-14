@@ -8753,7 +8753,13 @@ function pasteClipboardInternal(fromSystemClipboard) {
             });
         if (prior) {
             renameByPair.set(key, prior.id);
-            claimed.add(prior.id + '|' + scope);
+            // Claim the definition under ITS OWN scope — the exclusion scans in
+            // the two candidate queries probe with the candidate's attribute.scope.
+            // Claiming an 'all' definition adopted for a narrower carried pair
+            // under the carried scope would leave it unclaimed for those scans,
+            // and a second distinct carried property named the same would be
+            // granted the same definition (its values landing on the first's).
+            claimed.add(prior.id + '|' + String(prior?.scope ?? scope));
             handledPairs.add(key);
             return;
         }
