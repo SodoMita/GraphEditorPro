@@ -1974,3 +1974,5 @@ test('graph property controls rebuild when a same-shaped import changes the valu
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+

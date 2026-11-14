@@ -3632,3 +3632,45 @@ test('a blank graph-level <data> is stated evidence of a graph-scoped property',
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('long GraphML key ids sharing a prefix keep their values bound to their own definitions', async () => {
+  // Two foreign keys whose ids only differ past the 128-character storage
+  // limit. Both definitions survive (they are distinct properties), and each
+  // value must land on the definition its own key declared — truncating the
+  // definition ids without remapping the value keys bound both values to one
+  // definition, losing the first.
+  const longA = 'k'.repeat(140) + 'A';
+  const longB = 'k'.repeat(140) + 'B';
+  const graphml = [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    `  <key id="${longA}" for="node" attr.name="longa" attr.type="string"/>`,
+    `  <key id="${longB}" for="node" attr.name="longb" attr.type="string"/>`,
+    '  <graph edgedefault="directed">',
+    `    <node id="n1"><data key="${longA}">first-value</data></node>`,
+    `    <node id="n2"><data key="${longB}">second-value</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const saved = { title: 'long-keys', nodes: [], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  await settle(dom.window, 60);
+  await paste(document, dom.window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes;
+  assert.equal(defs.length, 2, 'both definitions survive');
+  assert.ok(defs.every(d => d.id.length <= 128), 'definition ids are truncated to 128 characters');
+  assert.notEqual(defs[0].id, defs[1].id, 'and remain distinct');
+  const defA = defs.find(d => d.name === 'longa');
+  const defB = defs.find(d => d.name === 'longb');
+  assert.ok(defA && defB, 'the two properties keep their own names');
+  const n1 = graph.nodes.find(n => n.id === 'n1');
+  const n2 = graph.nodes.find(n => n.id === 'n2');
+  assert.equal(n1?.custom?.[defA.id], 'first-value', 'the first key binds the first value');
+  assert.equal(n2?.custom?.[defB.id], 'second-value', 'the second key binds the second value');
+  assert.equal(Object.keys(n1?.custom ?? {}).length, 1, 'no value is stranded or duplicated');
+  assert.equal(Object.keys(n2?.custom ?? {}).length, 1);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

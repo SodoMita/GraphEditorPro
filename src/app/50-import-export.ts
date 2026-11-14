@@ -816,7 +816,14 @@
     let skipped = 0, renamed = 0;
     for(const raw of Array.isArray(defs) ? defs : []){
       if(!isRecord(raw)) continue; // unparseable: sanitize drops it too
-      const id = String(raw.id ?? '').trim().slice(0, 128);
+      // The payload's value keys spell the id the way the payload wrote it,
+      // not the truncated storage form — keep that spelling. Truncating
+      // first and then keying the value remap by the truncated id made two
+      // keys sharing their first 128 characters collide onto one entry, and
+      // every value bound to the surviving definition went to whichever was
+      // remapped last.
+      const origId = String(raw.id ?? '');
+      const id = origId.trim().slice(0, 128);
       if(!id) continue; // no id: sanitize drops it too
       const scope = scopeOf(raw);
       const pairKey = id + '|' + scope;
@@ -842,7 +849,10 @@
         const pairOrigin = String((pairHit as AnyRecord)?.origin ?? '').trim();
         const incOriginPair = String((inc as AnyRecord)?.origin ?? '').trim() || id;
         const originsMerge = !pairOrigin || pairOrigin === incOriginPair;
-        if(namesMerge && originsMerge) continue; // merges without capacity
+        if(namesMerge && originsMerge){ // merges without capacity
+          renameByPair.set(scope + '|' + origId, String(pairHit.id));
+          continue;
+        }
       }
       // 2) Provenance reuse — the property already lives under another id.
       // Identity outranks name: a definition created by an earlier import
@@ -873,7 +883,7 @@
         && e?.origin && String(e.origin) === incOrigin
         && nameAgreement(e));
       if(identity){
-        renameByPair.set(scope + '|' + id, String(identity.id));
+        renameByPair.set(scope + '|' + origId, String(identity.id));
         claimed.add(pairOf2(identity.id, scopeOf(identity)));
         continue; // free reuse
       }
@@ -884,7 +894,7 @@
           && (!e?.origin || String(e.origin) === incOrigin)
           && provMatch(e, inc));
         if(reused){
-          renameByPair.set(scope + '|' + id, String(reused.id));
+          renameByPair.set(scope + '|' + origId, String(reused.id));
           claimed.add(pairOf2(reused.id, scopeOf(reused)));
           continue; // free reuse
         }
@@ -902,7 +912,7 @@
         for(const a of kept) taken.add(String(a?.id));
         for(const carried of fileKeys) taken.add(carried);
         finalId = uniqueCustomAttributeId(id, taken);
-        renameByPair.set(scope + '|' + id, finalId);
+        renameByPair.set(scope + '|' + origId, finalId);
         // Record the carried id as the name when there is none — it is the
         // property's identity across imports, and without it the next import
         // of the same file cannot find this definition and mints another.
@@ -911,6 +921,7 @@
         byId.add(finalId);
       } else {
         byId.add(id);
+        if(origId !== id) renameByPair.set(scope + '|' + origId, id);
       }
       const def = finalId === id ? inc : {...inc, id: finalId};
       // Record the carried key id this definition was minted from — the
