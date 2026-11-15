@@ -842,10 +842,13 @@
   // caller can drop them explicitly.
   function coerceCustomValueForType(value: CustomAttributeValue, type: string): CustomAttributeValue | undefined {
     if(type === 'string') return String(value).slice(0, CUSTOM_VALUE_MAX);
+    // A value that is empty or all-whitespace is a stated empty — it migrates
+    // to the SAME stored string (never to '', and never to 0/false).
+    const statedEmpty = (): string => String(value ?? '').slice(0, CUSTOM_VALUE_MAX);
     if(type === 'boolean'){
       if(typeof value === 'boolean') return value;
       const text = String(value ?? '').trim();
-      if(text === '') return ''; // a stated empty survives verbatim
+      if(text === '') return statedEmpty(); // a stated empty survives verbatim
       if(/^(true|1|yes|on)$/i.test(text)) return true;
       if(/^(false|0|no|off)$/i.test(text)) return false;
       return undefined;
@@ -853,7 +856,7 @@
     if(type === 'int' || type === 'long'){
       if(typeof value === 'boolean') return undefined; // a truthy flag is not a number
       const text = String(value ?? '').trim();
-      if(text === '') return ''; // a stated empty survives verbatim, never 0
+      if(text === '') return statedEmpty(); // a stated empty survives verbatim, never 0
       const parsed = parseIntegerText(text, type); // text is non-empty, so 'empty' is unreachable here
       if(parsed.kind === 'empty') return ''; // unreachable, but keeps the types honest
       if(parsed.kind === 'invalid') return undefined; // not a stated empty and not representable — drop as before
@@ -866,7 +869,7 @@
     if(type === 'float' || type === 'double'){
       if(typeof value === 'boolean') return undefined;
       const text = String(value ?? '').trim();
-      if(text === '') return ''; // a stated empty survives verbatim, never Number('')===0
+      if(text === '') return statedEmpty(); // a stated empty survives verbatim, never Number('')===0
       const numeric = Number(text);
       return Number.isFinite(numeric) ? numeric : undefined;
     }
