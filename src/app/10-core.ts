@@ -383,6 +383,33 @@
     taken.add(fallback);
     return fallback;
   }
+  // Identity for an origin that may be arbitrarily long. Capping it (any
+  // finite cap) conflates foreign keys that differ only past the cap, so a
+  // long origin is stored as a deterministic fingerprint of the FULL string
+  // instead. Every origin comparison in the app compares recorded origins,
+  // normalization at ingress is idempotent, and the 106-bit fingerprint keeps
+  // distinct keys distinct. Origins at or below ORIGIN_IDENTITY_MAX pass
+  // through verbatim, so ordinary documents are byte-identical to before.
+  const ORIGIN_IDENTITY_MAX = 256;
+  function cyrb53(str: string, seed: number): number {
+    let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+    h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+    h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+  }
+  function originIdentity(value: unknown): string {
+    const s = String(value ?? '').trim();
+    if(s.length <= ORIGIN_IDENTITY_MAX) return s;
+    return 'h106:' + cyrb53(s, 0).toString(16).padStart(14, '0') + cyrb53(s, 0x9e3779b9).toString(16).padStart(14, '0');
+  }
+
   // Custom-value maps must carry their keys as OWN properties: a user-chosen
   // id like "__proto__" must never mutate a prototype or shadow inherited
   // members. Everything the app creates is already null-prototyped; this copies
@@ -1393,11 +1420,12 @@
         // read with. Keep `origin` for the same reason: it is the carried key
         // id the definition was minted from, which re-imports match against.
         // The name is a display heuristic (capped); the origin is identity —
-        // capping it at ANY length would merge foreign keys that differ only
-        // past the cap, so it is stored in full. Two such keys round-trip as
-        // distinct properties; anything shorter cannot tell them apart.
+        // stored bounded but lossless: full text up to the identity bound, a
+        // deterministic fingerprint beyond it, so two foreign keys differing
+        // only past the bound never conflate and the state stays small
+        // enough to persist.
         const rawName = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128);
-        const rawOrigin = String((attribute as AnyRecord).origin ?? '').trim();
+        const rawOrigin = originIdentity(attribute.origin);
         const out: AnyRecord = {id, scope, type};
         if(rawName && rawName !== id) out.name = rawName;
         if(rawOrigin) out.origin = rawOrigin;

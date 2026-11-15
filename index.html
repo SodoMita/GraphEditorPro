@@ -2875,6 +2875,33 @@ function uniqueCustomAttributeId(base, taken) {
     taken.add(fallback);
     return fallback;
 }
+// Identity for an origin that may be arbitrarily long. Capping it (any
+// finite cap) conflates foreign keys that differ only past the cap, so a
+// long origin is stored as a deterministic fingerprint of the FULL string
+// instead. Every origin comparison in the app compares recorded origins,
+// normalization at ingress is idempotent, and the 106-bit fingerprint keeps
+// distinct keys distinct. Origins at or below ORIGIN_IDENTITY_MAX pass
+// through verbatim, so ordinary documents are byte-identical to before.
+const ORIGIN_IDENTITY_MAX = 256;
+function cyrb53(str, seed) {
+    let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0; i < str.length; i++) {
+        const ch = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+    h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+    h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+function originIdentity(value) {
+    const s = String(value ?? '').trim();
+    if (s.length <= ORIGIN_IDENTITY_MAX)
+        return s;
+    return 'h106:' + cyrb53(s, 0).toString(16).padStart(14, '0') + cyrb53(s, 0x9e3779b9).toString(16).padStart(14, '0');
+}
 // Custom-value maps must carry their keys as OWN properties: a user-chosen
 // id like "__proto__" must never mutate a prototype or shadow inherited
 // members. Everything the app creates is already null-prototyped; this copies
@@ -4061,11 +4088,12 @@ function sanitizeState(input) {
         // read with. Keep `origin` for the same reason: it is the carried key
         // id the definition was minted from, which re-imports match against.
         // The name is a display heuristic (capped); the origin is identity —
-        // capping it at ANY length would merge foreign keys that differ only
-        // past the cap, so it is stored in full. Two such keys round-trip as
-        // distinct properties; anything shorter cannot tell them apart.
+        // stored bounded but lossless: full text up to the identity bound, a
+        // deterministic fingerprint beyond it, so two foreign keys differing
+        // only past the bound never conflate and the state stays small
+        // enough to persist.
         const rawName = String(attribute.name ?? '').trim().slice(0, 128);
-        const rawOrigin = String(attribute.origin ?? '').trim();
+        const rawOrigin = originIdentity(attribute.origin);
         const out = { id, scope, type };
         if (rawName && rawName !== id)
             out.name = rawName;
@@ -8878,9 +8906,9 @@ function pasteClipboardInternal(fromSystemClipboard) {
             return null;
         const name = String(def.name ?? '').trim().slice(0, 128);
         // The origin is identity data (the carried key id the definition was
-        // minted from) — capped only by the value limit, never at the id cap,
-        // or two long foreign keys sharing a prefix merge on the next paste.
-        const origin = String(def.origin ?? '').trim(); // identity — never truncated
+        // minted from) — stored in full up to the identity bound, then as a
+        // fingerprint of the full string; both spellings are equality-stable.
+        const origin = originIdentity(def.origin);
         return { id, fullId, scope: scope, type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
     })
         .filter((def) => def !== null);
@@ -12891,7 +12919,7 @@ function capCustomDefinitions(defs, existingDefs) {
             // free merge. Without this, two keys sharing the 128-char prefix of
             // an unproven definition both bound to it and overwrote each other.
             const pairOrigin = String(pairHit?.origin ?? '').trim() || String(pairHit?.id ?? '').trim();
-            const incOriginPair = String(inc?.origin ?? '').trim() || fullId;
+            const incOriginPair = originIdentity(inc?.origin) || originIdentity(fullId);
             const originsMerge = pairOrigin === incOriginPair;
             if (namesMerge && originsMerge) { // merges without capacity
                 renameByPair.set(scope + '|' + origId, String(pairHit.id));
@@ -12914,7 +12942,7 @@ function capCustomDefinitions(defs, existingDefs) {
         // specific key id and may not drift onto a different one. A
         // definition claimed by an earlier property in this file is likewise
         // no longer a candidate.
-        const incOrigin = String(inc?.origin ?? '').trim() || fullId;
+        const incOrigin = originIdentity(inc.origin) || originIdentity(fullId);
         const incNameLc = String(inc.name ?? '').trim().toLowerCase();
         const nameAgreement = (e) => {
             const en = String(e?.name ?? '').trim().toLowerCase();
@@ -12981,7 +13009,7 @@ function capCustomDefinitions(defs, existingDefs) {
         // earlier definition keeps the origin it was minted from; a fresh
         // mint defaults it to the carried id. The recorded name stays the
         // attr.name for export spelling.
-        const keepOrigin = String(inc?.origin ?? '').trim() || fullId;
+        const keepOrigin = originIdentity(String(inc?.origin ?? '').trim() || fullId);
         // Register the origin-bearing copy in byPair too — the exact-pair
         // branch above compares recorded origins to tell same-named keys
         // apart, and a minted definition without its origin in the pair map
@@ -13679,7 +13707,7 @@ function parseGraphml(text) {
         const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
         const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
             : (marked && recordedId ? recordedId : keyId);
-        const origin = k.getAttributeNS(QVGE_NS, 'origin') || '';
+        const origin = originIdentity(k.getAttributeNS(QVGE_NS, 'origin') || '');
         return { keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2, origin };
     });
     // -- Derived views: the only things the readers touch -----------------------

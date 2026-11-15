@@ -3965,3 +3965,37 @@ test('foreign graph keys differing only after character 1000 survive export and 
   assert.deepEqual(second.errors.map(e => e.message), []);
   second.dom.window.close();
 });
+
+test('a multi-megabyte foreign key id cannot leave the imported document un-persisted', async () => {
+  // Origins are stored without a bound; with a key id of several megabytes
+  // the accepted import produced a state bigger than jsdom's 5M-char
+  // localStorage quota. Autosave failed silently-ish (a toast), storage
+  // kept the PREVIOUS document, and reopening lost the import.
+  const bigKey = 'K'.repeat(5_100_000);
+  const saved = { title: 'quota-doc', nodes: [{ id: 'previousNode', label: 'old', x: 0, y: 0, order: 0 }], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom; const {document} = window;
+  await settle(window, 80);
+  assert.equal(JSON.parse(window.localStorage.getItem('graph-editor-pro-v2')).nodes[0].id, 'previousNode');
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    `  <key id="${bigKey}" for="node" attr.name="bigprop" attr.type="string" qvge:kind="custom-attribute"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="importedNode"><data key="${bigKey}">value-big</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  assert.ok(graphml.length > 5_000_000, 'the fixture really exceeds the 5M-char storage quota');
+  await paste(document, window, '#btnPasteGraphml', graphml);
+  window.dispatchEvent(new window.Event('pagehide'));
+  const raw = window.localStorage.getItem('graph-editor-pro-v2');
+  assert.ok(raw, 'autosave wrote the document');
+  const stored = JSON.parse(raw);
+  assert.ok(stored.nodes.some(n => n.id === 'importedNode'), 'the persisted document is the imported one, not a stale previous save');
+  const attr = (stored.customAttributes || []).find(a => a.name === 'bigprop');
+  assert.ok(attr, 'the definition persisted');
+  assert.ok(String(attr.origin).length <= 256, `the origin is stored bounded (fingerprint), got ${String(attr.origin).length} chars`);
+  assert.equal(stored.nodes.find(n => n.id === 'importedNode').custom[attr.id], 'value-big', 'the value round-trips');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

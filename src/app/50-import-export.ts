@@ -855,7 +855,7 @@
         // free merge. Without this, two keys sharing the 128-char prefix of
         // an unproven definition both bound to it and overwrote each other.
         const pairOrigin = String((pairHit as AnyRecord)?.origin ?? '').trim() || String(pairHit?.id ?? '').trim();
-        const incOriginPair = String((inc as AnyRecord)?.origin ?? '').trim() || fullId;
+        const incOriginPair = originIdentity((inc as AnyRecord)?.origin) || originIdentity(fullId);
         const originsMerge = pairOrigin === incOriginPair;
         if(namesMerge && originsMerge){ // merges without capacity
           renameByPair.set(scope + '|' + origId, String(pairHit.id));
@@ -878,7 +878,7 @@
       // specific key id and may not drift onto a different one. A
       // definition claimed by an earlier property in this file is likewise
       // no longer a candidate.
-      const incOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || fullId;
+      const incOrigin = originIdentity(inc.origin) || originIdentity(fullId);
       const incNameLc = String(inc.name ?? '').trim().toLowerCase();
       const nameAgreement = (e: AnyRecord | undefined) => {
         const en = String(e?.name ?? '').trim().toLowerCase();
@@ -937,7 +937,7 @@
       // earlier definition keeps the origin it was minted from; a fresh
       // mint defaults it to the carried id. The recorded name stays the
       // attr.name for export spelling.
-      const keepOrigin = String((inc as AnyRecord)?.origin ?? '').trim() || fullId;
+      const keepOrigin = originIdentity(String((inc as AnyRecord)?.origin ?? '').trim() || fullId);
       // Register the origin-bearing copy in byPair too — the exact-pair
       // branch above compares recorded origins to tell same-named keys
       // apart, and a minted definition without its origin in the pair map
@@ -1541,7 +1541,7 @@
       const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
       const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
         : (marked && recordedId ? recordedId : keyId);
-      const origin = k.getAttributeNS(QVGE_NS, 'origin') || '';
+      const origin = originIdentity(k.getAttributeNS(QVGE_NS, 'origin') || '');
       return {keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2, origin};
     });
 
