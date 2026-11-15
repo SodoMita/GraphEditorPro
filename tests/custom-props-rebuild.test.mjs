@@ -117,11 +117,17 @@ test('a byte-identical repaint at 2000 definitions reuses the panel and its cust
   // stated text verbatim (the same contract as import and editing), so the
   // panel re-renders with the value it kept — proving the definition edit
   // propagated through the cache path rather than being swallowed by it.
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const defRows = [...document.querySelectorAll('#customAttributesList .custom-attribute-row')];
   const attr0Row = defRows.find(r => r.querySelector('[data-attribute-field="id"]').value === 'attr0');
   attr0Row.querySelector('[data-attribute-field="type"]').value = 'int';
   attr0Row.querySelector('[data-attribute-action="save"]').click();
   await settle(window, 250);
+  // Switch back to the Edit panel: the selection panel's rebuild deferred
+  // while the Data tab was active, and only the switch mounts it — so this
+  // assertion observes the post-migration render, not the stale DOM.
+  document.querySelector('#tab-edit').click();
+  await nextFrame(window);
   assert.equal(row().value, '42.6', 'the migrated definition keeps the stated text verbatim');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();

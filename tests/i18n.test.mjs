@@ -298,12 +298,14 @@ test('the type-change toast declines the value count correctly in both languages
       const { window } = dom;
       const document = window.document;
       await settle(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
       if (lang === 'ru') await switchToRussian(document, window);
       const row = [...document.querySelectorAll('.custom-attribute-row')]
         .find(element => element.querySelector('[data-attribute-field="id"]').value === 'cap');
       row.querySelector('[data-attribute-field="type"]').value = 'int';
       row.querySelector('[data-attribute-action="save"]').click();
       await settle(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
       const toastText = [...document.querySelectorAll('.toast')].map(element => element.textContent).join(' | ');
       const expected = lang === 'ru' ? ru : en;
       assert.ok(toastText.includes(expected), `${lang}: expected "${expected}" in "${toastText}"`);

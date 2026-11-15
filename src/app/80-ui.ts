@@ -16,7 +16,7 @@
       const type = CUSTOM_ATTRIBUTE_TYPES.includes(typeValue) ? typeValue : 'string';
       state.customAttributes.push({id, scope: scope as GraphState['customAttributes'][number]['scope'], type});
       idInput.value = '';
-      renderCustomAttributes(); renderCustomPropHosts(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
+      flushDeferredCustomAttributes(); renderCustomPropHosts(); pushHistory('add custom attribute'); toast(I18N.t('attribute_added'));
     });
     $('#customAttributesList').addEventListener('click', async ev => {
       const button = ev.target.closest('[data-attribute-action]');
@@ -28,7 +28,7 @@
         const removedId = state.customAttributes[index].id;
         state.customAttributes.splice(index, 1);
         stripCustomAttributeValues(removedId);
-        renderCustomAttributes(); renderCustomPropHosts(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
+        flushDeferredCustomAttributes(); renderCustomPropHosts(); pushHistory('delete custom attribute'); toast(I18N.t('attribute_deleted')); return;
       }
       const oldDef = state.customAttributes[index];
       const oldId = oldDef.id, oldType = oldDef.type;
@@ -83,7 +83,7 @@
       // A type change rewrites every stored value; values that cannot be
       // represented in the new type are dropped (undo restores all of them).
       const dropped = oldType !== resolvedType ? migrateCustomValuesForType(id, resolvedType) : 0;
-      renderCustomAttributes(); renderCustomPropHosts(); pushHistory('edit custom attribute');
+      flushDeferredCustomAttributes(); renderCustomPropHosts(); pushHistory('edit custom attribute');
       toast(dropped > 0 ? I18N.t('attribute_type_changed', { n: dropped }) : I18N.t('attribute_updated'));
     });
     canvasWrap.addEventListener('selectstart', ev => { if(!isCanvasOverlayControl(ev.target)) ev.preventDefault(); });
@@ -114,6 +114,7 @@
       });
       // A newly revealed panel may have deferred custom-property sections —
       // mount them now, synchronously, so the panel is complete on first paint.
+      if(target === 'data') flushDeferredCustomAttributes();
       flushPendingCustomPropHosts();
     };
     // The sheet is sized by content (up to 60dvh), so its height cannot be

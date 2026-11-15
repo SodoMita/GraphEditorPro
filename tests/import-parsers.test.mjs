@@ -1588,6 +1588,7 @@ test('an unmarked key that binds to a built-in field never becomes a definition'
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
 
   const rows = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
@@ -1621,6 +1622,7 @@ test('a user definition named after a built-in field survives its own round-trip
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   document.querySelector('#btnExportGraphml').click();
   const graphml = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
@@ -1675,6 +1677,7 @@ test('a definition keeps its id through export and re-import, even when it looks
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.deepEqual(ids.sort(), ['arrowSize', 'weight'], 'both are definitions');
@@ -1708,6 +1711,7 @@ test('a GraphML export from the previous build keeps its definitions', async () 
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   document.querySelector('#btnExportGraphml').click();
   const current = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
@@ -1744,6 +1748,7 @@ test('a foreign key that looks namespaced keeps its own id instead of collapsing
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   let ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.deepEqual(ids.sort(), ['qvge.custom.score', 'score'], 'both keys survive as distinct definitions');
@@ -1769,6 +1774,7 @@ test('a definition\'s data never feeds the built-in field of the same name', asy
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
@@ -1817,6 +1823,7 @@ test('an export from main (41 keys, no marker) keeps its custom definitions', as
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.deepEqual(ids.sort(), ['name', 'style', 'value'], 'all three definitions survive');
@@ -1838,6 +1845,7 @@ test('a definition cannot capture a built-in value or default', async () => {
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
 
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
@@ -1869,6 +1877,7 @@ test('definitions survive a re-serialised namespace prefix', async () => {
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   document.querySelector('#btnExportGraphml').click();
   const exported = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
@@ -1903,6 +1912,7 @@ test('a marked key whose id is a bare field name cannot set a built-in value', a
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
 
   document.querySelector('#btnExportGraphml').click();
@@ -1937,6 +1947,7 @@ test('a foreign file reusing our key ids for other attributes keeps its definiti
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const defs = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.equal(defs.length, ids.length + edgeIds.length, 'every definition is kept');
@@ -1959,6 +1970,7 @@ test('a key declared without `for` is kept, not dropped (GraphML default is "all
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   let rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => ({
     id: row.querySelector('[data-attribute-field="id"]').value,
@@ -2045,6 +2057,7 @@ test('every custom definition id survives an export/import cycle, however it is 
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const idsOf = () => [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value).sort();
   assert.deepEqual(idsOf(), [...ids].sort(), 'every definition is accepted up front');
 
@@ -2102,6 +2115,7 @@ test('a cross-scope case collision does not drop a definition either', async () 
   ].join('\n');
   const {dom, errors} = createEditorDom();
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await paste(document, dom.window, '#btnPasteGraphml', graphml);
   const rows = [...document.querySelectorAll('.custom-attribute-row')].map(row => ({
     id: row.querySelector('[data-attribute-field="id"]').value,
@@ -3088,11 +3102,13 @@ test('growing a graph definition to all is additive — no confirmation, the val
   const {window} = dom;
   const {document} = window;
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
   assert.equal(rowSelect()?.value, 'graph');
   rowSelect().value = 'all';
   document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   assert.equal(document.querySelector('.app-dialog'), null, 'no confirmation is asked when growing to all');
   const graph = exportedGraph(document);
   assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'all', 'the definition is all-scope now');
@@ -3111,15 +3127,18 @@ test('narrowing an all definition asks for confirmation and drops only the lost 
   const {window} = dom;
   const {document} = window;
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
   assert.equal(rowSelect()?.value, 'all');
   rowSelect().value = 'node';
   document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const dialog = document.querySelector('.app-dialog');
   assert.ok(dialog, 'narrowing out of all asks for a danger confirmation');
   dialog.querySelector('[data-dialog-ok]').click();
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const graph = exportedGraph(document);
   assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'node', 'the definition is node-scope now');
   assert.equal(graph.graphCustom?.metric, undefined, 'the graph value is discarded');
@@ -3139,14 +3158,17 @@ test('cancelling the narrowing confirmation leaves every value untouched', async
   const {window} = dom;
   const {document} = window;
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const rowSelect = () => document.querySelector('#customAttributesList .custom-attribute-row [data-attribute-field="scope"]');
   rowSelect().value = 'node';
   document.querySelector('#customAttributesList [data-attribute-action="save"]').click();
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const dialog = document.querySelector('.app-dialog');
   assert.ok(dialog, 'narrowing asks for confirmation');
   dialog.querySelector('[data-dialog-cancel]').click();
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const graph = exportedGraph(document);
   assert.equal(graph.customAttributes.find(d => d.id === 'metric')?.scope, 'all', 'the definition stays all-scope');
   assert.equal(graph.graphCustom?.metric, 'graph-value', 'the graph value is kept');
@@ -3526,26 +3548,32 @@ test('Ctrl+Z behind a modal confirm does not revert history (the narrowing-confi
   const {document} = dom.window;
   const {window} = dom;
   await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   // Delete "doomed" through the panel button: this pushes a history entry.
   const rows = () => [...document.querySelectorAll('#customAttributesList [data-custom-attribute]')];
   const doomedRow = rows().find(row => row.querySelector('[data-attribute-field="id"]')?.value === 'doomed');
   doomedRow.querySelector('[data-attribute-action="delete"]').click();
   await settle(window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   assert.equal(rows().length, 1, 'the attribute is deleted');
   // Open the clear-graph confirm (any modal proves the gate).
   document.querySelector('#btnClear').click();
   await settle(window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   assert.ok(document.querySelector('.app-dialog'), 'the confirm dialog opens');
   // Ctrl+Z while the dialog is open must not resurrect the deleted attribute.
   window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true }));
   await settle(window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   assert.equal(rows().length, 1, 'history is not reverted behind the modal');
   document.querySelector('.app-dialog [data-dialog-cancel]').click();
   await settle(window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   assert.equal(rows().length, 1, 'still deleted after the dialog closes');
   // And the app shortcut works again once the dialog is gone.
   window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true }));
   await settle(window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   assert.equal(rows().length, 2, 'undo works again after the dialog closes');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();

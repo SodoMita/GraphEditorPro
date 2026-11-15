@@ -1136,7 +1136,7 @@
       for(const node of data.nodes) remapCustom(node, 'node');
       for(const { entity: edge } of materializedEdges) remapCustom(edge, 'edge');
     }
-    if(defsToAdd.length){ renderCustomAttributes(); renderCustomPropHosts(); }
+    if(defsToAdd.length){ flushDeferredCustomAttributes(); renderCustomPropHosts(); }
     if(skipped) toast(I18N.t('attribute_import_skipped', { n: skipped }));
     if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
     // Coerce carried values against the definitions applicable to each

@@ -208,6 +208,7 @@ test('deleting a definition strips its values; renaming migrates them', async ()
   const { dom, errors } = createEditorDom(customPropertiesGraph());
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
 
   const rows = [...document.querySelectorAll('.custom-attribute-row')];
   const capacityRow = rows.find(row => row.querySelector('[data-attribute-field="id"]')?.value === 'capacity');
@@ -215,6 +216,7 @@ test('deleting a definition strips its values; renaming migrates them', async ()
   changeValue(window, capacityRow.querySelector('[data-attribute-field="id"]'), 'cap');
   capacityRow.querySelector('[data-attribute-action="save"]').click();
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   let graph = exportGraph(document);
   assert.deepEqual(graph.nodes.find(n => n.id === 'a').custom, { cap: 7, notes: 'alpha' }, 'renaming moves the values to the new id');
 
@@ -223,6 +225,7 @@ test('deleting a definition strips its values; renaming migrates them', async ()
   assert.ok(deleteRow, 'the notes definition row is rendered');
   deleteRow.querySelector('[data-attribute-action="delete"]').click();
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   graph = exportGraph(document);
   assert.deepEqual(graph.nodes.find(n => n.id === 'a').custom, { cap: 7 }, 'deleting a definition drops its values');
   assert.equal(graph.customAttributes.some(a => a.id === 'notes'), false, 'the definition itself is removed');
@@ -489,6 +492,7 @@ test('renaming and deleting a definition migrates and strips pending new-element
   const { dom, errors } = createEditorDom(graph);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
 
   // The pending value survived sanitize at load time.
   const input = document.querySelector('#newNodeCustomProps [data-custom-attribute="capacity"]');
@@ -499,6 +503,11 @@ test('renaming and deleting a definition migrates and strips pending new-element
   row.querySelector('[data-attribute-field="id"]').value = 'maxCapacity';
   row.querySelector('[data-attribute-action="save"]').click();
   await nextFrame(window);
+  // The Edit panel (host of the applied-to-new-nodes section) is hidden while
+  // the Data tab is active, so its rebuild deferred; switching back mounts it
+  // synchronously.
+  document.querySelector('#tab-edit').click();
+  await nextFrame(window);
   let exported = exportGraph(document);
   assert.deepEqual(exported.settings.nodeCustom, { maxCapacity: 5 }, 'pending value migrated to the new id');
   assert.equal(document.querySelector('#newNodeCustomProps [data-custom-attribute="maxCapacity"]')?.value, '5');
@@ -506,6 +515,7 @@ test('renaming and deleting a definition migrates and strips pending new-element
   // Delete the definition; the pending value is stripped.
   document.querySelector('.custom-attribute-row [data-attribute-action="delete"]').click();
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   exported = exportGraph(document);
   assert.deepEqual(exported.settings.nodeCustom, {}, 'pending value stripped with the definition');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -688,6 +698,7 @@ test('changing a definition type migrates values and drops the unconvertible one
   const { dom, errors } = createEditorDom(graph);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
 
   const rowFor = id => [...document.querySelectorAll('.custom-attribute-row')]
     .find(row => row.querySelector('[data-attribute-field="id"]').value === id);
@@ -699,12 +710,14 @@ test('changing a definition type migrates values and drops the unconvertible one
   // string "yes" → boolean true (converted, not dropped, not left as junk)
   setType(rowFor('flag'), 'boolean');
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   let exported = exportGraph(document);
   assert.equal(exported.graphCustom.flag, true);
 
   // string "hello" → int: cannot be represented, value is dropped explicitly
   setType(rowFor('count'), 'int');
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   exported = exportGraph(document);
   assert.equal(Object.prototype.hasOwnProperty.call(exported.graphCustom, 'count'), false, 'unconvertible graph value is dropped, not left dangling');
   assert.equal(exported.graphCustom.flag, true, 'untouched definitions keep their values');
@@ -712,12 +725,14 @@ test('changing a definition type migrates values and drops the unconvertible one
   // int → string: value is converted, not dropped
   setType(rowFor('score'), 'string');
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   exported = exportGraph(document);
   assert.equal(exported.nodes.find(n => n.id === 'a').custom.score, '42');
 
   // Undo still steps over the migrations one edit at a time.
   document.querySelector('#btnUndo').click();
   await nextFrame(window); await settle(window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   exported = exportGraph(document);
   assert.equal(exported.nodes.find(n => n.id === 'a').custom.score, 42, 'undo restores the pre-migration value');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -892,12 +907,14 @@ test('changing a definition from string to long keeps a 64-bit value the number 
   const { dom, errors } = createEditorDom(graph);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
 
   const row = [...document.querySelectorAll('.custom-attribute-row')]
     .find(r => r.querySelector('[data-attribute-field="id"]').value === 'big');
   row.querySelector('[data-attribute-field="type"]').value = 'long';
   row.querySelector('[data-attribute-action="save"]').click();
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
 
   const exported = exportGraph(document);
   assert.equal(exported.graphCustom.big, '9223372036854775807', 'the exact 64-bit value survives the type change');
@@ -1331,13 +1348,16 @@ test('changing a definition scope warns about and handles stored values', async 
   const cancel = createEditorDom(graph);
   await nextFrame(cancel.dom.window);
   let document = cancel.dom.window.document;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   rowFor(document).querySelector('[data-attribute-field="scope"]').value = 'graph';
   rowFor(document).querySelector('[data-attribute-action="save"]').click();
   await nextFrame(cancel.dom.window); await settle(cancel.dom.window, 30);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const dialog = document.querySelector('.app-dialog');
   assert.ok(dialog, 'a confirmation dialog is shown for a scope change with values');
   dialog.querySelector('[data-dialog-cancel]').click();
   await nextFrame(cancel.dom.window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   let exported = exportGraph(document);
   assert.equal(exported.customAttributes.find(a => a.id === 'cap').scope, 'node', 'cancel keeps the scope');
   assert.equal(exported.nodes[0].custom.cap, 'red', 'cancel keeps the values');
@@ -1348,17 +1368,21 @@ test('changing a definition scope warns about and handles stored values', async 
   const yes = createEditorDom(graph);
   await nextFrame(yes.dom.window);
   document = yes.dom.window.document;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   rowFor(document).querySelector('[data-attribute-field="scope"]').value = 'graph';
   rowFor(document).querySelector('[data-attribute-action="save"]').click();
   await nextFrame(yes.dom.window); await settle(yes.dom.window, 30);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   document.querySelector('.app-dialog [data-dialog-ok]').click();
   await nextFrame(yes.dom.window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   exported = exportGraph(document);
   assert.equal(exported.customAttributes.find(a => a.id === 'cap').scope, 'graph');
   assert.equal(exported.nodes[0].custom, undefined, 'the node value is gone (as confirmed)');
   assert.equal(Object.keys(exported.settings.nodeCustom || {}).length, 0, 'the pending default is gone');
   document.querySelector('#btnUndo').click();
   await nextFrame(yes.dom.window); await settle(yes.dom.window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   exported = exportGraph(document);
   assert.equal(exported.customAttributes.find(a => a.id === 'cap').scope, 'node', 'undo restores the scope');
   assert.equal(exported.nodes[0].custom.cap, 'red', 'undo restores the values');
@@ -1378,11 +1402,13 @@ test('changing a definition scope warns about and handles stored values', async 
   });
   await nextFrame(promote.dom.window);
   document = promote.dom.window.document;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const promoteRow = [...document.querySelectorAll('.custom-attribute-row')]
     .find(row => row.querySelector('[data-attribute-field="id"]').value === 'shared');
   promoteRow.querySelector('[data-attribute-field="scope"]').value = 'node';
   promoteRow.querySelector('[data-attribute-action="save"]').click();
   await nextFrame(promote.dom.window); await settle(promote.dom.window, 30);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   assert.equal(document.querySelector('.app-dialog'), null, 'no confirmation needed for the lossless direction');
   exported = exportGraph(document);
   assert.equal(exported.customAttributes.find(a => a.id === 'shared').scope, 'node');
@@ -1549,26 +1575,31 @@ test('pasting starts from the copied originals — the internal clipboard is nev
   const { dom, errors } = createEditorDom(graph);
   const { window } = dom; const { document } = window;
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   await selectNode(window, document, 'a', 300, 330);
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
   await nextFrame(window);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const rowFor = () => [...document.querySelectorAll('.custom-attribute-row')]
     .find(row => row.querySelector('[data-attribute-field="id"]').value === 'tag');
   const setType = async type => {
     rowFor().querySelector('[data-attribute-field="type"]').value = type;
     rowFor().querySelector('[data-attribute-action="save"]').click();
     await nextFrame(window); await settle(window, 40);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   };
   // Flip the definition to boolean — the stored values migrate ('no' -> false).
   await setType('boolean');
   // Paste — the carried 'no' coerces to false; the clipboard itself must not change.
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
   await nextFrame(window); await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   // Flip the definition back to string — stored values migrate (false -> 'false').
   await setType('string');
   // Paste again — a pristine clipboard must yield 'no', not a previously coerced 'false'.
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
   await nextFrame(window); await settle(window, 60);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
 
   const exported = exportGraph(document);
   const restored = exported.nodes.filter(n => n.custom && n.custom.tag === 'no');
@@ -1585,6 +1616,7 @@ const appendGraphmlFile = async (document, window, text, append = true) => {
   if(Boolean(chk.checked) !== append) chk.click();
   modal.querySelector('#expImportBtn').click();
   await nextFrame(window); await settle(window, 50);
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   modal.remove();
 };
 

@@ -9198,7 +9198,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
             remapCustom(edge, 'edge');
     }
     if (defsToAdd.length) {
-        renderCustomAttributes();
+        flushDeferredCustomAttributes();
         renderCustomPropHosts();
     }
     if (skipped)
@@ -12893,7 +12893,7 @@ function appendImportedGraph(data, label = 'graph') {
     // The append path keeps the current settings, but may contribute new
     // definitions — repaint every custom-property surface so the Data tab,
     // the pending-defaults editors and the selection panel show them.
-    renderCustomAttributes();
+    flushDeferredCustomAttributes();
     renderSelectionPanel();
     pushHistory(`append ${label}`);
     queueRender(true, true);
@@ -15672,47 +15672,132 @@ function renderNewElementCustomProps() {
     if (edgeHost)
         mountCustomProps(edgeHost, null, 'new-edge', 'edge', ['edge-defaults'], false);
 }
-// Rebuilding the definitions list costs one innerHTML parse of ~2.5 MB at
-// CUSTOM_DEFINITIONS_MAX. When re-entrant syncs produce the same markup
-// (common: a no-op save, or a re-sync after unrelated edits), keep the
-// live DOM — rows carry no per-row listeners (actions are delegated), so
-// skipping is safe. The cached string is the only state kept.
+// The definitions list used to be rebuilt whole on every sync: one
+// innerHTML parse of ~2.5 MB at CUSTOM_DEFINITIONS_MAX — and it ran at
+// startup even with the Data tab closed. It now renders one page of
+// CUSTOM_ATTRIBUTES_PAGE_SIZE rows (matching the value editor pages) plus a
+// pager, no-op syncs re-use the live DOM, and the boot-time build defers
+// until the Data tab is first activated. Unsaved edits survive a page flip
+// (stashed by row index and re-applied); structural mutations clear the
+// stash because indices shift then.
+const CUSTOM_ATTRIBUTES_PAGE_SIZE = 100;
+let customAttributesPage = 0;
+let customAttributesBooted = false;
+let customAttributesDeferred = false;
 let lastCustomAttributesHtml = null;
-function renderCustomAttributes() {
+const customAttributeEdits = new Map();
+function stashVisibleAttributeRows() {
+    const host = $('#customAttributesList');
+    if (!host)
+        return;
+    host.querySelectorAll('.custom-attribute-row').forEach(row => {
+        const index = Number(row.getAttribute('data-custom-attribute'));
+        if (!Number.isFinite(index))
+            return;
+        const idField = row.querySelector('[data-attribute-field="id"]');
+        const scopeField = row.querySelector('[data-attribute-field="scope"]');
+        const typeField = row.querySelector('[data-attribute-field="type"]');
+        const def = state.customAttributes[index];
+        if (!idField || !scopeField || !typeField || !def)
+            return;
+        const values = { id: idField.value, scope: scopeField.value, type: typeField.value };
+        if (values.id === def.id && values.scope === def.scope && values.type === def.type)
+            customAttributeEdits.delete(index);
+        else
+            customAttributeEdits.set(index, values);
+    });
+}
+function flushDeferredCustomAttributes() {
+    // Interactive flush: the user is looking at (or acting on) the list, so
+    // build it now. Counterpart of the boot deferral inside
+    // renderCustomAttributes.
+    customAttributesBooted = true;
+    customAttributesDeferred = false;
+    renderCustomAttributes();
+}
+function renderCustomAttributes(options) {
     renderGraphCustomProps();
     renderNewElementCustomProps();
     const host = $('#customAttributesList');
     if (!host)
         return;
-    if (!state.customAttributes.length) {
+    if (!customAttributesBooted && !document.querySelector('#panel-data')?.classList.contains('active')) {
+        // Boot-time render with the Data tab closed: building thousands of
+        // rows now is wasted work. Defer to the tab activation.
+        customAttributesDeferred = true;
+        return;
+    }
+    customAttributesBooted = true;
+    customAttributesDeferred = false;
+    if (!options?.keepEdits)
+        customAttributeEdits.clear();
+    const defs = state.customAttributes;
+    if (!defs.length) {
         const emptyHtml = `<div class="tiny muted">${esc(I18N.t('no_custom_attrs'))}</div>`;
         if (lastCustomAttributesHtml !== emptyHtml) {
             host.innerHTML = emptyHtml;
             lastCustomAttributesHtml = emptyHtml;
         }
+        customAttributesPage = 0;
         return;
     }
-    const listHtml = state.customAttributes.map((attribute, index) => `
+    const pageCount = Math.max(1, Math.ceil(defs.length / CUSTOM_ATTRIBUTES_PAGE_SIZE));
+    customAttributesPage = Math.min(Math.max(0, customAttributesPage), pageCount - 1);
+    const start = customAttributesPage * CUSTOM_ATTRIBUTES_PAGE_SIZE;
+    const slice = defs.slice(start, start + CUSTOM_ATTRIBUTES_PAGE_SIZE);
+    const listHtml = slice.map((attribute, offset) => {
+        const index = start + offset;
+        const stashed = customAttributeEdits.get(index);
+        const fieldId = stashed?.id ?? attribute.id;
+        const fieldScope = stashed?.scope ?? attribute.scope;
+        const fieldType = stashed?.type ?? attribute.type;
+        return `
       <div class="custom-attribute-row" data-custom-attribute="${index}">
         <div class="custom-attribute-fields">
-          <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(attribute.id)}" data-attribute-field="id"></label>
+          <label class="field col"><span>${esc(I18N.t('attribute_id'))}</span><input type="text" maxlength="128" required value="${esc(fieldId)}" data-attribute-field="id"></label>
           <label class="field col"><span>${esc(I18N.t('attribute_scope'))}</span><select data-attribute-field="scope">
-            <option value="graph" ${attribute.scope === 'graph' ? 'selected' : ''}>${esc(I18N.t('scope_graph'))}</option>
-            <option value="node" ${attribute.scope === 'node' ? 'selected' : ''}>${esc(I18N.t('scope_node'))}</option>
-            <option value="edge" ${attribute.scope === 'edge' ? 'selected' : ''}>${esc(I18N.t('scope_edge'))}</option>
-            <option value="all" ${attribute.scope === 'all' ? 'selected' : ''}>${esc(I18N.t('scope_all'))}</option>
+            <option value="graph" ${fieldScope === 'graph' ? 'selected' : ''}>${esc(I18N.t('scope_graph'))}</option>
+            <option value="node" ${fieldScope === 'node' ? 'selected' : ''}>${esc(I18N.t('scope_node'))}</option>
+            <option value="edge" ${fieldScope === 'edge' ? 'selected' : ''}>${esc(I18N.t('scope_edge'))}</option>
+            <option value="all" ${fieldScope === 'all' ? 'selected' : ''}>${esc(I18N.t('scope_all'))}</option>
           </select></label>
-          <label class="field col"><span>${esc(I18N.t('attribute_type'))}</span><select data-attribute-field="type">${CUSTOM_ATTRIBUTE_TYPES.map(type => `<option value="${type}" ${attribute.type === type ? 'selected' : ''}>${type}</option>`).join('')}</select></label>
+          <label class="field col"><span>${esc(I18N.t('attribute_type'))}</span><select data-attribute-field="type">${CUSTOM_ATTRIBUTE_TYPES.map(type => `<option value="${type}" ${fieldType === type ? 'selected' : ''}>${type}</option>`).join('')}</select></label>
         </div>
         <div class="row custom-attribute-actions">
           <button type="button" class="btn small good" data-attribute-action="save">${esc(I18N.t('save_attribute'))}</button>
           <button type="button" class="btn small danger" data-attribute-action="delete" title="${esc(I18N.t('delete_btn'))}" aria-label="${esc(I18N.t('delete_btn'))}">${esc(I18N.t('delete_btn'))}</button>
         </div>
-      </div>`).join('');
-    if (listHtml === lastCustomAttributesHtml)
-        return;
-    host.innerHTML = listHtml;
-    lastCustomAttributesHtml = listHtml;
+      </div>`;
+    }).join('');
+    const pagerHtml = pageCount > 1
+        ? `<div class="custom-props-pager" role="navigation" aria-label="${esc(I18N.t('custom_props_pager_label'))}"><button type="button" class="btn small" data-def-page="prev" aria-label="${esc(I18N.t('custom_props_prev_page'))}">${esc(I18N.t('custom_props_prev_page'))}</button><span class="custom-props-page-status tiny" role="status" aria-live="polite">${esc(I18N.t('custom_props_page_status', { from: start + 1, to: start + slice.length, n: defs.length }))}</span><button type="button" class="btn small" data-def-page="next" aria-label="${esc(I18N.t('custom_props_next_page'))}">${esc(I18N.t('custom_props_next_page'))}</button></div>`
+        : '';
+    const pageHtml = `<div class="custom-attributes-rows">${listHtml}</div>${pagerHtml}`;
+    if (pageHtml !== lastCustomAttributesHtml) {
+        host.innerHTML = pageHtml;
+        lastCustomAttributesHtml = pageHtml;
+        const prev = pagerHtml ? host.querySelector('[data-def-page="prev"]') : null;
+        const next = pagerHtml ? host.querySelector('[data-def-page="next"]') : null;
+        if (prev)
+            prev.disabled = customAttributesPage === 0;
+        if (next)
+            next.disabled = customAttributesPage === pageCount - 1;
+    }
+    // One delegated listener for the pager; rows carry none of their own.
+    if (!host.dataset.defsPagerWired) {
+        host.dataset.defsPagerWired = '1';
+        host.addEventListener('click', ev => {
+            const btn = ev.target?.closest?.('[data-def-page]');
+            if (!btn || btn.disabled)
+                return;
+            stashVisibleAttributeRows();
+            const dir = btn.dataset.defPage === 'prev' ? -1 : 1;
+            customAttributesPage += dir;
+            renderCustomAttributes({ keepEdits: true });
+            const fresh = host.querySelector(btn.dataset.defPage === 'prev' ? '[data-def-page="prev"]' : '[data-def-page="next"]');
+            fresh?.focus({ preventScroll: true });
+        });
+    }
 }
 function wireUi() {
     renderCustomAttributes();
@@ -15742,7 +15827,7 @@ function wireUi() {
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(typeValue) ? typeValue : 'string';
         state.customAttributes.push({ id, scope: scope, type });
         idInput.value = '';
-        renderCustomAttributes();
+        flushDeferredCustomAttributes();
         renderCustomPropHosts();
         pushHistory('add custom attribute');
         toast(I18N.t('attribute_added'));
@@ -15759,7 +15844,7 @@ function wireUi() {
             const removedId = state.customAttributes[index].id;
             state.customAttributes.splice(index, 1);
             stripCustomAttributeValues(removedId);
-            renderCustomAttributes();
+            flushDeferredCustomAttributes();
             renderCustomPropHosts();
             pushHistory('delete custom attribute');
             toast(I18N.t('attribute_deleted'));
@@ -15837,7 +15922,7 @@ function wireUi() {
         // A type change rewrites every stored value; values that cannot be
         // represented in the new type are dropped (undo restores all of them).
         const dropped = oldType !== resolvedType ? migrateCustomValuesForType(id, resolvedType) : 0;
-        renderCustomAttributes();
+        flushDeferredCustomAttributes();
         renderCustomPropHosts();
         pushHistory('edit custom attribute');
         toast(dropped > 0 ? I18N.t('attribute_type_changed', { n: dropped }) : I18N.t('attribute_updated'));
@@ -15872,6 +15957,8 @@ function wireUi() {
         });
         // A newly revealed panel may have deferred custom-property sections —
         // mount them now, synchronously, so the panel is complete on first paint.
+        if (target === 'data')
+            flushDeferredCustomAttributes();
         flushPendingCustomPropHosts();
     };
     // The sheet is sized by content (up to 60dvh), so its height cannot be
