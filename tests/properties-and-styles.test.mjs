@@ -337,3 +337,64 @@ test('landscape canvas-disabled mode allows bottom pane and table scroll to expa
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('Reset Style syncs the single-node shape, stroke style and label position after reset and undo/redo', async () => {
+  const graph = {
+    title: 'reset-sync', nextNode: 2, nextEdge: 1, mode: 'select',
+    nodes: [{ id: 'n1', label: 'N1', x: 0, y: 0, order: 0, shape: 'square', strokeStyle: 'dashed', labelPosition: 'top' }],
+    edges: [],
+    settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+  const nodeN1 = document.getElementById('node-n1');
+  dispatchPointer(window, nodeN1, 'pointerdown', { pointerId: 1, clientX: 300, clientY: 330 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 300, clientY: 330 });
+  await nextFrame(window);
+
+  const shapeEl = () => document.querySelector('#selNodeShape');
+  const strokeEl = () => document.querySelector('#selNodeStrokeStyle');
+  const posEl = () => document.querySelector('#selNodeLabelPos');
+  assert.equal(shapeEl()?.value, 'square');
+  assert.equal(strokeEl()?.value, 'dashed');
+  assert.equal(posEl()?.value, 'top');
+
+  // Push a history entry while the selection is active — the app's undo
+  // restores snapshots, and selection only rides snapshots created by a
+  // mutation pushed during the selection. The shape dropdown is not part of
+  // the panel's interpolated HTML, so this leaves the cached HTML valid for
+  // the reuse path — the exact situation the early-return bug strands.
+  const shapeSet = document.querySelector('#selNodeShape');
+  shapeSet.value = 'circle';
+  shapeSet.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(shapeEl()?.value, 'circle', 'the dropdown reflects the edit');
+
+  // Reset Style clears the only overrides; the panel HTML is unchanged, so
+  // the cached-panel early return must not leave the dropdowns showing the
+  // cleared overrides.
+  document.querySelector('#selResetStyle').click();
+  await nextFrame(window);
+  assert.equal(shapeEl()?.value, '', 'the shape dropdown shows inherit after reset');
+  assert.equal(strokeEl()?.value, '', 'the stroke style dropdown shows inherit after reset');
+  assert.equal(posEl()?.value, '', 'the label position dropdown shows inherit after reset');
+
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await new Promise(r => window.setTimeout(r, 40));
+  assert.equal(shapeEl()?.value, 'circle', 'undo restores the shape dropdown');
+  assert.equal(strokeEl()?.value, 'dashed', 'undo restores the stroke style dropdown');
+  assert.equal(posEl()?.value, 'top', 'undo restores the label position dropdown');
+
+  document.querySelector('#btnRedo').click();
+  await nextFrame(window); await new Promise(r => window.setTimeout(r, 40));
+  assert.equal(shapeEl()?.value, '', 'redo clears the shape dropdown again');
+  assert.equal(strokeEl()?.value, '', 'redo clears the stroke style dropdown again');
+  assert.equal(posEl()?.value, '', 'redo clears the label position dropdown again');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

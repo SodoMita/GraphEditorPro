@@ -99,6 +99,7 @@ test('a saved definition keeps its id, even when it looks like a built-in', asyn
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.deepEqual(ids, ['direction', 'edgeArrowSize', 'capacity'], 'every definition keeps its id');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -115,6 +116,7 @@ test('duplicate saved definition ids are collapsed to one', async () => {
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.deepEqual(ids, ['capacity'], 'one definition survives, ids stay unique');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -153,6 +155,7 @@ test('editing a custom definition keeps its id, and migrated names survive reloa
   {
     const {dom} = createEditorDom();
     const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
     document.querySelector('#customAttributeId').value = 'capacity';
     document.querySelector('#btnAddCustomAttribute').click();
     const row = document.querySelector('.custom-attribute-row');
@@ -174,10 +177,12 @@ test('editing a custom definition keeps its id, and migrated names survive reloa
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const ids = [...document.querySelectorAll('.custom-attribute-row [data-attribute-field="id"]')].map(input => input.value);
   assert.deepEqual(ids, ['externaltag'], 'a migrated definition keeps its id across reloads');
   document.querySelector('#btnExportGraphml').click();
   const graphml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   document.querySelector('#expCloseBtn').click();
   assert.match(graphml, /<key id="externaltag"[^>]*attr\.name="externaltag"/, 'and still exports its own attr.name');
   assert.deepEqual(errors.map(error => error.message), []);
@@ -191,6 +196,7 @@ test('editing a migrated definition keeps the GraphML attr.name it came with', a
   };
   const {dom, errors} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const row = document.querySelector('.custom-attribute-row');
   row.querySelector('[data-attribute-field="type"]').value = 'double';
   row.querySelector('[data-attribute-action="save"]').click();
@@ -210,6 +216,7 @@ test('renaming a definition drops the attr.name that belonged to the old key', a
   };
   const {dom} = createEditorDom(saved);
   const {document} = dom.window;
+  document.querySelector('#tab-data').click(); // the definitions list defers to the Data tab activation
   const row = document.querySelector('.custom-attribute-row');
   row.querySelector('[data-attribute-field="id"]').value = 'renamed';
   row.querySelector('[data-attribute-action="save"]').click();
