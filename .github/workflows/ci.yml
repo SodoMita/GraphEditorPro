@@ -26,7 +26,7 @@ jobs:
 
       - run: npm ci
 
-      # typecheck → clean build → static guarantees → 62+ tests
+      # typecheck → source contract invariants → clean build → static guarantees → test suites
       - run: npm run check
 
       # The committed deliverable must be exactly what the sources produce, so a

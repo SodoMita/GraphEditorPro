@@ -162,7 +162,7 @@ test('gizmo appears for a selection in select mode only; tool persists as a UI p
   assert.equal(document.querySelector('.canvas-wrap').classList.contains('gizmo-active'), true);
   assert.equal(document.querySelectorAll('[data-gizmotool]').length, 8, 'floating row and sidebar section are both present');
   assert.ok([...document.querySelectorAll('[data-gizmotool="move"]')].every(b => b.classList.contains('active')));
-  assert.match(document.querySelector('#gizmoReadout').textContent, /Move.*4 target node/);
+  assert.match(document.querySelector('#gizmoReadout').textContent, /Move.*4 nodes/);
 
   document.querySelector('[data-gizmotool="rotate"]').click();
   assert.deepEqual(handles(), ['rotate', 'pivot']);

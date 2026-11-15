@@ -37,3 +37,19 @@ test('key graph editor controls remain in the generated page', () => {
     assert.match(html, new RegExp(`\\bid=["']${id}["']`), `missing #${id}`);
   }
 });
+
+test('portrait: the app bar outranks the lifted tool rows', async () => {
+  // The lifted rows are position:fixed with a bottom offset that rises with
+  // the sheet, so on short phones they reach into the app bar. Whatever the
+  // sheet height, the app bar's controls must stay reachable.
+  const css = await readFile('src/styles.css', 'utf8');
+  const portrait = css.match(/@media \(max-width:950px\) and \(orientation:portrait\)\{[\s\S]*?\n    \}/);
+  assert.ok(portrait, 'the portrait media query exists');
+  const appbar = portrait[0].match(/\.appbar\{[^}]*z-index:\s*(\d+)/);
+  assert.ok(appbar, 'the portrait block raises .appbar z-index');
+  const others = portrait[0].replace(/\.appbar\{[^}]*\}/g, '');
+  const lifted = [...others.matchAll(/z-index:\s*(\d+)/g)].map(m => Number(m[1])).filter(n => n > 0 && n < 90);
+  assert.ok(lifted.length > 0, 'the lifted rows carry z-index values');
+  assert.ok(Number(appbar[1]) > Math.max(...lifted),
+    `appbar z-index ${appbar[1]} outranks the lifted rows (${Math.max(...lifted)})`);
+});
