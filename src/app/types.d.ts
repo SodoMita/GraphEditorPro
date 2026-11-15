@@ -22,6 +22,8 @@ interface ViewBox extends Point {
   h: number;
 }
 
+type CustomAttributeValue = string | number | boolean;
+
 interface GraphNode extends Point {
   id: string;
   label: string;
@@ -38,6 +40,8 @@ interface GraphNode extends Point {
   labelSize?: number;
   labelPosition?: string;
   labelFont?: string;
+  /** Values of user-defined customAttributes with scope 'node', keyed by attribute id. */
+  custom?: Record<string, CustomAttributeValue>;
   [key: string]: any;
 }
 
@@ -58,6 +62,8 @@ interface GraphEdge {
   labelColor?: string;
   labelSize?: number;
   labelFont?: string;
+  /** Values of user-defined customAttributes with scope 'edge', keyed by attribute id. */
+  custom?: Record<string, CustomAttributeValue>;
   [key: string]: any;
 }
 
@@ -79,8 +85,17 @@ interface GraphState {
   nodes: GraphNode[];
   edges: GraphEdge[];
   /** `name` carries the original GraphML attr.name when it differs from the id
-   *  (a definition migrated away from a now-reserved key id). */
-  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge'; type: string; name?: string }[];
+   *  (e.g. a definition re-created under a fresh id, where the exporter cannot
+   *  use the id as the key name). Ids are stable in the editor, so graphs can
+   *  match definitions across imports by their own id. */
+  /** `origin` is the carried key id a definition was minted from, recorded so re-imports bind to the same property. */
+  /** `scope` is 'graph' | 'node' | 'edge', or 'all' — one definition that
+   *  applies on every scope (GraphML `for="all"`), storing values per scope
+   *  under the same id. A legacy document may still carry one definition per
+   *  scope instead; both shapes are valid and neither is migrated. */
+  customAttributes: { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }[];
+  /** Values of user-defined customAttributes with scope 'graph', keyed by attribute id. */
+  graphCustom: Record<string, CustomAttributeValue>;
   selected: { type: 'node' | 'edge'; id: string } | null;
   selection: GraphSelection;
   settings: AnyRecord;

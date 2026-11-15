@@ -34,6 +34,7 @@
     "src/app/30-graph-editing.ts",
     "src/app/40-interactions.ts",
     "src/app/45-gizmo.ts",
+    "src/app/46-dot-core.ts",
     "src/app/50-import-export.ts",
     "src/app/60-algorithms.ts",
     "src/app/70-controls.ts",
