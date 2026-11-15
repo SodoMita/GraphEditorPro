@@ -943,21 +943,26 @@
     const carriedDefs = (Array.isArray(data.customAttributes) ? data.customAttributes : [])
       .filter(isRecord)
       .map(def => {
+        // Lookups against the payload's value keys must use the ORIGINAL
+        // key — it can be arbitrarily long. Definition ids are capped at
+        // 128 by the sanitizer, so a destination id over-long is minted at
+        // creation time from the capped base, never by bisecting the key
+        // here (two keys sharing the first 128 chars are different
+        // properties — they may not collapse onto one definition).
         const fullId = String(def.id ?? '').trim();
-        const id = fullId.slice(0, 128);
+        const id = fullId;
         const scope = ['graph','node','edge','all'].includes(String(def.scope)) ? String(def.scope) : 'node';
         const type = CUSTOM_ATTRIBUTE_TYPES.includes(String(def.type)) ? String(def.type) : 'string';
         if(!id) return null;
         const name = String(def.name ?? '').trim().slice(0, 128);
         // The origin is identity data (the carried key id the definition was
         // minted from) — stored in full up to the identity bound, then as a
-        // fingerprint of the full string; both spellings are equality-stable.
-        // The clipboard is foreign input: wire spellings decode, raw
-        // marker-shaped input may not mint a token.
+        // fingerprint of the full string. The clipboard is foreign input: the
+        // wire spellings decode, raw marker-shaped input may not mint a token.
         const origin = originFromForeign((def as AnyRecord).origin);
-        return { id, fullId, scope: scope as 'graph' | 'node' | 'edge' | 'all', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
+        return { id, scope: scope as 'graph' | 'node' | 'edge' | 'all', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
       })
-      .filter((def): def is { id: string; fullId: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string } => def !== null);
+      .filter((def): def is { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string } => def !== null);
     const defsByPair = new Map(state.customAttributes.map(attribute => [attribute.id + '|' + attribute.scope, attribute]));
     const existingPairs = new Set(defsByPair.keys());
     const carriedByPair = new Map<string, { id: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string }>(carriedDefs.map(def => [def.id + '|' + def.scope, def]));
@@ -1012,7 +1017,7 @@
       // and mints instead; only an exactly-equal key id or recorded origin
       // keeps the free merge.
       const existingOrigin = String(existing?.origin ?? '').trim() || String(existing?.id ?? '').trim();
-      const carriedOrigin = String(carried?.origin ?? '').trim() || literalForeignIdentity(String((carried as AnyRecord)?.fullId ?? carried?.id ?? '').trim());
+      const carriedOrigin = String(carried?.origin ?? '').trim() || literalForeignIdentity(String(carried?.id ?? '').trim());
       return existingOrigin === carriedOrigin;
     };
     const ensurePair = (id: string, scope: 'node' | 'edge' | 'all') => {
@@ -1050,7 +1055,7 @@
       // candidate.
       const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
       const carriedNameRaw = String(carriedPair?.name ?? '').trim().toLowerCase();
-      const incOrigin = (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id));
+      const incOrigin = (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String(carriedPair?.id ?? '').trim() || id));
       const nameAgreement = (a: AnyRecord | undefined) => {
         const an = String(a?.name ?? '').trim().toLowerCase();
         return !an || !carriedNameRaw || an === carriedNameRaw;
@@ -1084,9 +1089,9 @@
         return;
       }
       if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
-      if(!createdIds.has(id)){
+      if(id.length <= 128 && !createdIds.has(id)){
         remaining--;
-        addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id)), carriedPair?.name ? { name: carriedPair.name } : undefined);
+        addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String(carriedPair?.id ?? '').trim() || id)), carriedPair?.name ? { name: carriedPair.name } : undefined);
         handledPairs.add(key);
         return;
       }
@@ -1097,7 +1102,7 @@
       // has none, record the carried id as the name so the next paste (or a
       // round-trip of an export of it) finds THIS definition instead of
       // minting a second one for the same property.
-      addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id)), { name: carriedPair?.name || id });
+      addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String(carriedPair?.id ?? '').trim() || id)), { name: carriedPair?.name || id });
       renameByPair.set(key, newId);
       handledPairs.add(key);
     };
