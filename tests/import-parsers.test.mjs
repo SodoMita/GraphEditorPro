@@ -3879,3 +3879,41 @@ test('two long GraphML keys sharing their first 128 characters and attr.name do 
   dom.window.close();
   dom2.window.close();
 });
+
+test('appending two long keys onto an origin-less 128-char definition mints one definition each', async () => {
+  // A UI-created node property whose id is exactly the 128-char storage cap
+  // and which carries no recorded name or origin. Appending two foreign
+  // keys that merely share that prefix must not collapse onto it — on a
+  // node carrying both values, the second would overwrite the first.
+  const prefix = 'N' + 'y'.repeat(127); // exactly 128 characters
+  const keyA = prefix + 'A', keyB = prefix + 'B';
+  assert.equal(keyA.slice(0, 128), prefix);
+  assert.equal(keyB.slice(0, 128), prefix);
+  const saved = { title: 'originless-def', nodes: [], edges: [],
+    customAttributes: [{ id: prefix, scope: 'node', type: 'string' }] }; // no name, no origin
+  const graphml = [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    `  <key id="${keyA}" for="node" attr.name="sharedprop" attr.type="string" qvge:kind="custom-attribute"/>`,
+    `  <key id="${keyB}" for="node" attr.name="sharedprop" attr.type="string" qvge:kind="custom-attribute"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="m1"><data key="${keyA}">value-A</data><data key="${keyB}">value-B</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom; const {document} = window;
+  await settle(window, 60);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphml);
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes.filter(d => d.name === 'sharedprop');
+  assert.equal(defs.length, 2, 'the two long keys mint their own definitions, never one merged onto the origin-less pair');
+  const m1 = graph.nodes.find(n => n.id === 'm1');
+  assert.deepEqual(Object.values(m1.custom || {}).sort(), ['value-A', 'value-B'], 'the node keeps both values under distinct binding ids');
+  assert.equal(Object.keys(m1.custom || {}).includes(prefix), false, 'no value was bound onto the unproven 128-char definition');
+  const originless = graph.customAttributes.find(d => d.id === prefix);
+  assert.ok(originless, 'the origin-less definition survives untouched');
+  assert.equal(originless.origin, undefined, 'the origin-less definition records no origin it was never given');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

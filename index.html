@@ -12883,9 +12883,16 @@ function capCustomDefinitions(defs, existingDefs) {
             // conflicting origins proves a different property sharing the id, so
             // it falls through to minting; a definition without a recorded
             // origin keeps the committed contract and merges for free.
-            const pairOrigin = String(pairHit?.origin ?? '').trim();
+            // An origin-less existing definition is no license to merge a
+            // longer incoming key onto it: the only evidence it offers is its
+            // own id, so a key differing only past the storage cap proves
+            // nothing was ever shared — it mints. Only an exactly-equal,
+            // never-truncated key id (or a recorded origin match) keeps the
+            // free merge. Without this, two keys sharing the 128-char prefix of
+            // an unproven definition both bound to it and overwrote each other.
+            const pairOrigin = String(pairHit?.origin ?? '').trim() || String(pairHit?.id ?? '').trim();
             const incOriginPair = String(inc?.origin ?? '').trim() || fullId;
-            const originsMerge = !pairOrigin || pairOrigin === incOriginPair;
+            const originsMerge = pairOrigin === incOriginPair;
             if (namesMerge && originsMerge) { // merges without capacity
                 renameByPair.set(scope + '|' + origId, String(pairHit.id));
                 continue;
