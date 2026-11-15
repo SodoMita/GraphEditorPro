@@ -10,7 +10,8 @@
     "build": "node scripts/clean.mjs && tsc && node scripts/build.mjs && node scripts/check-static.mjs",
     "check:static": "node scripts/check-static.mjs",
     "test": "npm run build && node scripts/test.mjs",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm run check:contract && npm test",
+    "check:contract": "node scripts/check-contract.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "^149.0.0",
