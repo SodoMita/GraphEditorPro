@@ -8931,15 +8931,14 @@ function pasteClipboardInternal(fromSystemClipboard) {
                 return false;
         }
         // The exact-pair branch is the same identity question as the import's
-        // exact-pair branch, so it applies the same rule there would: both
-        // sides recording conflicting origins proves a different property
-        // sharing the id. A definition without a recorded origin keeps the
-        // committed contract and merges for free; a carried definition without
-        // one defaults its origin to its own key id, exactly as the import's
-        // `incOrigin` fallback does.
-        const existingOrigin = String(existing?.origin ?? '').trim();
-        if (!existingOrigin)
-            return true; // origin-less definition — merges for free
+        // exact-pair branch, so it applies the same rule there: both sides
+        // recording conflicting origins proves a different property sharing
+        // the id. An origin-less definition offers only its own id as merge
+        // evidence — a carried key whose identity is a DIFFERENT string (a
+        // longer foreign id, a fingerprint of one) proves nothing was shared
+        // and mints instead; only an exactly-equal key id or recorded origin
+        // keeps the free merge.
+        const existingOrigin = String(existing?.origin ?? '').trim() || String(existing?.id ?? '').trim();
         const carriedOrigin = String(carried?.origin ?? '').trim() || String(carried?.fullId ?? carried?.id ?? '').trim();
         return existingOrigin === carriedOrigin;
     };

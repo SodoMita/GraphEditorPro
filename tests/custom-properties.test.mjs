@@ -2082,3 +2082,62 @@ test('graph property controls rebuild on the azcclx/50grip cache collision', asy
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('pasting a foreign key does not bind to an unrelated origin-less property sharing its id prefix', async () => {
+  // Source state as left by importing an unnamed 129-char foreign key (an
+  // <key> without attr.name mints no recorded name): the definition keeps
+  // the truncated storage id and the foreign key id lives on as the origin —
+  // the only thing that distinguishes the property afterwards.
+  const prefix = 'F' + 'r'.repeat(127); // exactly the 128-char storage cap
+  const foreignKey = prefix + 'A';
+  const source = { title: 'foreign-source', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, custom: { [prefix]: 'value-foreign' } }],
+    edges: [], graphCustom: {},
+    customAttributes: [{ id: prefix, scope: 'node', type: 'string', origin: foreignKey }],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const { dom, errors } = createEditorDom(source);
+  const { window } = dom; const { document } = window;
+  await nextFrame(window);
+  let clip = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async t => { clip = t; }, readText: async () => clip },
+  });
+  await selectNode(window, document, 'a', 300, 330);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(window);
+  assert.match(clip, new RegExp(foreignKey), 'the clipboard payload records the foreign origin');
+  dom.window.close();
+
+  // Target document with an unrelated, manually created property whose id
+  // is the 128-char prefix — no name, no origin.
+  const target = { title: 'target', mode: 'select', nextNode: 2, nextEdge: 1,
+    nodes: [], edges: [], customAttributes: [{ id: prefix, scope: 'node', type: 'string' }], graphCustom: {}, settings: {},
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const t2 = createEditorDom(target);
+  const t2Window = t2.dom.window; const t2Document = t2Window.document;
+  Object.defineProperty(t2Window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => clip },
+  });
+  await nextFrame(t2Window);
+  t2Document.dispatchEvent(new t2Window.KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+  await nextFrame(t2Window); await settle(t2Window, 60);
+
+  const exported = exportGraph(t2Document);
+  const manual = exported.customAttributes.find(a => a.id === prefix);
+  assert.ok(manual, 'the manual property is untouched');
+  assert.equal(manual.origin, undefined, 'the manual property gains no foreign origin');
+  assert.equal(manual.name, undefined, 'the manual property gains no foreign name');
+  const foreign = exported.customAttributes.find(a => a.origin === foreignKey);
+  assert.ok(foreign, 'the foreign origin survives on a freshly minted definition');
+  assert.notEqual(foreign.id, prefix, 'the minted definition takes a fresh id, never the manual one');
+  assert.equal(foreign.name, prefix, 'the minted definition records the carried id as its name heuristic (documented paste/import contract)');
+  const node = exported.nodes.find(n => n.label === 'A');
+  assert.equal(node.custom[foreign.id], 'value-foreign', 'the pasted value binds to the re-created definition');
+  assert.equal(node.custom[prefix], undefined, 'the unrelated manual property receives nothing');
+  assert.deepEqual(errors.map(e => e.message), []);
+  t2.dom.window.close();
+});
