@@ -2318,3 +2318,38 @@ test('an edges CSV keeps an edge label colour and size', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a type inherited from the defaults is exported rather than written blank', async () => {
+  // A type the element does not carry itself is inherited from the defaults and
+  // shows in the UI, so it is part of what is drawn and must survive export.
+  // DOT and both CSVs used to write the raw field here, recording nothing.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n1', weight:'1'}],
+    settings: { nodeDefaults: {type:'server'}, edgeDefaults: {type:'link'} },
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+
+  document.querySelector('#btnExportDot').click();
+  await settle(dom.window, 60);
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(dot.includes('type="server"'), 'the node type is written to DOT');
+  assert.ok(dot.includes('type="link"'), 'the edge type is written to DOT');
+
+  document.querySelector('#btnExportNodesCsv').click();
+  await settle(dom.window, 60);
+  const nodesCsv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(nodesCsv.split(/\r?\n/)[1].includes('server'), 'the node type is in the nodes CSV');
+
+  document.querySelector('#btnExportEdgesCsv').click();
+  await settle(dom.window, 60);
+  const edgesCsv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(edgesCsv.split(/\r?\n/)[1].includes('link'), 'the edge type is in the edges CSV');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

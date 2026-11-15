@@ -45,9 +45,17 @@
     return v;
   }
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
+  // Style columns come from the resolved visual, like every other exporter: a
+  // value the edge leaves unset is inherited from the edge defaults or its type
+  // style, and writing the raw field would record a blank and lose it on import.
   function edgeCsv(){
     const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','arrow_size','label_color','label_size']];
-    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.arrowSize??'',e.labelColor||'',e.labelSize??'']); }
+    for(const e of state.edges){
+      const a = nodeById(e.from), b = nodeById(e.to), v = edgeVisual(e);
+      rows.push([e.id, e.from, a?.label||'', e.to, b?.label||'', e.weight, edgeDirection(e), e.label,
+        v.type || '', v.color || '', v.strokeSize ?? '', v.strokeStyle || '', v.arrowSize ?? '',
+        v.labelColor || '', v.labelSize ?? '']);
+    }
     return rowsToCsv(rows);
   }
   // A node carries far more than position and fill colour, and a CSV that only
@@ -63,7 +71,7 @@
     const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     return rowsToCsv([NODE_CSV_COLUMNS, ...sorted.map(n => {
       const v = nodeVisual(n);
-      return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type,
+      return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), v.shape || '', v.color || '', v.type || '',
         v.width ?? '', v.height ?? '', v.strokeColor || '', v.strokeSize ?? '', v.strokeStyle || '',
         v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
     })]);
@@ -249,7 +257,7 @@
       }
       attrs.push(`width=${(v.width/72).toFixed(4)}`, `height=${(v.height/72).toFixed(4)}`);
       attrs.push(`order=${n.order ?? 0}`);
-      if(n.type) attrs.push(`type=${dotString(n.type)}`);
+      if(v.type) attrs.push(`type=${dotString(v.type)}`);
       // Label styling, spelled the way Graphviz spells it. Read the resolved
       // visual like every other attribute here: a value the element leaves unset
       // is inherited, and writing the raw field would record nothing at all.
