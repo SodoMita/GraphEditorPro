@@ -457,7 +457,9 @@
       // values of same-named keys on a round-trip. When it equals the
       // definition's own id the default resolution already finds it, so it is
       // omitted to keep ordinary exports byte-stable.
-      const originAttr = attribute.origin && attribute.origin !== attribute.id ? ` qvge:origin="${xmlEsc(attribute.origin)}"` : '';
+      // Tagged fingerprints (U+0001) are illegal in XML — emit the XML-safe
+      // 'h106:' spelling; the parser maps it straight back onto the token.
+      const originAttr = attribute.origin && originTokenForExport(attribute.origin) !== attribute.id ? ` qvge:origin="${xmlEsc(originTokenForExport(attribute.origin))}"` : '';
       return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}${originAttr}/>`;
     });
   }
@@ -1541,7 +1543,10 @@
       const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
       const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
         : (marked && recordedId ? recordedId : keyId);
-      const origin = originIdentity(k.getAttributeNS(QVGE_NS, 'origin') || '');
+      const rawOriginAttr = (k.getAttributeNS(QVGE_NS, 'origin') || '').trim();
+      // Our own fingerprint spelling round-trips onto the tagged token;
+      // everything else goes through the generic normalizer.
+      const origin = /^h106:[0-9a-f]{28}$/.test(rawOriginAttr) ? '\u0001' + rawOriginAttr.substring(5) : originIdentity(rawOriginAttr);
       return {keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2, origin};
     });
 

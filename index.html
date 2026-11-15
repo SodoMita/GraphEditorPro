@@ -2882,7 +2882,17 @@ function uniqueCustomAttributeId(base, taken) {
 // normalization at ingress is idempotent, and the 106-bit fingerprint keeps
 // distinct keys distinct. Origins at or below ORIGIN_IDENTITY_MAX pass
 // through verbatim, so ordinary documents are byte-identical to before.
+//
+// Fingerprints are tagged with U+0001, which XML 1.0 cannot express —
+// foreign GraphML can never carry a key whose id equals one of our tokens,
+// so a literal key can never alias a long key's identity. The tagged
+// shape (FP_MARK + 28 hex) is passed through unchanged (idempotent); any
+// token-shaped residue is re-tagged deterministically. GraphML exports
+// translate tokens into the XML-safe 'h106:' spelling, re-imported as the
+// tagged form by the parser.
 const ORIGIN_IDENTITY_MAX = 256;
+const FP_MARK = '\u0001';
+const fp106 = (str) => FP_MARK + cyrb53(str, 0).toString(16).padStart(14, '0') + cyrb53(str, 0x9e3779b9).toString(16).padStart(14, '0');
 function cyrb53(str, seed) {
     let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
     for (let i = 0; i < str.length; i++) {
@@ -2898,9 +2908,18 @@ function cyrb53(str, seed) {
 }
 function originIdentity(value) {
     const s = String(value ?? '').trim();
+    if (s.charAt(0) === FP_MARK) { // one of our tagged tokens — keep it as-is
+        return s.length === 29 && /^[0-9a-f]{28}$/.test(s.slice(1)) ? s : fp106(s);
+    }
     if (s.length <= ORIGIN_IDENTITY_MAX)
         return s;
-    return 'h106:' + cyrb53(s, 0).toString(16).padStart(14, '0') + cyrb53(s, 0x9e3779b9).toString(16).padStart(14, '0');
+    return fp106(s);
+}
+// XML cannot carry U+0001: tagged tokens are exported in the XML-safe
+// 'h106:' spelling and re-imported as the tagged form by the parser.
+function originTokenForExport(origin) {
+    const s = String(origin ?? '');
+    return s.charAt(0) === FP_MARK ? 'h106:' + s.slice(1) : s;
 }
 // Custom-value maps must carry their keys as OWN properties: a user-chosen
 // id like "__proto__" must never mutate a prototype or shadow inherited
@@ -12486,7 +12505,9 @@ function graphmlCustomKeyLines(keyIds) {
         // values of same-named keys on a round-trip. When it equals the
         // definition's own id the default resolution already finds it, so it is
         // omitted to keep ordinary exports byte-stable.
-        const originAttr = attribute.origin && attribute.origin !== attribute.id ? ` qvge:origin="${xmlEsc(attribute.origin)}"` : '';
+        // Tagged fingerprints (U+0001) are illegal in XML — emit the XML-safe
+        // 'h106:' spelling; the parser maps it straight back onto the token.
+        const originAttr = attribute.origin && originTokenForExport(attribute.origin) !== attribute.id ? ` qvge:origin="${xmlEsc(originTokenForExport(attribute.origin))}"` : '';
         return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}${originAttr}/>`;
     });
 }
@@ -13707,7 +13728,10 @@ function parseGraphml(text) {
         const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
         const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
             : (marked && recordedId ? recordedId : keyId);
-        const origin = originIdentity(k.getAttributeNS(QVGE_NS, 'origin') || '');
+        const rawOriginAttr = (k.getAttributeNS(QVGE_NS, 'origin') || '').trim();
+        // Our own fingerprint spelling round-trips onto the tagged token;
+        // everything else goes through the generic normalizer.
+        const origin = /^h106:[0-9a-f]{28}$/.test(rawOriginAttr) ? '\u0001' + rawOriginAttr.substring(5) : originIdentity(rawOriginAttr);
         return { keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2, origin };
     });
     // -- Derived views: the only things the readers touch -----------------------

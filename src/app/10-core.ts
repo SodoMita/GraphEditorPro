@@ -390,7 +390,18 @@
   // normalization at ingress is idempotent, and the 106-bit fingerprint keeps
   // distinct keys distinct. Origins at or below ORIGIN_IDENTITY_MAX pass
   // through verbatim, so ordinary documents are byte-identical to before.
+  //
+  // Fingerprints are tagged with U+0001, which XML 1.0 cannot express —
+  // foreign GraphML can never carry a key whose id equals one of our tokens,
+  // so a literal key can never alias a long key's identity. The tagged
+  // shape (FP_MARK + 28 hex) is passed through unchanged (idempotent); any
+  // token-shaped residue is re-tagged deterministically. GraphML exports
+  // translate tokens into the XML-safe 'h106:' spelling, re-imported as the
+  // tagged form by the parser.
   const ORIGIN_IDENTITY_MAX = 256;
+  const FP_MARK = '\u0001';
+  const fp106 = (str: string): string =>
+    FP_MARK + cyrb53(str, 0).toString(16).padStart(14, '0') + cyrb53(str, 0x9e3779b9).toString(16).padStart(14, '0');
   function cyrb53(str: string, seed: number): number {
     let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
     for (let i = 0; i < str.length; i++) {
@@ -406,8 +417,17 @@
   }
   function originIdentity(value: unknown): string {
     const s = String(value ?? '').trim();
+    if(s.charAt(0) === FP_MARK){ // one of our tagged tokens — keep it as-is
+      return s.length === 29 && /^[0-9a-f]{28}$/.test(s.slice(1)) ? s : fp106(s);
+    }
     if(s.length <= ORIGIN_IDENTITY_MAX) return s;
-    return 'h106:' + cyrb53(s, 0).toString(16).padStart(14, '0') + cyrb53(s, 0x9e3779b9).toString(16).padStart(14, '0');
+    return fp106(s);
+  }
+  // XML cannot carry U+0001: tagged tokens are exported in the XML-safe
+  // 'h106:' spelling and re-imported as the tagged form by the parser.
+  function originTokenForExport(origin: unknown): string {
+    const s = String(origin ?? '');
+    return s.charAt(0) === FP_MARK ? 'h106:' + s.slice(1) : s;
   }
 
   // Custom-value maps must carry their keys as OWN properties: a user-chosen

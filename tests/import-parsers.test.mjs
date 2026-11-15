@@ -3994,8 +3994,48 @@ test('a multi-megabyte foreign key id cannot leave the imported document un-pers
   assert.ok(stored.nodes.some(n => n.id === 'importedNode'), 'the persisted document is the imported one, not a stale previous save');
   const attr = (stored.customAttributes || []).find(a => a.name === 'bigprop');
   assert.ok(attr, 'the definition persisted');
-  assert.ok(String(attr.origin).length <= 256, `the origin is stored bounded (fingerprint), got ${String(attr.origin).length} chars`);
+  assert.ok(String(attr.origin).length <= 256 && String(attr.origin).charAt(0) === '\u0001' && String(attr.origin).length === 29, `the origin is stored bounded (tagged fingerprint), got ${JSON.stringify(String(attr.origin))}`);
   assert.equal(stored.nodes.find(n => n.id === 'importedNode').custom[attr.id], 'value-big', 'the value round-trips');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a literal key equal to a long key’s fingerprint never merges with that property', async () => {
+  // 'fp128:…'-style fingerprints live in the same short-string space as
+  // ordinary keys, so a foreign file can carry a key whose id IS the
+  // fingerprint of an unrelated long key. The identity reuse must treat
+  // them as distinct properties, never merging them.
+  const longKey = 'L' + 'q'.repeat(299); // 300 chars — fingerprint territory
+  const saved = { title: 'fp-collision', nodes: [], edges: [] };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom; const {document} = window;
+  await settle(window, 60);
+  const graphmlFor = (key, value) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    `  <key id="${key}" for="graph" attr.name="sharedprop" attr.type="string" qvge:kind="custom-attribute"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <data key="${key}">${value}</data>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+  await paste(document, window, '#btnPasteGraphml', graphmlFor(longKey, 'value-long'));
+  // Read the fingerprint off our own export — exactly what an attacker appends.
+  document.querySelector('#btnExportGraphml').click();
+  const modal = document.querySelector('.export-modal');
+  const exported = modal.querySelector('textarea').value;
+  modal.remove();
+  const m = exported.match(/qvge:origin="([^"]+)"/);
+  assert.ok(m, 'the long-key definition exports an origin token');
+  const fingerprint = m[1];
+  // Append a distinct short key whose id IS that fingerprint token.
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteGraphml', graphmlFor(fingerprint, 'value-evil'));
+  const graph = exportedGraph(document);
+  const defs = graph.customAttributes.filter(d => d.name === 'sharedprop');
+  assert.equal(defs.length, 2, 'the literal key and the long key are distinct properties');
+  const values = graph.graphCustom || {};
+  assert.equal(values[defs.find(d => d.origin === longKey || d.origin === '\x01' + fingerprint.slice(5))?.id], 'value-long', 'the long key keeps its value');
+  assert.equal(Object.values(values).includes('value-evil'), true, 'the literal key has its own value');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
