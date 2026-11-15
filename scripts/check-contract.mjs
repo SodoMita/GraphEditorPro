@@ -30,7 +30,7 @@ const inv = (name, condition) => {
 inv('ORIGIN_IDENTITY_MAX = 256 is the identity bound (P3, fingerprint fix)', /ORIGIN_IDENTITY_MAX\s*=\s*256/.test(core));
 inv('originIdentity is defined and fingerprints past the bound (tagged token)', /function originIdentity/.test(core) && /const fp106/.test(core) && /FP_MARK\s*=\s*'\\u0001'/.test(core));
 inv('fingerprints live in a namespace disjoint from XML-expressible literals (U+0001 marker)', /charAt\(0\) === FP_MARK/.test(core) && /FP_MARK \+ cyrb53/.test(core));
-inv('originIdentity passes short origins through verbatim before fingerprinting', /if\(s\.length <= ORIGIN_IDENTITY_MAX\) return s;/.test(core) && core.indexOf('ORIGIN_IDENTITY_MAX) return s') < core.indexOf('return fp106(s);'));
+inv('originIdentity passes short origins through verbatim before fingerprinting (long path only)', /if\(s\.length <= ORIGIN_IDENTITY_MAX\) return s;[\s\S]{0,80}?return fp106\(s\);/.test(core));
 inv('cyrb53 is the fingerprint hash (two independent seeds)', /function cyrb53/.test(core) && /cyrb53\(s(tr)?, 0\)/.test(core) && /cyrb53\(s(tr)?, 0x9e3779b9\)/.test(core));
 
 // --- Origins are never truncated ANYWHERE (any cap conflates long foreign keys) ---
@@ -38,12 +38,16 @@ inv('no source line truncates an origin (no .slice( on an origin)', !all.split('
 
 // --- Every identity/storage ingress goes through the fingerprint ---
 inv('load/sanitize records origins via originIdentity', /rawOrigin\s*=\s*originIdentity\(attribute\.origin\)/.test(core));
-inv('paste carries origins via originIdentity', /const origin = originIdentity\(\(def as AnyRecord\)\.origin\)/.test(paste));
-inv('GraphML parse ingress maps the XML-safe h106 spelling back onto the tagged token', /rawOriginAttr/.test(imp) && /\^h106:\[0-9a-f\]\{28\}\$/.test(imp) && /'\\u0001' \+ rawOriginAttr\.substring\(5\)/.test(imp));
-inv('GraphML export re-emits tagged tokens in the XML-safe h106 spelling', /originTokenForExport/.test(imp) && /originTokenForExport\(attribute\.origin\)/.test(imp));
-inv('import exact-pair identity uses originIdentity (pair branch)', /incOriginPair\s*=\s*originIdentity/.test(imp));
-inv('import reuse scan identity uses originIdentity', /incOrigin\s*=\s*originIdentity\(inc\.origin\)/.test(imp));
-inv('import mint keeps a fingerprinted origin', /keepOrigin\s*=\s*originIdentity/.test(imp));
+inv('paste carries origins via originFromForeign (clipboard is foreign input)', /const origin = originFromForeign\(\(def as AnyRecord\)\.origin\)/.test(paste));
+inv('paste encodes carried origins in the wire spelling on copy', /originForWire\(attribute\?\.origin\)/.test(paste));
+inv('GraphML parse ingress shares the one foreign ingress (wire decode, forged markers re-tagged)', /const origin = originFromForeign\(k\.getAttributeNS\(QVGE_NS, 'origin'\) \|\| ''\)/.test(imp));
+inv('foreign ingress decodes the wire encoding and re-tags forged markers (originFromForeign)', /function originFromForeign/.test(core) && /WIRE_TOKEN_RE\.test\(s\)/.test(core) && /literalForeignIdentity\(s\)/.test(core));
+inv('foreign KEY IDS never mint a token (literalForeignIdentity: fingerprint past the bound, markers re-tagged)', /const literalForeignIdentity/.test(core) && /s\.charAt\(0\) === FP_MARK \|\| s\.length > ORIGIN_IDENTITY_MAX/.test(core));
+inv('export encodes origins in the disjoint spellings (h106: token / l106: escaped literal) and never emits raw markers', /function originForWire/.test(core) && /isFpToken\(s\)\) return 'h106:' \+ s\.substring\(1\)/.test(core) && /'l106:' \+ encodeURIComponent/.test(core) && /originForWire\(attribute\.origin\)/.test(imp));
+inv('JSON exports encode origins in the wire spelling (no raw markers leak across the boundary)', /function jsonExportText/.test(imp) && /attribute\.origin = originForWire\(attribute\.origin\)/.test(imp));
+inv('import boundaries decode origins once, at their parsers (JSON at the parse sites, GraphML in the parser) — claims inside import use the internal identity verbatim', /incOriginPair\s*=\s*String\(\(inc as AnyRecord\)\?\.origin \?\? ''\)\.trim\(\) \|\| literalForeignIdentity\(fullId\)/.test(imp));
+inv('every JSON site feeding the import funnel decodes origins exactly once (three call sites plus the definition)', (imp.match(/decodeForeignGraphJson\(/g) || []).length === 4 && !/importGraphData\(JSON\.parse\(/.test(imp) && !/importGraphData\(data, 'JSON'/.test(imp));
+inv('import paths never re-decode an already-internal identity (originFromForeign only at a document boundary)', !/originFromForeign\(inc\.origin\)/.test(imp) && !/originFromForeign\(keepOriginRaw\)/.test(imp));
 
 // --- Import exact-pair branch: truncated keys prove nothing without an origin match (P2, ⑱) ---
 inv('exact-pair merge requires recorded origin equality (no "no origin = free merge")', /pairOrigin === incOriginPair/.test(imp) && !imp.includes('!pairOrigin || pairOrigin === incOriginPair'));

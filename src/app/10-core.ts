@@ -386,20 +386,28 @@
   // Identity for an origin that may be arbitrarily long. Capping it (any
   // finite cap) conflates foreign keys that differ only past the cap, so a
   // long origin is stored as a deterministic fingerprint of the FULL string
-  // instead. Every origin comparison in the app compares recorded origins,
-  // normalization at ingress is idempotent, and the 106-bit fingerprint keeps
-  // distinct keys distinct. Origins at or below ORIGIN_IDENTITY_MAX pass
-  // through verbatim, so ordinary documents are byte-identical to before.
+  // instead. Origins at or below ORIGIN_IDENTITY_MAX pass through verbatim,
+  // so ordinary documents are byte-identical to before.
   //
-  // Fingerprints are tagged with U+0001, which XML 1.0 cannot express —
-  // foreign GraphML can never carry a key whose id equals one of our tokens,
-  // so a literal key can never alias a long key's identity. The tagged
-  // shape (FP_MARK + 28 hex) is passed through unchanged (idempotent); any
-  // token-shaped residue is re-tagged deterministically. GraphML exports
-  // translate tokens into the XML-safe 'h106:' spelling, re-imported as the
-  // tagged form by the parser.
+  // Two identities may never coincide, so the wire must distinguish them:
+  // Fingerprints are tagged with U+0001 (XML cannot express it), and every
+  // origin that crosses a document boundary travels in exactly one of two
+  // unambiguous spellings: 'h106:' + 28 hex is a token (a long key's
+  // fingerprint), 'l106:' + percent-encoding is a literal. Ordinary literal
+  // origins stay verbatim unless their own spelling would be ambiguous, so
+  // existing exports are byte-stable; anything else is escaped. A LITERAL
+  // can therefore never decode as a token, and vice versa.
+  //
+  // Trusted storage (localStorage, our own undo snapshots) keeps the raw
+  // token spelling and passes it through verbatim (originIdentity below).
+  // Foreign input (files, pastes, clipboard payloads) goes through
+  // originFromForeign, which never stores a raw marker-shaped string —
+  // JSON admits U+0001, so a foreign payload may not mint a token by
+  // carrying one (an earlier hole); non-token markers are re-tagged instead.
   const ORIGIN_IDENTITY_MAX = 256;
   const FP_MARK = '\u0001';
+  const FP_HEX_RE = /^[0-9a-f]{28}$/;
+  const isFpToken = (s: string): boolean => s.length === 29 && s.charAt(0) === FP_MARK && FP_HEX_RE.test(s.substring(1));
   const fp106 = (str: string): string =>
     FP_MARK + cyrb53(str, 0).toString(16).padStart(14, '0') + cyrb53(str, 0x9e3779b9).toString(16).padStart(14, '0');
   function cyrb53(str: string, seed: number): number {
@@ -415,19 +423,61 @@
     h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return 4294967296 * (2097151 & h2) + (h1 >>> 0);
   }
+  // Trusted ingresses (our own persisted state): token-shaped strings are our
+  // fingerprints and pass through verbatim (idempotent); any other marker-
+  // shaped residue is re-tagged deterministically. Idempotent on stored state.
   function originIdentity(value: unknown): string {
     const s = String(value ?? '').trim();
-    if(s.charAt(0) === FP_MARK){ // one of our tagged tokens — keep it as-is
-      return s.length === 29 && /^[0-9a-f]{28}$/.test(s.slice(1)) ? s : fp106(s);
-    }
+    if(s.charAt(0) === FP_MARK) return isFpToken(s) ? s : fp106(s);
     if(s.length <= ORIGIN_IDENTITY_MAX) return s;
     return fp106(s);
   }
-  // XML cannot carry U+0001: tagged tokens are exported in the XML-safe
-  // 'h106:' spelling and re-imported as the tagged form by the parser.
-  function originTokenForExport(origin: unknown): string {
+  const WIRE_TOKEN_RE = /^h106:[0-9a-f]{28}$/;
+  const WIRE_AMBIGUOUS_LITERAL_RE = /^(h106:[0-9a-f]{28}|l106:)/;
+  const pctDecode = (s: string): string | null => {
+    try { return decodeURIComponent(s); } catch { return null; }
+  };
+  // Identity of a foreign KEY ID — never a wire claim: verbatim within the
+  // bound, a fingerprint past it, and any marker-shaped input is re-tagged
+  // (a JSON payload may not mint a token by carrying one).
+  const literalForeignIdentity = (value: unknown): string => {
+    const s = String(value ?? '').trim();
+    if(s.charAt(0) === FP_MARK || s.length > ORIGIN_IDENTITY_MAX) return fp106(s);
+    return s;
+  };
+  // Decode the wire spelling back to a stored identity. Token spellings mint
+  // tokens (the designed identity channel); escaped literals round-trip to the
+  // exact stored string; anything unrecognized returns null.
+  function decodeOriginWire(s: string): string | null {
+    if(WIRE_TOKEN_RE.test(s)) return FP_MARK + s.substring(5);
+    if(s.startsWith('l106:')){
+      const decoded = pctDecode(s.substring(5));
+      if(decoded === null) return null;
+      return literalForeignIdentity(decoded);
+    }
+    return null;
+  }
+  // Foreign ingresses (files, pastes, clipboard): the wire spelling decodes,
+  // raw marker-shaped input is re-tagged (JSON admits U+0001 — a foreign
+  // payload may not mint a token), and anything else follows the verbatim /
+  // fingerprint rule for literals.
+  function originFromForeign(value: unknown): string {
+    const s = String(value ?? '').trim();
+    const wire = decodeOriginWire(s);
+    if(wire !== null) return wire;
+    return literalForeignIdentity(s);
+  }
+  // Export spelling (GraphML qvge:origin and JSON origin fields): total and
+  // injective — a token is h106:+hex, an ordinary literal stays verbatim, and
+  // any literal whose spelling would decode as a token (or as another escape)
+  // is percent-escaped. Raw marker-shaped leftovers are escaped too — U+0001
+  // is never emitted.
+  function originForWire(origin: unknown): string {
     const s = String(origin ?? '');
-    return s.charAt(0) === FP_MARK ? 'h106:' + s.slice(1) : s;
+    if(isFpToken(s)) return 'h106:' + s.substring(1);
+    if(s.charAt(0) === FP_MARK) return 'l106:' + encodeURIComponent(s);
+    if(s.length <= ORIGIN_IDENTITY_MAX && !WIRE_AMBIGUOUS_LITERAL_RE.test(s)) return s;
+    return 'l106:' + encodeURIComponent(s);
   }
 
   // Custom-value maps must carry their keys as OWN properties: a user-chosen

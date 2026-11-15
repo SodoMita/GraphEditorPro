@@ -4001,10 +4001,10 @@ test('a multi-megabyte foreign key id cannot leave the imported document un-pers
 });
 
 test('a literal key equal to a long key’s fingerprint never merges with that property', async () => {
-  // 'fp128:…'-style fingerprints live in the same short-string space as
-  // ordinary keys, so a foreign file can carry a key whose id IS the
-  // fingerprint of an unrelated long key. The identity reuse must treat
-  // them as distinct properties, never merging them.
+  // A short foreign key can be spelled exactly like the wire spelling of a
+  // long key's fingerprint, so a foreign file can carry a key whose id IS
+  // that token's spelling. The identity reuse must treat them as distinct
+  // properties, never merging them.
   const longKey = 'L' + 'q'.repeat(299); // 300 chars — fingerprint territory
   const saved = { title: 'fp-collision', nodes: [], edges: [] };
   const {dom, errors} = createEditorDom(saved);
@@ -4033,9 +4033,16 @@ test('a literal key equal to a long key’s fingerprint never merges with that p
   const graph = exportedGraph(document);
   const defs = graph.customAttributes.filter(d => d.name === 'sharedprop');
   assert.equal(defs.length, 2, 'the literal key and the long key are distinct properties');
+  // Exported origins use the wire spelling: the token spelling is 'h106:…',
+  // the literal's own spelling is percent-escaped into 'l106:…'.
+  const tokenDef = defs.find(d => d.origin === fingerprint);
+  const literalDef = defs.find(d => d.origin === 'l106:' + encodeURIComponent(fingerprint));
+  assert.ok(tokenDef, 'the long key’s definition exports the token spelling');
+  assert.ok(literalDef, 'the literal key’s definition exports the escaped-literal spelling');
+  assert.notEqual(tokenDef.id, literalDef.id, 'the two properties have distinct definitions');
   const values = graph.graphCustom || {};
-  assert.equal(values[defs.find(d => d.origin === longKey || d.origin === '\x01' + fingerprint.slice(5))?.id], 'value-long', 'the long key keeps its value');
-  assert.equal(Object.values(values).includes('value-evil'), true, 'the literal key has its own value');
+  assert.equal(values[tokenDef.id], 'value-long', 'the long key keeps its value');
+  assert.equal(values[literalDef.id], 'value-evil', 'the literal key has its own value');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

@@ -850,7 +850,13 @@
     }
     // Carry the definitions of the custom attributes this payload references,
     // so pasting into a document without them can re-create them.
-    const customAttributes = referencedCustomAttributes([...nodes, ...edges, ...externalEdges]);
+    // Definitions carry identity in their origins; tokens are internal, so
+    // they cross the boundary in the wire spelling (decoded symmetrically on
+    // paste). The in-memory payload and the system clipboard both get the
+    // encoded form — a raw marker may not travel between documents.
+    const customAttributes = referencedCustomAttributes([...nodes, ...edges, ...externalEdges])
+      .map(attribute => attribute?.origin == null ? attribute
+        : { ...attribute, origin: originForWire(attribute?.origin) });
     clipboardData = { nodes, edges, externalEdges, customAttributes };
     // Deduplicate externalEdges that are duplicates of internal? Already separated
     // Write to system clipboard as JSON for cross-tab paste
@@ -946,7 +952,9 @@
         // The origin is identity data (the carried key id the definition was
         // minted from) — stored in full up to the identity bound, then as a
         // fingerprint of the full string; both spellings are equality-stable.
-        const origin = originIdentity((def as AnyRecord).origin);
+        // The clipboard is foreign input: wire spellings decode, raw
+        // marker-shaped input may not mint a token.
+        const origin = originFromForeign((def as AnyRecord).origin);
         return { id, fullId, scope: scope as 'graph' | 'node' | 'edge' | 'all', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
       })
       .filter((def): def is { id: string; fullId: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string } => def !== null);
@@ -1004,7 +1012,7 @@
       // and mints instead; only an exactly-equal key id or recorded origin
       // keeps the free merge.
       const existingOrigin = String(existing?.origin ?? '').trim() || String(existing?.id ?? '').trim();
-      const carriedOrigin = String(carried?.origin ?? '').trim() || String((carried as AnyRecord)?.fullId ?? carried?.id ?? '').trim();
+      const carriedOrigin = String(carried?.origin ?? '').trim() || literalForeignIdentity(String((carried as AnyRecord)?.fullId ?? carried?.id ?? '').trim());
       return existingOrigin === carriedOrigin;
     };
     const ensurePair = (id: string, scope: 'node' | 'edge' | 'all') => {
@@ -1042,7 +1050,7 @@
       // candidate.
       const carriedName = (String(carriedPair?.name ?? '').trim() || id).toLowerCase();
       const carriedNameRaw = String(carriedPair?.name ?? '').trim().toLowerCase();
-      const incOrigin = (String(carriedPair?.origin ?? '').trim() || String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id);
+      const incOrigin = (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id));
       const nameAgreement = (a: AnyRecord | undefined) => {
         const an = String(a?.name ?? '').trim().toLowerCase();
         return !an || !carriedNameRaw || an === carriedNameRaw;
@@ -1078,7 +1086,7 @@
       if(remaining <= 0){ failedPairs.add(key); skipped++; return; }
       if(!createdIds.has(id)){
         remaining--;
-        addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id), carriedPair?.name ? { name: carriedPair.name } : undefined);
+        addDef(id, scope, type, (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id)), carriedPair?.name ? { name: carriedPair.name } : undefined);
         handledPairs.add(key);
         return;
       }
@@ -1089,7 +1097,7 @@
       // has none, record the carried id as the name so the next paste (or a
       // round-trip of an export of it) finds THIS definition instead of
       // minting a second one for the same property.
-      addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id), { name: carriedPair?.name || id });
+      addDef(newId, scope, type, (String(carriedPair?.origin ?? '').trim() || literalForeignIdentity(String((carriedPair as AnyRecord)?.fullId ?? '').trim() || id)), { name: carriedPair?.name || id });
       renameByPair.set(key, newId);
       handledPairs.add(key);
     };

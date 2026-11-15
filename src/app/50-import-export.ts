@@ -137,7 +137,7 @@
       if(!text || !text.trim()){ toast(I18N.t('textarea_empty')); return; }
       try {
         assertImportTextSize(text);
-        if(format === 'json') importGraphData(JSON.parse(text), 'JSON', appendChk.checked);
+        if(format === 'json') importGraphData(decodeForeignGraphJson(JSON.parse(text)), 'JSON', appendChk.checked);
         else if(format === 'dot') importGraphData(parseDot(text), 'DOT', appendChk.checked);
         else if(format === 'graphml') importGraphData(parseGraphml(text), 'GraphML', appendChk.checked);
         else if(format === 'edges-csv') importEdgesCsv(text, appendChk.checked);
@@ -172,7 +172,7 @@
     }, 0);
   }
   function fileBase(){ return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,60) || 'graph'; }
-  function exportJson(){ showExportPreview(`${fileBase()}.graph.json`, JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json;charset=utf-8'); }
+  function exportJson(){ showExportPreview(`${fileBase()}.graph.json`, jsonExportText(), 'application/json;charset=utf-8'); }
   // Map the editor's shape names onto DOT's vocabulary (and back in parseDot).
   function dotShapeName(shape){
     return shape === 'diamond' ? 'diamond'
@@ -457,9 +457,9 @@
       // values of same-named keys on a round-trip. When it equals the
       // definition's own id the default resolution already finds it, so it is
       // omitted to keep ordinary exports byte-stable.
-      // Tagged fingerprints (U+0001) are illegal in XML — emit the XML-safe
-      // 'h106:' spelling; the parser maps it straight back onto the token.
-      const originAttr = attribute.origin && originTokenForExport(attribute.origin) !== attribute.id ? ` qvge:origin="${xmlEsc(originTokenForExport(attribute.origin))}"` : '';
+      // Tagged fingerprints (U+0001) are illegal in XML — emit the wire
+      // spelling; the parser decodes it straight back onto the stored identity.
+      const originAttr = attribute.origin && originForWire(attribute.origin) !== attribute.id ? ` qvge:origin="${xmlEsc(originForWire(attribute.origin))}"` : '';
       return `  <key id="${xmlEsc(id)}" for="${xmlEsc(attribute.scope)}" attr.name="${xmlEsc(attrName)}" attr.type="${xmlEsc(attribute.type)}" qvge:kind="${QVGE_CUSTOM_MARKER}"${idAttr}${originAttr}/>`;
     });
   }
@@ -570,7 +570,31 @@
     return lines.join('\n') + '\n';
   }
   function exportGraphml(){ showExportPreview(`${fileBase()}.graphml`, exportGraphmlText(), 'application/graphml+xml;charset=utf-8'); }
-  function exportJsonText(){ return JSON.stringify(JSON.parse(snapshot()), null, 2); }
+  // JSON may carry U+0001, so tokens travel in the same unambiguous wire
+  // spellings as GraphML — one format at every document boundary, and a
+  // foreign payload may not mint a token.
+  function jsonExportText(){
+    const obj = JSON.parse(snapshot()) as AnyRecord;
+    if(isRecord(obj) && Array.isArray(obj.customAttributes)){
+      for(const attribute of obj.customAttributes as AnyRecord[]){
+        if(isRecord(attribute) && typeof attribute.origin === 'string') attribute.origin = originForWire(attribute.origin);
+      }
+    }
+    return JSON.stringify(obj, null, 2);
+  }
+  // A JSON document boundary is foreign input: wire spellings decode and raw
+  // marker-shaped strings may not mint a token. Applied at every place that
+  // feeds importGraphData from a JSON.parse — GraphML (already decoded by its
+  // parser) and DOT (origins are minted fresh) must never pass through this.
+  function decodeForeignGraphJson(data){
+    if(!isRecord(data) || !Array.isArray(data.customAttributes)) return data;
+    const customAttributes = data.customAttributes.map(attribute =>
+      isRecord(attribute) && typeof (attribute as AnyRecord).origin === 'string'
+        ? { ...(attribute as AnyRecord), origin: originFromForeign((attribute as AnyRecord).origin) }
+        : attribute);
+    return { ...data, customAttributes };
+  }
+  function exportJsonText(){ return jsonExportText(); }
   function replaceWithImportedGraph(data, label='graph'){
     cancelZoomPreview();
     // Preserve current graph defaults (Style tab) when importing — only override
@@ -857,7 +881,7 @@
         // free merge. Without this, two keys sharing the 128-char prefix of
         // an unproven definition both bound to it and overwrote each other.
         const pairOrigin = String((pairHit as AnyRecord)?.origin ?? '').trim() || String(pairHit?.id ?? '').trim();
-        const incOriginPair = originIdentity((inc as AnyRecord)?.origin) || originIdentity(fullId);
+        const incOriginPair = String((inc as AnyRecord)?.origin ?? '').trim() || literalForeignIdentity(fullId);
         const originsMerge = pairOrigin === incOriginPair;
         if(namesMerge && originsMerge){ // merges without capacity
           renameByPair.set(scope + '|' + origId, String(pairHit.id));
@@ -880,7 +904,7 @@
       // specific key id and may not drift onto a different one. A
       // definition claimed by an earlier property in this file is likewise
       // no longer a candidate.
-      const incOrigin = originIdentity(inc.origin) || originIdentity(fullId);
+      const incOrigin = String(inc.origin ?? '').trim() || literalForeignIdentity(fullId);
       const incNameLc = String(inc.name ?? '').trim().toLowerCase();
       const nameAgreement = (e: AnyRecord | undefined) => {
         const en = String(e?.name ?? '').trim().toLowerCase();
@@ -939,7 +963,16 @@
       // earlier definition keeps the origin it was minted from; a fresh
       // mint defaults it to the carried id. The recorded name stays the
       // attr.name for export spelling.
-      const keepOrigin = originIdentity(String((inc as AnyRecord)?.origin ?? '').trim() || fullId);
+      // Origins reaching this function are already internal identities:
+      // every file parser decodes its own wire spellings at the boundary
+      // (JSON at the parse sites, GraphML in the parser, clipboard on
+      // paste), and values are internal by the time any in-app code mints
+      // them. Re-decoding here would re-tag a real token as a fresh one —
+      // identity must be stable across one import, one export, forever.
+      // A bare key id is not an identity claim either — it mints the
+      // literal fingerprint exactly once, at this fallback.
+      const keepOriginRaw = String((inc as AnyRecord)?.origin ?? '').trim();
+      const keepOrigin = keepOriginRaw || literalForeignIdentity(fullId);
       // Register the origin-bearing copy in byPair too — the exact-pair
       // branch above compares recorded origins to tell same-named keys
       // apart, and a minted definition without its origin in the pair map
@@ -1011,7 +1044,7 @@
       const append = $('#optImportAppend')?.checked;
       if(format === 'json'){
         const data = JSON.parse(text);
-        importGraphData(data, 'JSON', append);
+        importGraphData(decodeForeignGraphJson(data), 'JSON', append);
       } else if(format === 'dot'){
         importGraphData(parseDot(text), 'DOT', append);
       } else if(format === 'graphml'){
@@ -1543,10 +1576,9 @@
       const definitionHere = appliesTo(forWhom).some(dataScope => roles[dataScope] === 'definition');
       const definitionId = prefixed ? keyId.slice(CUSTOM_KEY_PREFIX.length)
         : (marked && recordedId ? recordedId : keyId);
-      const rawOriginAttr = (k.getAttributeNS(QVGE_NS, 'origin') || '').trim();
-      // Our own fingerprint spelling round-trips onto the tagged token;
-      // everything else goes through the generic normalizer.
-      const origin = /^h106:[0-9a-f]{28}$/.test(rawOriginAttr) ? '\u0001' + rawOriginAttr.substring(5) : originIdentity(rawOriginAttr);
+      // One wire format, one decoder: our exported token/escaped-literal
+      // spellings round-trip; raw marker-shaped input may not mint a token.
+      const origin = originFromForeign(k.getAttributeNS(QVGE_NS, 'origin') || '');
       return {keyId, rawName, forWhom, roles, definitionId, isDefinition: definitionHere, eager: isDefinition, type: type2, origin};
     });
 
@@ -1957,7 +1989,7 @@
             else importMatrixCsv(text, append);
           }
         }
-        else { importGraphData(JSON.parse(text), 'JSON', append); }
+        else { importGraphData(decodeForeignGraphJson(JSON.parse(text)), 'JSON', append); }
       } catch(err){ toast(I18N.t('could_not_import', {msg: err.message})); }
     };
     reader.readAsText(file);
