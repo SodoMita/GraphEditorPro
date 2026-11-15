@@ -214,3 +214,40 @@ test('a double click in a drag-selection tool does not edit', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a double click reaches a selected node through the gizmo hit shape on top of it', async () => {
+  // Found in a real browser, not jsdom: with the gizmo enabled (the default) the
+  // gizmo draws an invisible hit shape over the selected node and claims the
+  // press, stopping propagation — so no node press is ever recorded. Resolving
+  // from the topmost element alone then finds only gizmo chrome and gives up,
+  // and double-clicking a node did nothing at all.
+  //
+  // jsdom does no hit testing, so the stack is supplied directly: chrome first,
+  // then the node underneath it, exactly as a browser would report it.
+  const { dom, errors } = createEditorDom();
+  const { window } = dom;
+  const document = window.document;
+  await importGraphml(dom, graphml);
+
+  const node = document.querySelector('#nodesLayer g.node');
+  assert.ok(node, 'expected a rendered node');
+  const chrome = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  chrome.setAttribute('class', 'gizmo-hit');
+
+  const original = document.elementsFromPoint;
+  document.elementsFromPoint = () => [chrome, node, document.querySelector('#canvasWrap')];
+  try {
+    // No press on the node: the gizmo swallowed it.
+    doubleClickRetargetedToCanvas(dom, 100, 100);
+    await settle(window);
+
+    const dialog = openDialog(document);
+    assert.ok(dialog, 'the label editor opens for the node under the gizmo handle');
+    assert.equal(dialog.querySelector('input')?.value, 'Alice', 'and it is the node under the handle');
+    assert.deepEqual(errors.map(error => error.message), []);
+  } finally {
+    if (original) document.elementsFromPoint = original;
+    else delete document.elementsFromPoint;
+    dom.window.close();
+  }
+});

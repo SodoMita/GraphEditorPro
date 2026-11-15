@@ -406,17 +406,29 @@
   let lastPressed: {kind: 'node' | 'edge'; id: string} | null = null;
   function notePress(kind: 'node' | 'edge', id: string){ lastPressed = {kind, id}; }
   // Resolve which element a dblclick means. Prefer the event target (works when
-  // capture is not involved); otherwise fall back to where the pointer actually
-  // is, then to the element the press began on.
+  // capture is not involved); otherwise look up what is actually under the
+  // pointer, then fall back to the element the press began on.
+  //
+  // Editor chrome (the gizmo's hit shapes, selection accents) sits above the
+  // document and swallows presses: the gizmo owns the press for a selected node
+  // and stops propagation, so no node press is ever recorded. Resolving from the
+  // topmost element alone would therefore find chrome and give up. Walk the hit
+  // stack instead and take the first document element in it, so a double click
+  // on a selected node reaches the node whether or not a handle covers it.
+  function documentHitAt(x: number, y: number){
+    const stack = typeof document.elementsFromPoint === 'function'
+      ? document.elementsFromPoint(x, y)
+      : [typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null];
+    for(const el of stack){
+      const hit = (el as Element | null)?.closest?.('.node, .edge') as HTMLElement | null;
+      if(hit?.dataset?.id) return {kind: hit.classList.contains('node') ? 'node' as const : 'edge' as const, id: hit.dataset.id};
+    }
+    return null;
+  }
   function doubleClickTarget(ev){
     const direct = (ev.target as Element | null)?.closest?.('.node, .edge') as HTMLElement | null;
     if(direct?.dataset?.id) return {kind: direct.classList.contains('node') ? 'node' as const : 'edge' as const, id: direct.dataset.id};
-    const el = typeof document.elementFromPoint === 'function'
-      ? document.elementFromPoint(ev.clientX, ev.clientY) as Element | null
-      : null;
-    const at = el?.closest?.('.node, .edge') as HTMLElement | null;
-    if(at?.dataset?.id) return {kind: at.classList.contains('node') ? 'node' as const : 'edge' as const, id: at.dataset.id};
-    return lastPressed;
+    return documentHitAt(ev.clientX, ev.clientY) || lastPressed;
   }
   function editQuickByHit(hit: {kind: 'node' | 'edge'; id: string}){
     // Only in the tools where a double click is unambiguous. In the drag-select
