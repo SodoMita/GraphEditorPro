@@ -3917,3 +3917,51 @@ test('appending two long keys onto an origin-less 128-char definition mints one 
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('foreign graph keys differing only after character 1000 survive export and append', async () => {
+  // Two keys identical for their first 1,000 characters. Each is imported
+  // into its own document, one is exported, and the export is appended to
+  // the other. State sanitization used to truncate origins at 1,000 —
+  // erasing exactly the part that tells the two keys apart — so the append
+  // merged them and the incoming graph value overwrote the existing one.
+  const longA = 'X'.repeat(1000) + 'A', longB = 'X'.repeat(1000) + 'B'; // 1001 chars each
+  assert.equal(longA.slice(0, 1000), longB.slice(0, 1000));
+  assert.notEqual(longA, longB);
+  const graphmlFor = (key, value) => [
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:qvge="http://qvge.github.io/graphml">',
+    `  <key id="${key}" for="graph" attr.name="sharedprop" attr.type="string" qvge:kind="custom-attribute"/>`,
+    '  <graph id="g" edgedefault="directed">',
+    `    <data key="${key}">${value}</data>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+
+  // Document one: import key A, then export its GraphML.
+  const first = createEditorDom({ title: 'doc-one', nodes: [], edges: [] });
+  const document1 = first.dom.window.document;
+  await settle(first.dom.window, 60);
+  await paste(document1, first.dom.window, '#btnPasteGraphml', graphmlFor(longA, 'value-A'));
+  document1.querySelector('#btnExportGraphml').click();
+  const modal1 = document1.querySelector('.export-modal');
+  const exported = modal1.querySelector('textarea').value;
+  modal1.remove();
+  assert.match(exported, /qvge:origin=/, 'the export carries the identity of its definition');
+  first.dom.window.close();
+
+  // Document two: import key B, then append document one's export.
+  const second = createEditorDom({ title: 'doc-two', nodes: [], edges: [] });
+  const document2 = second.dom.window.document;
+  await settle(second.dom.window, 60);
+  await paste(document2, second.dom.window, '#btnPasteGraphml', graphmlFor(longB, 'value-B'));
+  document2.querySelector('#optImportAppend').checked = true;
+  await paste(document2, second.dom.window, '#btnPasteGraphml', exported);
+  const graph = exportedGraph(document2);
+  const defs = graph.customAttributes.filter(d => d.name === 'sharedprop');
+  assert.equal(defs.length, 2, 'the two over-1000-char foreign keys never share an identity');
+  const values = graph.graphCustom || {};
+  assert.deepEqual(Object.values(values).sort(), ['value-A', 'value-B'], 'both graph values survive the append');
+  assert.equal(Object.keys(values).length, 2, 'the values live under distinct binding ids');
+  assert.deepEqual(first.errors.map(e => e.message), []);
+  assert.deepEqual(second.errors.map(e => e.message), []);
+  second.dom.window.close();
+});

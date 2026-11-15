@@ -1393,10 +1393,11 @@
         // read with. Keep `origin` for the same reason: it is the carried key
         // id the definition was minted from, which re-imports match against.
         // The name is a display heuristic (capped); the origin is identity —
-        // capping it at 128 would merge two long foreign keys that share a
-        // prefix on the next round-trip.
+        // capping it at ANY length would merge foreign keys that differ only
+        // past the cap, so it is stored in full. Two such keys round-trip as
+        // distinct properties; anything shorter cannot tell them apart.
         const rawName = String((attribute as AnyRecord).name ?? '').trim().slice(0, 128);
-        const rawOrigin = String((attribute as AnyRecord).origin ?? '').trim().slice(0, CUSTOM_VALUE_MAX);
+        const rawOrigin = String((attribute as AnyRecord).origin ?? '').trim();
         const out: AnyRecord = {id, scope, type};
         if(rawName && rawName !== id) out.name = rawName;
         if(rawOrigin) out.origin = rawOrigin;

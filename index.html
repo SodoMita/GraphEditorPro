@@ -4061,10 +4061,11 @@ function sanitizeState(input) {
         // read with. Keep `origin` for the same reason: it is the carried key
         // id the definition was minted from, which re-imports match against.
         // The name is a display heuristic (capped); the origin is identity —
-        // capping it at 128 would merge two long foreign keys that share a
-        // prefix on the next round-trip.
+        // capping it at ANY length would merge foreign keys that differ only
+        // past the cap, so it is stored in full. Two such keys round-trip as
+        // distinct properties; anything shorter cannot tell them apart.
         const rawName = String(attribute.name ?? '').trim().slice(0, 128);
-        const rawOrigin = String(attribute.origin ?? '').trim().slice(0, CUSTOM_VALUE_MAX);
+        const rawOrigin = String(attribute.origin ?? '').trim();
         const out = { id, scope, type };
         if (rawName && rawName !== id)
             out.name = rawName;
@@ -8879,7 +8880,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
         // The origin is identity data (the carried key id the definition was
         // minted from) — capped only by the value limit, never at the id cap,
         // or two long foreign keys sharing a prefix merge on the next paste.
-        const origin = String(def.origin ?? '').trim().slice(0, CUSTOM_VALUE_MAX);
+        const origin = String(def.origin ?? '').trim(); // identity — never truncated
         return { id, fullId, scope: scope, type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
     })
         .filter((def) => def !== null);

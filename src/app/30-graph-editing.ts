@@ -946,7 +946,7 @@
         // The origin is identity data (the carried key id the definition was
         // minted from) — capped only by the value limit, never at the id cap,
         // or two long foreign keys sharing a prefix merge on the next paste.
-        const origin = String((def as AnyRecord).origin ?? '').trim().slice(0, CUSTOM_VALUE_MAX);
+        const origin = String((def as AnyRecord).origin ?? '').trim(); // identity — never truncated
         return { id, fullId, scope: scope as 'graph' | 'node' | 'edge' | 'all', type, ...(name ? { name } : {}), ...(origin ? { origin } : {}) };
       })
       .filter((def): def is { id: string; fullId: string; scope: 'graph' | 'node' | 'edge' | 'all'; type: string; name?: string; origin?: string } => def !== null);
