@@ -144,7 +144,7 @@
       try {
         assertImportTextSize(text);
         if(format === 'json') importGraphData(decodeForeignGraphJson(JSON.parse(text)), 'JSON', appendChk.checked);
-        else if(format === 'dot') importGraphData(parseDot(text), 'DOT', appendChk.checked);
+        else if(format === 'dot') importGraphData(parseDot(text, { units: dotUnitsChoice() }), 'DOT', appendChk.checked);
         else if(format === 'graphml') importGraphData(parseGraphml(text), 'GraphML', appendChk.checked);
         else if(format === 'edges-csv') importEdgesCsv(text, appendChk.checked);
         else if(format === 'matrix-csv') importMatrixCsv(text, appendChk.checked);
@@ -194,18 +194,33 @@
       : shape === 'hexagon' ? 'hexagon'
       : 'ellipse';
   }
-  // DOT positions are written in POINTS with an explicit `inputscale=72`, which
-  // is the one combination every reader agrees on: `neato -n` / `-n2` read
-  // `pos` in points, and `neato`/`fdp` honour `inputscale=72` over their
-  // inch default. Writing inches instead (what this did before) round-tripped
-  // through GEP alone but landed 72x too small in `neato -n`, because that mode
-  // ignores `inputscale` and assumes points.
+  // DOT does not have one scale — different readers assume different ones, so
+  // the exporter states which convention a file follows instead of claiming a
+  // universal one (that claim was in an earlier version of this comment and the
+  // review was right to reject it):
   //
-  // The prior form also made the file contradict itself: `width`/`height` are
-  // DOT inches while `pos` was pixels, and no reader could satisfy both.
+  //   inches (default) — `pos` in inches with `!`, no `inputscale`. This is what
+  //     QVGE's reader assumes (it multiplies by 72 and never reads
+  //     `inputscale`) and what its writer emits (`pos/72`, its own
+  //     `inputscale` line commented out). It also agrees with `width`/`height`,
+  //     which are DOT inches in every format. `neato`/`fdp` read it at 1:1, so
+  //     running a layout engine on the file keeps the authored positions.
+  //   points — `pos` in points plus `inputscale=72`, for `neato -n`/`-n2`,
+  //     which take `pos` as points and ignore `inputscale`.
+  //
+  // The one combination that is wrong for BOTH is what this shipped before the
+  // review: pixel `pos` against inch `width`.
   // QVGE_GAP_ANALYSIS.md §1.7.
   const DOT_UNITS_PER_INCH = 72;
-  function dotCoord(value){ return fmtCoord(value); }
+  type DotExportProfile = 'inches' | 'points';
+  function dotExportProfile(): DotExportProfile {
+    const el = document.querySelector('#optDotExportUnits') as HTMLSelectElement | null;
+    return el?.value === 'points' ? 'points' : 'inches';
+  }
+  let dotProfile: DotExportProfile = 'inches';
+  function dotCoord(value){
+    return dotProfile === 'points' ? fmtCoord(value) : fmtCoord(value / DOT_UNITS_PER_INCH);
+  }
   // Label typography, mirroring `readDotLabelAttrs` in 46-dot-core.ts: QVGE
   // writes a label's colour/size/font as `fontcolor`/`fontsize`/`fontname`
   // (`CFileSerializerDOT::doWriteLabel`), so a file that only carried `label`
@@ -236,6 +251,17 @@
     if(style === 'none') return 'invis';
     return style;
   }
+  // The reader's choice of DOT coordinate units. `auto` trusts the file's own
+  // signals (`inputscale`, a layout engine, `bb`); the other two force a
+  // convention for files that carry no reliable signal — in particular this
+  // app's own exports before the units change, which put raw pixels in `pos`
+  // against inch `width`. Units are NOT inferred from the numbers: the review
+  // showed any such guess is wrong in both directions.
+  function dotUnitsChoice(){
+    const el = document.querySelector('#optDotUnits') as HTMLSelectElement | null;
+    const v = el?.value;
+    return v === 'inches' || v === 'legacyPixels' ? v : 'auto';
+  }
   function exportDotText(){
     // DOT grammar: the edge operator is fixed by the graph kind — `graph` takes
     // only `--`, `digraph` takes only `->`. Emitting `--` for an undirected edge
@@ -247,11 +273,14 @@
     const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
     // `graph` may only use `--`, and a mutual edge is invalid there anyway.
     const op = allUndirected ? '--' : '->';
-    // `pos` is in points (see `dotCoord`), so the file declares the scale it
-    // was written at. `neato`/`fdp` then divide by 72 back to inches and land
-    // where the author put the node; `neato -n` already assumes points and
-    // ignores the attribute, so both agree.
-    const lines = [header, '  graph [layout="neato", inputscale="72"];', '  node [style="filled"];'];
+    // The profile decides both the unit of `pos` and whether the file declares
+    // it: inches need no declaration (that is `inputscale`'s default), points
+    // must say so or `neato`/`fdp` would divide them by 72 a second time.
+    dotProfile = dotExportProfile();
+    const graphAttrs = dotProfile === 'points'
+      ? 'layout="neato", inputscale="72"'
+      : 'layout="neato"';
+    const lines = [header, `  graph [${graphAttrs}];`, '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
       const v = nodeVisual(n);
       const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${dotCoord(n.x)},${dotCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
@@ -1104,7 +1133,7 @@
         const data = JSON.parse(text);
         importGraphData(decodeForeignGraphJson(data), 'JSON', append);
       } else if(format === 'dot'){
-        const parsed = parseDot(text);
+        const parsed = parseDot(text, { units: dotUnitsChoice() });
         importGraphData(parsed, 'DOT', append);
         // A file from an older GEP carries pixels in `pos` while its node sizes
         // are inches; the parser rescales those (46-dot-core.ts `dotGraphUnits`)
@@ -1196,15 +1225,34 @@
     const taken = new Set<string>(existing);
     for(const cell of declared){ const sane = sanitize(cell); if(cell) taken.add(sane); }
     const seen = new Set<string>(existing);
-    let renamed = 0, gen = stateNext;
+    // The generated counter is a NUMBER, and it used to be incremented without
+    // bound. `state.nextNode`/`nextEdge` are derived from the ids in the
+    // document, so a node legitimately named `n9007199254740992` put the
+    // counter at 2^53: `gen++` stopped advancing and the `do/while` below span
+    // forever — an infinite loop on the main thread, i.e. a frozen tab.
+    //
+    // So the counter is treated as a hint, not a guarantee: it only runs while
+    // it stays in safe-integer range, and if it exhausts that range (or the
+    // generated id is somehow still taken) the search falls back to probing a
+    // suffixed form, which always terminates.
+    let renamed = 0, gen = Number.isSafeInteger(stateNext) && stateNext > 0 ? stateNext : 1;
     return {
       renamed: () => renamed,
       next(index: number) {
         const cell = declared[index];
         const wanted = cell ? sanitize(cell) : '';
         if(wanted && !seen.has(wanted)){ seen.add(wanted); return wanted; }
-        let id: string;
-        do { id = sanitize(prefix + gen++); } while(taken.has(id) || seen.has(id));
+        let id = '';
+        while(gen < Number.MAX_SAFE_INTEGER - 1){
+          const candidate = sanitize(prefix + gen++);
+          if(!taken.has(candidate) && !seen.has(candidate)){ id = candidate; break; }
+        }
+        if(!id){
+          // Counter exhausted (or every value in range is occupied): probe a
+          // deterministic suffix instead of spinning.
+          let probe = 1;
+          do { id = sanitize(prefix + probe); probe++; } while(taken.has(id) || seen.has(id));
+        }
         seen.add(id); taken.add(id); renamed++;
         return id;
       }
@@ -2100,7 +2148,7 @@
           return;
         }
         if(!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), {danger: true, confirmLabel: I18N.t('import_btn')})) return;
-        if(format === 'dot') importGraphData(parseDot(text), 'DOT', append);
+        if(format === 'dot') importGraphData(parseDot(text, { units: dotUnitsChoice() }), 'DOT', append);
         else if(format === 'graphml') importGraphData(parseGraphml(text), 'GraphML', append);
         else if(format === 'csv'){
           // Auto-detect CSV type from filename or header

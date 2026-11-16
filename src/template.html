@@ -550,6 +550,21 @@
               </summary>
               <div class="sec-body">
                 <label class="chk" for="optImportAppend" style="margin-bottom:6px"><input id="optImportAppend" type="checkbox" /> <span data-i18n="append_mode">Append to current graph</span></label>
+                <label class="row tiny muted" for="optDotUnits" style="margin-bottom:6px;gap:6px">
+                  <span data-i18n="dot_import_units">DOT import</span>
+                  <select id="optDotUnits" data-i18n-aria-label="dot_import_units" aria-label="DOT import units">
+                    <option value="auto" data-i18n="dot_units_auto">Auto (GraphViz signals)</option>
+                    <option value="inches" data-i18n="dot_units_inches">Read as inches (QVGE)</option>
+                    <option value="legacyPixels" data-i18n="dot_units_pixels">Read as pixels (old GEP)</option>
+                  </select>
+                </label>
+                <label class="row tiny muted" for="optDotExportUnits" style="margin-bottom:6px;gap:6px">
+                  <span data-i18n="dot_export_units">DOT export</span>
+                  <select id="optDotExportUnits" data-i18n-aria-label="dot_export_units" aria-label="DOT export units">
+                    <option value="inches" data-i18n="dot_export_inches">Inches (QVGE-compatible)</option>
+                    <option value="points" data-i18n="dot_export_points">Points + inputscale=72 (neato -n)</option>
+                  </select>
+                </label>
                 <div class="io-grid">
                   <div class="io-row">
                     <span class="io-format">JSON</span>

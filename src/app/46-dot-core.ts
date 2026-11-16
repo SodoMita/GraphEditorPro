@@ -368,7 +368,7 @@
   // the exporter (50-import-export.ts) keeps its own copy under this name.
   const DOT_PX_PER_INCH = 72;
   const dotClampArrowSize = (v: number) => Math.min(DOT_ARROW_SIZE_MAX, Math.max(DOT_ARROW_SIZE_MIN, v));
-  function parseDot(text){
+  function parseDot(text, options: { units?: 'auto' | 'inches' | 'legacyPixels' } = {}){
     // Strip comments once, up front: the structure test and the
     // directed-graph default both derive from the comment-free source, so a
     // keyword hiding inside a comment can never rescue garbage input.
@@ -392,7 +392,14 @@
     // `inputscale`), which is also the unit layout programs write on output;
     // a plain `neato`/`fdp` run treats an unmarked `pos` as INCHES. See
     // `dotGraphUnits` below for how this file decides which case it is.
-    const dotUnits = dotGraphUnits(body);
+    // The reader may state the convention outright. `legacyPixels` is the
+    // migration path for files this app wrote before the units fix (pixel `pos`
+    // against inch `width`); `inches` forces the QVGE/neato reading even for a
+    // file whose numbers look like pixels. `auto` keeps the format signals.
+    const unitsChoice = options.units || 'auto';
+    const dotUnits = unitsChoice === 'legacyPixels'
+      ? { pointsPerInch: DOT_PX_PER_INCH, legacyPixels: true }
+      : unitsChoice === 'inches' ? { pointsPerInch: 1 } : dotGraphUnits(body);
     const dotPosScale = DOT_PX_PER_INCH / dotUnits.pointsPerInch;
     const hasStructure = (open >= 0 && close > open) && headerOk;
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
@@ -659,45 +666,83 @@
     // `declarationsOnly` blanks every string so text cannot impersonate a
     // declaration. Lengths are preserved, so both index the same positions.
     const valuesReadable = maskDotSyntax(body);
-    const declarationsOnly = blankDotStrings(valuesReadable);
     const unquote = (raw: string): string => {
       if(raw[0] === '"' && raw.length > 1) return dotUnescape(raw.slice(1, -1)).trim();
       if(raw[0] === '<') return raw.slice(1, -1).trim();
       return raw.trim();
     };
-    // Every `graph [ ... ]` block before the first node/edge statement. A
-    // `graph` block that follows an element may still be that element's
-    // defaults, so only the leading ones are treated as graph attributes —
-    // which is also how GraphViz binds them.
-    const leadingGraphAttrs: AnyRecord = {};
-    const graphBlockRe = /(?:^|[;,\n\s])graph\s*\[([^\]]*)\]/g;
-    const firstElementAt = ((): number => {
-      // `graph [ ... ]`, `node [ ... ]`, `edge [ ... ]` and `subgraph x {` are
-      // attribute/default statements, not elements, so they must not end the
-      // leading-attributes region — excluding the keywords is what lets a
-      // `graph [inputscale=72]` at the top of the body be read as a graph
-      // attribute instead of being skipped as "the first node".
-      const re = /(?:^|[;\n])\s*(?:"[^"]*"|(?!graph\b|node\b|edge\b|digraph\b|subgraph\b|strict\b)[A-Za-z0-9_:.\-]+)\s*(?:--|->|\[)/;
-      const m = re.exec(declarationsOnly);
-      return m ? m.index : declarationsOnly.length;
-    })();
-    let gb;
-    while((gb = graphBlockRe.exec(valuesReadable))){
-      if(gb.index > firstElementAt) break;
-      const parsed = parseAttrList(gb[1]);
-      for(const k of Object.keys(parsed)) leadingGraphAttrs[k] = parsed[k];
+    // Graph-level attributes, and only those. `readScalar` used to accept a
+    // `name = value` anywhere in the body — including inside a node's attribute
+    // list, so `a [pos="1,2", inputscale=72]` rescaled the whole document from
+    // a node property. GraphViz binds `inputscale` at graph scope; the same key
+    // on a node or edge is that element's own attribute.
+    //
+    // A `graph [ ... ]` statement is a graph attribute wherever it appears, even
+    // after nodes, as is `graph.attr = value` and a bare `key = value` at body
+    // scope. `subgraph x { ... }` is a nested scope and is skipped whole.
+    //
+    // The walk runs over the ORIGINAL body: `maskDotSyntax` replaces `[`, `]`
+    // and `{` with sentinels, so it cannot be used to find statement structure
+    // (that is what broke the first attempt at this). Values are taken from the
+    // masked copies, whose indices line up one-to-one with the original.
+    const graphAttrs: AnyRecord = {};
+    {
+      const start = blankDotStrings(body);
+      const valueAt = (from: number, to: number) => valuesReadable.slice(from, to);
+      let i = 0;
+      const skipBalanced = (from: number, openCh: string, closeCh: string): number => {
+        // `from` points at the opening bracket in the blanked source.
+        let d = 0, j = from;
+        while(j < start.length){
+          if(start[j] === openCh) d++;
+          else if(start[j] === closeCh){ d--; if(d === 0) return j + 1; }
+          j++;
+        }
+        return start.length;
+      };
+      while(i < start.length){
+        const ch = start[i];
+        if(ch === ';' || ch === ',' || /\s/.test(ch)){ i++; continue; }
+        // The graph's own header is not part of `body`, but a stray `digraph`
+        // would otherwise be read as a node name.
+        const sub = /^(?:strict\s+)?(?:di|)graph\b/i.exec(start.slice(i));
+        if(sub){ i += sub[0].length; continue; }
+        const subg = /^subgraph\b[^{]*\{/i.exec(start.slice(i));
+        if(subg){ i = skipBalanced(i + subg[0].length - 1, '{', '}'); continue; }
+        const gb = /^graph\s*\[/i.exec(start.slice(i));
+        if(gb){
+          const from = i + gb[0].length - 1;
+          const to = skipBalanced(from, '[', ']');
+          const parsed = parseAttrList(valueAt(from + 1, to - 1));
+          for(const k of Object.keys(parsed)) graphAttrs[k] = parsed[k];
+          i = to;
+          continue;
+        }
+        // `graph.name = value`, and bare `name = value` at body scope.
+        const kv = /^(?:graph\s*\.\s*)?([A-Za-z_][\w.]*)\s*=(?!=)\s*/i.exec(start.slice(i));
+        if(kv){
+          const from = i + kv[0].length;
+          const literal = /^("(?:[^"\\]|\\.)*"|<[^>]*>|[^,;\s\]}]+)/.exec(valueAt(from, start.length));
+          if(literal){
+            graphAttrs[kv[1].toLowerCase()] = unquote(valueAt(from, from + literal[0].length));
+            i = from + literal[0].length;
+            continue;
+          }
+        }
+        // An element statement: its attribute list belongs to the element, so
+        // skip the whole list — this is what stops a node's `inputscale`.
+        const el = /^(?:"(?:[^"\\]|\\.)*"|[A-Za-z0-9_:.\-]+)\s*(?:--|->)?\s*\[/i.exec(start.slice(i));
+        if(el){
+          const bracket = i + el[0].length - 1;
+          i = skipBalanced(bracket, '[', ']');
+          continue;
+        }
+        i++;
+      }
     }
     const readScalar = (name: string): string | null => {
-      if(Object.prototype.hasOwnProperty.call(leadingGraphAttrs, name)) return String(leadingGraphAttrs[name]).trim();
-      const re = new RegExp('(?:^|[\\s;,{])' + name + '\\s*=\\s*("(?:\\\\.|[^"])*"|<[^>]*>|[^\\s,;\\]]+)', 'i');
-      // Locate the key in the blanked view so that text inside a label cannot
-      // impersonate a declaration (`label="inputscale=72"` was read as one), but
-      // take the VALUE from the readable view — the two strings have identical
-      // lengths, so the index carries over and quoted values stay intact.
-      const found = re.exec(declarationsOnly);
-      if(!found) return null;
-      const start = found.index + found[0].length - found[1].length;
-      return unquote(valuesReadable.slice(start, start + found[1].length));
+      const key = name.toLowerCase();
+      return Object.prototype.hasOwnProperty.call(graphAttrs, key) ? String(graphAttrs[key]).trim() : null;
     };
     const inputscale = readScalar('inputscale');
     if(inputscale != null && inputscale !== ''){
@@ -719,26 +764,12 @@
     // `layout` is absent (a raw `-Tdot` file names no engine) this is the only
     // reliable signal that the numbers were produced by a layout run.
     if(readScalar('bb') != null) return { pointsPerInch: 72 };
-    // Last resort: a file written by an older GEP put raw pixels in `pos` while
-    // `width`/`height` stayed in inches, so its coordinates are 72x the size of
-    // its nodes. A graph where every node is spaced orders of magnitude wider
-    // than a default 0.75in node cannot be an inch file — no layout produces
-    // that — so read it as the pixels it is. This is the migration the review
-    // asked for: without it such a file lands 72x too large and Fit cannot
-    // repair the node/edge ratio.
-    const sizes = [...valuesReadable.matchAll(/width\s*=\s*"?([0-9.]+)/gi)]
-      .map(m => Number(m[1])).filter(v => Number.isFinite(v) && v > 0);
-    const xs = [...valuesReadable.matchAll(/pos\s*=\s*"(-?[0-9.]+)/gi)].map(m => Number(m[1])).filter(Number.isFinite);
-    if(sizes.length && xs.length){
-      // Both terms are in the file's own units: the span of `pos` (inches, if
-      // this really is an inch file) against the node width (always inches).
-      const span = Math.max(...xs) - Math.min(...xs);
-      const node = sizes.reduce((a, b) => a + b, 0) / sizes.length;
-      // 72 node-widths of empty space is not a layout any engine produces; it is
-      // what pixels look like when read as inches. A genuinely wide inch file
-      // would have to be 54in across to trip this.
-      if(node > 0 && span / node > DOT_PX_PER_INCH) return { pointsPerInch: DOT_PX_PER_INCH, legacyPixels: true };
-    }
+    // NOTHING ELSE IS GUESSED. An earlier version inferred pixels from wide
+    // coordinate spans, and the review was right that it is unsound in both
+    // directions: two nodes with inch `pos` 0 and 100 imported at 100 instead of
+    // 7200, and an old pixel file whose nodes sat 30 apart imported at 2160.
+    // Units are not recoverable from the numbers; the reader picks them
+    // (`importDot`'s legacy option) instead.
     return { pointsPerInch: 1 };
   }
   // Label typography, one table for nodes and edges. QVGE writes a label's

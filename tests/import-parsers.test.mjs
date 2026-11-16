@@ -4077,7 +4077,10 @@ test('a literal key equal to a long key’s fingerprint never merges with that p
 
 
 // === DOT interoperability units and shapes (QVGE_GAP_ANALYSIS.md §1.7, §1.8) ===
-test('DOT export writes pos in points and declares inputscale=72', async () => {
+test('DOT export states its convention: pos and node size agree, no reader gets both wrong', async () => {
+  // The decisive check is positions AND sizes together against a stated
+  // convention; a GEP-only round trip cannot distinguish them, because it reads
+  // back whatever it wrote.
   const saved = {
     title: 'units',
     nodes: [
@@ -4086,21 +4089,48 @@ test('DOT export writes pos in points and declares inputscale=72', async () => {
     ],
     edges: [],
   };
-  const {dom} = createEditorDom(saved);
-  const {document} = dom.window;
-  document.querySelector('#btnExportDot').click();
-  const dot = document.querySelector('.export-modal textarea').value;
-  document.querySelector('#expCloseBtn').click();
-  // `pos` is in points: `neato -n`/`-n2` read points unconditionally and this is
-  // the mode a reader uses to render a file that already has a layout. The
-  // editor's 72 px/inch is the same number, so the digits are unchanged; the
-  // y axis flips because DOT's points up and the editor's points down.
-  assert.match(dot, /pos="72,144!"/, 'x=72 y=-144 stays 72,144 in points');
-  assert.match(dot, /pos="-36,-36!"/, 'negative coordinates convert too');
-  assert.match(dot, /width=1\.0000/, 'width is a DOT length in inches');
-  // `inputscale=72` is what makes neato/fdp (which default to inches) agree
-  // with `neato -n`; without it the same file is 72x off in one of the two.
+
+  // Default profile: inches, which is what QVGE reads and writes.
+  const inchesDom = createEditorDom(saved);
+  const inchesDoc = inchesDom.dom.window.document;
+  inchesDoc.querySelector('#btnExportDot').click();
+  let dot = inchesDoc.querySelector('.export-modal textarea').value;
+  inchesDoc.querySelector('#expCloseBtn').click();
+  assert.match(dot, /pos="1,2!"/, 'a 72px node is 1in from the origin');
+  assert.match(dot, /pos="-0\.5,-0\.5!"/);
+  assert.match(dot, /width=1\.0000/, 'the node is 1in wide — the same unit as pos');
+  assert.doesNotMatch(dot, /inputscale/, 'inches is the default, so nothing is declared');
+  // QVGE multiplies `pos` and `width` by the same 72, so a node lands at the
+  // right distance relative to its own size — which is what Fit cannot repair
+  // once a file mixes the two units.
+
+  // Points profile: for `neato -n`, which reads points and ignores inputscale.
+  const pointsDom = createEditorDom(saved);
+  const pointsDoc = pointsDom.dom.window.document;
+  pointsDoc.querySelector('#optDotExportUnits').value = 'points';
+  pointsDoc.querySelector('#btnExportDot').click();
+  dot = pointsDoc.querySelector('.export-modal textarea').value;
+  pointsDoc.querySelector('#expCloseBtn').click();
+  assert.match(dot, /pos="72,144!"/, 'the same node in points');
+  assert.match(dot, /width=1\.0000/, 'width stays a DOT inch, as the format defines it');
   assert.match(dot, /graph \[layout="neato", inputscale="72"\]/, 'the file declares the scale it was written at');
+
+  // Both profiles round-trip through this app unchanged.
+  for(const prof of ['inches', 'points']){
+    const {dom} = createEditorDom();
+    const {document} = dom.window;
+    document.querySelector('#optDotExportUnits').value = prof;
+    const source = createEditorDom(saved);
+    source.dom.window.document.querySelector('#optDotExportUnits').value = prof;
+    source.dom.window.document.querySelector('#btnExportDot').click();
+    const text = source.dom.window.document.querySelector('.export-modal textarea').value;
+    source.dom.window.document.querySelector('#expCloseBtn').click();
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    const a = graph.nodes.find(n => n.id === 'n1');
+    assert.equal(a.x, 72, `${prof}: x survives`);
+    assert.equal(a.y, -144, `${prof}: y survives`);
+  }
 });
 
 test('DOT import reads pos as inches and honours an explicit inputscale in points', async () => {
@@ -4480,22 +4510,67 @@ test('DOT coordinates keep six decimals and an explicit zero is a position, not 
   assert.ok(Math.abs(byId.b.x - byId.a.x) > 0, 'the two nodes are not collapsed onto one point');
 });
 
-test('a legacy pixel export is rescaled instead of arriving 72x too large', async () => {
+test('DOT coordinate units are chosen by the reader, never guessed from spans', async () => {
+  // Units are not recoverable from the numbers: an inch file with x=0 and x=100
+  // and an old pixel file with x=0 and x=30 are the same digits. Inferring them
+  // from the span (as an earlier version did) rescales valid data in both
+  // directions, so the reader states the convention instead.
+  const ambiguousInches = 'digraph G{ a [pos="0,0", width=0.75]; b [pos="100,0", width=0.75]; a->b; }';
   const {dom} = createEditorDom();
   const {document} = dom.window;
-  // What this app wrote before the units fix: pixel `pos`, inch `width`.
-  await paste(document, dom.window, '#btnPasteDot', [
-    'digraph G {',
-    '  a [pos="5000,5000!", width=0.75, height=0.75];',
-    '  b [pos="5200,5000!", width=0.75, height=0.75];',
-    '  a -> b;',
-    '}',
-  ].join('\n'));
-  const a = exportedGraph(document).nodes[0];
-  assert.equal(a.x, 5000, 'pixels stay pixels after the legacy rescale');
-  assert.match(toasts(document), /pixels/i, 'the reader is told why the graph came in rescaled');
+  await paste(document, dom.window, '#btnPasteDot', ambiguousInches);
+  assert.equal(exportedGraph(document).nodes.find(n => n.id === 'b').x, 7200,
+    'an unmarked inch file keeps inches: 100in is 7200px, never 100px');
+
+  // The explicit "old GEP pixels" choice reads the same digits as pixels.
+  const legacy = createEditorDom();
+  const legacyDocument = legacy.dom.window.document;
+  legacyDocument.querySelector('#optDotUnits').value = 'legacyPixels';
+  await paste(legacyDocument, legacy.dom.window, '#btnPasteDot', ambiguousInches);
+  assert.equal(exportedGraph(legacyDocument).nodes.find(n => n.id === 'b').x, 100,
+    'the legacy profile keeps pixel coordinates at their pixel value');
 });
 
+test('DOT inputscale is read from graph scope only, wherever the declaration sits', async () => {
+  const probe = async (dot) => {
+    const {dom} = createEditorDom();
+    await paste(dom.window.document, dom.window, '#btnPasteDot', dot);
+    return exportedGraph(dom.window.document).nodes.find(n => n.id === 'a').x;
+  };
+  // At inputscale=72 the numbers ARE points, so 72pt is 72px.
+  assert.equal(await probe('digraph G{ graph [inputscale=72]; a [pos="72,144"]; }'), 72, 'leading graph block');
+  assert.equal(await probe('digraph G{ a [pos="72,144"]; graph [inputscale=72]; }'), 72, 'graph block after a node');
+  assert.equal(await probe('digraph G{ a [pos="72,144"]; graph.inputscale=72; }'), 72, 'graph.attr = value');
+  // A node attribute is the node's, not the graph's: this stays inches (1in = 72px).
+  assert.equal(await probe('digraph G{ a [pos="1,2", inputscale=72]; }'), 72, 'node-level key does not rescale the document');
+});
+
+test('a DOT file with a huge id cannot spin the CSV counter', async () => {
+  // The generated-id counter started at state.nextNode, which a node named
+  // n9007199254740992 pushes to 2^53; `gen++` stops advancing there and the
+  // search looped forever on the main thread.
+  const saved = { title: 'huge', nodes: [{id:'n9007199254740992', label:'X', x:0, y:0, order:0}], edges: [] };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteNodesCsv', 'order,id,label,x,y\n,,New,10,10\n');
+  const nodes = exportedGraph(document).nodes;
+  assert.equal(nodes.length, 2, 'the import completed instead of hanging');
+  assert.ok(nodes.every(n => n.id), 'every node has an id');
+});
+
+test('a large DOT file does not overflow the stack while reading units', async () => {
+  // `Math.max(...xs)` on 150k positions threw RangeError from the argument
+  // limit; the units reader no longer spreads anything.
+  const parts = ['digraph G {'];
+  for(let i = 0; i < 3000; i++) parts.push(`n${i} [pos="${i},0", width=0.75];`);
+  parts.push('}');
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', parts.join('\n'));
+  const nodes = exportedGraph(document).nodes;
+  assert.equal(nodes.length, 3000, 'every node imported with no stack error');
+});
 test('CSV ids reserve explicit ids from later rows, and every rename is reported', async () => {
   const saved = {
     title: 'csv-ids',
