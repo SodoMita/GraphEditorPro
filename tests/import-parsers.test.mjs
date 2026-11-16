@@ -4627,3 +4627,63 @@ test('a literal key equal to a long key’s fingerprint never merges with that p
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('the exported bounds are the nodes, not the camera', async () => {
+  // The camera is where the user is looking, not where the graph is: zooming out
+  // grows it without limit and panning moves it. Exporting it as the document's
+  // extent made a small graph export with arbitrarily large bounds, and the value
+  // changed every time the user scrolled. The file must describe the content.
+  const saved = {
+    title: 'bounds',
+    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:50}],
+    edges: [{id:'e1', from:'n1', to:'n2'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  // Nodes are 50x50 by default, so the box is the centre span grown by half a
+  // node on every side: x in [-25, 125], y in [-25, 75].
+  const atRest = exportedGraph(document).viewBox;
+  assert.deepEqual(atRest, {x:-25, y:-25, w:150, h:100}, 'the bounds are the node bounding box');
+
+  // Zooming out must not change the bounds in the file, however far it goes.
+  for (let i = 0; i < 15; i++) {
+    document.querySelector('#graphCanvas').dispatchEvent(new window.WheelEvent('wheel', {
+      deltaY: 120, clientX: 400, clientY: 300, bubbles: true, cancelable: true,
+    }));
+  }
+  await settle(window, 120);
+  assert.deepEqual(exportedGraph(document).viewBox, atRest, 'zooming out does not inflate the exported bounds');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('exported bounds measure an inherited node size as drawn', async () => {
+  // Size comes from the resolved visual, so a node that takes its width/height
+  // from the defaults is measured at the size it is actually drawn — the same
+  // rule every other exporter follows.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'n1', label:'A', x:0, y:0}], edges: [],
+    settings: { nodeDefaults: { width: 120, height: 80 } },
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+  assert.deepEqual(exportedGraph(document).viewBox, {x:-60, y:-40, w:120, h:80}, 'the inherited size is measured');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an empty document exports finite zero bounds, not Infinity', async () => {
+  const {dom, errors} = createEditorDom({title:'t', nodes: [], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+  const bounds = exportedGraph(document).viewBox;
+  assert.deepEqual(bounds, {x:0, y:0, w:0, h:0}, 'no content has no extent, and stays JSON-clean');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

@@ -614,9 +614,17 @@
   // foreign payload may not mint a token.
   function jsonExportText(){
     const obj = JSON.parse(snapshot()) as AnyRecord;
-    if(isRecord(obj) && Array.isArray(obj.customAttributes)){
-      for(const attribute of obj.customAttributes as AnyRecord[]){
-        if(isRecord(attribute) && typeof attribute.origin === 'string') attribute.origin = originForWire(attribute.origin);
+    if(isRecord(obj)){
+      // `viewBox` is the camera, and the camera is where the user is looking,
+      // not where the graph is: zoom out and it grows without limit, pan and it
+      // moves. Exporting it as the document's extent made the bounds of a file
+      // depend on the last scroll wheel. The file records where the content
+      // actually is; the camera stays in snapshots/autosave, where it belongs.
+      obj.viewBox = graphBounds();
+      if(Array.isArray(obj.customAttributes)){
+        for(const attribute of obj.customAttributes as AnyRecord[]){
+          if(isRecord(attribute) && typeof attribute.origin === 'string') attribute.origin = originForWire(attribute.origin);
+        }
       }
     }
     return JSON.stringify(obj, null, 2);

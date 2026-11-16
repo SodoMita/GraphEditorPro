@@ -188,6 +188,34 @@
     syncRenderScaleForCamera(cam);
     return cam;
   }
+  // The box the *document* occupies: the union of every node's resolved shape,
+  // not the viewport.
+  //
+  // These are different things and only the second belongs in a file. The camera
+  // is where the user happens to be looking — zoom out and it grows without
+  // limit, pan and it moves — so writing it as a graph's extent made every
+  // export's bounds depend on the last scroll wheel, and a bounded graph could
+  // export as arbitrarily large. This is the answer a consumer of the file
+  // actually wants: where the content is, and how far it reaches.
+  //
+  // Size comes from the resolved visual so a node that inherits its width from
+  // the type/defaults is measured at the size it is drawn, exactly like every
+  // other exporter. An empty document has no extent; `w`/`h` are then 0 and
+  // `x`/`y` are 0 rather than Infinity, so the value is still JSON-clean.
+  function graphBounds(){
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for(const n of state.nodes){
+      if(!isRenderablePoint(n.x, n.y)) continue;
+      const v = nodeVisual(n);
+      const hw = (v.width != null ? v.width : 50) / 2, hh = (v.height != null ? v.height : 50) / 2;
+      if(n.x - hw < minX) minX = n.x - hw;
+      if(n.y - hh < minY) minY = n.y - hh;
+      if(n.x + hw > maxX) maxX = n.x + hw;
+      if(n.y + hh > maxY) maxY = n.y + hh;
+    }
+    if(!(maxX >= minX) || !(maxY >= minY)) return { x: 0, y: 0, w: 0, h: 0 };
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
   // One floating origin for every surface inside the scene. It changes only
   // when the camera centre moves past a 1e6 snap boundary, so ordinary
   // pans/zooms are still a single matrix write; crossing one forces a geometry
