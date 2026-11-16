@@ -386,15 +386,14 @@
     const directedGraph = headerOk && /^\s*(strict\s+)?digraph\b/i.test(headerText);
     let body = stripped;
     if(open >= 0 && close > open) body = stripped.slice(open + 1, close);
-    // `pos` units follow the GraphViz rule, which QVGE follows too: without
-    // `inputscale` the numbers are INCHES; with it they are points, scaled by
-    // `value / inputscale` inches. Both convert to this app's pixels at 72 per
-    // inch. Files written by releases before this fix hold pixels and no
-    // `inputscale`, so they come back 72x larger — a uniform scale that Fit
-    // undoes, and the price of no longer contradicting every other tool.
-    const declaredScale = parseFloat((body.match(/\binputscale\s*=\s*"?([0-9.]+)/i) || [])[1]);
-    const dotPointsPerInch = Number.isFinite(declaredScale) && declaredScale > 0 ? declaredScale : 1;
-    const dotPosScale = DOT_PX_PER_INCH / dotPointsPerInch;
+    // `pos` units, resolved from the graph's own declarations.
+    //
+    // GraphViz: `neato -n`/`-n2` treat `pos` as POINTS (and ignore
+    // `inputscale`), which is also the unit layout programs write on output;
+    // a plain `neato`/`fdp` run treats an unmarked `pos` as INCHES. See
+    // `dotGraphUnits` below for how this file decides which case it is.
+    const dotUnits = dotGraphUnits(body);
+    const dotPosScale = DOT_PX_PER_INCH / dotUnits.pointsPerInch;
     const hasStructure = (open >= 0 && close > open) && headerOk;
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
@@ -430,10 +429,11 @@
       // QVGE tristate: '->' and the graph's directedness both mean "directed".
       const initDir = m[2] === '->' || directedGraph ? 'directed' : 'undirected';
       // The exporter prints the weight as `label` when the document shows edge
-      // weights (`edgeWeightMode`), so a file that came from this app carries
-      // the number in both places. Reading `label` as the label as well would
-      // show that number twice; drop it only when it repeats the weight.
-      const eLabel = attrs.label && attrs.label !== attrs.weight ? String(attrs.label) : '';
+      // weights (`edgeWeightMode`), and tags only that synthetic label with
+      // `_gepWeightLabel` (attribute keys are lower-cased by `parseAttrList`).
+      // Comparing the two texts instead dropped real labels, because "3" on a
+      // 3-weight edge is a perfectly ordinary label.
+      const eLabel = attrs._gepweightlabel ? '' : (attrs.label != null ? String(attrs.label) : '');
       const e = { id:'e' + (edges.length+1), from:a.id, to:b.id, weight:dotWeight, label:eLabel, directed: initDir !== 'undirected', direction: initDir } as any;
       if(attrs.directed){
         const dd = String(attrs.directed).toLowerCase();
@@ -468,7 +468,7 @@
         else if(dir === 'forward' || dir === 'directed' || dir === 'true'){ (e as any).direction = 'directed'; (e as any).directed = true; }
       }
       if(attrs.type) (e as any).type = String(attrs.type).slice(0, 40);
-      readDotLabelAttrs(attrs, e, '');
+      readDotLabelAttrs(attrs, e);
       edges.push(e as any);
     }
     const withoutEdges = work.replace(edgeRe, '');
@@ -479,7 +479,7 @@
       if(['graph','node','edge'].includes(name.toLowerCase())) continue;
       const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
       if(attrs.label) n.label = attrs.label;
-      readDotLabelAttrs(attrs, n, name);
+      readDotLabelAttrs(attrs, n);
       if(attrs.fillcolor || attrs.color) n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
       if(attrs.shape){
         const shape = parseShape(attrs.shape);
@@ -513,6 +513,11 @@
         const parts = attrs.pos.replace('!','').split(',').map(Number);
         if(Number.isFinite(parts[0])) n.x = parts[0] * dotPosScale;
         if(Number.isFinite(parts[1])) n.y = -parts[1] * dotPosScale;
+        // "no positions at all" is decided by whether the attribute was
+        // DECLARED, not by whether the numbers happen to be zero. A graph whose
+        // nodes all sit at the origin is a real graph; inferring it as missing
+        // moved it onto a circle.
+        n.__hasPos = true;
       }
     }
     const arr = [...nodes.values()];
@@ -525,11 +530,15 @@
       const after = close >= 0 ? stripped.slice(close + 1) : '';
       return (hasStructure && /^\s*$/.test(after) && scanDotStructure(body)) ? { title:'imported-dot', nodes: [], edges: [] } : null;
     }
-    if(arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1){
+    // Only lay the nodes out when the file declared no position at all. Testing
+    // `x === 0 && y === 0` instead re-placed graphs that legitimately sit on the
+    // origin, and a file whose coordinates rounded to zero (see `dotCoord`) fell
+    // into the same branch.
+    if(arr.length > 1 && !arr.some((n: any) => n.__hasPos)){
       const r = Math.max(120, arr.length * 24);
       arr.forEach((n,i) => { const a=-Math.PI/2+i*2*Math.PI/arr.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; });
     }
-    return {title:'imported-dot', nodes:arr.map(({original,...n}) => n), edges};
+    return {title:'imported-dot', nodes:arr.map(({original, __hasPos, ...n}) => n), edges, legacyPixels: dotUnits.legacyPixels === true};
   }
   function parseShape(raw){
     const s = String(raw || '').toLowerCase();
@@ -576,6 +585,162 @@
     indigo:'#4b0082', gold:'#ffd700', coral:'#ff7f50', salmon:'#fa8072',
     khaki:'#f0e68c', lavender:'#e6e6fa', tan:'#d2b48c', turquoise:'#40e0d0'
   };
+  // Blank the *contents* of every quoted and HTML-like string, keeping the
+  // length identical so every index still lines up with the original source.
+  //
+  // `maskDotSyntax` protects the parser from brackets inside labels but leaves
+  // their text intact, which is right for reading values and wrong for deciding
+  // what a file *declares*: a node labelled `inputscale=72` would otherwise read
+  // as a units declaration and rescale the whole document.
+  function blankDotStrings(src: string): string {
+    const out = src.split('');
+    const hide = (from: number, to: number) => { for(let k = from; k < to && k < out.length; k++) out[k] = ' '; };
+    for(let i = 0; i < src.length;){
+      if(src[i] === '"'){
+        let j = i + 1;
+        while(j < src.length){
+          if(src[j] === '\\'){ j += 2; continue; }
+          if(src[j] === '"') break;
+          j++;
+        }
+        hide(i + 1, Math.min(j, src.length));
+        i = j + 1;
+        continue;
+      }
+      if(src[i] === '<'){
+        let depth = 1, j = i + 1;
+        while(j < src.length && depth > 0){
+          if(src[j] === '<') depth++;
+          else if(src[j] === '>'){ depth--; if(depth === 0) break; }
+          j++;
+        }
+        hide(i + 1, Math.min(j, src.length));
+        i = j + 1;
+        continue;
+      }
+      i++;
+    }
+    return out.join('');
+  }
+
+  // Which unit a DOT file's `pos` values are in, expressed as points per inch.
+  //
+  // Three spellings reach this reader and they do not agree on a unit:
+  //
+  //  * a layout program's output (`dot -Tdot`, `neato -Tdot`) — POINTS, the unit
+  //    GraphViz documents for `pos` output and the one `neato -n` consumes;
+  //  * a hand-written `neato`/`fdp` input — INCHES unless `inputscale` says
+  //    otherwise, and `inputscale` is a graph attribute only;
+  //  * this editor's own export — INCHES, like QVGE's, naming `neato` in the
+  //    graph attributes so another tool can reproduce the layout.
+  //
+  // Guessing from the numbers alone cannot work (a graph can legitimately span
+  // hundreds of points or a few inches), so the units come from what the file
+  // says about itself, in this order:
+  //
+  //  1. an explicit `inputscale` graph attribute — points per inch, directly.
+  //     `inputscale=0` is GraphViz's documented alias for 72;
+  //  2. `pin` or a `!` on any `pos` — the file asks for its positions to be
+  //     kept as they are, which is `neato -n` semantics: points;
+  //  3. an engine that only lays out (`dot`, `circo`, `twopi`, `osage`,
+  //     `patchwork`) can only have produced these positions itself: points;
+  //  4. otherwise inches, which is what unmarked `neato`/`fdp` input means.
+  //
+  // Every step looks at the graph's own attributes, never at arbitrary text: a
+  // label reading "inputscale=72" must not rescale the document, so quoted and
+  // HTML strings are blanked before anything is matched.
+  function dotGraphUnits(body: string): { pointsPerInch: number; legacyPixels?: boolean } {
+    // A graph-level `graph [...]` statement wins over a `name = value` written
+    // anywhere in the body: the latter also matches a statement's stray text,
+    // and a declaration placed after the nodes is still a graph declaration.
+    // Both are read from the string-blanked source.
+    // Two views of the same source: `valuesReadable` keeps attribute values
+    // (needed for `inputscale=72`, `layout="dot"`, `pos="…!"`), while
+    // `declarationsOnly` blanks every string so text cannot impersonate a
+    // declaration. Lengths are preserved, so both index the same positions.
+    const valuesReadable = maskDotSyntax(body);
+    const declarationsOnly = blankDotStrings(valuesReadable);
+    const unquote = (raw: string): string => {
+      if(raw[0] === '"' && raw.length > 1) return dotUnescape(raw.slice(1, -1)).trim();
+      if(raw[0] === '<') return raw.slice(1, -1).trim();
+      return raw.trim();
+    };
+    // Every `graph [ ... ]` block before the first node/edge statement. A
+    // `graph` block that follows an element may still be that element's
+    // defaults, so only the leading ones are treated as graph attributes —
+    // which is also how GraphViz binds them.
+    const leadingGraphAttrs: AnyRecord = {};
+    const graphBlockRe = /(?:^|[;,\n\s])graph\s*\[([^\]]*)\]/g;
+    const firstElementAt = ((): number => {
+      // `graph [ ... ]`, `node [ ... ]`, `edge [ ... ]` and `subgraph x {` are
+      // attribute/default statements, not elements, so they must not end the
+      // leading-attributes region — excluding the keywords is what lets a
+      // `graph [inputscale=72]` at the top of the body be read as a graph
+      // attribute instead of being skipped as "the first node".
+      const re = /(?:^|[;\n])\s*(?:"[^"]*"|(?!graph\b|node\b|edge\b|digraph\b|subgraph\b|strict\b)[A-Za-z0-9_:.\-]+)\s*(?:--|->|\[)/;
+      const m = re.exec(declarationsOnly);
+      return m ? m.index : declarationsOnly.length;
+    })();
+    let gb;
+    while((gb = graphBlockRe.exec(valuesReadable))){
+      if(gb.index > firstElementAt) break;
+      const parsed = parseAttrList(gb[1]);
+      for(const k of Object.keys(parsed)) leadingGraphAttrs[k] = parsed[k];
+    }
+    const readScalar = (name: string): string | null => {
+      if(Object.prototype.hasOwnProperty.call(leadingGraphAttrs, name)) return String(leadingGraphAttrs[name]).trim();
+      const re = new RegExp('(?:^|[\\s;,{])' + name + '\\s*=\\s*("(?:\\\\.|[^"])*"|<[^>]*>|[^\\s,;\\]]+)', 'i');
+      // Locate the key in the blanked view so that text inside a label cannot
+      // impersonate a declaration (`label="inputscale=72"` was read as one), but
+      // take the VALUE from the readable view — the two strings have identical
+      // lengths, so the index carries over and quoted values stay intact.
+      const found = re.exec(declarationsOnly);
+      if(!found) return null;
+      const start = found.index + found[0].length - found[1].length;
+      return unquote(valuesReadable.slice(start, start + found[1].length));
+    };
+    const inputscale = readScalar('inputscale');
+    if(inputscale != null && inputscale !== ''){
+      const value = Number(inputscale);
+      // 0 is GraphViz's alias for 72. Anything else that is not a positive
+      // number is not a units declaration; ignoring it beats letting a typo
+      // rescale the whole document.
+      if(Number.isFinite(value) && value === 0) return { pointsPerInch: 72 };
+      if(Number.isFinite(value) && value > 0) return { pointsPerInch: value };
+    }
+    // A `!` on `pos` is NOT a units marker: our own export (and QVGE) writes
+    // inches with `!` to pin the node, and `neato -n` reads points with the same
+    // suffix. Treating it as "points" made every file this app produced import
+    // 72x too small. What does identify a laid-out GraphViz file is `bb` or a
+    // concrete engine in `layout`, both checked below.
+    const layout = (readScalar('layout') || '').toLowerCase();
+    if(/^(dot|circo|twopi|osage|patchwork)\b/.test(layout)) return { pointsPerInch: 72 };
+    // `dot -Tdot` stamps the bounding box in points; `neato`/`fdp` do not. When
+    // `layout` is absent (a raw `-Tdot` file names no engine) this is the only
+    // reliable signal that the numbers were produced by a layout run.
+    if(readScalar('bb') != null) return { pointsPerInch: 72 };
+    // Last resort: a file written by an older GEP put raw pixels in `pos` while
+    // `width`/`height` stayed in inches, so its coordinates are 72x the size of
+    // its nodes. A graph where every node is spaced orders of magnitude wider
+    // than a default 0.75in node cannot be an inch file — no layout produces
+    // that — so read it as the pixels it is. This is the migration the review
+    // asked for: without it such a file lands 72x too large and Fit cannot
+    // repair the node/edge ratio.
+    const sizes = [...valuesReadable.matchAll(/width\s*=\s*"?([0-9.]+)/gi)]
+      .map(m => Number(m[1])).filter(v => Number.isFinite(v) && v > 0);
+    const xs = [...valuesReadable.matchAll(/pos\s*=\s*"(-?[0-9.]+)/gi)].map(m => Number(m[1])).filter(Number.isFinite);
+    if(sizes.length && xs.length){
+      // Both terms are in the file's own units: the span of `pos` (inches, if
+      // this really is an inch file) against the node width (always inches).
+      const span = Math.max(...xs) - Math.min(...xs);
+      const node = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+      // 72 node-widths of empty space is not a layout any engine produces; it is
+      // what pixels look like when read as inches. A genuinely wide inch file
+      // would have to be 54in across to trip this.
+      if(node > 0 && span / node > DOT_PX_PER_INCH) return { pointsPerInch: DOT_PX_PER_INCH, legacyPixels: true };
+    }
+    return { pointsPerInch: 1 };
+  }
   // Label typography, one table for nodes and edges. QVGE writes a label's
   // colour/size/font as the GraphViz `fontcolor`/`fontsize`/`fontname`
   // attributes (`CFileSerializerDOT::doWriteLabel`), and reads `xlabel` as a
@@ -583,12 +748,14 @@
   // understood here, so a QVGE file lost its label text and every file lost
   // the label's typography. Keep the names in sync with `dotLabelAttrs` in
   // 50-import-export.ts, which writes them back.
-  function readDotLabelAttrs(attrs, target, placeholder){
-    // `ensureNode` seeds a node's label with its own id, so "no label declared"
-    // cannot be spelled `!target.label` — that placeholder is exactly what a
-    // bare `xlabel` has to replace.
-    const hasRealLabel = target.label != null && target.label !== '' && target.label !== placeholder;
-    if(attrs.xlabel != null && attrs.xlabel !== '' && !hasRealLabel) target.label = String(attrs.xlabel).slice(0, 80);
+  function readDotLabelAttrs(attrs, target){
+    // `label` wins whenever the attribute is PRESENT, including when its text
+    // happens to equal the node id or is empty — `n [label="n", xlabel="other"]`
+    // says the label is "n", and inferring "absent" from the text turned it into
+    // "other". Only a file that declares no `label` at all falls back to
+    // `xlabel`, which is what `CFormatDOT::readLabel` does.
+    const labelDeclared = Object.prototype.hasOwnProperty.call(attrs, 'label');
+    if(!labelDeclared && attrs.xlabel != null && attrs.xlabel !== '') target.label = String(attrs.xlabel).slice(0, 80);
     const lc = parseColor(attrs.fontcolor);
     if(lc) (target as any).labelColor = lc;
     if(attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize))){

@@ -2272,6 +2272,7 @@ const I18N = {
         'no_matrix_data': { en: 'No matrix data', ru: 'Нет данных матрицы' },
         'no_node_data': { en: 'No node data', ru: 'Нет данных узлов' },
         'csv_needs_cols': { en: 'CSV needs source_id and target_id columns', ru: 'CSV требует колонки source_id и target_id' },
+        'dot_legacy_units': { en: 'DOT positions were read as pixels (an older GEP export), so the graph came in {f}× larger than its node sizes — use Fit', ru: 'Позиции DOT прочитаны как пиксели (старый экспорт GEP), граф пришёл в {f}× крупнее размеров узлов — нажмите «Fit»' },
         'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
         'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
         'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
@@ -11917,15 +11918,14 @@ function parseDot(text) {
     let body = stripped;
     if (open >= 0 && close > open)
         body = stripped.slice(open + 1, close);
-    // `pos` units follow the GraphViz rule, which QVGE follows too: without
-    // `inputscale` the numbers are INCHES; with it they are points, scaled by
-    // `value / inputscale` inches. Both convert to this app's pixels at 72 per
-    // inch. Files written by releases before this fix hold pixels and no
-    // `inputscale`, so they come back 72x larger — a uniform scale that Fit
-    // undoes, and the price of no longer contradicting every other tool.
-    const declaredScale = parseFloat((body.match(/\binputscale\s*=\s*"?([0-9.]+)/i) || [])[1]);
-    const dotPointsPerInch = Number.isFinite(declaredScale) && declaredScale > 0 ? declaredScale : 1;
-    const dotPosScale = DOT_PX_PER_INCH / dotPointsPerInch;
+    // `pos` units, resolved from the graph's own declarations.
+    //
+    // GraphViz: `neato -n`/`-n2` treat `pos` as POINTS (and ignore
+    // `inputscale`), which is also the unit layout programs write on output;
+    // a plain `neato`/`fdp` run treats an unmarked `pos` as INCHES. See
+    // `dotGraphUnits` below for how this file decides which case it is.
+    const dotUnits = dotGraphUnits(body);
+    const dotPosScale = DOT_PX_PER_INCH / dotUnits.pointsPerInch;
     const hasStructure = (open >= 0 && close > open) && headerOk;
     const nodes = new Map(), edges = [];
     const ensureNode = id => { if (!nodes.has(id))
@@ -11962,10 +11962,11 @@ function parseDot(text) {
         // QVGE tristate: '->' and the graph's directedness both mean "directed".
         const initDir = m[2] === '->' || directedGraph ? 'directed' : 'undirected';
         // The exporter prints the weight as `label` when the document shows edge
-        // weights (`edgeWeightMode`), so a file that came from this app carries
-        // the number in both places. Reading `label` as the label as well would
-        // show that number twice; drop it only when it repeats the weight.
-        const eLabel = attrs.label && attrs.label !== attrs.weight ? String(attrs.label) : '';
+        // weights (`edgeWeightMode`), and tags only that synthetic label with
+        // `_gepWeightLabel` (attribute keys are lower-cased by `parseAttrList`).
+        // Comparing the two texts instead dropped real labels, because "3" on a
+        // 3-weight edge is a perfectly ordinary label.
+        const eLabel = attrs._gepweightlabel ? '' : (attrs.label != null ? String(attrs.label) : '');
         const e = { id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: eLabel, directed: initDir !== 'undirected', direction: initDir };
         if (attrs.directed) {
             const dd = String(attrs.directed).toLowerCase();
@@ -12014,7 +12015,7 @@ function parseDot(text) {
         }
         if (attrs.type)
             e.type = String(attrs.type).slice(0, 40);
-        readDotLabelAttrs(attrs, e, '');
+        readDotLabelAttrs(attrs, e);
         edges.push(e);
     }
     const withoutEdges = work.replace(edgeRe, '');
@@ -12027,7 +12028,7 @@ function parseDot(text) {
             const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
             if (attrs.label)
                 n.label = attrs.label;
-            readDotLabelAttrs(attrs, n, name);
+            readDotLabelAttrs(attrs, n);
             if (attrs.fillcolor || attrs.color)
                 n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
             if (attrs.shape) {
@@ -12074,6 +12075,11 @@ function parseDot(text) {
                     n.x = parts[0] * dotPosScale;
                 if (Number.isFinite(parts[1]))
                     n.y = -parts[1] * dotPosScale;
+                // "no positions at all" is decided by whether the attribute was
+                // DECLARED, not by whether the numbers happen to be zero. A graph whose
+                // nodes all sit at the origin is a real graph; inferring it as missing
+                // moved it onto a circle.
+                n.__hasPos = true;
             }
         }
     const arr = [...nodes.values()];
@@ -12086,11 +12092,15 @@ function parseDot(text) {
         const after = close >= 0 ? stripped.slice(close + 1) : '';
         return (hasStructure && /^\s*$/.test(after) && scanDotStructure(body)) ? { title: 'imported-dot', nodes: [], edges: [] } : null;
     }
-    if (arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1) {
+    // Only lay the nodes out when the file declared no position at all. Testing
+    // `x === 0 && y === 0` instead re-placed graphs that legitimately sit on the
+    // origin, and a file whose coordinates rounded to zero (see `dotCoord`) fell
+    // into the same branch.
+    if (arr.length > 1 && !arr.some((n) => n.__hasPos)) {
         const r = Math.max(120, arr.length * 24);
         arr.forEach((n, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / arr.length; n.x = Math.cos(a) * r; n.y = Math.sin(a) * r; });
     }
-    return { title: 'imported-dot', nodes: arr.map(({ original, ...n }) => n), edges };
+    return { title: 'imported-dot', nodes: arr.map(({ original, __hasPos, ...n }) => n), edges, legacyPixels: dotUnits.legacyPixels === true };
 }
 function parseShape(raw) {
     const s = String(raw || '').toLowerCase();
@@ -12155,6 +12165,182 @@ const NAMED_COLORS = {
     indigo: '#4b0082', gold: '#ffd700', coral: '#ff7f50', salmon: '#fa8072',
     khaki: '#f0e68c', lavender: '#e6e6fa', tan: '#d2b48c', turquoise: '#40e0d0'
 };
+// Blank the *contents* of every quoted and HTML-like string, keeping the
+// length identical so every index still lines up with the original source.
+//
+// `maskDotSyntax` protects the parser from brackets inside labels but leaves
+// their text intact, which is right for reading values and wrong for deciding
+// what a file *declares*: a node labelled `inputscale=72` would otherwise read
+// as a units declaration and rescale the whole document.
+function blankDotStrings(src) {
+    const out = src.split('');
+    const hide = (from, to) => { for (let k = from; k < to && k < out.length; k++)
+        out[k] = ' '; };
+    for (let i = 0; i < src.length;) {
+        if (src[i] === '"') {
+            let j = i + 1;
+            while (j < src.length) {
+                if (src[j] === '\\') {
+                    j += 2;
+                    continue;
+                }
+                if (src[j] === '"')
+                    break;
+                j++;
+            }
+            hide(i + 1, Math.min(j, src.length));
+            i = j + 1;
+            continue;
+        }
+        if (src[i] === '<') {
+            let depth = 1, j = i + 1;
+            while (j < src.length && depth > 0) {
+                if (src[j] === '<')
+                    depth++;
+                else if (src[j] === '>') {
+                    depth--;
+                    if (depth === 0)
+                        break;
+                }
+                j++;
+            }
+            hide(i + 1, Math.min(j, src.length));
+            i = j + 1;
+            continue;
+        }
+        i++;
+    }
+    return out.join('');
+}
+// Which unit a DOT file's `pos` values are in, expressed as points per inch.
+//
+// Three spellings reach this reader and they do not agree on a unit:
+//
+//  * a layout program's output (`dot -Tdot`, `neato -Tdot`) — POINTS, the unit
+//    GraphViz documents for `pos` output and the one `neato -n` consumes;
+//  * a hand-written `neato`/`fdp` input — INCHES unless `inputscale` says
+//    otherwise, and `inputscale` is a graph attribute only;
+//  * this editor's own export — INCHES, like QVGE's, naming `neato` in the
+//    graph attributes so another tool can reproduce the layout.
+//
+// Guessing from the numbers alone cannot work (a graph can legitimately span
+// hundreds of points or a few inches), so the units come from what the file
+// says about itself, in this order:
+//
+//  1. an explicit `inputscale` graph attribute — points per inch, directly.
+//     `inputscale=0` is GraphViz's documented alias for 72;
+//  2. `pin` or a `!` on any `pos` — the file asks for its positions to be
+//     kept as they are, which is `neato -n` semantics: points;
+//  3. an engine that only lays out (`dot`, `circo`, `twopi`, `osage`,
+//     `patchwork`) can only have produced these positions itself: points;
+//  4. otherwise inches, which is what unmarked `neato`/`fdp` input means.
+//
+// Every step looks at the graph's own attributes, never at arbitrary text: a
+// label reading "inputscale=72" must not rescale the document, so quoted and
+// HTML strings are blanked before anything is matched.
+function dotGraphUnits(body) {
+    // A graph-level `graph [...]` statement wins over a `name = value` written
+    // anywhere in the body: the latter also matches a statement's stray text,
+    // and a declaration placed after the nodes is still a graph declaration.
+    // Both are read from the string-blanked source.
+    // Two views of the same source: `valuesReadable` keeps attribute values
+    // (needed for `inputscale=72`, `layout="dot"`, `pos="…!"`), while
+    // `declarationsOnly` blanks every string so text cannot impersonate a
+    // declaration. Lengths are preserved, so both index the same positions.
+    const valuesReadable = maskDotSyntax(body);
+    const declarationsOnly = blankDotStrings(valuesReadable);
+    const unquote = (raw) => {
+        if (raw[0] === '"' && raw.length > 1)
+            return dotUnescape(raw.slice(1, -1)).trim();
+        if (raw[0] === '<')
+            return raw.slice(1, -1).trim();
+        return raw.trim();
+    };
+    // Every `graph [ ... ]` block before the first node/edge statement. A
+    // `graph` block that follows an element may still be that element's
+    // defaults, so only the leading ones are treated as graph attributes —
+    // which is also how GraphViz binds them.
+    const leadingGraphAttrs = {};
+    const graphBlockRe = /(?:^|[;,\n\s])graph\s*\[([^\]]*)\]/g;
+    const firstElementAt = (() => {
+        // `graph [ ... ]`, `node [ ... ]`, `edge [ ... ]` and `subgraph x {` are
+        // attribute/default statements, not elements, so they must not end the
+        // leading-attributes region — excluding the keywords is what lets a
+        // `graph [inputscale=72]` at the top of the body be read as a graph
+        // attribute instead of being skipped as "the first node".
+        const re = /(?:^|[;\n])\s*(?:"[^"]*"|(?!graph\b|node\b|edge\b|digraph\b|subgraph\b|strict\b)[A-Za-z0-9_:.\-]+)\s*(?:--|->|\[)/;
+        const m = re.exec(declarationsOnly);
+        return m ? m.index : declarationsOnly.length;
+    })();
+    let gb;
+    while ((gb = graphBlockRe.exec(valuesReadable))) {
+        if (gb.index > firstElementAt)
+            break;
+        const parsed = parseAttrList(gb[1]);
+        for (const k of Object.keys(parsed))
+            leadingGraphAttrs[k] = parsed[k];
+    }
+    const readScalar = (name) => {
+        if (Object.prototype.hasOwnProperty.call(leadingGraphAttrs, name))
+            return String(leadingGraphAttrs[name]).trim();
+        const re = new RegExp('(?:^|[\\s;,{])' + name + '\\s*=\\s*("(?:\\\\.|[^"])*"|<[^>]*>|[^\\s,;\\]]+)', 'i');
+        // Locate the key in the blanked view so that text inside a label cannot
+        // impersonate a declaration (`label="inputscale=72"` was read as one), but
+        // take the VALUE from the readable view — the two strings have identical
+        // lengths, so the index carries over and quoted values stay intact.
+        const found = re.exec(declarationsOnly);
+        if (!found)
+            return null;
+        const start = found.index + found[0].length - found[1].length;
+        return unquote(valuesReadable.slice(start, start + found[1].length));
+    };
+    const inputscale = readScalar('inputscale');
+    if (inputscale != null && inputscale !== '') {
+        const value = Number(inputscale);
+        // 0 is GraphViz's alias for 72. Anything else that is not a positive
+        // number is not a units declaration; ignoring it beats letting a typo
+        // rescale the whole document.
+        if (Number.isFinite(value) && value === 0)
+            return { pointsPerInch: 72 };
+        if (Number.isFinite(value) && value > 0)
+            return { pointsPerInch: value };
+    }
+    // A `!` on `pos` is NOT a units marker: our own export (and QVGE) writes
+    // inches with `!` to pin the node, and `neato -n` reads points with the same
+    // suffix. Treating it as "points" made every file this app produced import
+    // 72x too small. What does identify a laid-out GraphViz file is `bb` or a
+    // concrete engine in `layout`, both checked below.
+    const layout = (readScalar('layout') || '').toLowerCase();
+    if (/^(dot|circo|twopi|osage|patchwork)\b/.test(layout))
+        return { pointsPerInch: 72 };
+    // `dot -Tdot` stamps the bounding box in points; `neato`/`fdp` do not. When
+    // `layout` is absent (a raw `-Tdot` file names no engine) this is the only
+    // reliable signal that the numbers were produced by a layout run.
+    if (readScalar('bb') != null)
+        return { pointsPerInch: 72 };
+    // Last resort: a file written by an older GEP put raw pixels in `pos` while
+    // `width`/`height` stayed in inches, so its coordinates are 72x the size of
+    // its nodes. A graph where every node is spaced orders of magnitude wider
+    // than a default 0.75in node cannot be an inch file — no layout produces
+    // that — so read it as the pixels it is. This is the migration the review
+    // asked for: without it such a file lands 72x too large and Fit cannot
+    // repair the node/edge ratio.
+    const sizes = [...valuesReadable.matchAll(/width\s*=\s*"?([0-9.]+)/gi)]
+        .map(m => Number(m[1])).filter(v => Number.isFinite(v) && v > 0);
+    const xs = [...valuesReadable.matchAll(/pos\s*=\s*"(-?[0-9.]+)/gi)].map(m => Number(m[1])).filter(Number.isFinite);
+    if (sizes.length && xs.length) {
+        // Both terms are in the file's own units: the span of `pos` (inches, if
+        // this really is an inch file) against the node width (always inches).
+        const span = Math.max(...xs) - Math.min(...xs);
+        const node = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+        // 72 node-widths of empty space is not a layout any engine produces; it is
+        // what pixels look like when read as inches. A genuinely wide inch file
+        // would have to be 54in across to trip this.
+        if (node > 0 && span / node > DOT_PX_PER_INCH)
+            return { pointsPerInch: DOT_PX_PER_INCH, legacyPixels: true };
+    }
+    return { pointsPerInch: 1 };
+}
 // Label typography, one table for nodes and edges. QVGE writes a label's
 // colour/size/font as the GraphViz `fontcolor`/`fontsize`/`fontname`
 // attributes (`CFileSerializerDOT::doWriteLabel`), and reads `xlabel` as a
@@ -12162,12 +12348,14 @@ const NAMED_COLORS = {
 // understood here, so a QVGE file lost its label text and every file lost
 // the label's typography. Keep the names in sync with `dotLabelAttrs` in
 // 50-import-export.ts, which writes them back.
-function readDotLabelAttrs(attrs, target, placeholder) {
-    // `ensureNode` seeds a node's label with its own id, so "no label declared"
-    // cannot be spelled `!target.label` — that placeholder is exactly what a
-    // bare `xlabel` has to replace.
-    const hasRealLabel = target.label != null && target.label !== '' && target.label !== placeholder;
-    if (attrs.xlabel != null && attrs.xlabel !== '' && !hasRealLabel)
+function readDotLabelAttrs(attrs, target) {
+    // `label` wins whenever the attribute is PRESENT, including when its text
+    // happens to equal the node id or is empty — `n [label="n", xlabel="other"]`
+    // says the label is "n", and inferring "absent" from the text turned it into
+    // "other". Only a file that declares no `label` at all falls back to
+    // `xlabel`, which is what `CFormatDOT::readLabel` does.
+    const labelDeclared = Object.prototype.hasOwnProperty.call(attrs, 'label');
+    if (!labelDeclared && attrs.xlabel != null && attrs.xlabel !== '')
         target.label = String(attrs.xlabel).slice(0, 80);
     const lc = parseColor(attrs.fontcolor);
     if (lc)
@@ -12205,7 +12393,13 @@ function assertImportTextSize(text) {
         throw new Error(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
     }
 }
-function fmtCoord(v) { return (Math.round(v * 10000) / 10000).toString(); }
+// Four decimals of an INCH is 0.0001 in = 0.0072 px, which is finer than the
+// editor's own grid but not fine enough for every coordinate: a node at x=0.001
+// px rounds to 0, and two nodes 0.001 px apart collapse onto each other. Six
+// decimals keep a pixel exact to ~1e-6 px while still holding the trailing
+// zeros out of the file (0.5 stays "0.5"). The value is a DOT length in inches,
+// so the digits are meaningful, not noise.
+function fmtCoord(v) { return (Math.round(v * 1e6) / 1e6).toString(); }
 // Spreadsheet apps execute a cell that starts with =, +, @, tab or CR as a
 // formula. Graph labels and weights are user/import-controlled text, so a
 // malicious .json could otherwise run code on the exporter's machine when the
@@ -12437,16 +12631,18 @@ function dotShapeName(shape) {
                     : shape === 'hexagon' ? 'hexagon'
                         : 'ellipse';
 }
-// DOT `pos` is in INCHES when neato/fdp read it back (GraphViz `inputscale`
-// defaults to "no scaling, units on input are inches"), and QVGE writes and
-// reads it the same way (`CFileSerializerDOT.cpp`: `pos().x() / 72`, and
-// `x * 72` on import). The editor works in pixels at the same 72-per-inch
-// ratio `width`/`height` already use, so positions are converted on both
-// sides. Before this, one node said `width` in inches and `pos` in pixels —
-// the file contradicted itself, and a hop through QVGE or `neato` rescaled
-// the graph by 72×. QVGE_GAP_ANALYSIS.md §1.7.
+// DOT positions are written in POINTS with an explicit `inputscale=72`, which
+// is the one combination every reader agrees on: `neato -n` / `-n2` read
+// `pos` in points, and `neato`/`fdp` honour `inputscale=72` over their
+// inch default. Writing inches instead (what this did before) round-tripped
+// through GEP alone but landed 72x too small in `neato -n`, because that mode
+// ignores `inputscale` and assumes points.
+//
+// The prior form also made the file contradict itself: `width`/`height` are
+// DOT inches while `pos` was pixels, and no reader could satisfy both.
+// QVGE_GAP_ANALYSIS.md §1.7.
 const DOT_UNITS_PER_INCH = 72;
-function dotCoord(value) { return fmtCoord(value / DOT_UNITS_PER_INCH); }
+function dotCoord(value) { return fmtCoord(value); }
 // Label typography, mirroring `readDotLabelAttrs` in 46-dot-core.ts: QVGE
 // writes a label's colour/size/font as `fontcolor`/`fontsize`/`fontname`
 // (`CFileSerializerDOT::doWriteLabel`), so a file that only carried `label`
@@ -12497,12 +12693,11 @@ function exportDotText() {
     const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
     // `graph` may only use `--`, and a mutual edge is invalid there anyway.
     const op = allUndirected ? '--' : '->';
-    // No `inputscale` here on purpose: `pos` is written in inches below, which
-    // is what neato/fdp assume when the attribute is absent. Declaring
-    // `inputscale=72` would announce points and divide the positions by 72 a
-    // second time. `width`/`height` are inches as well, so the whole file now
-    // speaks one unit.
-    const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
+    // `pos` is in points (see `dotCoord`), so the file declares the scale it
+    // was written at. `neato`/`fdp` then divide by 72 back to inches and land
+    // where the author put the node; `neato -n` already assumes points and
+    // ignores the attribute, so both agree.
+    const lines = [header, '  graph [layout="neato", inputscale="72"];', '  node [style="filled"];'];
     for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
         const v = nodeVisual(n);
         const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${dotCoord(n.x)},${dotCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
@@ -12540,10 +12735,17 @@ function exportDotText() {
         const v = edgeVisual(e);
         const dir = edgeDirection(e);
         const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
-        if (e.label)
+        // A real label may legitimately repeat the weight ("3" on a "3" edge), so
+        // text alone cannot tell a label from the number the document draws for
+        // display. The synthetic one is tagged; `label` without the tag is always
+        // a real label, whatever it says.
+        if (e.label) {
             attrs.push(`label=${dotString(e.label)}`);
-        else if (e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number')
+        }
+        else if (e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number') {
             attrs.push(`label=${dotString(e.weight)}`);
+            attrs.push(`_gepWeightLabel=true`);
+        }
         // QVGE: store direction explicitly via dir for DOT
         // QVGE DOT: color, penwidth, style, dir
         attrs.push(`color=${dotString(v.color)}`);
@@ -13374,7 +13576,15 @@ async function pasteFromClipboard(format) {
             importGraphData(decodeForeignGraphJson(data), 'JSON', append);
         }
         else if (format === 'dot') {
-            importGraphData(parseDot(text), 'DOT', append);
+            const parsed = parseDot(text);
+            importGraphData(parsed, 'DOT', append);
+            // A file from an older GEP carries pixels in `pos` while its node sizes
+            // are inches; the parser rescales those (46-dot-core.ts `dotGraphUnits`)
+            // and flags it, and the reader deserves to know why the nodes sit far
+            // apart rather than discovering it through Fit.
+            if (parsed && parsed.legacyPixels) {
+                toast(I18N.t('dot_legacy_units', { f: DOT_UNITS_PER_INCH }));
+            }
         }
         else if (format === 'graphml') {
             importGraphData(parseGraphml(text), 'GraphML', append);
@@ -13473,6 +13683,53 @@ function csvImportToast(imported, dropped, skipped, limit, key, renamed = 0) {
     }
     toast(I18N.t(key, { n: imported }) + suffix);
 }
+// Allocate ids for a CSV import so that no row can take an id that a *later*
+// row declares explicitly.
+//
+// Two separate bugs met here. First the id was taken raw and only then
+// sanitized, so a cell `e!1` became `e1` after the fact and collided with a
+// real `e1` — the rename happened where nothing could report it. Second, the
+// allocator only knew the ids it had already handed out, so with rows
+// [implicit, e2] the first row took `e2` and the second was pushed aside: the
+// row that *declared* the id lost it to a row that had not.
+//
+// So: sanitize first, reserve every declared id up front, and let the
+// generated ones fill the gaps. `renamed` counts rows that did not keep the id
+// they asked for (or that declared none and took a generated one), which is
+// what the toast reports — each rename, not just the first.
+function reserveCsvIds(rows, idIndex, prefix, stateNext, existing, sanitize) {
+    const declared = rows.map(row => (idIndex >= 0 ? String(row[idIndex] ?? '').trim() : ''));
+    // An explicit id that is already in the document cannot be handed out again:
+    // the sanitizer would drop one of the two holders. Existing ids are not
+    // "declared", so the replay below never yields them to a CSV row either.
+    const taken = new Set(existing);
+    for (const cell of declared) {
+        const sane = sanitize(cell);
+        if (cell)
+            taken.add(sane);
+    }
+    const seen = new Set(existing);
+    let renamed = 0, gen = stateNext;
+    return {
+        renamed: () => renamed,
+        next(index) {
+            const cell = declared[index];
+            const wanted = cell ? sanitize(cell) : '';
+            if (wanted && !seen.has(wanted)) {
+                seen.add(wanted);
+                return wanted;
+            }
+            let id;
+            do {
+                id = sanitize(prefix + gen++);
+            } while (taken.has(id) || seen.has(id));
+            seen.add(id);
+            taken.add(id);
+            renamed++;
+            return id;
+        }
+    };
+}
 function importEdgesCsv(text, append) {
     const rows = parseCsv(text);
     if (rows.length < 2) {
@@ -13506,21 +13763,8 @@ function importEdgesCsv(text, append) {
     // edge, so an import could rewrite the document it was appending to. Claims
     // are tracked here and the newcomer yields instead, with a count the toast
     // reports. Same rule for the generated `e<N>` fallback.
-    const claimedEdgeIds = new Set(edges.map(e => e.id));
-    let renamed = 0;
-    const claimEdgeId = (wanted) => {
-        if (!claimedEdgeIds.has(wanted)) {
-            claimedEdgeIds.add(wanted);
-            return wanted;
-        }
-        renamed++;
-        let n = state.nextEdge + parsed;
-        while (claimedEdgeIds.has('e' + n))
-            n++;
-        const id = 'e' + n;
-        claimedEdgeIds.add(id);
-        return id;
-    };
+    const bodyRows = rows.slice(1);
+    const edgeIds = reserveCsvIds(bodyRows, iId, 'e', state.nextEdge, edges.map(e => e.id), v => safeId(v, 'e'));
     let parsed = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -13533,7 +13777,7 @@ function importEdgesCsv(text, append) {
             continue;
         }
         const e = {
-            id: claimEdgeId((iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed)),
+            id: edgeIds.next(r - 1),
             // `from`/`to` are what the state model and the sanitizer read; `source`
             // and `target` are only export aliases, so writing those two would make
             // the sanitizer drop the edge without an error.
@@ -13560,7 +13804,7 @@ function importEdgesCsv(text, append) {
         return;
     }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
-    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', renamed);
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', edgeIds.renamed());
 }
 function importMatrixCsv(text, append) {
     const rows = parseCsv(text);
@@ -13675,6 +13919,8 @@ function importNodesCsv(text, append) {
     // existing nodes in append mode.
     const orderBase = append ? state.nodes.length : 0;
     const nodes = append ? state.nodes.slice() : [];
+    const bodyRows = rows.slice(1);
+    const nodeIds = reserveCsvIds(bodyRows, iId, 'n', state.nextNode, append ? state.nodes.map(n => n.id) : [], v => safeId(v, 'n'));
     let parsed = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -13685,7 +13931,7 @@ function importNodesCsv(text, append) {
         const orderCell = iOrder >= 0 ? String(row[iOrder] ?? '').trim() : '';
         const parsedOrder = orderCell === '' ? NaN : parseInt(orderCell, 10);
         const n = {
-            id: (iId >= 0 && row[iId]) ? row[iId] : 'n' + (state.nextNode + parsed),
+            id: nodeIds.next(r - 1),
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
             x: iX >= 0 ? parseFloat(row[iX]) || 0 : 0,
             y: iY >= 0 ? parseFloat(row[iY]) || 0 : 0,
@@ -13708,7 +13954,7 @@ function importNodesCsv(text, append) {
     }
     const replacedEdges = append ? 0 : state.edges.length;
     const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
-    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
+    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes', nodeIds.renamed());
     if (replacedEdges > 0)
         toast(I18N.t('csv_nodes_replaced_edges', { n: state.nodes.length, e: replacedEdges }));
 }

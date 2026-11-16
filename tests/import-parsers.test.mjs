@@ -4077,7 +4077,7 @@ test('a literal key equal to a long key’s fingerprint never merges with that p
 
 
 // === DOT interoperability units and shapes (QVGE_GAP_ANALYSIS.md §1.7, §1.8) ===
-test('DOT export writes pos in inches, like width/height and like QVGE', async () => {
+test('DOT export writes pos in points and declares inputscale=72', async () => {
   const saved = {
     title: 'units',
     nodes: [
@@ -4091,12 +4091,16 @@ test('DOT export writes pos in inches, like width/height and like QVGE', async (
   document.querySelector('#btnExportDot').click();
   const dot = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
-  // 72 px = 1 inch, and DOT's y axis points up while the editor's points down.
-  assert.match(dot, /pos="1,2!"/, 'x=72 y=-144 becomes 1,2 in inches');
-  assert.match(dot, /pos="-0\.5,-0\.5!"/, 'negative coordinates convert too');
-  assert.match(dot, /width=1\.0000/, 'width already used inches, and still does');
-  // No inputscale: the file speaks inches, which is what neato assumes.
-  assert.doesNotMatch(dot, /inputscale/, 'positions are inches, so no rescale is declared');
+  // `pos` is in points: `neato -n`/`-n2` read points unconditionally and this is
+  // the mode a reader uses to render a file that already has a layout. The
+  // editor's 72 px/inch is the same number, so the digits are unchanged; the
+  // y axis flips because DOT's points up and the editor's points down.
+  assert.match(dot, /pos="72,144!"/, 'x=72 y=-144 stays 72,144 in points');
+  assert.match(dot, /pos="-36,-36!"/, 'negative coordinates convert too');
+  assert.match(dot, /width=1\.0000/, 'width is a DOT length in inches');
+  // `inputscale=72` is what makes neato/fdp (which default to inches) agree
+  // with `neato -n`; without it the same file is 72x off in one of the two.
+  assert.match(dot, /graph \[layout="neato", inputscale="72"\]/, 'the file declares the scale it was written at');
 });
 
 test('DOT import reads pos as inches and honours an explicit inputscale in points', async () => {
@@ -4112,6 +4116,10 @@ test('DOT import reads pos as inches and honours an explicit inputscale in point
   await paste(document, dom.window, '#btnPasteDot', dot);
   const graph = exportedGraph(document);
   const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+  // A bare `pos` with no `inputscale` and no layout engine output is inches,
+  // which is neato's own default (`inputscale` defaults to "no scaling").
+  // A `!` does NOT mean points: this app and QVGE both write inches with it to
+  // pin the node, and `neato -n` writes points with the same suffix.
   assert.equal(byId.a.x, 72, '1 inch is 72 px');
   assert.equal(byId.a.y, -144, 'the y axis flips back');
   assert.equal(byId.b.y, 288, '-4 becomes +288');
@@ -4382,4 +4390,137 @@ test('a bold QVGE font name keeps only the family, and label= still wins over xl
   assert.equal(a.labelFont, 'DejaVu Sans', 'the bold suffix is style, not family');
   assert.equal(graph.nodes.find(n => n.id === 'b').label, 'only-xlabel');
   assert.deepEqual(errors.map(error => error.message), []);
+});
+
+// === Review round 2: units, labels, CSV id allocation (PR #39) ===
+test('a label that spells inputscale=72 is text, not a units declaration', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  // Reading the raw body found `inputscale=72` inside the label and divided
+  // every coordinate by 72, so a 72,144 node arrived at 1,2.
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [pos="1,2", label="inputscale=72"];',
+    '}',
+  ].join('\n'));
+  const a = exportedGraph(document).nodes[0];
+  assert.equal(a.x, 72, 'an inch coordinate stays an inch coordinate');
+  assert.equal(a.y, -144);
+});
+
+test('a graph-level inputscale is found even though graph[ is not an element', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  graph [inputscale=72];',
+    '  a [pos="72,144"];',
+    '}',
+  ].join('\n'));
+  const a = exportedGraph(document).nodes[0];
+  assert.equal(a.x, 72, '72 points at inputscale=72 are 72 px');
+  assert.equal(a.y, -144);
+});
+
+test('xlabel never overrides a declared label, even when that label is the node id', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', 'digraph G { a [label="a", xlabel="other"]; }');
+  assert.equal(exportedGraph(document).nodes[0].label, 'a');
+
+  const second = createEditorDom();
+  await paste(second.dom.window.document, second.dom.window, '#btnPasteDot', 'digraph G { a [xlabel="from-xlabel"]; }');
+  assert.equal(exportedGraph(second.dom.window.document).nodes[0].label, 'from-xlabel', 'xlabel still fills in for a node that declares no label');
+});
+
+test('an edge label equal to its weight survives the DOT round-trip', async () => {
+  const saved = {
+    title: 'edge-label', nodes: [
+      {id:'n1', label:'A', x:0, y:0, order:0},
+      {id:'n2', label:'B', x:100, y:0, order:1},
+    ],
+    edges: [
+      {id:'e1', from:'n1', to:'n2', label:'3', weight:'3', directed:true},
+      {id:'e2', from:'n1', to:'n2', label:'', weight:'7', directed:true},
+    ],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  // Only the synthetic label carries the marker; a real label is written bare,
+  // whatever its text, so "3" is not mistaken for a drawn weight.
+  assert.match(dot, /label="3"/);
+  assert.match(dot, /_gepWeightLabel=true/);
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const edges = exportedGraph(document).edges;
+  assert.equal(edges[0].label, '3', 'a real label that repeats the weight is kept');
+  assert.equal(edges[0].weight, '3');
+  assert.equal(edges[1].label, '', 'the drawn weight is not a label');
+  assert.equal(edges[1].weight, '7');
+});
+
+test('DOT coordinates keep six decimals and an explicit zero is a position, not a missing one', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  // x=0 and x=0.001 both rounded to 0 at four decimals, and "every node at the
+  // origin" then read as "no positions declared" and was re-placed on a circle.
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [pos="0,0"];',
+    '  b [pos="0.001,0"];',
+    '  a -> b;',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+  assert.equal(byId.a.x, 0);
+  assert.ok(Math.abs(byId.b.x - 0.072) < 1e-9, `0.001in is 0.072px, not 0 (got ${byId.b.x})`);
+  assert.ok(Math.abs(byId.b.x - byId.a.x) > 0, 'the two nodes are not collapsed onto one point');
+});
+
+test('a legacy pixel export is rescaled instead of arriving 72x too large', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  // What this app wrote before the units fix: pixel `pos`, inch `width`.
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [pos="5000,5000!", width=0.75, height=0.75];',
+    '  b [pos="5200,5000!", width=0.75, height=0.75];',
+    '  a -> b;',
+    '}',
+  ].join('\n'));
+  const a = exportedGraph(document).nodes[0];
+  assert.equal(a.x, 5000, 'pixels stay pixels after the legacy rescale');
+  assert.match(toasts(document), /pixels/i, 'the reader is told why the graph came in rescaled');
+});
+
+test('CSV ids reserve explicit ids from later rows, and every rename is reported', async () => {
+  const saved = {
+    title: 'csv-ids',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#optImportAppend').checked = true;
+  // Row 1 declares nothing and must not steal `e2` from row 2; `e!1` sanitizes
+  // to `e1`, which the existing document already holds, so it yields with a
+  // counted rename instead of silently becoming `e1-2`.
+  await paste(document, dom.window, '#btnPasteEdgesCsv', [
+    'id,source_id,target_id,weight',
+    ',n1,n2,5',
+    'e2,n2,n1,6',
+    'e!1,n1,n2,9',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.edges.map(e => [e.id, e]));
+  // The generated row steps over `e2` because a later row declares it, so it
+  // takes `e3`; the declared `e2` keeps its own id, and `e!1` (which sanitizes
+  // to the already-present `e1`) yields a fresh one.
+  assert.equal(byId.e2.weight, '6', 'the explicit e2 is not taken by the generated row');
+  assert.equal(byId.e3.weight, '5', 'the generated row stepped over the reserved id');
+  assert.ok(!graph.edges.some(e => e.id === 'e1-2' || e.id.startsWith('e1-')), 'no opaque suffixed id');
+  assert.match(toasts(document), /2 imported edge id/i, 'both renames are counted');
 });

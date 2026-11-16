@@ -572,6 +572,7 @@ const I18N: I18nService = {
     'no_matrix_data': { en: 'No matrix data', ru: 'Нет данных матрицы' },
     'no_node_data': { en: 'No node data', ru: 'Нет данных узлов' },
     'csv_needs_cols': { en: 'CSV needs source_id and target_id columns', ru: 'CSV требует колонки source_id и target_id' },
+    'dot_legacy_units': { en: 'DOT positions were read as pixels (an older GEP export), so the graph came in {f}× larger than its node sizes — use Fit', ru: 'Позиции DOT прочитаны как пиксели (старый экспорт GEP), граф пришёл в {f}× крупнее размеров узлов — нажмите «Fit»' },
     'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
     'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
     'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },

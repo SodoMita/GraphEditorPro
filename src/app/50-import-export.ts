@@ -4,7 +4,13 @@
     }
   }
 
-  function fmtCoord(v){ return (Math.round(v * 10000) / 10000).toString(); }
+  // Four decimals of an INCH is 0.0001 in = 0.0072 px, which is finer than the
+  // editor's own grid but not fine enough for every coordinate: a node at x=0.001
+  // px rounds to 0, and two nodes 0.001 px apart collapse onto each other. Six
+  // decimals keep a pixel exact to ~1e-6 px while still holding the trailing
+  // zeros out of the file (0.5 stays "0.5"). The value is a DOT length in inches,
+  // so the digits are meaningful, not noise.
+  function fmtCoord(v){ return (Math.round(v * 1e6) / 1e6).toString(); }
 
   // Spreadsheet apps execute a cell that starts with =, +, @, tab or CR as a
   // formula. Graph labels and weights are user/import-controlled text, so a
@@ -188,16 +194,18 @@
       : shape === 'hexagon' ? 'hexagon'
       : 'ellipse';
   }
-  // DOT `pos` is in INCHES when neato/fdp read it back (GraphViz `inputscale`
-  // defaults to "no scaling, units on input are inches"), and QVGE writes and
-  // reads it the same way (`CFileSerializerDOT.cpp`: `pos().x() / 72`, and
-  // `x * 72` on import). The editor works in pixels at the same 72-per-inch
-  // ratio `width`/`height` already use, so positions are converted on both
-  // sides. Before this, one node said `width` in inches and `pos` in pixels —
-  // the file contradicted itself, and a hop through QVGE or `neato` rescaled
-  // the graph by 72×. QVGE_GAP_ANALYSIS.md §1.7.
+  // DOT positions are written in POINTS with an explicit `inputscale=72`, which
+  // is the one combination every reader agrees on: `neato -n` / `-n2` read
+  // `pos` in points, and `neato`/`fdp` honour `inputscale=72` over their
+  // inch default. Writing inches instead (what this did before) round-tripped
+  // through GEP alone but landed 72x too small in `neato -n`, because that mode
+  // ignores `inputscale` and assumes points.
+  //
+  // The prior form also made the file contradict itself: `width`/`height` are
+  // DOT inches while `pos` was pixels, and no reader could satisfy both.
+  // QVGE_GAP_ANALYSIS.md §1.7.
   const DOT_UNITS_PER_INCH = 72;
-  function dotCoord(value){ return fmtCoord(value / DOT_UNITS_PER_INCH); }
+  function dotCoord(value){ return fmtCoord(value); }
   // Label typography, mirroring `readDotLabelAttrs` in 46-dot-core.ts: QVGE
   // writes a label's colour/size/font as `fontcolor`/`fontsize`/`fontname`
   // (`CFileSerializerDOT::doWriteLabel`), so a file that only carried `label`
@@ -239,12 +247,11 @@
     const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
     // `graph` may only use `--`, and a mutual edge is invalid there anyway.
     const op = allUndirected ? '--' : '->';
-    // No `inputscale` here on purpose: `pos` is written in inches below, which
-    // is what neato/fdp assume when the attribute is absent. Declaring
-    // `inputscale=72` would announce points and divide the positions by 72 a
-    // second time. `width`/`height` are inches as well, so the whole file now
-    // speaks one unit.
-    const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
+    // `pos` is in points (see `dotCoord`), so the file declares the scale it
+    // was written at. `neato`/`fdp` then divide by 72 back to inches and land
+    // where the author put the node; `neato -n` already assumes points and
+    // ignores the attribute, so both agree.
+    const lines = [header, '  graph [layout="neato", inputscale="72"];', '  node [style="filled"];'];
     for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
       const v = nodeVisual(n);
       const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${dotCoord(n.x)},${dotCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
@@ -278,7 +285,16 @@
       const v = edgeVisual(e);
       const dir = edgeDirection(e);
       const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
-      if(e.label) attrs.push(`label=${dotString(e.label)}`); else if(e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number') attrs.push(`label=${dotString(e.weight)}`);
+      // A real label may legitimately repeat the weight ("3" on a "3" edge), so
+      // text alone cannot tell a label from the number the document draws for
+      // display. The synthetic one is tagged; `label` without the tag is always
+      // a real label, whatever it says.
+      if(e.label){
+        attrs.push(`label=${dotString(e.label)}`);
+      } else if(e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number'){
+        attrs.push(`label=${dotString(e.weight)}`);
+        attrs.push(`_gepWeightLabel=true`);
+      }
       // QVGE: store direction explicitly via dir for DOT
       // QVGE DOT: color, penwidth, style, dir
       attrs.push(`color=${dotString(v.color)}`);
@@ -1088,7 +1104,15 @@
         const data = JSON.parse(text);
         importGraphData(decodeForeignGraphJson(data), 'JSON', append);
       } else if(format === 'dot'){
-        importGraphData(parseDot(text), 'DOT', append);
+        const parsed = parseDot(text);
+        importGraphData(parsed, 'DOT', append);
+        // A file from an older GEP carries pixels in `pos` while its node sizes
+        // are inches; the parser rescales those (46-dot-core.ts `dotGraphUnits`)
+        // and flags it, and the reader deserves to know why the nodes sit far
+        // apart rather than discovering it through Fit.
+        if(parsed && (parsed as any).legacyPixels){
+          toast(I18N.t('dot_legacy_units', { f: DOT_UNITS_PER_INCH }));
+        }
       } else if(format === 'graphml'){
         importGraphData(parseGraphml(text), 'GraphML', append);
       } else if(format === 'edges-csv'){
@@ -1150,6 +1174,42 @@
     if(skipped > 0){ toast(I18N.t('csv_import_skipped', {imported, skipped}) + suffix); return; }
     toast(I18N.t(key, {n: imported}) + suffix);
   }
+  // Allocate ids for a CSV import so that no row can take an id that a *later*
+  // row declares explicitly.
+  //
+  // Two separate bugs met here. First the id was taken raw and only then
+  // sanitized, so a cell `e!1` became `e1` after the fact and collided with a
+  // real `e1` — the rename happened where nothing could report it. Second, the
+  // allocator only knew the ids it had already handed out, so with rows
+  // [implicit, e2] the first row took `e2` and the second was pushed aside: the
+  // row that *declared* the id lost it to a row that had not.
+  //
+  // So: sanitize first, reserve every declared id up front, and let the
+  // generated ones fill the gaps. `renamed` counts rows that did not keep the id
+  // they asked for (or that declared none and took a generated one), which is
+  // what the toast reports — each rename, not just the first.
+  function reserveCsvIds(rows, idIndex, prefix, stateNext, existing, sanitize) {
+    const declared = rows.map(row => (idIndex >= 0 ? String(row[idIndex] ?? '').trim() : ''));
+    // An explicit id that is already in the document cannot be handed out again:
+    // the sanitizer would drop one of the two holders. Existing ids are not
+    // "declared", so the replay below never yields them to a CSV row either.
+    const taken = new Set<string>(existing);
+    for(const cell of declared){ const sane = sanitize(cell); if(cell) taken.add(sane); }
+    const seen = new Set<string>(existing);
+    let renamed = 0, gen = stateNext;
+    return {
+      renamed: () => renamed,
+      next(index: number) {
+        const cell = declared[index];
+        const wanted = cell ? sanitize(cell) : '';
+        if(wanted && !seen.has(wanted)){ seen.add(wanted); return wanted; }
+        let id: string;
+        do { id = sanitize(prefix + gen++); } while(taken.has(id) || seen.has(id));
+        seen.add(id); taken.add(id); renamed++;
+        return id;
+      }
+    };
+  }
   function importEdgesCsv(text, append){
     const rows = parseCsv(text);
     if(rows.length < 2){ toast(I18N.t('no_edge_data')); return; }
@@ -1174,24 +1234,15 @@
     // edge, so an import could rewrite the document it was appending to. Claims
     // are tracked here and the newcomer yields instead, with a count the toast
     // reports. Same rule for the generated `e<N>` fallback.
-    const claimedEdgeIds = new Set(edges.map(e => e.id));
-    let renamed = 0;
-    const claimEdgeId = (wanted: string) => {
-      if(!claimedEdgeIds.has(wanted)){ claimedEdgeIds.add(wanted); return wanted; }
-      renamed++;
-      let n = state.nextEdge + parsed;
-      while(claimedEdgeIds.has('e' + n)) n++;
-      const id = 'e' + n;
-      claimedEdgeIds.add(id);
-      return id;
-    };
+    const bodyRows = rows.slice(1);
+    const edgeIds = reserveCsvIds(bodyRows, iId, 'e', state.nextEdge, edges.map(e => e.id), v => safeId(v, 'e'));
     let parsed = 0, skipped = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length || (row.length === 1 && !row[0])) continue;
       const from = resolveNode(row[iFrom]); const to = resolveNode(row[iTo]);
       if(!from || !to){ skipped++; continue; }
       const e: GraphEdge = {
-        id: claimEdgeId((iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed)),
+        id: edgeIds.next(r - 1),
         // `from`/`to` are what the state model and the sanitizer read; `source`
         // and `target` are only export aliases, so writing those two would make
         // the sanitizer drop the edge without an error.
@@ -1210,7 +1261,7 @@
     }
     if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
-    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', renamed);
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', edgeIds.renamed());
   }
   function importMatrixCsv(text, append){
     const rows = parseCsv(text);
@@ -1303,6 +1354,8 @@
     // existing nodes in append mode.
     const orderBase = append ? state.nodes.length : 0;
     const nodes: GraphNode[] = append ? state.nodes.slice() : [];
+    const bodyRows = rows.slice(1);
+    const nodeIds = reserveCsvIds(bodyRows, iId, 'n', state.nextNode, append ? state.nodes.map(n => n.id) : [], v => safeId(v, 'n'));
     let parsed = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length || (row.length === 1 && !row[0])) continue;
@@ -1311,7 +1364,7 @@
       const orderCell = iOrder >= 0 ? String(row[iOrder] ?? '').trim() : '';
       const parsedOrder = orderCell === '' ? NaN : parseInt(orderCell, 10);
       const n: GraphNode = {
-        id: (iId >= 0 && row[iId]) ? row[iId] : 'n' + (state.nextNode + parsed),
+        id: nodeIds.next(r - 1),
         label: (iLabel >= 0 ? row[iLabel] : '') || '',
         x: iX >= 0 ? parseFloat(row[iX]) || 0 : 0,
         y: iY >= 0 ? parseFloat(row[iY]) || 0 : 0,
@@ -1330,7 +1383,7 @@
     if(parsed === 0){ toast(I18N.t('csv_nothing_parsed')); return; }
     const replacedEdges = append ? 0 : state.edges.length;
     const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
-    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
+    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes', nodeIds.renamed());
     if(replacedEdges > 0) toast(I18N.t('csv_nodes_replaced_edges', {n: state.nodes.length, e: replacedEdges}));
   }
 
