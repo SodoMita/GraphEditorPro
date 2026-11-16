@@ -328,6 +328,26 @@
     keyId?: string;
   }
   const num = (raw: unknown, fallback: number, lo: number, hi: number) => clamp(finite(raw, fallback), lo, hi);
+  // Pixels -> inches for anything that lands in a Graphviz-named attribute.
+  // Graphviz measures in inches (72 per inch), so this is the same conversion the
+  // DOT exporter does inline for `width`/`height`. Kept as one function so the
+  // two exporters cannot drift apart again.
+  const graphmlInches = (px: number) => Number((finite(px, 0) / 72).toFixed(4));
+  // ...and back, for node size in a file.
+  //
+  // Size is written in inches, but builds before that fix wrote pixels, so a file
+  // may hold either. Nothing the editor draws is under 10px, so an inch value is
+  // at most ~4.2 — a number under 10 can only be inches and is converted; a
+  // larger one is a pixel size from an old file and is taken as-is. The convert
+  // has to happen BEFORE the range clamp, or a valid 0.69in would be clamped up
+  // to the 10px floor and then multiplied into nonsense.
+  const nodeSizeFromGraphml = (raw: string) => {
+    const value = Number(raw);
+    if(!Number.isFinite(value) || value <= 0) return num(raw, 50, 10, 300);
+    // Rounded: inches carry four decimals, so 50px comes back as 49.9968 without
+    // this, and every re-export would drift a little further from the original.
+    return Math.round(clamp(value < 10 ? value * 72 : value, 10, 300));
+  };
   const colorOrUndef = (raw: unknown) => parseColor(raw) || undefined;
   const NODE_FIELDS_MODEL: readonly GraphmlField[] = [
     {field: 'label', name: 'label', aliases: ['name']},
@@ -557,8 +577,15 @@
       if(n.type) parts.push(`      <data key="type">${xmlEsc(n.type)}</data>`);
       parts.push(`      <data key="shape">${xmlEsc(v.shape)}</data>`);
       parts.push(`      <data key="color">${xmlEsc(v.color)}</data>`);
-      parts.push(`      <data key="width">${xmlEsc(v.width)}</data>`);
-      parts.push(`      <data key="height">${xmlEsc(v.height)}</data>`);
+      // Size is inches, like every other Graphviz-family writer, and like our own
+      // DOT exporter (which divides by 72 for the same reason). A GraphML reader
+      // maps each <data> onto a graph attribute of the same attr.name, and
+      // Graphviz reads `width`/`height` in inches — so publishing the editor's
+      // pixel size here made a 50px node declare itself 50 INCHES: a two-node
+      // graph rendered on a 50 x 100 inch canvas, 72x too large. The reader
+      // still accepts pixel-sized files from older builds (see importGraphml).
+      parts.push(`      <data key="width">${xmlEsc(graphmlInches(v.width))}</data>`);
+      parts.push(`      <data key="height">${xmlEsc(graphmlInches(v.height))}</data>`);
       parts.push(`      <data key="strokeColor">${xmlEsc(v.strokeColor)}</data>`);
       parts.push(`      <data key="strokeSize">${xmlEsc(v.strokeSize)}</data>`);
       parts.push(`      <data key="strokeStyle">${xmlEsc(v.strokeStyle)}</data>`);
@@ -1481,8 +1508,8 @@
     'labelColor': raw => colorOrUndef(raw),
     'labelSize': raw => num(raw, 13, 4, 72),
     'labelPosition': raw => parseLabelPosition(raw) || undefined,
-    'width': raw => num(raw, 50, 10, 300),
-    'height': raw => num(raw, 50, 10, 300),
+    'width': raw => nodeSizeFromGraphml(raw),
+    'height': raw => nodeSizeFromGraphml(raw),
     // Edge values carry their own fallbacks; one parser serves both scopes
     // because the ranges are the same shape and the defaults only differ where
     // the property has a different natural size.

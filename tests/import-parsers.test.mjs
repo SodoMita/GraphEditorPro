@@ -4687,3 +4687,85 @@ test('an empty document exports finite zero bounds, not Infinity', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('GraphML writes node size in inches, so a renderer does not draw it 72x too large', async () => {
+  // A GraphML reader maps each <data> onto a graph attribute of the same
+  // attr.name, and Graphviz reads `width`/`height` in inches (72 per inch). This
+  // exporter published the editor's pixel size under those names, so a 50px node
+  // declared itself 50 INCHES and a two-node graph rendered on a 50 x 100 inch
+  // canvas. Node size is now written the way the DOT exporter already wrote it.
+  const {dom, errors} = createEditorDom();
+  const {window} = dom;
+  const {document} = window;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 't', nodes: [{id:'a', x:0, y:0}, {id:'b', x:100, y:50}], edges: [{id:'e', from:'a', to:'b'}],
+  }));
+
+  document.querySelector('#btnExportGraphml').click();
+  await settle(window, 60);
+  const xml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  const widths = [...xml.matchAll(/<data key="width">([^<]+)<\/data>/g)].map(m => Number(m[1]));
+  assert.equal(widths.length, 2, 'both nodes carry a width');
+  for (const w of widths) {
+    assert.ok(w < 5, `a 50px node must not be written as ${w} inches`);
+    assert.ok(Math.abs(w - 50 / 72) < 0.001, `50px is ${50 / 72} inches, got ${w}`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('GraphML node size still reads files written in either unit', async () => {
+  // Files from builds before the fix hold pixels; a pixel size is 72x the same
+  // size in inches, and nothing the editor draws is under 10px, so the two are
+  // told apart by magnitude. Both must land on the same node size.
+  const xmlFor = size => [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="x" for="node" attr.name="x" attr.type="double"/>',
+    '  <key id="y" for="node" attr.name="y" attr.type="double"/>',
+    '  <key id="width" for="node" attr.name="width" attr.type="double"/>',
+    '  <key id="height" for="node" attr.name="height" attr.type="double"/>',
+    '  <graph id="g" edgedefault="directed">',
+    `    <node id="n1"><data key="x">0</data><data key="y">0</data><data key="width">${size}</data><data key="height">${size}</data></node>`,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+
+  for (const [size, label] of [[50, 'pixels (older build)'], [0.6944, 'inches (current build)']]) {
+    const {dom, errors} = createEditorDom();
+    const {window} = dom;
+    const {document} = window;
+    await paste(document, window, '#btnPasteGraphml', xmlFor(size));
+    const node = exportedGraph(document).nodes[0];
+    assert.equal(node.width, 50, `${label} reads as a 50px node`);
+    assert.equal(node.height, 50, `${label} reads as a 50px node`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('a GraphML round trip keeps node size exactly, without drifting', async () => {
+  // Inches carry four decimals, so an unrounded conversion returns 49.9968 for a
+  // 50px node and each re-export would drift further from the original.
+  const {dom, errors} = createEditorDom();
+  const {window} = dom;
+  const {document} = window;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 't', nodes: [{id:'n1', x:0, y:0}], edges: [],
+  }));
+  let xml;
+  for (let i = 0; i < 4; i++) {
+    document.querySelector('#btnExportGraphml').click();
+    await settle(window, 60);
+    xml = document.querySelector('.export-modal textarea').value;
+    document.querySelector('#expCloseBtn').click();
+    await paste(document, window, '#btnPasteGraphml', xml);
+  }
+  const node = exportedGraph(document).nodes[0];
+  assert.equal(node.width, 50, 'width is still exactly the original');
+  assert.equal(node.height, 50, 'height is still exactly the original');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
