@@ -212,6 +212,20 @@
   // review: pixel `pos` against inch `width`.
   // QVGE_GAP_ANALYSIS.md §1.7.
   const DOT_UNITS_PER_INCH = 72;
+  // A DOT attribute name must be a plain identifier, while a custom id is
+  // user-defined and may hold anything, so it is sanitized into one. The prefix
+  // is the marker: an attribute starting with it is the editor's, not GraphViz's.
+  const GEP_CUSTOM_PREFIX = '_gep_custom_';
+  function gepCustomAttr(id){ return GEP_CUSTOM_PREFIX + String(id).replace(/[^A-Za-z0-9_]/g, '_').slice(0, 32); }
+  function gepCustomAttrs(custom){
+    if(!isRecord(custom)) return [];
+    const out = [];
+    for(const [cid, value] of Object.entries(custom)){
+      if(!cid || value == null) continue;
+      out.push(`${gepCustomAttr(cid)}=${dotString(String(value))}`);
+    }
+    return out;
+  }
   type DotExportProfile = 'inches' | 'points';
   function dotExportProfile(): DotExportProfile {
     const el = document.querySelector('#optDotExportUnits') as HTMLSelectElement | null;
@@ -306,8 +320,12 @@
       }
       attrs.push(`width=${(v.width/DOT_UNITS_PER_INCH).toFixed(4)}`, `height=${(v.height/DOT_UNITS_PER_INCH).toFixed(4)}`);
       attrs.push(`order=${n.order ?? 0}`);
+      // `labelloc`/`labeljust` are real GraphViz attributes but cannot express
+      // this editor's five-way position, so it goes under a reserved name too.
+      if(n.labelPosition) attrs.push(`_gep_labelPosition=${dotString(n.labelPosition)}`);
       if(n.type) attrs.push(`type=${dotString(n.type)}`);
       attrs.push(...dotLabelAttrs(v));
+      attrs.push(...gepCustomAttrs(n.custom));
       lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
     }
     for(const e of state.edges){
@@ -343,6 +361,7 @@
       // property survived. QVGE keeps arbitrary edge attributes, so the name
       // is free to use.
       if(e.type) attrs.push(`type=${dotString(e.type)}`);
+      attrs.push(...gepCustomAttrs(e.custom));
       attrs.push(...dotLabelAttrs(v));
       lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
     }

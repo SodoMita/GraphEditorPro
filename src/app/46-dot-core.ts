@@ -367,6 +367,13 @@
   // Copied here for the same self-containment reason as the arrow constants;
   // the exporter (50-import-export.ts) keeps its own copy under this name.
   const DOT_PX_PER_INCH = 72;
+  // Attribute prefix marking the editor's own custom values (see 50-import-export.ts
+  // `gepCustomAttr`). This module must stay self-contained for its unit-test
+  // harness, so the value is repeated rather than imported; the name is distinct
+  // because every module lands in one shared scope after bundling.
+  const DOT_CUSTOM_ATTR_PREFIX = '_gep_custom_';
+  // Copied from 10-core.ts for the same self-containment reason.
+  const DOT_LABEL_POSITIONS = ['center','top','bottom','left','right'];
   const dotClampArrowSize = (v: number) => Math.min(DOT_ARROW_SIZE_MAX, Math.max(DOT_ARROW_SIZE_MIN, v));
   function parseDot(text, options: { units?: 'auto' | 'inches' | 'legacyPixels' } = {}){
     // Strip comments once, up front: the structure test and the
@@ -461,11 +468,10 @@
         const mv = Number.isFinite(mul) ? mul : 1;
         // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
         // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
-        if(mv > 5){
-          (e as any).arrowSize = dotClampArrowSize(mv);
-        } else {
-          (e as any).arrowSize = dotClampArrowSize(mv * DOT_DEFAULT_ARROW_SIZE);
-        }
+        // The exporter writes the multiplier to four decimals, so 20/12 comes
+        // back as 1.6667 and 20 as 20.0004. The editor's sizes are whole
+        // numbers; a fraction of a pixel is not a size.
+        (e as any).arrowSize = Math.round(dotClampArrowSize(mv > 5 ? mv : mv * DOT_DEFAULT_ARROW_SIZE) * 100) / 100;
       }
       // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
       if(attrs.dir){
@@ -475,6 +481,13 @@
         else if(dir === 'forward' || dir === 'directed' || dir === 'true'){ (e as any).direction = 'directed'; (e as any).directed = true; }
       }
       if(attrs.type) (e as any).type = String(attrs.type).slice(0, 40);
+      const edgeCustom: AnyRecord = {};
+      for(const key of Object.keys(attrs)){
+        if(!key.startsWith(DOT_CUSTOM_ATTR_PREFIX)) continue;
+        const cid = key.slice(DOT_CUSTOM_ATTR_PREFIX.length);
+        if(cid) edgeCustom[cid] = String(attrs[key]);
+      }
+      if(Object.keys(edgeCustom).length) (e as any).custom = edgeCustom;
       readDotLabelAttrs(attrs, e);
       edges.push(e as any);
     }
@@ -526,8 +539,49 @@
         // moved it onto a circle.
         n.__hasPos = true;
       }
+      // DOT carries arbitrary attributes — that is what the format is FOR — so
+      // the editor's own values ride along as `_gep_custom_<id>`. The prefix
+      // keeps them out of GraphViz's namespace and marks them as ours, exactly
+      // like `_gepWeightLabel` marks a drawn weight.
+      const custom: AnyRecord = {};
+      for(const key of Object.keys(attrs)){
+        if(!key.startsWith(DOT_CUSTOM_ATTR_PREFIX)) continue;
+        const id = key.slice(DOT_CUSTOM_ATTR_PREFIX.length);
+        if(id) custom[id] = String(attrs[key]);
+      }
+      if(Object.keys(custom).length) (n as any).custom = custom;
+      if(attrs._gep_labelposition && DOT_LABEL_POSITIONS.includes(String(attrs._gep_labelposition))){
+        (n as any).labelPosition = String(attrs._gep_labelposition);
+      }
     }
-    const arr = [...nodes.values()];
+    // DOT's z-order is the order of DECLARATION, so that is the order the
+    // document must come back in — but the parse above reads edges BEFORE node
+    // statements (the edge regex has to see the raw text), so insertion order
+    // here is "whichever node an edge mentioned first": in
+    // `first; second; third; second -> third` the Map held second, third, first.
+    //
+    // The order is recovered from the source instead: one scan over `work` for
+    // every statement start, and each node is placed at the offset where it
+    // first appears. A node only an edge mentions takes that edge's offset,
+    // which is where DOT would put it too.
+    const declaredAt = new Map<string, number>();
+    {
+      const stmtRe = new RegExp(
+        '(?:^|[;\\r\\n]|\\{)\\s*' + id +
+        '(?:\\s*(?:--|->)\\s*' + id + ')?', 'g');
+      let dm;
+      while((dm = stmtRe.exec(work))){
+        const name = cleanDotToken(dm[1]);
+        if(!['graph','node','edge'].includes(name.toLowerCase()) && !declaredAt.has(name)) declaredAt.set(name, dm.index);
+        if(dm[2] != null){
+          const other = cleanDotToken(dm[2]);
+          if(!declaredAt.has(other)) declaredAt.set(other, dm.index);
+        }
+      }
+    }
+    const arr = [...nodes.values()].sort((a, b) =>
+      (declaredAt.get(a.original) ?? 0) - (declaredAt.get(b.original) ?? 0));
+    arr.forEach((n, i) => { if(n.order == null) n.order = i; });
     // A structurally recognized DOT graph with zero nodes is a valid empty
     // document ONLY when its body consists solely of no-content statements —
     // the exporter's empty output satisfies this. Anything else ("digraph G {
@@ -545,7 +599,29 @@
       const r = Math.max(120, arr.length * 24);
       arr.forEach((n,i) => { const a=-Math.PI/2+i*2*Math.PI/arr.length; n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; });
     }
-    return {title:'imported-dot', nodes:arr.map(({original, __hasPos, ...n}) => n), edges, legacyPixels: dotUnits.legacyPixels === true};
+    // Custom values only survive `sanitizeState` when their DEFINITION exists:
+    // an unknown key is an orphan and is dropped. DOT cannot declare one, so the
+    // definitions are synthesized from the values that were read — scope from
+    // where the attribute appeared, type `string` because DOT carries text
+    // verbatim. QVGE does the same (`attr.name` equals the attribute id).
+    const customSeen = new Map<string, { id: string; scope: string; type: string; name: string }>();
+    for(const n of arr){
+      for(const cid of Object.keys((n as any).custom || {})){
+        if(!customSeen.has('node:' + cid)) customSeen.set('node:' + cid, { id: cid, scope: 'node', type: 'string', name: cid });
+      }
+    }
+    for(const e of edges){
+      for(const cid of Object.keys((e as any).custom || {})){
+        if(!customSeen.has('edge:' + cid)) customSeen.set('edge:' + cid, { id: cid, scope: 'edge', type: 'string', name: cid });
+      }
+    }
+    return {
+      title:'imported-dot',
+      nodes:arr.map(({original, __hasPos, ...n}) => n),
+      edges,
+      customAttributes: [...customSeen.values()],
+      legacyPixels: dotUnits.legacyPixels === true
+    };
   }
   function parseShape(raw){
     const s = String(raw || '').toLowerCase();

@@ -4599,3 +4599,62 @@ test('CSV ids reserve explicit ids from later rows, and every rename is reported
   assert.ok(!graph.edges.some(e => e.id === 'e1-2' || e.id.startsWith('e1-')), 'no opaque suffixed id');
   assert.match(toasts(document), /2 imported edge id/i, 'both renames are counted');
 });
+
+// === DOT as a full carrier: z-order, custom attributes, label position ===
+test('DOT z-order follows declaration order, not the order edges mention nodes', async () => {
+  // The parser reads edges before node statements, so its Map held
+  // second, third, first for this file — the node nothing points at came last.
+  const {dom} = createEditorDom();
+  await paste(dom.window.document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  first [pos="0,0"];',
+    '  second [pos="100,0"];',
+    '  third [pos="200,0"];',
+    '  second -> third;',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(dom.window.document);
+  assert.deepEqual(graph.nodes.map(n => n.id), ['first', 'second', 'third'],
+    'the document keeps the order the file declares');
+  assert.deepEqual(graph.nodes.map(n => n.order), [0, 1, 2],
+    'and writes it as the explicit order that drives drawing');
+});
+
+test('custom attribute values survive a DOT round-trip', async () => {
+  const saved = {
+    title: 'custom-dot',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0, custom:{cap:'5'}}],
+    edges: [],
+    customAttributes: [{id:'cap', name:'capacity', scope:'node', type:'string'}],
+    graphCustom: {},
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(dot, /_gep_custom_cap="5"/, 'DOT carries it as an ordinary attribute');
+
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].custom.cap, '5', 'the value comes back');
+  assert.ok(graph.customAttributes.some(a => a.id === 'cap' && a.scope === 'node'),
+    'and its definition is synthesized, or the sanitizer drops it as orphaned');
+});
+
+test('label position and arrow size survive a DOT round-trip', async () => {
+  const saved = {
+    title: 'misc-dot',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0, labelPosition:'top'}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, arrowSize:20}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].labelPosition, 'top', 'label position survives');
+  assert.equal(graph.edges[0].arrowSize, 20, 'a 4-decimal multiplier rounds back to the whole size');
+});
