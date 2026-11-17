@@ -251,6 +251,19 @@
     return out;
   }
   function dotId(id){ return /^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : '"' + String(id).replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"'; }
+  // DOT node names are ASCII identifiers in practice: QVGE and older GraphViz
+  // builds treat a quoted non-ASCII name as opaque bytes, and a name that is not
+  // reproducible across tools is not an identity. So a non-ASCII id is written
+  // as a STABLE ASCII alias (`n` + a hash of the id) and the original is kept in
+  // `id="..."`, which import prefers — the same trick the edge ids already use.
+  // Deterministic, not random: the same document must produce the same DOT.
+  function dotAlias(id){
+    const s = String(id);
+    if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return s;
+    let h = 0x811c9dc5;
+    for(let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return 'n_' + h.toString(36);
+  }
   function dotString(v){ return '"' + String(v ?? '').replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n') + '"'; }
   // DOT style mapping for QVGE parity: QVGE uses style values solid/dashed/dotted/dashdot/dashdotdot/none
   // (CUtils::penStyleToText). DOT natively supports solid/dashed/dotted/bold/invis/filled,
@@ -323,10 +336,13 @@
       // `labelloc`/`labeljust` are real GraphViz attributes but cannot express
       // this editor's five-way position, so it goes under a reserved name too.
       if(n.labelPosition) attrs.push(`_gep_labelPosition=${dotString(n.labelPosition)}`);
+      // Only when the node name had to be aliased: the real id must survive, and
+      // `id` is already the attribute the edge exporter uses for the same job.
+      if(dotAlias(n.id) !== n.id) attrs.push(`id=${dotString(n.id)}`);
       if(n.type) attrs.push(`type=${dotString(n.type)}`);
       attrs.push(...dotLabelAttrs(v));
       attrs.push(...gepCustomAttrs(n.custom));
-      lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
+      lines.push(`  ${dotId(dotAlias(n.id))} [${attrs.join(', ')}];`);
     }
     for(const e of state.edges){
       const v = edgeVisual(e);
@@ -363,7 +379,10 @@
       if(e.type) attrs.push(`type=${dotString(e.type)}`);
       attrs.push(...gepCustomAttrs(e.custom));
       attrs.push(...dotLabelAttrs(v));
-      lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
+      // Endpoints are written with the SAME alias the node statements use, or
+      // the file would name a node twice: `n_ebrlx5 [id="ключ"]` plus
+      // `"ключ" -> "узел"` created a second, empty `ключ` on re-import.
+      lines.push(`  ${dotId(dotAlias(e.from))} ${op} ${dotId(dotAlias(e.to))} [${attrs.join(', ')}];`);
     }
     lines.push('}');
     return lines.join('\n') + '\n';

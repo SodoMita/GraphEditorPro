@@ -410,6 +410,12 @@
     const dotPosScale = DOT_PX_PER_INCH / dotUnits.pointsPerInch;
     const hasStructure = (open >= 0 && close > open) && headerOk;
     const nodes = new Map<string, AnyRecord>(), edges: GraphEdge[] = [];
+    // An exported node may be an ASCII alias with the real id in `id="..."`, and
+    // edges then reference the alias. Node statements are read AFTER edges (the
+    // edge regex needs the raw text), so the mapping is collected in a quick
+    // pre-scan and applied when an edge names its endpoints.
+    const aliasToReal = new Map<string, string>();
+    const realOf = (name: string) => aliasToReal.get(name) || name;
     const ensureNode = id => { if(!nodes.has(id)) nodes.set(id, {id:safeId(id,'n'), original:id, label:id, x:0, y:0, shape:'circle', color:'#0ea5e9'}); return nodes.get(id); };
     // A bare token must contain at least one word-ish character: a run of
     // pure punctuation ('--', ':.') is never a node reference or endpoint —
@@ -429,10 +435,24 @@
     // reparses identically; later lists override duplicate keys, matching
     // how a single repeated key is handled.
     const work = maskDotSyntax(body).replace(/\]\s*\[/g, ',');
+    // Pre-scan the node statements for `id="..."` so that an edge naming the
+    // ASCII alias resolves to the real id. The edge loop below runs first and
+    // would otherwise create a second node under the alias name.
+    {
+      const preNodeRe = new RegExp('(?:^|;|[\\r\\n]|\\{)\\s*' + id + '\\s*\\[([^\\]]*)\\]', 'g');
+      let pm;
+      while((pm = preNodeRe.exec(work))){
+        const name = cleanDotToken(pm[1]);
+        if(['graph','node','edge'].includes(name.toLowerCase())) continue;
+        const pre = parseAttrList(pm[2] || '');
+        const real = pre.id ? safeId(String(pre.id), 'n') : '';
+        if(real && real !== name && !aliasToReal.has(name)) aliasToReal.set(name, real);
+      }
+    }
     let m;
     while((m = edgeRe.exec(work))){
       const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
-      const a = ensureNode(fromOrig), b = ensureNode(toOrig);
+      const a = ensureNode(realOf(fromOrig)), b = ensureNode(realOf(toOrig));
       // `label` is a LABEL, not a weight. This used to fall back to it, so a
       // plain GraphViz file with `a -> b [label="heeft"]` arrived with the
       // weight "heeft": the algorithms then read Number("heeft") = NaN and
@@ -498,7 +518,13 @@
       const name = cleanDotToken(m[1]);
       if(['graph','node','edge'].includes(name.toLowerCase())) continue;
       const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
+      const realId = attrs.id ? safeId(attrs.id, 'n') : '';
+      if(realId && realId !== name && !aliasToReal.has(name)) aliasToReal.set(name, realId);
       if(attrs.label) n.label = attrs.label;
+      // `id=` on a node statement is the real identifier when the name had to be
+      // an ASCII alias (see `dotAlias` in 50-import-export.ts). It is read the
+      // same way the edge id already is, so a rename cannot drift.
+      if(attrs.id) (n as any).id = safeId(attrs.id, 'n');
       readDotLabelAttrs(attrs, n);
       if(attrs.fillcolor || attrs.color) n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
       if(attrs.shape){
@@ -578,6 +604,15 @@
           if(!declaredAt.has(other)) declaredAt.set(other, dm.index);
         }
       }
+    }
+    // An alias and its real id are the same node; the pre-scan made the edge
+    // resolve to the real id, and the node statement created the real node, so
+    // the alias entry left over from the edge pass is a duplicate. Drop it.
+    for(const [alias, real] of aliasToReal){
+      const dup = nodes.get(alias);
+      if(!dup || alias === real || !nodes.has(real)) continue;
+      nodes.delete(alias);
+      declaredAt.delete(alias);
     }
     const arr = [...nodes.values()].sort((a, b) =>
       (declaredAt.get(a.original) ?? 0) - (declaredAt.get(b.original) ?? 0));

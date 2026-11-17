@@ -4658,3 +4658,47 @@ test('label position and arrow size survive a DOT round-trip', async () => {
   assert.equal(graph.nodes[0].labelPosition, 'top', 'label position survives');
   assert.equal(graph.edges[0].arrowSize, 20, 'a 4-decimal multiplier rounds back to the whole size');
 });
+
+// === Non-ASCII identifiers ===
+test('a non-ASCII id survives import unchanged and is not randomised', async () => {
+  // `safeId` stripped everything outside [A-Za-z0-9_-], so "ключ" became an
+  // empty string and then a RANDOM id — a different one on every import.
+  const dot = 'digraph G{ "ключ" [pos="0,0"]; "узел" [pos="100,0"]; "ключ" -> "узел"; }';
+  const once = createEditorDom();
+  await paste(once.dom.window.document, once.dom.window, '#btnPasteDot', dot);
+  const first = exportedGraph(once.dom.window.document);
+
+  const twice = createEditorDom();
+  await paste(twice.dom.window.document, twice.dom.window, '#btnPasteDot', dot);
+  const second = exportedGraph(twice.dom.window.document);
+
+  assert.deepEqual(first.nodes.map(n => n.id), ['ключ', 'узел'], 'the id is the one the file gave');
+  assert.deepEqual(second.nodes.map(n => n.id), first.nodes.map(n => n.id),
+    'and it is the same on the next import');
+  assert.equal(first.edges.length, 1, 'the edge still connects them');
+});
+
+test('DOT export aliases a non-ASCII node name and brings the real id back', async () => {
+  const saved = {
+    title: 'unicode',
+    nodes: [{id:'ключ', label:'Ключ', x:0, y:0, order:0}, {id:'узел', label:'Узел', x:100, y:0, order:1}],
+    edges: [{id:'связь', from:'ключ', to:'узел', label:'L', weight:'1', directed:true}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  // The statement name is a portable ASCII alias; the real id rides in `id=`.
+  assert.match(dot, /n_[a-z0-9]+ \[/, 'the node name is an ASCII alias');
+  assert.match(dot, /id="ключ"/, 'the real id is kept as an attribute');
+  assert.doesNotMatch(dot, /"ключ" ->/, 'edges use the same alias, not the raw name');
+
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(n => n.id), ['ключ', 'узел'],
+    'no duplicate node appears under the alias');
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].from, 'ключ');
+  assert.equal(graph.edges[0].to, 'узел');
+});

@@ -1806,12 +1806,24 @@
     const numeric = Math.trunc(finite(value, fallback));
     return numeric > 0 ? numeric : fallback;
   }
+  // IDs keep letters and digits of ANY script. GraphML, JSON and the editor's
+  // own model treat an id as an opaque string, and the places an id reaches —
+  // `g.id`, `dataset.id`, the lists built with `esc()` — are text, not CSS
+  // selectors. Stripping non-ASCII turned `"ключ"` into an empty string and
+  // then into a RANDOM id (`n80jmqx` one import, `nu1qtab` the next), so a file
+  // could not identify its own nodes. Only characters that break markup or
+  // selectors are removed, and DOT export maps the rest to a stable alias.
+  // The pattern is inline, not a module constant: `tests/dot-core-harness.mjs`
+  // pulls this function out verbatim and evaluates it alone, so it must not
+  // reference anything from this module's scope.
   function safeId(value: unknown, prefix: string): string {
-    const id = String(value ?? '').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,40);
+    const id = String(value ?? '').replace(/[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/g,'').slice(0,40);
+    // A random fallback is a last resort for genuinely unusable input; a real
+    // name must survive, including one written in a non-Latin script.
     return id || (prefix + Math.random().toString(36).slice(2,8));
   }
   function uniqueSafeId(value: unknown, prefix: string, used: Set<string>): string {
-    const base = String(value ?? '').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,40) || prefix;
+    const base = String(value ?? '').replace(/[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/g,'').slice(0,40) || prefix;
     let id = base;
     for(let suffix = 2; used.has(id); suffix++){
       const ending = `-${suffix}`;
