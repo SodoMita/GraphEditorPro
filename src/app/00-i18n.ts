@@ -580,6 +580,7 @@ const I18N: I18nService = {
     'pasted_exact_noop': { en: 'Paste in place: nothing changed', ru: 'Вставка на месте: изменений нет' },
     'paste_cap_nodes': { en: 'Skipped {n:node}: the document limit is {limit}', ru: 'Пропущено: {n:node} — предел документа {limit}' },
     'paste_cap_edges': { en: 'Skipped {n:edge}: the document limit is {limit}', ru: 'Пропущено: {n:edge} — предел документа {limit}' },
+    'paste_local_fallback': { en: 'System clipboard unavailable — pasted the local copy', ru: 'Системный буфер недоступен — вставлена локальная копия' },
     'nodes_reversed': { en: 'Node order reversed', ru: 'Порядок узлов обращён' },
     'nodes_shuffled': { en: 'Node order shuffled', ru: 'Порядок узлов перемешан' },
     'no_edge_data': { en: 'No edge data', ru: 'Нет данных рёбер' },
