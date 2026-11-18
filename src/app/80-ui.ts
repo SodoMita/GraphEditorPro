@@ -424,10 +424,12 @@
     bindClipboardButton('btnCut', cutSelectedNodes);
     bindClipboardButton('btnDuplicate', duplicateSelectedNodes);
     bindClipboardButton('btnPaste', pasteFromSystemClipboard);
+    bindClipboardButton('btnPasteExact', pasteExactFromSystemClipboard);
     bindClipboardButton('btnCopy2', copySelectedNodes);
     bindClipboardButton('btnCut2', cutSelectedNodes);
     bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
     bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
+    bindClipboardButton('btnPasteExact2', pasteExactFromSystemClipboard);
     const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null;
     if(chkPreserve){
       chkPreserve.checked = state.settings.copyPreserveExternal !== false;
@@ -461,6 +463,11 @@
         if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
           ev.preventDefault(); cutSelectedNodes();
         }
+      } else if(key === 'v' && (ev.shiftKey || ev.altKey)){
+        // Ctrl/Cmd+Alt+V (Illustrator-style "paste in place") and
+        // Ctrl/Cmd+Shift+V both restore the copied coordinates. The latter is
+        // normally "paste as plain text" in a browser; here the canvas owns it.
+        ev.preventDefault(); pasteExactFromSystemClipboard();
       } else if(key === 'v' && !ev.shiftKey && !ev.altKey){
         ev.preventDefault(); pasteFromSystemClipboard();
       } else if(key === 'd' && !ev.shiftKey && !ev.altKey){

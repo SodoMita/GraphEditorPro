@@ -754,8 +754,10 @@
     $('#btnMatrixClear').disabled = !state.edges.length;
     const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
     const pasteBtn = document.getElementById('btnPaste') as HTMLButtonElement | null;
+    const pasteExactBtn = document.getElementById('btnPasteExact') as HTMLButtonElement | null;
     const pasteExtBtn = document.getElementById('btnPasteWithExternal') as HTMLButtonElement | null;
     if(pasteBtn) pasteBtn.disabled = !hasClipboard;
+    if(pasteExactBtn) pasteExactBtn.disabled = !hasClipboard;
     if(pasteExtBtn) pasteExtBtn.disabled = !hasClipboard;
     const copyBtn = document.getElementById('btnCopy') as HTMLButtonElement | null;
     const cutBtn = document.getElementById('btnCut') as HTMLButtonElement | null;

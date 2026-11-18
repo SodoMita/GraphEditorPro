@@ -42,6 +42,7 @@
     <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></symbol>
     <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></symbol>
     <symbol id="icon-paste" viewBox="0 0 24 24"><path d="M9 5h6m-5-2h4a2 2 0 0 1 2 2v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2Z"/></symbol>
+    <symbol id="icon-paste-exact" viewBox="0 0 24 24"><path d="M9 5h6m-5-2h4a2 2 0 0 1 2 2v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2Z"/><path d="M9 12h6m-6 4h6"/></symbol>
     <symbol id="icon-export" viewBox="0 0 24 24"><path d="M12 4v11m-4-4 4 4 4-4M5 17v3h14v-3"/></symbol>
     <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 20V9m-4 4 4-4 4 4M5 7V4h14v3"/></symbol>
     <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
@@ -85,6 +86,7 @@
         <button id="btnCut" class="btn symbol-only" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title" aria-label="Cut" data-i18n-aria-label="cut_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg></button>
         <button id="btnDuplicate" class="btn symbol-only" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title" aria-label="Duplicate" data-i18n-aria-label="duplicate_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg></button>
         <button id="btnPaste" class="btn symbol-only" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title" aria-label="Paste" data-i18n-aria-label="paste" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+        <button id="btnPasteExact" class="btn symbol-only" title="Paste in place (Ctrl+Alt+V)" data-i18n-title="paste_exact_title" aria-label="Paste in place" data-i18n-aria-label="paste_exact" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste-exact"></use></svg></button>
         <button id="btnClear" class="btn symbol-only danger" title="Clear graph" data-i18n-title="clear_graph" aria-label="Clear graph" data-i18n-aria-label="clear_graph"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
         <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open" aria-label="Open style presets" data-i18n-aria-label="presets_open">
           <svg class="ui-icon" aria-hidden="true"><use href="#icon-star"></use></svg>
@@ -127,6 +129,7 @@
                 <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
                 <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
                 <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
+                <button id="btnPasteExact2" class="btn small" title="Paste in place (Ctrl+Alt+V)" data-i18n-title="paste_exact_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste-exact"></use></svg> <span data-i18n="paste_exact">Paste in place</span></button>
               </div>
               <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
             </div>
@@ -689,7 +692,7 @@
                 <p class="tiny muted"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
-                <p class="tiny muted"><span data-i18n-html="help_copy_paste"><b>Copy / paste selection:</b> Ctrl+C copies the selected nodes with the edges between them, Ctrl+X cuts, Ctrl+D duplicates in place, Ctrl+V pastes with an offset (also across tabs, via the system clipboard). Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.</span></p>
+                <p class="tiny muted"><span data-i18n-html="help_copy_paste"><b>Copy / paste selection:</b> Ctrl+C copies the selected nodes with the edges between them, Ctrl+X cuts, Ctrl+D duplicates in place, Ctrl+V pastes with an offset (also across tabs, via the system clipboard). Ctrl+Alt+V (or Ctrl+Shift+V) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.</span></p>
               </div>
             </details>
 

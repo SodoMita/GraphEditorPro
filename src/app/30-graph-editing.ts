@@ -884,7 +884,11 @@
     if(!copySelectedNodes()) return;
     pasteClipboardInternal();
   }
-  function pasteClipboardInternal(fromSystemClipboard?: AnyRecord | null){
+  function pasteClipboardInternal(fromSystemClipboard?: AnyRecord | null, options?: { exact?: boolean }){
+    // 'exact' is the in-place paste: no offset, no collision reshuffle, and
+    // carried ids that already exist update the entity in place instead of
+    // creating a second copy of it.
+    const exactPaste = options?.exact === true;
     // Clone the clipboard entities — the definition resolution below may
     // remap or coerce their custom values, which must never leak back into
     // the clipboard (a second paste has to start from the copied originals).
@@ -1154,109 +1158,190 @@
       const resolved = sanitizeCustomValues(entity?.custom, pasteEdgeTypeById, pasteAllSurvivingTypeById);
       if(resolved) entity.custom = resolved; else delete entity?.custom;
     }
-    const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
-    let nextOrder = maxOrder + 1;
-    pasteOffsetCount = (pasteOffsetCount + 1) % 20;
-    const offsetDist = 40 + pasteOffsetCount * 10;
-    const idMap = new Map<string, string>();
-    const newNodes: GraphNode[] = [];
-    const newNodeIds: string[] = [];
-    const existingNodeIds = new Set(originalExistingNodeIds);
-    const sortedCopyNodes = [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    const isFreeWithPlaced = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
-      if(!isPositionFree(x, y, ignoreIds)) return false;
-      for(const pn of placed){
-        if(Math.hypot(pn.x - x, pn.y - y) < 50) return false;
-      }
-      return true;
-    };
-    const findFreeForPaste = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
-      if(isFreeWithPlaced(x, y, ignoreIds, placed)) return {x, y};
-      const step = 50;
-      for(let ring=1; ring<=8; ring++){
-        const radius = step * ring;
-        const count = Math.max(8, ring * 8);
-        for(let i=0; i<count; i++){
-          const a = i * Math.PI*2 / count;
-          const px = x + Math.cos(a)*radius;
-          const py = y + Math.sin(a)*radius;
-          if(isFreeWithPlaced(px, py, ignoreIds, placed)) return {x:px, y:py};
+    if(exactPaste){
+      // Exact paste is a *merge*, not a clone pass. Each carried id names one
+      // entity: if the document already has it, that object is updated and no
+      // second copy is made. Only keys present in the payload are written, so
+      // unrelated fields an existing node/edge acquired since the copy stay
+      // intact; the node order is left alone as well. Coordinates, however,
+      // are restored verbatim (no offset and no free-spot search).
+      const valuesEqual = (a: unknown, b: unknown): boolean => {
+        if(a === b) return true;
+        if(isRecord(a) && isRecord(b)){
+          const ak = Object.keys(a), bk = Object.keys(b);
+          return ak.length === bk.length && ak.every(k => valuesEqual(a[k], b[k]));
+        }
+        return false;
+      };
+      const mergeCarried = (target: AnyRecord, carried: AnyRecord, keep: string[] = []) => {
+        let changed = false;
+        for(const key of Object.keys(carried)){
+          if(key === 'id' || keep.includes(key)) continue;
+          // A null-prototype copy keeps keys such as "__proto__" harmless and
+          // never shares a mutable custom map with the clipboard payload.
+          const incoming = key === 'custom' ? cloneCustomMap(carried.custom) : carried[key];
+          if(key === 'custom' && !incoming) continue;
+          if(!valuesEqual(target[key], incoming)){ target[key] = incoming; changed = true; }
+        }
+        return changed;
+      };
+      const nodeById = new Map(state.nodes.map(n => [n.id, n] as [string, GraphNode]));
+      const edgeById = new Map(state.edges.map(e => [e.id, e] as [string, GraphEdge]));
+      const pastedNodeIds: string[] = [];
+      const pastedEdgeIds: string[] = [];
+      let changed = false;
+      let nextFreeOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1) + 1;
+      for(const orig of [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
+        const node = cloneNode(orig) as GraphNode;
+        node.x = finite(node.x, 0); node.y = finite(node.y, 0);
+        const existing = nodeById.get(node.id);
+        if(existing){
+          if(mergeCarried(existing, node, ['order'])) changed = true;
+          pastedNodeIds.push(existing.id);
+        } else {
+          const num = Number((node.id.match(/\d+$/)||[0])[0]);
+          if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
+          const carriedOrder = Number(node.order);
+          node.order = Number.isFinite(carriedOrder) ? carriedOrder : nextFreeOrder++;
+          state.nodes.push(node); nodeById.set(node.id, node);
+          pastedNodeIds.push(node.id); changed = true;
         }
       }
-      return {x: x + 80, y: y + 80};
-    };
-    for(const orig of sortedCopyNodes){
-      let newId = orig.id;
-      const used = new Set([...existingNodeIds, ...newNodeIds]);
-      if(used.has(newId)){
-        let counter = state.nextNode;
-        while(used.has('n' + counter)) counter++;
-        newId = 'n' + counter;
-        state.nextNode = counter + 1;
-      } else {
-        const num = Number((newId.match(/\d+$/)||[0])[0]);
-        if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
+      for(const { entity: orig } of materializedEdges){
+        const edge = cloneEdge(orig) as GraphEdge;
+        const existing = edgeById.get(edge.id);
+        if(existing){
+          if(mergeCarried(existing, edge)) changed = true;
+          pastedEdgeIds.push(existing.id);
+        } else {
+          const num = Number((edge.id.match(/\d+$/)||[0])[0]);
+          if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
+          // Endpoints are carried verbatim: a pasted node reuses its own id,
+          // an external endpoint is a pre-existing node in this document.
+          state.edges.push(edge); edgeById.set(edge.id, edge);
+          pastedEdgeIds.push(edge.id); changed = true;
+        }
       }
-      idMap.set(orig.id, newId);
-      const cloned: GraphNode = cloneNode({...orig, id: newId, order: nextOrder++} as GraphNode);
-      let nx = finite(orig.x, 0) + offsetDist;
-      let ny = finite(orig.y, 0) + offsetDist;
-      // The clone is not in state.nodes yet, so nothing may be ignored:
-      // ignoring every existing id (as the merged branch did) disables the
-      // overlap check against the graph entirely. Already-placed clones are
-      // covered by findFreeForPaste's `placed` check.
-      const free = findFreeForPaste(nx, ny, new Set<string>(), newNodes);
-      cloned.x = free.x;
-      cloned.y = free.y;
-      newNodes.push(cloned);
-      newNodeIds.push(newId);
-      existingNodeIds.add(newId);
-    }
-    const finalNewEdges: GraphEdge[] = [];
-    const usedEdgeIds2 = new Set(state.edges.map(e=>e.id));
-    const edgeIdMap = new Set<string>();
-    const addEdgeWithNewId = (orig: GraphEdge, from: string, to: string) => {
-      let nid = orig.id;
-      if(usedEdgeIds2.has(nid) || edgeIdMap.has(nid)){
-        let c = state.nextEdge;
-        while(usedEdgeIds2.has('e'+c) || edgeIdMap.has('e'+c)) c++;
-        nid = 'e'+c;
-        state.nextEdge = c+1;
-      } else {
-        const num = Number((nid.match(/\d+$/)||[0])[0]);
-        if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
+      if(changed){
+        if(data.nodes.length) state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+        invalidateGraphIndex();
+        pushHistory('paste in place');
       }
-      const ce: GraphEdge = cloneEdge({...orig, id: nid, from, to} as GraphEdge);
-      finalNewEdges.push(ce);
-      edgeIdMap.add(nid);
-      usedEdgeIds2.add(nid);
-    };
-    // The set was resolved before the definitions were minted; idMap now
-    // agrees with it one-to-one (an endpoint maps iff it is being pasted).
-    for(const { entity: orig } of materializedEdges){
-      const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
-      addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
+      if(pastedNodeIds.length || pastedEdgeIds.length){
+        setSelection(pastedNodeIds, pastedEdgeIds,
+          pastedNodeIds.length ? {type:'node', id: pastedNodeIds[0]} : {type:'edge', id: pastedEdgeIds[0]}, false);
+      }
+      queueRender(true, true);
+      if(!changed) toast(I18N.t('pasted_exact_noop'));
+      else if(pastedNodeIds.length) toast(I18N.t('pasted_exact_n_m', {n: pastedNodeIds.length, m: pastedEdgeIds.length}));
+      else toast(I18N.t('pasted_exact_edges', {n: pastedEdgeIds.length}));
+      saveSoon();
+      return true;
+    } else {
+      const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
+      let nextOrder = maxOrder + 1;
+      pasteOffsetCount = (pasteOffsetCount + 1) % 20;
+      const offsetDist = 40 + pasteOffsetCount * 10;
+      const idMap = new Map<string, string>();
+      const newNodes: GraphNode[] = [];
+      const newNodeIds: string[] = [];
+      const existingNodeIds = new Set(originalExistingNodeIds);
+      const sortedCopyNodes = [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+      const isFreeWithPlaced = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
+        if(!isPositionFree(x, y, ignoreIds)) return false;
+        for(const pn of placed){
+          if(Math.hypot(pn.x - x, pn.y - y) < 50) return false;
+        }
+        return true;
+      };
+      const findFreeForPaste = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
+        if(isFreeWithPlaced(x, y, ignoreIds, placed)) return {x, y};
+        const step = 50;
+        for(let ring=1; ring<=8; ring++){
+          const radius = step * ring;
+          const count = Math.max(8, ring * 8);
+          for(let i=0; i<count; i++){
+            const a = i * Math.PI*2 / count;
+            const px = x + Math.cos(a)*radius;
+            const py = y + Math.sin(a)*radius;
+            if(isFreeWithPlaced(px, py, ignoreIds, placed)) return {x:px, y:py};
+          }
+        }
+        return {x: x + 80, y: y + 80};
+      };
+      for(const orig of sortedCopyNodes){
+        let newId = orig.id;
+        const used = new Set([...existingNodeIds, ...newNodeIds]);
+        if(used.has(newId)){
+          let counter = state.nextNode;
+          while(used.has('n' + counter)) counter++;
+          newId = 'n' + counter;
+          state.nextNode = counter + 1;
+        } else {
+          const num = Number((newId.match(/\d+$/)||[0])[0]);
+          if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
+        }
+        idMap.set(orig.id, newId);
+        const cloned: GraphNode = cloneNode({...orig, id: newId, order: nextOrder++} as GraphNode);
+        let nx = finite(orig.x, 0) + offsetDist;
+        let ny = finite(orig.y, 0) + offsetDist;
+        // The clone is not in state.nodes yet, so nothing may be ignored:
+        // ignoring every existing id (as the merged branch did) disables the
+        // overlap check against the graph entirely. Already-placed clones are
+        // covered by findFreeForPaste's `placed` check.
+        const free = findFreeForPaste(nx, ny, new Set<string>(), newNodes);
+        cloned.x = free.x;
+        cloned.y = free.y;
+        newNodes.push(cloned);
+        newNodeIds.push(newId);
+        existingNodeIds.add(newId);
+      }
+      const finalNewEdges: GraphEdge[] = [];
+      const usedEdgeIds2 = new Set(state.edges.map(e=>e.id));
+      const edgeIdMap = new Set<string>();
+      const addEdgeWithNewId = (orig: GraphEdge, from: string, to: string) => {
+        let nid = orig.id;
+        if(usedEdgeIds2.has(nid) || edgeIdMap.has(nid)){
+          let c = state.nextEdge;
+          while(usedEdgeIds2.has('e'+c) || edgeIdMap.has('e'+c)) c++;
+          nid = 'e'+c;
+          state.nextEdge = c+1;
+        } else {
+          const num = Number((nid.match(/\d+$/)||[0])[0]);
+          if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
+        }
+        const ce: GraphEdge = cloneEdge({...orig, id: nid, from, to} as GraphEdge);
+        finalNewEdges.push(ce);
+        edgeIdMap.add(nid);
+        usedEdgeIds2.add(nid);
+      };
+      // The set was resolved before the definitions were minted; idMap now
+      // agrees with it one-to-one (an endpoint maps iff it is being pasted).
+      for(const { entity: orig } of materializedEdges){
+        const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
+        addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
+      }
+      if(newNodes.length) state.nodes.push(...newNodes);
+      if(finalNewEdges.length) state.edges.push(...finalNewEdges);
+      state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+      if(finalNewEdges.length) invalidateGraphIndex();
+      const selNodes = newNodes.map(n=>n.id);
+      const selEdges = finalNewEdges.map(e=>e.id);
+      if(selNodes.length || selEdges.length){
+        setSelection(selNodes, selEdges, selNodes.length ? {type:'node', id: selNodes[0]} : (selEdges.length ? {type:'edge', id: selEdges[0]} : null), false);
+      }
+      pushHistory('paste'); queueRender(true, true);
+      const totalPastedEdges = finalNewEdges.length;
+      if(newNodes.length) toast(I18N.t('pasted_n_m', {n: newNodes.length, m: totalPastedEdges}) || `Pasted ${newNodes.length} node(s), ${totalPastedEdges} edge(s)`);
+      else if(totalPastedEdges) toast(I18N.t('pasted_edges', {n: totalPastedEdges}) || `Pasted ${totalPastedEdges} edge(s)`);
+      saveSoon();
+      return true;
     }
-    if(newNodes.length) state.nodes.push(...newNodes);
-    if(finalNewEdges.length) state.edges.push(...finalNewEdges);
-    state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    if(finalNewEdges.length) invalidateGraphIndex();
-    const selNodes = newNodes.map(n=>n.id);
-    const selEdges = finalNewEdges.map(e=>e.id);
-    if(selNodes.length || selEdges.length){
-      setSelection(selNodes, selEdges, selNodes.length ? {type:'node', id: selNodes[0]} : (selEdges.length ? {type:'edge', id: selEdges[0]} : null), false);
-    }
-    pushHistory('paste'); queueRender(true, true);
-    const totalPastedEdges = finalNewEdges.length;
-    if(newNodes.length) toast(I18N.t('pasted_n_m', {n: newNodes.length, m: totalPastedEdges}) || `Pasted ${newNodes.length} node(s), ${totalPastedEdges} edge(s)`);
-    else if(totalPastedEdges) toast(I18N.t('pasted_edges', {n: totalPastedEdges}) || `Pasted ${totalPastedEdges} edge(s)`);
-    saveSoon();
-    return true;
   }
-  async function pasteFromSystemClipboard(){
+  async function pasteFromClipboardSource(exact: boolean){
     // Try internal clipboard first (fast path); if empty, try system clipboard
     if(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length)){
-      pasteClipboardInternal();
+      pasteClipboardInternal(null, { exact });
       return;
     }
     try {
@@ -1264,7 +1349,7 @@
       if(!text) { toast(I18N.t('clipboard_empty')); return; }
       const data = JSON.parse(text);
       if(data && data.type === 'graph-editor-clipboard'){
-        pasteClipboardInternal(data);
+        pasteClipboardInternal(data, { exact });
         return;
       }
       // Try to parse as generic graph JSON (whole graph paste)
@@ -1279,3 +1364,5 @@
       toast(I18N.t('paste_failed', {msg: (e as Error).message}));
     }
   }
+  function pasteFromSystemClipboard(){ return pasteFromClipboardSource(false); }
+  function pasteExactFromSystemClipboard(){ return pasteFromClipboardSource(true); }

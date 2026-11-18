@@ -43,6 +43,10 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 
 `index.html` is generated and should not be edited directly.
 
+## Paste in place
+
+`Ctrl+V` (⌘+V) pastes the copied nodes and edges with an increasing offset and never reuses the copied ids. The **Paste in place** button and `Ctrl+Alt+V` / `Ctrl+Shift+V` (⌘+Option+V / ⌘+Shift+V) paste the same payload at its original coordinates instead. Ids already present in the document are updated in place — only fields carried by the clipboard change, so unrelated node/edge data survives — while missing ids are created at their copied coordinates. Repeating an in-place paste is therefore idempotent rather than piling up clones. The system clipboard payload used for cross-tab pastes goes through the same merge.
+
 ## Moving selections: transform gizmos
 
 In Select mode, a selection that contains nodes (or only edges — their endpoints are used) gets a transform gizmo: handles drawn around the selection on the canvas, a floating toolbar row above the selection tools, and a matching **Transform gizmo** section in the Edit tab with a live status readout. **Every gizmo tool rewrites only node `x`/`y` positions.** Node widths, heights, shapes, colors, labels — all visual parameters of the individual parts — are never touched; the node bodies simply ride to their new spots and connected edges follow through the same live-edge fast path as an ordinary node drag.
