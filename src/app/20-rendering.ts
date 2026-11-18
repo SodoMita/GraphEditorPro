@@ -612,7 +612,7 @@
       return nodeTypesCache.types;
     }
     const set = new Set<string>();
-    for(const n of arr) if(n.type) set.add(n.type);
+    for(const n of arr) if(n.type && n.type.trim()) set.add(n.type);
     if(styles){ for(const t of Object.keys(styles)) if(t && t.trim()) set.add(t); }
     if(defType && defType.trim()) set.add(defType);
     const types = [...set].sort();
@@ -632,7 +632,7 @@
       return edgeTypesCache.types;
     }
     const set = new Set<string>();
-    for(const e of arr) if(e.type) set.add(e.type);
+    for(const e of arr) if(e.type && e.type.trim()) set.add(e.type);
     if(styles){ for(const t of Object.keys(styles)) if(t && t.trim()) set.add(t); }
     if(defType && defType.trim()) set.add(defType);
     const types = [...set].sort();
@@ -700,25 +700,27 @@
   }
   const NODE_TYPE_DATALIST_SELECTORS = ['#nodeTypeListEdit', '#defNodeTypeList', '#nodeTypeStyleList'];
   const EDGE_TYPE_DATALIST_SELECTORS = ['#edgeTypeListEdit', '#defEdgeTypeList', '#edgeTypeStyleList'];
+  const datalistHtmlMemo = new WeakMap<Element, string>();
+  function setDatalistOptions(el: Element | null, html: string){
+    if(!el || datalistHtmlMemo.get(el) === html) return;
+    if(html !== '' || el.firstChild) el.innerHTML = html;
+    datalistHtmlMemo.set(el, html);
+  }
   let lastNodeTypeOptionsHtml: string | null = null;
   let lastEdgeTypeOptionsHtml: string | null = null;
   function syncEditTypeLists(){
     const nHtml = nodeTypeOptionsHtml();
     if(nHtml !== lastNodeTypeOptionsHtml){
       lastNodeTypeOptionsHtml = nHtml;
-      for(const sel of NODE_TYPE_DATALIST_SELECTORS){
-        const el = $(sel);
-        if(el && el.innerHTML !== nHtml) el.innerHTML = nHtml;
-      }
+      for(const sel of NODE_TYPE_DATALIST_SELECTORS) setDatalistOptions(document.querySelector(sel), nHtml);
     }
     const eHtml = edgeTypeOptionsHtml();
     if(eHtml !== lastEdgeTypeOptionsHtml){
       lastEdgeTypeOptionsHtml = eHtml;
-      for(const sel of EDGE_TYPE_DATALIST_SELECTORS){
-        const el = $(sel);
-        if(el && el.innerHTML !== eHtml) el.innerHTML = eHtml;
-      }
+      for(const sel of EDGE_TYPE_DATALIST_SELECTORS) setDatalistOptions(document.querySelector(sel), eHtml);
     }
+    setDatalistOptions(document.querySelector('#nodeTypeList'), nHtml);
+    setDatalistOptions(document.querySelector('#edgeTypeList'), eHtml);
   }
 
   // A caller of queueRender is a caller that changed something a pass renders
@@ -764,13 +766,21 @@
     lastPaintedGen = renderGen;
     endRenderPass();
   }
+  let pendingRenderSidebar = false;
   function queueRender(includeMatrix=false, includeSidebar=false){
     invalidateStyleCache();
     if(includeSidebar) sidebarDirty = true;
+    if(includeSidebar || sidebarDirty) pendingRenderSidebar = true;
     if(includeMatrix){ clearTimeout(matrixTimer); matrixTimer = setTimeout(renderMatrixAndList, 60); }
     if(renderQueued) return;
     renderQueued = true;
-    requestAnimationFrame(() => { renderQueued = false; renderCanvas(); if(sidebarDirty){ sidebarDirty = false; renderSidebar(); } });
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      const wantSidebar = pendingRenderSidebar;
+      pendingRenderSidebar = false;
+      renderCanvas();
+      if(wantSidebar && sidebarDirty){ sidebarDirty = false; renderSidebar(); }
+    });
   }
   let sidebarDirty = false;
   function markSidebarDirty(){ sidebarDirty = true; }
@@ -833,9 +843,9 @@
       + '|' + (gd.edgeWeightColorLow || '#22d3ee') + '|' + (gd.edgeWeightColorHigh || '#f59e0b');
     // Type styles are keyed by user-provided names: walk them in insertion
     // order and include every field a type can set.
-    for(const name in types){
+    for(const name of Object.keys(types)){
       const style = types[name] || {};
-      out += '|' + name + ':' + NODE_STYLE_DEFAULT_KEYS.concat(EDGE_STYLE_DEFAULT_KEYS).map(key => style[key] ?? '').join(',');
+      out += '|' + name + ':' + keys.map(key => style[key] ?? '').join(',');
     }
     return out;
   }
@@ -2109,7 +2119,7 @@
         html += `<div class="section-title">${I18N.t('nodes_n', {n: nodeCount})} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>
           <div class="grid2">
             <label class="field" for="mulNodeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulNodeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
-            <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList">${nodeTypeOptionsHtml()}</datalist></label>
+            <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList"></datalist></label>
             <label class="field" for="mulNodeOrder">${I18N.t('order')} <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
             <label class="field" for="mulNodeColor">${I18N.t('color')} <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
             <label class="field" for="mulNodeShape">${I18N.t('shape')} <select id="mulNodeShape">${shapeOptions}</select></label>
@@ -2135,7 +2145,7 @@
           <div class="grid2">
             <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
-            <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${edgeTypeOptionsHtml()}</datalist></label>
+            <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList"></datalist></label>
             <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
             <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
             <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
@@ -2152,13 +2162,19 @@
       }
       const multiNodeTargets = nodeCount > 0 ? state.selection.nodes.map(id => nodeById(id)).filter(Boolean) : [];
       const multiEdgeTargets = edgeCount > 0 ? state.selection.edges.map(id => edgeById(id)).filter(Boolean) : [];
+      const syncMultiTypeLists = () => {
+        if(nodeCount > 0) setDatalistOptions(document.querySelector('#nodeTypeList'), nodeTypeOptionsHtml());
+        if(edgeCount > 0) setDatalistOptions(document.querySelector('#edgeTypeList'), edgeTypeOptionsHtml());
+      };
       if(!applySelectionPanelHtml(host, html)){
-        // Outer panel reused byte-identically; only the cached custom sections
-        // can have moved on (definition edits). Swap those, keep the rest.
+        // Outer panel reused byte-identically; only datalists and cached custom
+        // sections can have moved on (type or definition edits). Swap those, keep the rest.
+        syncMultiTypeLists();
         if(nodeCount > 0) refreshSelectionCustomSection(host, 'sel-node', 'node', multiNodeTargets, true);
         if(edgeCount > 0) refreshSelectionCustomSection(host, 'sel-edge', 'edge', multiEdgeTargets, true);
         return;
       }
+      syncMultiTypeLists();
       // Mount the custom sections: cached live elements — untouched
       // definitions/values keep their DOM, listeners and focus.
       if(nodeCount > 0) mountCustomProps(host, 'sel-node', 'sel-node', 'node', multiNodeTargets, true);
@@ -2242,7 +2258,7 @@
       const singleNodeHtml = `
         <div class="grid2">
           <label class="field" for="selNodeLabel">${I18N.t('label')} <input id="selNodeLabel" value="${esc(n.label)}"></label>
-          <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList">${nodeTypeOptionsHtml()}</datalist></label>
+          <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList"></datalist></label>
         </div>
         <div class="grid2" style="margin-top:8px">
           <label class="field" for="selNodeX">${I18N.t('x_coord')} <input id="selNodeX" type="number" value="${Math.round(n.x)}" inputmode="decimal"></label>
@@ -2281,6 +2297,7 @@
         const shape = $('#selNodeShape'); if(shape && document.activeElement !== shape) shape.value = n.shape || '';
         const stroke = $('#selNodeStrokeStyle'); if(stroke && document.activeElement !== stroke) stroke.value = n.strokeStyle || '';
         const pos = $('#selNodeLabelPos'); if(pos && document.activeElement !== pos) pos.value = n.labelPosition || '';
+        setDatalistOptions(document.querySelector('#nodeTypeList'), nodeTypeOptionsHtml());
       };
       if(!applySelectionPanelHtml(host, singleNodeHtml)){ syncSelects(); refreshSelectionCustomSection(host, 'sel-node', 'node', [n], false); return; }
       mountCustomProps(host, 'sel-node', 'sel-node', 'node', [n], false);
@@ -2344,7 +2361,7 @@
           <label class="field" for="selEdgeWeight">${I18N.t('weight')} <input id="selEdgeWeight" value="${esc(e.weight)}"></label>
           <label class="field" for="selEdgeLabel">${I18N.t('label')} <input id="selEdgeLabel" value="${esc(e.label)}"></label>
         </div>
-        <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList">${edgeTypeOptionsHtml()}</datalist></label>
+        <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList"></datalist></label>
         <label class="field" for="selEdgeDirected">${I18N.t('direction')} <select id="selEdgeDirected"><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
         <div class="section-title">${I18N.t('style_blank_inherit')} <span class="tiny muted">${I18N.t('blank_inherit')}</span></div>
         <div class="grid2">
@@ -2366,6 +2383,7 @@
       // same sync on the reuse path as the single-node selects.
       const syncEdgeSelects = () => {
         const stroke = $('#selEdgeStrokeStyle'); if(stroke && document.activeElement !== stroke) stroke.value = e.strokeStyle || '';
+        setDatalistOptions(document.querySelector('#edgeTypeList'), edgeTypeOptionsHtml());
       };
       if(!applySelectionPanelHtml(host, singleEdgeHtml)){ syncEdgeSelects(); refreshSelectionCustomSection(host, 'sel-edge', 'edge', [e], false); return; }
       mountCustomProps(host, 'sel-edge', 'sel-edge', 'edge', [e], false);
@@ -2571,7 +2589,7 @@
         <td><input class="matrix-input edge-to" data-edge-id="${esc(e.id)}" value="${esc(b?.label || e.to)}" aria-label="${esc(I18N.t('col_to'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_to_hint', {node: e.to}))}" style="width:64px"></td>
         <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" aria-label="${esc(I18N.t('weight'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_weight'))}" style="width:52px"></td>
         <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" aria-label="${esc(I18N.t('label'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_label'))}" style="width:72px"></td>
-        <td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
+        <td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="${esc(I18N.t('none_placeholder'))}" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
         <td><select class="edge-directed" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"><option value="directed" ${edgeDirection(e)==='directed'?'selected':''}>→</option><option value="mutual" ${edgeDirection(e)==='mutual'?'selected':''}>↔</option><option value="undirected" ${edgeDirection(e)==='undirected'?'selected':''}>—</option></select></td>
         <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>

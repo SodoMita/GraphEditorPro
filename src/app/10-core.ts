@@ -1389,6 +1389,10 @@
   // Swap in the rebuilt element when their content key moved on; otherwise
   // this is a no-op.
   function refreshSelectionCustomSection(host: HTMLElement, cacheKey: string, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): void {
+    if(customPropHostHidden(host)){
+      mountCustomProps(host, cacheKey, cacheKey, scope, targets, multi);
+      return;
+    }
     const element = customPropsSection(cacheKey, scope, targets, multi);
     if(element.parentNode === host) return; // still mounted and current
     const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
@@ -1413,6 +1417,8 @@
     if(placeholder){
       const marker = host.querySelector(`[data-cp-ph="${placeholder}"]`);
       if(marker){ marker.replaceWith(element); return; }
+      const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
+      if(current){ if(current !== element) current.replaceWith(element); return; }
       // The placeholder vanished since the request was made (e.g. the
       // selection was cleared): the request is stale and must not clobber
       // whatever the host shows now — least of all "Nothing selected.".
@@ -1687,8 +1693,8 @@
     if(isRecord(settings.nodeTypeStyles)){
       const cleaned: AnyRecord = Object.create(null);
       for(const [key, value] of Object.entries(settings.nodeTypeStyles)){
-        const name = String(key).trim().slice(0,40);
-        const style = name ? sanitizeTypeStyle(value, true) : undefined;
+        const name = String(key).slice(0,40);
+        const style = name.trim() ? sanitizeTypeStyle(value, true) : undefined;
         if(style) cleaned[name] = style;
       }
       settings.nodeTypeStyles = cleaned;
@@ -1696,8 +1702,8 @@
     if(isRecord(settings.edgeTypeStyles)){
       const cleaned: AnyRecord = Object.create(null);
       for(const [key, value] of Object.entries(settings.edgeTypeStyles)){
-        const name = String(key).trim().slice(0,40);
-        const style = name ? sanitizeTypeStyle(value, false) : undefined;
+        const name = String(key).slice(0,40);
+        const style = name.trim() ? sanitizeTypeStyle(value, false) : undefined;
         if(style) cleaned[name] = style;
       }
       settings.edgeTypeStyles = cleaned;

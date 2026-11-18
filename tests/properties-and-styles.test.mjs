@@ -409,6 +409,8 @@ test('types defined in styles appear in selection type dropdowns (preloaded, sin
       nodeTypeStyles: {
         server: { color: '#ff0000', shape: 'square', width: 80, height: 60 },
         client: { color: '#00aa00', shape: 'diamond' },
+        ' padded': { color: '#aa00ff', shape: 'hexagon' },
+        '   ': { color: '#111111' },
       },
       edgeTypeStyles: {
         fiber: { color: '#00ff00', strokeSize: 5, strokeStyle: 'dashed' },
@@ -434,10 +436,11 @@ test('types defined in styles appear in selection type dropdowns (preloaded, sin
   const svg = document.querySelector('#graphCanvas');
   setCanvasRect(svg);
 
-  // Edit-tab and Style-tab datalists already include the style-defined types.
-  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['client', 'legacy', 'server']);
-  assert.deepEqual(datalistValues(document, '#defNodeTypeList'), ['client', 'legacy', 'server']);
-  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), ['client', 'legacy', 'server']);
+  // Edit-tab and Style-tab datalists already include the style-defined types
+  // (preserving significant leading whitespace while dropping whitespace-only keys).
+  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), [' padded', 'client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#defNodeTypeList'), [' padded', 'client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), [' padded', 'client', 'legacy', 'server']);
   assert.deepEqual(datalistValues(document, '#edgeTypeListEdit'), ['fiber', 'wireless']);
   assert.deepEqual(datalistValues(document, '#defEdgeTypeList'), ['fiber', 'wireless']);
   assert.deepEqual(datalistValues(document, '#edgeTypeStyleList'), ['fiber', 'wireless']);
@@ -451,7 +454,7 @@ test('types defined in styles appear in selection type dropdowns (preloaded, sin
   const selNodeType = document.querySelector('#selNodeType');
   assert.ok(selNodeType, 'single-node type input is rendered');
   assert.equal(selNodeType.getAttribute('list'), 'nodeTypeList');
-  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), [' padded', 'client', 'legacy', 'server']);
 
   // Choosing a style-defined type applies its style immediately and keeps all types listed.
   selNodeType.value = 'server';
@@ -460,7 +463,21 @@ test('types defined in styles appear in selection type dropdowns (preloaded, sin
   const nodeAShape = document.querySelector('#node-a .node-shape');
   assert.equal(nodeAShape.getAttribute('fill'), '#ff0000');
   assert.equal(nodeAShape.tagName.toLowerCase(), 'rect');
-  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), [' padded', 'client', 'legacy', 'server']);
+
+  // Leading-whitespace type key keeps its style binding, loads in the form, and deletes cleanly.
+  const selNodeTypeAfter = document.querySelector('#selNodeType');
+  selNodeTypeAfter.value = ' padded';
+  selNodeTypeAfter.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#node-a .node-shape').getAttribute('fill'), '#aa00ff');
+  const ntsInput = document.querySelector('#nodeTypeStyleInput');
+  ntsInput.value = ' padded';
+  ntsInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(document.querySelector('#ntsColor').value, '#aa00ff');
+  document.querySelector('#btnDelNodeTypeStyle').click();
+  await nextFrame(window);
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), [' padded', 'client', 'legacy', 'server']);
 
   // Multi-node selection offers the style-defined node types and applies them.
   dispatchPointer(window, document.getElementById('node-c'), 'pointerdown', { pointerId: 1, clientX: 500, clientY: 530, shiftKey: true });
@@ -471,12 +488,13 @@ test('types defined in styles appear in selection type dropdowns (preloaded, sin
   const mulNodeType = document.querySelector('#mulNodeType');
   assert.ok(mulNodeType, 'multi-node type input is rendered');
   assert.equal(mulNodeType.getAttribute('list'), 'nodeTypeList');
-  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), [' padded', 'client', 'legacy', 'server']);
   mulNodeType.value = 'client';
   mulNodeType.dispatchEvent(new window.Event('change', { bubbles: true }));
   await nextFrame(window);
   assert.equal(document.querySelector('#node-a .node-shape').getAttribute('fill'), '#00aa00');
   assert.equal(document.querySelector('#node-c .node-shape').getAttribute('fill'), '#00aa00');
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['client', 'legacy', 'server']);
 
   // Single edge selection offers style-defined edge types and applies them.
   dispatchPointer(window, document.getElementById('edge-e1'), 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
@@ -544,6 +562,7 @@ test('saving, deleting, defaulting, and undoing style types live-updates selecte
   await nextFrame(window);
   assert.deepEqual(datalistValues(document, '#nodeTypeList'), []);
 
+  const selNodeTypeInitial = document.querySelector('#selNodeType');
   const ntsInput = document.querySelector('#nodeTypeStyleInput');
   const ntsColor = document.querySelector('#ntsColor');
   const ntsShape = document.querySelector('#ntsShape');
@@ -552,7 +571,8 @@ test('saving, deleting, defaulting, and undoing style types live-updates selecte
   ntsShape.value = 'hexagon';
   document.querySelector('#btnSaveNodeTypeStyle').click();
 
-  // Dropdown for already-selected node updates immediately without re-selecting.
+  // Dropdown for already-selected node updates in place without rebuilding the panel.
+  assert.equal(document.querySelector('#selNodeType'), selNodeTypeInitial, 'datalist-only update preserves selection panel DOM');
   assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['router']);
   assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['router']);
   assert.deepEqual(datalistValues(document, '#defNodeTypeList'), ['router']);
@@ -562,6 +582,7 @@ test('saving, deleting, defaulting, and undoing style types live-updates selecte
   const defNodeType = document.querySelector('#defNodeType');
   defNodeType.value = 'worker';
   defNodeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(document.querySelector('#selNodeType'), selNodeTypeInitial, 'default-type datalist update preserves selection panel DOM');
   assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['router', 'worker']);
 
   // Undo removes 'worker'; undo again removes 'router'; redo brings 'router' back.
@@ -579,6 +600,14 @@ test('saving, deleting, defaulting, and undoing style types live-updates selecte
   await nextFrame(window);
   await new Promise(r => window.setTimeout(r, 40));
   assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['router']);
+
+  // Renaming the selected node's label preserves one-frame sidebar deferral (no focus tear).
+  const selNodeTypeBeforeRename = document.querySelector('#selNodeType');
+  const selNodeLabel = document.querySelector('#selNodeLabel');
+  selNodeLabel.value = 'N1 renamed';
+  selNodeLabel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#selNodeType'), selNodeTypeBeforeRename, 'label change defers sidebar rebuild past the immediate frame');
 
   // Special HTML chars and Object.prototype property names work safely as type names.
   ntsInput.value = 'A & "B" <C>';

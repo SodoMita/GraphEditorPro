@@ -4084,6 +4084,10 @@ function customPropsSection(cacheKey, scope, targets, multi) {
 // Swap in the rebuilt element when their content key moved on; otherwise
 // this is a no-op.
 function refreshSelectionCustomSection(host, cacheKey, scope, targets, multi) {
+    if (customPropHostHidden(host)) {
+        mountCustomProps(host, cacheKey, cacheKey, scope, targets, multi);
+        return;
+    }
     const element = customPropsSection(cacheKey, scope, targets, multi);
     if (element.parentNode === host)
         return; // still mounted and current
@@ -4113,6 +4117,12 @@ function mountCustomProps(host, placeholder, cacheKey, scope, targets, multi) {
         const marker = host.querySelector(`[data-cp-ph="${placeholder}"]`);
         if (marker) {
             marker.replaceWith(element);
+            return;
+        }
+        const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
+        if (current) {
+            if (current !== element)
+                current.replaceWith(element);
             return;
         }
         // The placeholder vanished since the request was made (e.g. the
@@ -4435,8 +4445,8 @@ function sanitizeState(input) {
     if (isRecord(settings.nodeTypeStyles)) {
         const cleaned = Object.create(null);
         for (const [key, value] of Object.entries(settings.nodeTypeStyles)) {
-            const name = String(key).trim().slice(0, 40);
-            const style = name ? sanitizeTypeStyle(value, true) : undefined;
+            const name = String(key).slice(0, 40);
+            const style = name.trim() ? sanitizeTypeStyle(value, true) : undefined;
             if (style)
                 cleaned[name] = style;
         }
@@ -4448,8 +4458,8 @@ function sanitizeState(input) {
     if (isRecord(settings.edgeTypeStyles)) {
         const cleaned = Object.create(null);
         for (const [key, value] of Object.entries(settings.edgeTypeStyles)) {
-            const name = String(key).trim().slice(0, 40);
-            const style = name ? sanitizeTypeStyle(value, false) : undefined;
+            const name = String(key).slice(0, 40);
+            const style = name.trim() ? sanitizeTypeStyle(value, false) : undefined;
             if (style)
                 cleaned[name] = style;
         }
@@ -5410,7 +5420,7 @@ function existingNodeTypes() {
     }
     const set = new Set();
     for (const n of arr)
-        if (n.type)
+        if (n.type && n.type.trim())
             set.add(n.type);
     if (styles) {
         for (const t of Object.keys(styles))
@@ -5441,7 +5451,7 @@ function existingEdgeTypes() {
     }
     const set = new Set();
     for (const e of arr)
-        if (e.type)
+        if (e.type && e.type.trim())
             set.add(e.type);
     if (styles) {
         for (const t of Object.keys(styles))
@@ -5528,27 +5538,31 @@ function syncControls() {
 }
 const NODE_TYPE_DATALIST_SELECTORS = ['#nodeTypeListEdit', '#defNodeTypeList', '#nodeTypeStyleList'];
 const EDGE_TYPE_DATALIST_SELECTORS = ['#edgeTypeListEdit', '#defEdgeTypeList', '#edgeTypeStyleList'];
+const datalistHtmlMemo = new WeakMap();
+function setDatalistOptions(el, html) {
+    if (!el || datalistHtmlMemo.get(el) === html)
+        return;
+    if (html !== '' || el.firstChild)
+        el.innerHTML = html;
+    datalistHtmlMemo.set(el, html);
+}
 let lastNodeTypeOptionsHtml = null;
 let lastEdgeTypeOptionsHtml = null;
 function syncEditTypeLists() {
     const nHtml = nodeTypeOptionsHtml();
     if (nHtml !== lastNodeTypeOptionsHtml) {
         lastNodeTypeOptionsHtml = nHtml;
-        for (const sel of NODE_TYPE_DATALIST_SELECTORS) {
-            const el = $(sel);
-            if (el && el.innerHTML !== nHtml)
-                el.innerHTML = nHtml;
-        }
+        for (const sel of NODE_TYPE_DATALIST_SELECTORS)
+            setDatalistOptions(document.querySelector(sel), nHtml);
     }
     const eHtml = edgeTypeOptionsHtml();
     if (eHtml !== lastEdgeTypeOptionsHtml) {
         lastEdgeTypeOptionsHtml = eHtml;
-        for (const sel of EDGE_TYPE_DATALIST_SELECTORS) {
-            const el = $(sel);
-            if (el && el.innerHTML !== eHtml)
-                el.innerHTML = eHtml;
-        }
+        for (const sel of EDGE_TYPE_DATALIST_SELECTORS)
+            setDatalistOptions(document.querySelector(sel), eHtml);
     }
+    setDatalistOptions(document.querySelector('#nodeTypeList'), nHtml);
+    setDatalistOptions(document.querySelector('#edgeTypeList'), eHtml);
 }
 // A caller of queueRender is a caller that changed something a pass renders
 // from. Document mutations are already visible through graphRev (every
@@ -5595,10 +5609,13 @@ function syncRenderOriginRepaint() {
     lastPaintedGen = renderGen;
     endRenderPass();
 }
+let pendingRenderSidebar = false;
 function queueRender(includeMatrix = false, includeSidebar = false) {
     invalidateStyleCache();
     if (includeSidebar)
         sidebarDirty = true;
+    if (includeSidebar || sidebarDirty)
+        pendingRenderSidebar = true;
     if (includeMatrix) {
         clearTimeout(matrixTimer);
         matrixTimer = setTimeout(renderMatrixAndList, 60);
@@ -5606,10 +5623,16 @@ function queueRender(includeMatrix = false, includeSidebar = false) {
     if (renderQueued)
         return;
     renderQueued = true;
-    requestAnimationFrame(() => { renderQueued = false; renderCanvas(); if (sidebarDirty) {
-        sidebarDirty = false;
-        renderSidebar();
-    } });
+    requestAnimationFrame(() => {
+        renderQueued = false;
+        const wantSidebar = pendingRenderSidebar;
+        pendingRenderSidebar = false;
+        renderCanvas();
+        if (wantSidebar && sidebarDirty) {
+            sidebarDirty = false;
+            renderSidebar();
+        }
+    });
 }
 let sidebarDirty = false;
 function markSidebarDirty() { sidebarDirty = true; }
@@ -5676,9 +5699,9 @@ function styleFingerprint(kind) {
             + '|' + (gd.edgeWeightColorLow || '#22d3ee') + '|' + (gd.edgeWeightColorHigh || '#f59e0b');
     // Type styles are keyed by user-provided names: walk them in insertion
     // order and include every field a type can set.
-    for (const name in types) {
+    for (const name of Object.keys(types)) {
         const style = types[name] || {};
-        out += '|' + name + ':' + NODE_STYLE_DEFAULT_KEYS.concat(EDGE_STYLE_DEFAULT_KEYS).map(key => style[key] ?? '').join(',');
+        out += '|' + name + ':' + keys.map(key => style[key] ?? '').join(',');
     }
     return out;
 }
@@ -7209,7 +7232,7 @@ function renderSelectionPanel() {
             html += `<div class="section-title">${I18N.t('nodes_n', { n: nodeCount })} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>
           <div class="grid2">
             <label class="field" for="mulNodeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulNodeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
-            <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList">${nodeTypeOptionsHtml()}</datalist></label>
+            <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList"></datalist></label>
             <label class="field" for="mulNodeOrder">${I18N.t('order')} <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
             <label class="field" for="mulNodeColor">${I18N.t('color')} <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
             <label class="field" for="mulNodeShape">${I18N.t('shape')} <select id="mulNodeShape">${shapeOptions}</select></label>
@@ -7235,7 +7258,7 @@ function renderSelectionPanel() {
           <div class="grid2">
             <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
-            <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${edgeTypeOptionsHtml()}</datalist></label>
+            <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList"></datalist></label>
             <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
             <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
             <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
@@ -7252,15 +7275,23 @@ function renderSelectionPanel() {
         }
         const multiNodeTargets = nodeCount > 0 ? state.selection.nodes.map(id => nodeById(id)).filter(Boolean) : [];
         const multiEdgeTargets = edgeCount > 0 ? state.selection.edges.map(id => edgeById(id)).filter(Boolean) : [];
+        const syncMultiTypeLists = () => {
+            if (nodeCount > 0)
+                setDatalistOptions(document.querySelector('#nodeTypeList'), nodeTypeOptionsHtml());
+            if (edgeCount > 0)
+                setDatalistOptions(document.querySelector('#edgeTypeList'), edgeTypeOptionsHtml());
+        };
         if (!applySelectionPanelHtml(host, html)) {
-            // Outer panel reused byte-identically; only the cached custom sections
-            // can have moved on (definition edits). Swap those, keep the rest.
+            // Outer panel reused byte-identically; only datalists and cached custom
+            // sections can have moved on (type or definition edits). Swap those, keep the rest.
+            syncMultiTypeLists();
             if (nodeCount > 0)
                 refreshSelectionCustomSection(host, 'sel-node', 'node', multiNodeTargets, true);
             if (edgeCount > 0)
                 refreshSelectionCustomSection(host, 'sel-edge', 'edge', multiEdgeTargets, true);
             return;
         }
+        syncMultiTypeLists();
         // Mount the custom sections: cached live elements — untouched
         // definitions/values keep their DOM, listeners and focus.
         if (nodeCount > 0)
@@ -7489,7 +7520,7 @@ function renderSelectionPanel() {
         const singleNodeHtml = `
         <div class="grid2">
           <label class="field" for="selNodeLabel">${I18N.t('label')} <input id="selNodeLabel" value="${esc(n.label)}"></label>
-          <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList">${nodeTypeOptionsHtml()}</datalist></label>
+          <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList"></datalist></label>
         </div>
         <div class="grid2" style="margin-top:8px">
           <label class="field" for="selNodeX">${I18N.t('x_coord')} <input id="selNodeX" type="number" value="${Math.round(n.x)}" inputmode="decimal"></label>
@@ -7534,6 +7565,7 @@ function renderSelectionPanel() {
             const pos = $('#selNodeLabelPos');
             if (pos && document.activeElement !== pos)
                 pos.value = n.labelPosition || '';
+            setDatalistOptions(document.querySelector('#nodeTypeList'), nodeTypeOptionsHtml());
         };
         if (!applySelectionPanelHtml(host, singleNodeHtml)) {
             syncSelects();
@@ -7621,7 +7653,7 @@ function renderSelectionPanel() {
           <label class="field" for="selEdgeWeight">${I18N.t('weight')} <input id="selEdgeWeight" value="${esc(e.weight)}"></label>
           <label class="field" for="selEdgeLabel">${I18N.t('label')} <input id="selEdgeLabel" value="${esc(e.label)}"></label>
         </div>
-        <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList">${edgeTypeOptionsHtml()}</datalist></label>
+        <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList"></datalist></label>
         <label class="field" for="selEdgeDirected">${I18N.t('direction')} <select id="selEdgeDirected"><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
         <div class="section-title">${I18N.t('style_blank_inherit')} <span class="tiny muted">${I18N.t('blank_inherit')}</span></div>
         <div class="grid2">
@@ -7645,6 +7677,7 @@ function renderSelectionPanel() {
             const stroke = $('#selEdgeStrokeStyle');
             if (stroke && document.activeElement !== stroke)
                 stroke.value = e.strokeStyle || '';
+            setDatalistOptions(document.querySelector('#edgeTypeList'), edgeTypeOptionsHtml());
         };
         if (!applySelectionPanelHtml(host, singleEdgeHtml)) {
             syncEdgeSelects();
@@ -7891,7 +7924,7 @@ function edgeListHtml() {
         <td><input class="matrix-input edge-to" data-edge-id="${esc(e.id)}" value="${esc(b?.label || e.to)}" aria-label="${esc(I18N.t('col_to'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_to_hint', { node: e.to }))}" style="width:64px"></td>
         <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" aria-label="${esc(I18N.t('weight'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_weight'))}" style="width:52px"></td>
         <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" aria-label="${esc(I18N.t('label'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_label'))}" style="width:72px"></td>
-        <td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
+        <td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="${esc(I18N.t('none_placeholder'))}" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
         <td><select class="edge-directed" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"><option value="directed" ${edgeDirection(e) === 'directed' ? 'selected' : ''}>→</option><option value="mutual" ${edgeDirection(e) === 'mutual' ? 'selected' : ''}>↔</option><option value="undirected" ${edgeDirection(e) === 'undirected' ? 'selected' : ''}>—</option></select></td>
         <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
@@ -15860,7 +15893,7 @@ function applyNodeDefaultsToAll() {
     }
     invalidateGraphIndex();
     pushHistory('apply node defaults');
-    queueRender(true, true);
+    queueRender(true);
     syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('node_defaults_applied'));
@@ -15898,7 +15931,7 @@ function applyNodeDefaultsToSelected() {
     }
     invalidateGraphIndex();
     pushHistory('apply node defaults to selected');
-    queueRender(true, true);
+    queueRender(true);
     syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('node_defaults_applied_sel', { count: nodeIds.length }));
@@ -15920,7 +15953,7 @@ function applyEdgeDefaultsToAll() {
     }
     invalidateGraphIndex();
     pushHistory('apply edge defaults');
-    queueRender(true, true);
+    queueRender(true);
     syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('edge_defaults_applied'));
@@ -15950,14 +15983,22 @@ function applyEdgeDefaultsToSelected() {
     }
     invalidateGraphIndex();
     pushHistory('apply edge defaults to selected');
-    queueRender(true, true);
+    queueRender(true);
     syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('edge_defaults_applied_sel', { count: edgeIds.length }));
 }
 // === Type style management ===
+function resolveTypeStyleKey(styles, items, input) {
+    const raw = String(input || '').slice(0, 40);
+    if (!raw.trim())
+        return '';
+    if (getTypeStyle(styles, raw) || items.some(item => item.type === raw))
+        return raw;
+    return raw.trim().slice(0, 40);
+}
 function loadNodeTypeStyleForm(type) {
-    const key = String(type || '').trim().slice(0, 40);
+    const key = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, type);
     const ts = getTypeStyle(state.settings.nodeTypeStyles, key) || {};
     $('#ntsColor').value = ts.color || '#0ea5e9';
     $('#ntsShape').value = ts.shape || '';
@@ -15972,7 +16013,7 @@ function loadNodeTypeStyleForm(type) {
     $('#ntsLabelFont').value = ts.labelFont || '';
 }
 function loadEdgeTypeStyleForm(type) {
-    const key = String(type || '').trim().slice(0, 40);
+    const key = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, type);
     const ts = getTypeStyle(state.settings.edgeTypeStyles, key) || {};
     $('#etsColor').value = ts.color || '#94a3b8';
     $('#etsStrokeSize').value = ts.strokeSize != null ? ts.strokeSize : 2.4;
@@ -15983,7 +16024,7 @@ function loadEdgeTypeStyleForm(type) {
     $('#etsLabelFont').value = ts.labelFont || '';
 }
 function saveNodeTypeStyle() {
-    const type = $('#nodeTypeStyleInput').value.trim().slice(0, 40);
+    const type = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16016,14 +16057,14 @@ function saveNodeTypeStyle() {
     }
     invalidateTypeLists();
     pushHistory('save node type style');
-    queueRender(true, true);
+    queueRender(true);
     saveSoon();
     syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('saved_style_type', { type: type }));
 }
 function saveEdgeTypeStyle() {
-    const type = $('#edgeTypeStyleInput').value.trim().slice(0, 40);
+    const type = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16052,14 +16093,14 @@ function saveEdgeTypeStyle() {
     }
     invalidateTypeLists();
     pushHistory('save edge type style');
-    queueRender(true, true);
+    queueRender(true);
     saveSoon();
     syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('saved_style_type', { type: type }));
 }
 function delNodeTypeStyle() {
-    const type = $('#nodeTypeStyleInput').value.trim().slice(0, 40);
+    const type = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16068,7 +16109,7 @@ function delNodeTypeStyle() {
         delete state.settings.nodeTypeStyles[type];
         invalidateTypeLists();
         pushHistory('delete node type style');
-        queueRender(true, true);
+        queueRender(true);
         saveSoon();
         syncEditTypeLists();
         renderSelectionPanel();
@@ -16077,7 +16118,7 @@ function delNodeTypeStyle() {
     }
 }
 function delEdgeTypeStyle() {
-    const type = $('#edgeTypeStyleInput').value.trim().slice(0, 40);
+    const type = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16086,7 +16127,7 @@ function delEdgeTypeStyle() {
         delete state.settings.edgeTypeStyles[type];
         invalidateTypeLists();
         pushHistory('delete edge type style');
-        queueRender(true, true);
+        queueRender(true);
         saveSoon();
         syncEditTypeLists();
         renderSelectionPanel();
@@ -16095,7 +16136,7 @@ function delEdgeTypeStyle() {
     }
 }
 function clearNodeOverridesForType() {
-    const type = $('#nodeTypeStyleInput').value.trim().slice(0, 40);
+    const type = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16120,13 +16161,13 @@ function clearNodeOverridesForType() {
         }
     }
     pushHistory('clear per-node overrides');
-    queueRender(true, true);
+    queueRender(true);
     saveSoon();
     renderSelectionPanel();
     toast(count > 0 ? I18N.t('cleared_overrides_n', { n: count }) : I18N.t('no_nodes_type'));
 }
 function clearEdgeOverridesForType() {
-    const type = $('#edgeTypeStyleInput').value.trim().slice(0, 40);
+    const type = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16146,7 +16187,7 @@ function clearEdgeOverridesForType() {
         }
     }
     pushHistory('clear per-edge overrides');
-    queueRender(true, true);
+    queueRender(true);
     saveSoon();
     renderSelectionPanel();
     toast(count > 0 ? I18N.t('cleared_overrides_e', { n: count }) : I18N.t('no_edges_type'));
@@ -17355,7 +17396,7 @@ function wireUi() {
     $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveSoon(); });
     $('#gridMajorColor').addEventListener('change', () => pushHistory('grid major color'));
     $('#gridMajorAlpha').addEventListener('change', e => { state.settings.gridMajorAlpha = clamp(finite(e.target.value, 0.16), 0, 1); e.target.value = state.settings.gridMajorAlpha; pushHistory('grid major alpha'); updateGridBackground(); saveSoon(); });
-    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0, 40); invalidateTypeLists(); pushHistory('default node type'); queueRender(false, true); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
+    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0, 40); invalidateTypeLists(); pushHistory('default node type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defNodeShape').addEventListener('change', e => { nd().shape = e.target.value; state.settings.nodeShape = e.target.value; const el = $('#nodeShape'); if (el)
         el.value = e.target.value; pushHistory('default node shape'); queueRender(false); });
     $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el = $('#nodeColor'); if (el)
@@ -17372,7 +17413,7 @@ function wireUi() {
     $('#defNodeLabelFont').addEventListener('change', e => { nd().labelFont = e.target.value; pushHistory('default label font'); queueRender(false); });
     $('#defNodeLabelSize').addEventListener('change', e => { nd().labelSize = clamp(finite(e.target.value, 13), 4, 72); e.target.value = nd().labelSize; pushHistory('default label size'); queueRender(false); });
     $('#defNodeLabelPos').addEventListener('change', e => { nd().labelPosition = e.target.value; pushHistory('default label position'); queueRender(false); });
-    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0, 40); invalidateTypeLists(); pushHistory('default edge type'); queueRender(false, true); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
+    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0, 40); invalidateTypeLists(); pushHistory('default edge type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value, 2.4), 0, 20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
