@@ -799,6 +799,94 @@
   }
   function cloneNode(n){ const c = {...n}; const custom = cloneCustomMap(n?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
   function cloneEdge(e){ const c = {...e}; const custom = cloneCustomMap(e?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
+  // Whether the latest local copy was published to the system clipboard. A
+  // pending or failed write leaves the system clipboard older than the
+  // in-memory payload, so pastes must not prefer it in that state.
+  let localClipboardWrite: { seq: number; state: 'pending' | 'published' | 'failed' } | null = null;
+  let localClipboardSeq = 0;
+  const clipboardHas = (obj: unknown, key: string) => isRecord(obj) && Object.prototype.hasOwnProperty.call(obj, key);
+  const clipboardText = (value: unknown, max: number, trim = false) => {
+    if(typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
+    const text = String(value);
+    return (trim ? text.trim() : text).slice(0, max);
+  };
+  const clipboardNumber = (value: unknown, min: number, max: number, integer = false) => {
+    const n = Number(value);
+    if(!Number.isFinite(n)) return undefined;
+    return clamp(integer ? Math.trunc(n) : n, min, max);
+  };
+  const clipboardColor = (value: unknown) => {
+    const text = String(value ?? '');
+    return /^#[0-9a-f]{6}$/i.test(text) ? text : undefined;
+  };
+  // Clipboard is foreign input. Only fields the app itself writes are copied,
+  // and each supplied field is normalized exactly as load/sanitize would.
+  // Invalid values are treated as omitted so an in-place merge cannot corrupt
+  // a live entity (and cannot overwrite it with a default either).
+  function sanitizeClipboardEntity(raw: unknown, kind: 'node' | 'edge'): AnyRecord | null {
+    if(!isRecord(raw)) return null;
+    const idText = clipboardText(raw.id, 200, true);
+    if(!idText) return null;
+    // Same identity normalization as the loader: a payload id that would be
+    // rewritten on reload must not be used to address a live entity here.
+    const id = uniqueSafeId(idText, kind === 'node' ? 'n' : 'e', new Set());
+    const out: AnyRecord = { id };
+    const take = (key: string, normalize: (value: unknown) => unknown) => {
+      if(!clipboardHas(raw, key)) return;
+      const value = normalize(raw[key]);
+      if(value !== undefined) out[key] = value;
+    };
+    const finiteCoordinate = (value: unknown) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const endpointId = (value: unknown) => {
+      const text = clipboardText(value, 200, true);
+      return text ? uniqueSafeId(text, 'n', new Set()) : undefined;
+    };
+    if(kind === 'node'){
+      take('x', finiteCoordinate); take('y', finiteCoordinate);
+      take('label', v => clipboardText(v, 80));
+      take('shape', v => NODE_SHAPES.includes(String(v)) ? String(v) : undefined);
+      take('color', clipboardColor);
+      take('type', v => clipboardText(v, 40));
+      take('order', v => clipboardNumber(v, 0, 2147483647, true));
+      take('width', v => clipboardNumber(v, 10, 300));
+      take('height', v => clipboardNumber(v, 10, 300));
+      take('strokeColor', clipboardColor);
+      take('strokeSize', v => clipboardNumber(v, 0, 20));
+      take('strokeStyle', v => STROKE_STYLES.includes(String(v)) ? String(v) : undefined);
+      take('labelColor', clipboardColor);
+      take('labelSize', v => clipboardNumber(v, 4, 72));
+      take('labelPosition', v => LABEL_POSITIONS.includes(String(v)) ? String(v) : undefined);
+      take('labelFont', v => clipboardText(v, 60));
+    } else {
+      take('from', endpointId);
+      take('to', endpointId);
+      take('label', v => clipboardText(v, 80));
+      take('direction', v => normalizeDirection(v));
+      take('directed', v => normalizeDirection(v));
+      take('type', v => clipboardText(v, 40));
+      take('weight', v => clipboardText(v, 50));
+      take('color', clipboardColor);
+      take('strokeSize', v => clipboardNumber(v, 0, 20));
+      take('strokeStyle', v => STROKE_STYLES.includes(String(v)) ? String(v) : undefined);
+      take('arrowSize', v => clipboardNumber(v, 4, 40));
+      take('labelColor', clipboardColor);
+      take('labelSize', v => clipboardNumber(v, 4, 72));
+      take('labelFont', v => clipboardText(v, 60));
+      if(clipboardHas(out, 'direction')) out.directed = out.direction !== 'undirected';
+      else if(clipboardHas(out, 'directed')){
+        out.direction = normalizeDirection(out.directed);
+        out.directed = out.direction !== 'undirected';
+      }
+    }
+    if(clipboardHas(raw, 'custom')){
+      const custom = cloneCustomMap(raw.custom);
+      if(custom) out.custom = custom;
+    }
+    return out;
+  }
   // clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
   function getSelectedNodeIdsForCopy(): Set<string> {
     const ids = new Set(state.selection?.nodes || []);
@@ -858,12 +946,29 @@
       .map(attribute => attribute?.origin == null ? attribute
         : { ...attribute, origin: originForWire(attribute?.origin) });
     clipboardData = { nodes, edges, externalEdges, customAttributes };
-    // Deduplicate externalEdges that are duplicates of internal? Already separated
-    // Write to system clipboard as JSON for cross-tab paste
+    // Publish to the system clipboard for cross-tab paste, but remember the
+    // outcome. An in-memory copy is always newer than the system clipboard
+    // until this write resolves successfully.
+    const writeSeq = ++localClipboardSeq;
+    localClipboardWrite = { seq: writeSeq, state: 'pending' };
     try {
       const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes });
-      if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(payload).catch(()=>{});
-    } catch {}
+      if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
+        const outcome: any = navigator.clipboard.writeText(payload);
+        if(outcome && typeof outcome.then === 'function'){
+          outcome.then(
+            () => { if(localClipboardWrite?.seq === writeSeq) localClipboardWrite.state = 'published'; },
+            () => { if(localClipboardWrite?.seq === writeSeq) localClipboardWrite.state = 'failed'; }
+          );
+        } else {
+          localClipboardWrite.state = 'published';
+        }
+      } else {
+        localClipboardWrite.state = 'failed';
+      }
+    } catch {
+      if(localClipboardWrite?.seq === writeSeq) localClipboardWrite.state = 'failed';
+    }
     // Try to use copyText helper if available
     if(nodes.length || edges.length || externalEdges.length){
       const internalCount = edges.length;
@@ -893,9 +998,12 @@
     // remap or coerce their custom values, which must never leak back into
     // the clipboard (a second paste has to start from the copied originals).
     const cloneClipboardData = (src: AnyRecord) => ({
-      nodes: (Array.isArray(src.nodes) ? src.nodes : []).map((n: AnyRecord) => cloneNode(n)),
-      edges: (Array.isArray(src.edges) ? src.edges : []).map((e: AnyRecord) => cloneEdge(e)),
-      externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).map((e: AnyRecord) => cloneEdge(e)),
+      nodes: (Array.isArray(src.nodes) ? src.nodes : [])
+        .map((n: AnyRecord) => sanitizeClipboardEntity(cloneNode(n), 'node')).filter((n): n is AnyRecord => n !== null),
+      edges: (Array.isArray(src.edges) ? src.edges : [])
+        .map((e: AnyRecord) => sanitizeClipboardEntity(cloneEdge(e), 'edge')).filter((e): e is AnyRecord => e !== null),
+      externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : [])
+        .map((e: AnyRecord) => sanitizeClipboardEntity(cloneEdge(e), 'edge')).filter((e): e is AnyRecord => e !== null),
       customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
         .filter(isRecord)
         .map((def: AnyRecord) => ({ ...def })),
@@ -911,7 +1019,34 @@
       return false;
     }
     const preserveExternal = state.settings.copyPreserveExternal !== false;
+    // Plan which entities will really be pasted BEFORE resolving custom
+    // definitions: a definition for a node/edge dropped by the document cap
+    // would otherwise be added to the document with no entity to use it.
+    const nodeCapacity = Math.max(0, MAX_GRAPH_NODES - state.nodes.length);
+    const edgeCapacity = Math.max(0, MAX_GRAPH_EDGES - state.edges.length);
+    let droppedNodes = 0, droppedEdges = 0;
+    const reportDropped = () => {
+      if(droppedNodes) toast(I18N.t('paste_cap_nodes', {n: droppedNodes, limit: MAX_GRAPH_NODES}));
+      if(droppedEdges) toast(I18N.t('paste_cap_edges', {n: droppedEdges, limit: MAX_GRAPH_EDGES}));
+    };
     const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
+    const originalExistingEdgeIds = new Set(state.edges.map(e => e.id));
+    const sortedCopyNodes = [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const plannedNodes: AnyRecord[] = [];
+    const plannedNodeIds = new Set<string>();
+    let nodeSlots = nodeCapacity;
+    for(const orig of sortedCopyNodes){
+      const id = String(orig?.id ?? '');
+      if(!id || plannedNodeIds.has(id)){ droppedNodes++; continue; }
+      plannedNodeIds.add(id);
+      // In exact mode an existing id is an update, so it consumes no slot.
+      if(!exactPaste || !originalExistingNodeIds.has(id)){
+        if(nodeSlots <= 0){ droppedNodes++; continue; }
+        nodeSlots--;
+      }
+      plannedNodes.push(orig);
+    }
+    data.nodes = plannedNodes;
     // An endpoint's fate decides whether a carried edge will be pasted at
     // all: 'pasted' = it clones with this paste, 'existing' = it stays bound
     // to a node the document already has, 'absent' = it points nowhere and
@@ -925,6 +1060,13 @@
     };
     const edgeMaterializes = (orig: AnyRecord, isExternal: boolean): boolean => {
       if(isExternal && !preserveExternal) return false;
+      // An omitted endpoint stays as it is on an existing edge; only a
+      // supplied endpoint has to name a node that will exist after the paste.
+      if(exactPaste && originalExistingEdgeIds.has(String(orig?.id ?? ''))){
+        if(clipboardHas(orig, 'from') && endpointFate(orig.from) === 'absent') return false;
+        if(clipboardHas(orig, 'to') && endpointFate(orig.to) === 'absent') return false;
+        return true;
+      }
       const fs = endpointFate(orig?.from), ts = endpointFate(orig?.to);
       if(fs === 'pasted' && ts === 'pasted') return true;
       if(fs === 'absent' || ts === 'absent') return false;
@@ -932,10 +1074,25 @@
       // Exactly one pasted side: an external edge reaching into the document.
       return preserveExternal;
     };
-    const materializedEdges = [
+    const candidateEdges = [
       ...data.edges.filter(e => edgeMaterializes(e, false)).map(e => ({ entity: e })),
       ...(data.externalEdges || []).filter(e => edgeMaterializes(e, true)).map(e => ({ entity: e })),
     ];
+    const plannedEdgeIds = new Set<string>();
+    const plannedEdges: AnyRecord[] = [];
+    let edgeSlots = edgeCapacity;
+    for(const { entity: orig } of candidateEdges){
+      const id = String(orig?.id ?? '');
+      if(!id || plannedEdgeIds.has(id)){ droppedEdges++; continue; }
+      plannedEdgeIds.add(id);
+      // Updating an existing edge consumes no capacity; only new edges do.
+      if(!exactPaste || !originalExistingEdgeIds.has(id)){
+        if(edgeSlots <= 0){ droppedEdges++; continue; }
+        edgeSlots--;
+      }
+      plannedEdges.push(orig);
+    }
+    const materializedEdges = plannedEdges.map(entity => ({ entity }));
     // Re-create carried custom-attribute definitions this document lacks.
     // Definitions are resolved per (id, scope) PAIR, not by id alone: an
     // existing definition with the same id but a different scope cannot
@@ -1125,6 +1282,9 @@
     ensureEntityPairs(data.nodes, 'node');
     ensureEntityPairs(materializedEdges.map(m => m.entity), 'edge');
     if(defsToAdd.length) state.customAttributes.push(...defsToAdd);
+    // A definition minted or rebound during this paste is a document change
+    // even if no entity field ends up differing — undo has to cover it.
+    const definitionsChanged = defsToAdd.length > 0 || renameByPair.size > 0;
     // Remap carried values whose definition was re-created under a fresh id.
     if(renameByPair.size){
       const remapCustom = (entity: AnyRecord, scope: 'node' | 'edge') => {
@@ -1158,16 +1318,6 @@
       const resolved = sanitizeCustomValues(entity?.custom, pasteEdgeTypeById, pasteAllSurvivingTypeById);
       if(resolved) entity.custom = resolved; else delete entity?.custom;
     }
-    // Both paste modes must leave a document the loader can read back: the
-    // sanitizer drops entities past these caps, so pasting beyond them would
-    // autosave a graph that silently shrinks on the next open.
-    const nodeCapacity = Math.max(0, MAX_GRAPH_NODES - state.nodes.length);
-    const edgeCapacity = Math.max(0, MAX_GRAPH_EDGES - state.edges.length);
-    let droppedNodes = 0, droppedEdges = 0;
-    const reportDropped = () => {
-      if(droppedNodes) toast(I18N.t('paste_cap_nodes', {n: droppedNodes, limit: MAX_GRAPH_NODES}));
-      if(droppedEdges) toast(I18N.t('paste_cap_edges', {n: droppedEdges, limit: MAX_GRAPH_EDGES}));
-    };
     if(exactPaste){
       // Exact paste is a *merge*, not a clone pass. Each carried id names one
       // entity: if the document already has it, that object is updated and no
@@ -1265,7 +1415,7 @@
           pastedEdgeIds.push(edge.id); changed = true;
         }
       }
-      if(changed){
+      if(changed || definitionsChanged){
         if(data.nodes.length) state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
         invalidateGraphIndex();
         pushHistory('paste in place');
@@ -1275,7 +1425,7 @@
           pastedNodeIds.length ? {type:'node', id: pastedNodeIds[0]} : {type:'edge', id: pastedEdgeIds[0]}, false);
       }
       queueRender(true, true);
-      if(!changed) toast(I18N.t('pasted_exact_noop'));
+      if(!changed && !definitionsChanged) toast(I18N.t('pasted_exact_noop'));
       else if(pastedNodeIds.length) toast(I18N.t('pasted_exact_n_m', {n: pastedNodeIds.length, m: pastedEdgeIds.length}));
       else toast(I18N.t('pasted_exact_edges', {n: pastedEdgeIds.length}));
       reportDropped();
@@ -1290,8 +1440,6 @@
       const newNodes: GraphNode[] = [];
       const newNodeIds: string[] = [];
       const existingNodeIds = new Set(originalExistingNodeIds);
-      const sortedCopyNodes = [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
-      droppedNodes = sortedCopyNodes.length - Math.min(sortedCopyNodes.length, nodeCapacity);
       const isFreeWithPlaced = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
         if(!isPositionFree(x, y, ignoreIds)) return false;
         for(const pn of placed){
@@ -1370,7 +1518,7 @@
            (carriedNodeIds.has(to) && !idMap.has(to))){ droppedEdges++; continue; }
         if(finalNewEdges.length >= edgeCapacity){ droppedEdges++; continue; }
         const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
-        addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
+        addEdgeWithNewId(orig as GraphEdge, nf ?? orig.from, nt ?? orig.to);
       }
       if(newNodes.length) state.nodes.push(...newNodes);
       if(finalNewEdges.length) state.edges.push(...finalNewEdges);
@@ -1417,12 +1565,16 @@
     } else if(!systemIssue){
       systemIssue = { key:'clipboard_empty' };
     }
-    // A well-formed graph payload from the system clipboard wins over the
-    // in-memory buffer: another tab may have copied after our last local copy,
-    // and in-place paste would otherwise overwrite live data with a stale
-    // payload. Unreadable/unrelated system text falls back to the local copy.
-    if(systemData){ pasteClipboardInternal(systemData, { exact }); return; }
+    // The system clipboard is only newer than the in-memory buffer if the
+    // latest local copy was actually published there. A rejected or still
+    // pending writeText leaves stale system data behind, which an in-place
+    // paste must never use to overwrite the current graph.
+    const systemCanBeNewer = !localClipboardWrite || localClipboardWrite.state === 'published';
+    if(systemData && systemCanBeNewer){ pasteClipboardInternal(systemData, { exact }); return; }
     if(hasInternal){ pasteClipboardInternal(null, { exact }); return; }
+    // With no trustworthy local copy, even a system payload written before
+    // this session is better than nothing.
+    if(systemData){ pasteClipboardInternal(systemData, { exact }); return; }
     if(systemIssue) toast(I18N.t(systemIssue.key, systemIssue.params));
   }
   function pasteFromSystemClipboard(){ return pasteFromClipboardSource(false); }

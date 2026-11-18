@@ -41,6 +41,12 @@ function setClipboard(window, payload) {
     value: { writeText:async()=>{}, readText:async()=> JSON.stringify(payload) },
   });
 }
+function setClipboardWrite(window, payload, writeText) {
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText, readText:async()=> JSON.stringify(payload) },
+  });
+}
 function hotkey(window, key, modifiers) {
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles:true, cancelable:true, ...modifiers }));
 }
@@ -260,8 +266,9 @@ test('exact paste refuses to grow a document past the loader node cap', async ()
   await settle(window, 500);
   setClipboard(window, {
     type: 'graph-editor-clipboard',
-    nodes: [{ id: 'extra', label: 'Extra', x: 10, y: 10, order: 3000 }],
-    edges: [], externalEdges: [], customAttributes: [],
+    nodes: [{ id: 'extra', label: 'Extra', x: 10, y: 10, order: 3000, custom: { p1: 'orphan' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'p1', scope: 'node', type: 'string' }],
   });
   hotkey(window, 'v', { ctrlKey: true, altKey: true });
   await settle(window, 300);
@@ -269,7 +276,82 @@ test('exact paste refuses to grow a document past the loader node cap', async ()
   const graph = exportGraph(document);
   assert.equal(graph.nodes.length, 3000, 'no entity is added beyond the sanitizer cap');
   assert.equal(graph.nodes.some(n => n.id === 'extra'), false);
+  assert.deepEqual(graph.customAttributes, [], 'the dropped node leaves no custom definition behind');
+  assert.equal(document.querySelector('#btnUndo').disabled, true, 'no history step for a no-op paste');
   assert.match(document.querySelector('.toast-stack').textContent, /3000/, 'the drop is reported');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a rejected system-clipboard write does not let stale system data win', async () => {
+  const stale = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Stale', x: -100, y: 50, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  };
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboardWrite(window, stale, async () => { throw new Error('write denied'); });
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 40);
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const a = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'A', 'the successful local copy wins over the older system payload');
+  assert.equal(a.x, -200); assert.equal(a.y, 0);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a pending system-clipboard write counts as not published', async () => {
+  const stale = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Stale', x: -100, y: 50, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  };
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboardWrite(window, stale, () => new Promise(() => {}));
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const a = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'A', 'pending publication still leaves the local copy authoritative');
+  assert.equal(a.x, -200); assert.equal(a.y, 0);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('exact paste validates supplied fields and ignores entities without an id', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [
+      { id: 'a', label: { bad: true }, width: -9999, x: 'nope', y: 'bad', bogus: 'evil', order: 0 },
+      { label: 'No id here' },
+    ],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.length, 2, 'the id-less payload entity is ignored, not thrown on');
+  const a = graph.nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'A', 'an object label is treated as omitted, not written');
+  assert.equal(a.width, 10, 'an out-of-range width is clamped to the loader range');
+  assert.equal(a.x, -200); assert.equal(a.y, 0, 'non-numeric coordinates are treated as omitted');
+  assert.equal(a.bogus, undefined, 'unknown fields never reach the live entity');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
