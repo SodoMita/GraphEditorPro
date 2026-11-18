@@ -712,3 +712,111 @@ test('an older write that lands late is repaired on the system clipboard', async
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('a cancelled pending paste cannot apply its delayed system payload', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let resolveRead;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: async () => {},
+      readText: () => new Promise(resolve => { resolveRead = resolve; }),
+    },
+  });
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  hotkey(window, 'v', { ctrlKey: true });       // first paste starts a hanging read
+  await settle(window, 20);
+  hotkey(window, 'v', { ctrlKey: true });       // explicit fallback cancels it
+  await settle(window, 60);
+  assert.equal(exportGraph(document).nodes.length, 3, 'the fallback pasted the local copy');
+
+  resolveRead(JSON.stringify({
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Delayed system payload', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  }));
+  await settle(window, 120);
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.length, 3, 'the cancelled read pastes nothing more');
+  assert.equal(graph.nodes.find(n => n.id === 'a').label, 'A');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a failed copy leaves the published clipboard stamp and valid payload usable', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  window.Date.now = () => 1000;
+  let publishedText = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text) => { publishedText = text; }, readText: async () => '' },
+  });
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 30);
+  const stamp = JSON.parse(window.localStorage.getItem('graph-editor-pro-clipboard-stamp'));
+  assert.equal(stamp.t, 1000, 'a successful copy publishes its stamp');
+  const valid = JSON.parse(publishedText);
+
+  window.Date.now = () => 2000;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => { throw new Error('write denied'); }, readText: async () => '' },
+  });
+  await selectNode(window, 'b', 700, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 30);
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('graph-editor-pro-clipboard-stamp')), stamp,
+    'a failed copy must not advance the shared stamp');
+
+  // A fresh tab has no local copy and must still trust the earlier payload.
+  const fresh = createEditorDom(baseGraph);
+  await settle(fresh.dom.window, 80);
+  fresh.dom.window.localStorage.setItem('graph-editor-pro-clipboard-stamp', JSON.stringify(stamp));
+  valid.nodes[0].label = 'Valid published payload';
+  setClipboard(fresh.dom.window, valid);
+  hotkey(fresh.dom.window, 'v', { ctrlKey: true, altKey: true });
+  await settle(fresh.dom.window, 120);
+  assert.equal(exportGraph(fresh.dom.window.document).nodes.find(n => n.id === 'a').label, 'Valid published payload');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close(); fresh.dom.window.close();
+});
+
+test('a huge numeric id cannot freeze a later offset paste', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  const payload = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'n9007199254740992', label: 'Huge', x: 100, y: 100, order: 2 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  };
+  setClipboard(window, payload);
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+  let graph = exportGraph(document);
+  assert.ok(graph.nodes.some(n => n.id === 'n9007199254740992'));
+
+  // The same id now collides: the old allocator could not increment it and
+  // looped forever. A fresh tab with only the system payload reproduces it.
+  setClipboard(window, payload);
+  hotkey(window, 'v', { ctrlKey: true });
+  await settle(window, 200);
+  graph = exportGraph(document);
+  assert.equal(graph.nodes.length, 4, 'the offset paste completed with a new node');
+  const replacement = graph.nodes.find(n => n.label === 'Huge' && n.id !== 'n9007199254740992');
+  assert.ok(replacement && /^n\d+$/.test(replacement.id),
+    'the replacement id is allocated safely: ' + graph.nodes.map(n => n.id).join(','));
+  assert.ok(Number.isSafeInteger(Number(replacement.id.slice(1))));
+  assert.ok(Number.isSafeInteger(graph.nextNode) && graph.nextNode >= 1,
+    'the counter remains finite and safe');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

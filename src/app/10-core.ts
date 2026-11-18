@@ -1779,16 +1779,20 @@
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
-    const maxN = Math.max(
-      ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),
-      finite(source.nextNode,1)-1,
+    const idSuffix = (entity: { id: string }) => {
+      const num = Number((entity.id.match(/\d+$/)||[0])[0]);
+      return Number.isSafeInteger(num) ? num : 0;
+    };
+    const maxN = Math.min(Number.MAX_SAFE_INTEGER, Math.max(
+      ...nodes.map(idSuffix),
+      safeGraphCounter(source.nextNode,1)-1,
       nodes.length
-    );
-    const maxE = Math.max(
-      ...edges.map(e => Number((e.id.match(/\d+$/)||[0])[0])),
-      finite(source.nextEdge,1)-1,
+    ));
+    const maxE = Math.min(Number.MAX_SAFE_INTEGER, Math.max(
+      ...edges.map(idSuffix),
+      safeGraphCounter(source.nextEdge,1)-1,
       edges.length
-    );
+    ));
     return {
       ...base,
       title: String(source.title || 'untitled').slice(0,80),
@@ -1808,6 +1812,12 @@
   function finite(value: unknown, fallback: number): number {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
+  }
+  // Counters derived from ids must stay exactly representable: an unsafe
+  // integer cannot be incremented, which would make id allocation loop.
+  function safeGraphCounter(value: unknown, fallback = 1): number {
+    const numeric = Number(value);
+    return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : fallback;
   }
   function positiveInteger(value: unknown, fallback: number): number {
     const numeric = Math.trunc(finite(value, fallback));

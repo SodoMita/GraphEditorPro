@@ -1,3 +1,52 @@
+  // Numeric ids are a convenience, not an unbounded counter. Any suffix that
+  // exceeds the safe-integer range is unusable for arithmetic allocation; reset
+  // to a fresh safe range instead of looping on a counter that cannot advance.
+  function allocateLocalId(prefix: string, used: Set<string>, start: number): { id: string; next: number } {
+    let counter = safeGraphCounter(start, 1);
+    const tried = new Set<number>();
+    while(used.has(prefix + counter)){
+      if(counter >= Number.MAX_SAFE_INTEGER || tried.has(counter)){
+        let suffix = 0, candidate = '';
+        do {
+          candidate = prefix + Date.now().toString(36) + (suffix ? '-' + suffix : '');
+          suffix++;
+        } while(used.has(candidate));
+        used.add(candidate);
+        return { id: candidate, next: 1 };
+      }
+      tried.add(counter);
+      counter++;
+    }
+    const id = prefix + counter;
+    used.add(id);
+    return { id, next: counter < Number.MAX_SAFE_INTEGER ? counter + 1 : 1 };
+  }
+  function takeNextGraphId(prefix: 'n' | 'e'): string {
+    const current = prefix === 'n' ? state.nextNode : state.nextEdge;
+    // Read the arrays directly: a bulk edit can append entities before the
+    // cached id index is rebuilt, and that cache must not hide a collision.
+    const exists = (id: string) => prefix === 'n'
+      ? state.nodes.some(n => n.id === id)
+      : state.edges.some(e => e.id === id);
+    if(Number.isSafeInteger(current) && current >= 0){
+      const id = prefix + current;
+      if(!exists(id)){
+        const next = current < Number.MAX_SAFE_INTEGER ? current + 1 : 1;
+        if(prefix === 'n') state.nextNode = next; else state.nextEdge = next;
+        return id;
+      }
+    }
+    const used = new Set(prefix === 'n' ? state.nodes.map(n => n.id) : state.edges.map(e => e.id));
+    const allocated = allocateLocalId(prefix, used, current);
+    if(prefix === 'n') state.nextNode = allocated.next; else state.nextEdge = allocated.next;
+    return allocated.id;
+  }
+  function advanceCounterFromId(current: number, id: unknown): number {
+    const base = safeGraphCounter(current, 1);
+    const num = Number((String(id ?? '').match(/\d+$/)||[0])[0]);
+    if(!Number.isSafeInteger(num) || num < base) return base;
+    return num < Number.MAX_SAFE_INTEGER ? num + 1 : 1;
+  }
   function setMode(mode, render=true){
     if(mode !== 'edge') pendingEdgeFrom = null;
     state.mode = mode;
@@ -411,8 +460,11 @@
     if(!isPositionFree(x, y)) ({x, y} = findFreeNodePosition(x, y));
     const custom = $('#nodeLabel').value.trim();
     const s = state.settings;
-    const label = s.noLabel ? '' : (custom ? (custom.length <= 3 ? custom : custom.slice(0,80)) : labelFromNumber(state.nextNode));
-    const n: GraphNode = { id:'n' + state.nextNode++, label, x, y, type:'', order: state.nodes.length };
+    const id = takeNextGraphId('n');
+    const suffix = Number((id.match(/\d+$/)||[0])[0]);
+    const autoNumber = Number.isSafeInteger(suffix) ? suffix : state.nodes.length + 1;
+    const label = s.noLabel ? '' : (custom ? (custom.length <= 3 ? custom : custom.slice(0,80)) : labelFromNumber(autoNumber));
+    const n: GraphNode = { id, label, x, y, type:'', order: state.nodes.length };
     applyNewNodeDefaults(n);
     return n;
   }
@@ -433,7 +485,7 @@
     const defEdgeType = s.edgeDefaults?.type || '';
     const effectiveType = s.edgeType || defEdgeType;
     const dir = normalizeDirection((s as any).direction ?? s.directed);
-    const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0,80), directed: dir !== 'undirected' as any, direction: dir as any, type: effectiveType };
+    const e: GraphEdge = { id: takeNextGraphId('e'), from, to, label: String(s.edgeLabel || '').slice(0,80), directed: dir !== 'undirected' as any, direction: dir as any, type: effectiveType };
     // Pending custom property values from "New edge defaults".
     const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
     if(pendingCustom) e.custom = pendingCustom;
@@ -505,7 +557,9 @@
     });
   }
   function createNode(label=null, x=null, y=null){
-    const idx = state.nextNode++;
+    const id = takeNextGraphId('n');
+    const suffix = Number((id.match(/\d+$/)||[0])[0]);
+    const idx = Number.isSafeInteger(suffix) ? suffix : state.nodes.length + 1;
     if(x == null || y == null){
       const pos = circlePositionsForNewNodes(1)[0];
       x = pos.x; y = pos.y;
@@ -513,7 +567,7 @@
     ({x, y} = findFreeNodePosition(x, y));
     const s = state.settings;
     const autoLabel = s.noLabel ? '' : (label || labelFromNumber(idx));
-    const n: GraphNode = { id:'n' + idx, label:autoLabel, x, y, type:'', order: state.nodes.length };
+    const n: GraphNode = { id, label:autoLabel, x, y, type:'', order: state.nodes.length };
     applyNewNodeDefaults(n);
     return n;
   }
@@ -617,7 +671,7 @@
       for(let i = 1; i < values.length; i++){
         const inherited = cloneCustomMap(tpl.custom);
         const fresh: GraphEdge = {
-          id:'e' + state.nextEdge++, from, to,
+          id: takeNextGraphId('e'), from, to,
           weight: values[i].slice(0, 50),
           label: tpl.label || '',
           // Carry the canonical tristate: copying only the legacy boolean turned
@@ -635,7 +689,7 @@
       // No existing edges — create new ones with default settings
       for(const weight of values){
         const dir = normalizeDirection((s as any).direction ?? s.directed);
-        const e: GraphEdge = { id:'e' + state.nextEdge++, from, to, weight:weight.slice(0,50), label:'', directed: dir !== 'undirected' as any, direction: dir as any, type:'' };
+        const e: GraphEdge = { id: takeNextGraphId('e'), from, to, weight:weight.slice(0,50), label:'', directed: dir !== 'undirected' as any, direction: dir as any, type:'' };
         // Pending custom property values from "New edge defaults", as on the canvas path.
         const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
         if(pendingCustom) e.custom = pendingCustom;
@@ -821,6 +875,14 @@
     try { return JSON.parse(localStorage.getItem(CLIPBOARD_STAMP_KEY) || 'null'); }
     catch { return null; }
   };
+  // A stamp is evidence that the matching payload was actually published.
+  // Writing it early would let a failed copy invalidate an older, still valid
+  // system payload for every fresh tab.
+  const publishClipboardStamp = (stamp: ClipboardStamp) => {
+    const current = readGlobalClipboardStamp();
+    if(current && compareClipboardStamps(stamp, current) !== true) return;
+    try { localStorage.setItem(CLIPBOARD_STAMP_KEY, JSON.stringify(stamp)); } catch {}
+  };
   const boundedRead = async <T>(promise: Promise<T>, fallback: T): Promise<T> => {
     let timer: any = null;
     try {
@@ -840,12 +902,17 @@
     staleSystemText: Promise<string | undefined>;
   } | null = null;
   let localClipboardSeq = 0;
-  // The payload from the newest local copy, used to repair the system
-  // clipboard if an older write resolves afterwards.
-  let latestClipboardPayload: string | null = null;
-  // A paste read still in flight. A second paste command while it hangs is an
-  // explicit request to use the local copy instead.
-  let pendingSystemRead: Promise<{ text: string } | { error: unknown }> | null = null;
+  // The newest copy that actually reached the system clipboard. Only this may
+  // repair an out-of-order write: a failed copy was never published and must
+  // not become authoritative.
+  let latestPublishedClipboard: { text: string; stamp: ClipboardStamp } | null = null;
+  // A paste read still in flight. Its generation token is invalidated by the
+  // next paste command, so a hanging read can never paste a second time.
+  let pasteGeneration = 0;
+  let pendingSystemRead: {
+    token: number;
+    promise: Promise<{ text: string } | { error: unknown }>;
+  } | null = null;
   const clipboardHas = (obj: unknown, key: string) => isRecord(obj) && Object.prototype.hasOwnProperty.call(obj, key);
   const clipboardText = (value: unknown, max: number, trim = false) => {
     if(typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
@@ -1013,22 +1080,28 @@
     let payload = '';
     try {
       payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
-      latestClipboardPayload = payload;
-      // Shared with other tabs so a fresh destination can reject a stale
-      // payload even if an older write overwrote the system clipboard.
-      try { localStorage.setItem(CLIPBOARD_STAMP_KEY, JSON.stringify(stamp)); } catch {}
       if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
         const settleWrite = (published: boolean) => {
           if(localClipboardWrite?.seq === writeSeq){
             localClipboardWrite.state = published ? 'published' : 'failed';
+            if(published){
+              // Shared with other tabs only now that the payload is really on
+              // the system clipboard. A failed write leaves the previous stamp
+              // (and therefore the previous valid payload) untouched.
+              latestPublishedClipboard = { text: payload, stamp };
+              publishClipboardStamp(stamp);
+            }
             return;
           }
           // An older write landed after a newer copy. Restore the newest
-          // payload so it cannot become the published clipboard value.
-          if(published && latestClipboardPayload && localClipboardWrite?.state !== 'failed'){
+          // *published* payload so a failed copy cannot displace valid data.
+          if(published && latestPublishedClipboard){
+            const repairTarget = latestPublishedClipboard;
             try {
-              const repair: any = navigator.clipboard.writeText(latestClipboardPayload);
-              if(repair && typeof repair.catch === 'function') repair.catch(()=>{});
+              const repair: any = navigator.clipboard.writeText(repairTarget.text);
+              if(repair && typeof repair.then === 'function'){
+                repair.then(() => publishClipboardStamp(repairTarget.stamp), () => {});
+              }
             } catch {}
           }
         };
@@ -1465,8 +1538,7 @@
           pastedNodeIds.push(existing.id);
         } else {
           if(state.nodes.length >= MAX_GRAPH_NODES){ droppedNodes++; continue; }
-          const num = Number((node.id.match(/\d+$/)||[0])[0]);
-          if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
+          state.nextNode = advanceCounterFromId(state.nextNode, node.id);
           const carriedOrder = Number(node.order);
           node.order = Number.isFinite(carriedOrder) ? carriedOrder : nextFreeOrder++;
           state.nodes.push(node as GraphNode); nodeById.set(node.id, node as GraphNode);
@@ -1487,8 +1559,7 @@
           pastedEdgeIds.push(existing.id);
         } else {
           if(state.edges.length >= MAX_GRAPH_EDGES){ droppedEdges++; continue; }
-          const num = Number((edge.id.match(/\d+$/)||[0])[0]);
-          if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
+          state.nextEdge = advanceCounterFromId(state.nextEdge, edge.id);
           // Endpoints are carried verbatim: a pasted node reuses its own id,
           // an external endpoint is a pre-existing node in this document.
           state.edges.push(edge); edgeById.set(edge.id, edge);
@@ -1548,13 +1619,11 @@
         let newId = orig.id;
         const used = new Set([...existingNodeIds, ...newNodeIds]);
         if(used.has(newId)){
-          let counter = state.nextNode;
-          while(used.has('n' + counter)) counter++;
-          newId = 'n' + counter;
-          state.nextNode = counter + 1;
+          const allocated = allocateLocalId('n', used, state.nextNode);
+          newId = allocated.id;
+          state.nextNode = allocated.next;
         } else {
-          const num = Number((newId.match(/\d+$/)||[0])[0]);
-          if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
+          state.nextNode = advanceCounterFromId(state.nextNode, newId);
         }
         idMap.set(orig.id, newId);
         const cloned: GraphNode = cloneNode({...orig, id: newId, order: nextOrder++} as GraphNode);
@@ -1577,13 +1646,12 @@
       const addEdgeWithNewId = (orig: GraphEdge, from: string, to: string) => {
         let nid = orig.id;
         if(usedEdgeIds2.has(nid) || edgeIdMap.has(nid)){
-          let c = state.nextEdge;
-          while(usedEdgeIds2.has('e'+c) || edgeIdMap.has('e'+c)) c++;
-          nid = 'e'+c;
-          state.nextEdge = c+1;
+          const usedEdgeIds = new Set([...usedEdgeIds2, ...edgeIdMap]);
+          const allocated = allocateLocalId('e', usedEdgeIds, state.nextEdge);
+          nid = allocated.id;
+          state.nextEdge = allocated.next;
         } else {
-          const num = Number((nid.match(/\d+$/)||[0])[0]);
-          if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
+          state.nextEdge = advanceCounterFromId(state.nextEdge, nid);
         }
         const ce: GraphEdge = cloneEdge({...orig, id: nid, from, to} as GraphEdge);
         finalNewEdges.push(ce);
@@ -1628,24 +1696,28 @@
     let text = '';
     let outcome: any;
     if(pendingSystemRead){
-      // A second paste command while the clipboard read is still pending is
-      // the explicit request to use the local copy. The first command never
-      // silently falls back to possibly stale local data.
+      // Any second paste command cancels the first one. Its delayed read must
+      // not paste again or overwrite edits made after the explicit fallback.
+      pasteGeneration++;
+      pendingSystemRead = null;
       if(hasInternal){
         toast(I18N.t('paste_local_fallback'));
         pasteClipboardInternal(null, { exact });
         return;
       }
-      outcome = await pendingSystemRead;
-    } else {
-      const readPromise = (async (): Promise<{ text: string } | { error: unknown }> => {
-        try { return { text: (await navigator.clipboard.readText()) || '' }; }
-        catch(e){ return { error: e }; }
-      })();
-      pendingSystemRead = readPromise;
-      try { outcome = await readPromise; }
-      finally { pendingSystemRead = null; }
+      // With no local copy, start a fresh read rather than reviving the
+      // command that the user just superseded.
     }
+    const token = ++pasteGeneration;
+    const readPromise = (async (): Promise<{ text: string } | { error: unknown }> => {
+      try { return { text: (await navigator.clipboard.readText()) || '' }; }
+      catch(e){ return { error: e }; }
+    })();
+    const pending = { token, promise: readPromise };
+    pendingSystemRead = pending;
+    try { outcome = await readPromise; }
+    finally { if(pendingSystemRead === pending) pendingSystemRead = null; }
+    if(token !== pasteGeneration) return; // superseded by another paste command
     if(outcome && outcome.error) systemIssue = { key:'paste_failed', params:{msg:(outcome.error as Error)?.message} };
     else text = outcome?.text || '';
 
