@@ -59,28 +59,53 @@
     state.nodes.forEach((node,i)=>{ node.x=(i%cols-(cols-1)/2)*gap; node.y=(Math.floor(i/cols)-Math.floor((n-1)/cols)/2)*gap; });
     pushHistory('grid layout'); fitView(); queueRender(true);
   }
-  function layoutForce(requestedIter=180){
-    const n=state.nodes.length; if(n < 2) return;
-    // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
-    // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
-    // work instead so one click always finishes in roughly a second; large
-    // graphs get fewer refinement passes rather than an unresponsive page.
-    const pairs = n * (n - 1) / 2;
-    const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
-    const reduced = iter < requestedIter;
-    const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
-    for(let step=0; step<iter; step++){
-      const disp = new Map(state.nodes.map(v=>[v.id,{x:0,y:0}]));
-      for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
-        const v=state.nodes[i], u=state.nodes[j]; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(k*k)/d; dx/=d; dy/=d; disp.get(v.id).x += dx*f; disp.get(v.id).y += dy*f; disp.get(u.id).x -= dx*f; disp.get(u.id).y -= dy*f;
+  // Yielding an already-running task keeps pending input ahead of the next
+  // batch of force-layout passes. Safari has no scheduler.yield() yet, so a
+  // setTimeout fallback is part of the contract, not an optional extra.
+  const yieldToBrowser = (): Promise<void> => {
+    const scheduler = (window as any).scheduler;
+    if(scheduler && typeof scheduler.yield === 'function') return scheduler.yield();
+    return new Promise(resolve => setTimeout(resolve, 0));
+  };
+  let forceLayoutRunning = false;
+  async function layoutForce(requestedIter=180){
+    if(forceLayoutRunning) return;
+    const nodes = state.nodes;
+    const n=nodes.length; if(n < 2) return;
+    forceLayoutRunning = true;
+    const startRev = graphRev;
+    try {
+      // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
+      // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
+      // work so one click finishes in roughly a second, and yield every ~50 ms
+      // so the tab can still paint and answer input while it runs.
+      const pairs = n * (n - 1) / 2;
+      const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
+      const reduced = iter < requestedIter;
+      const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
+      let deadline = performance.now() + 50;
+      for(let step=0; step<iter; step++){
+        const disp = new Map(nodes.map(v=>[v.id,{x:0,y:0}]));
+        for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+          const v=nodes[i], u=nodes[j]; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(k*k)/d; dx/=d; dy/=d; disp.get(v.id).x += dx*f; disp.get(v.id).y += dy*f; disp.get(u.id).x -= dx*f; disp.get(u.id).y -= dy*f;
+        }
+        for(const e of state.edges){ const v=nodeById(e.from), u=nodeById(e.to); if(!v||!u) continue; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(d*d)/k; dx/=d; dy/=d; disp.get(v.id).x -= dx*f; disp.get(v.id).y -= dy*f; disp.get(u.id).x += dx*f; disp.get(u.id).y += dy*f; }
+        const temp = 80 * (1 - step/iter);
+        for(const v of nodes){ const d=disp.get(v.id); const len=Math.hypot(d.x,d.y)||.01; v.x += (d.x/len)*Math.min(len,temp); v.y += (d.y/len)*Math.min(len,temp); }
+        if(performance.now() >= deadline && step < iter - 1){
+          await yieldToBrowser();
+          deadline = performance.now() + 50;
+          // A document edit or import during the yield invalidates this run.
+          if(graphRev !== startRev) return;
+        }
       }
-      for(const e of state.edges){ const v=nodeById(e.from), u=nodeById(e.to); if(!v||!u) continue; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(d*d)/k; dx/=d; dy/=d; disp.get(v.id).x -= dx*f; disp.get(v.id).y -= dy*f; disp.get(u.id).x += dx*f; disp.get(u.id).y += dy*f; }
-      const temp = 80 * (1 - step/iter);
-      for(const v of state.nodes){ const d=disp.get(v.id); const len=Math.hypot(d.x,d.y)||.01; v.x += (d.x/len)*Math.min(len,temp); v.y += (d.y/len)*Math.min(len,temp); }
+      pushHistory('relax layout'); fitView(); queueRender(true);
+      if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
+    } finally {
+      forceLayoutRunning = false;
     }
-    pushHistory('relax layout'); fitView(); queueRender(true);
-    if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
   }
+
   async function addSample(){
     if(state.nodes.length && !await uiConfirm(I18N.t('replace_with_sample'), {danger: true})) return;
     state.nodes = [
@@ -151,14 +176,46 @@
   }
   function toast(message){
     const stack = $('#toastStack');
-    while(stack.children.length >= 4) stack.firstElementChild?.remove();
+    const removeToast = (node: HTMLElement) => {
+      const pending = (node as any)._toastTimer;
+      if(pending) clearTimeout(pending);
+      node.remove();
+    };
+    while(stack.children.length >= 4) removeToast(stack.firstElementChild as HTMLElement);
     const el = document.createElement('div');
-    el.className = 'toast'; el.textContent = message;
-    stack.appendChild(el);
-    setTimeout(() => {
+    el.className = 'toast';
+    const text = document.createElement('span');
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button'; close.className = 'toast-close';
+    close.setAttribute('aria-label', I18N.t('toast_close'));
+    close.textContent = '\u00d7';
+    el.append(text, close);
+    // A toast the pointer or keyboard is using must not vanish underneath it.
+    let timer = 0;
+    const disarm = () => {
+      if(timer) clearTimeout(timer);
+      timer = 0;
+      (el as any)._toastTimer = 0;
+    };
+    const dismiss = () => {
+      if(!el.isConnected) return;
+      disarm();
       el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
-      setTimeout(() => el.remove(), 180);
-    }, 2300);
+      window.setTimeout(() => el.remove(), 180);
+    };
+    const arm = () => {
+      disarm();
+      timer = window.setTimeout(dismiss, 2300);
+      (el as any)._toastTimer = timer;
+    };
+    el.addEventListener('pointerenter', disarm);
+    el.addEventListener('focusin', disarm);
+    el.addEventListener('pointerleave', arm);
+    el.addEventListener('focusout', () => { if(!el.contains(document.activeElement)) arm(); });
+    close.addEventListener('click', dismiss);
+    stack.appendChild(el);
+    arm();
   }
   async function copyText(text){
     try{ await navigator.clipboard.writeText(text); toast(I18N.t('copied')); }

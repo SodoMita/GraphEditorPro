@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="text-scale" content="scale" />
   <title>Graph Editor Pro</title>
   <style>
     /* =====================================================================
@@ -14,8 +15,11 @@
     :root{
       --bg:#04070f; --panel:#0a101d; --panel-2:#0d1524; --panel-3:#101a2e;
       --text:#e2e8f0; --muted:#a1b2c8; --dim:#7f92ad; --line:#1e2a3f; --line-2:#2d3d58;
+      /* Dedicated control boundary: ~3.9:1 against the field background. */
+      --control-border:#5a708f;
       --accent:#22d3ee; --accent-2:#38bdf8; --good:#34d399; --warn:#fbbf24; --bad:#fb7185;
       --ink:#02131a;
+      color-scheme:dark;
       --radius:16px; --radius-s:10px;
       --shadow:0 12px 34px rgba(0,0,0,.42);
       --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -28,7 +32,7 @@
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
-      margin:0; color:var(--text); font-family:var(--font); font-size:14px;
+      margin:0; color:var(--text); font-family:var(--font); font-size:0.875rem;
       overflow:hidden; overscroll-behavior:none; touch-action:manipulation;
       background:
         radial-gradient(1100px 520px at 12% -8%, rgba(14,165,233,.16), transparent 60%),
@@ -72,7 +76,7 @@
       padding-left:calc(10px + var(--sa-left)); padding-right:calc(10px + var(--sa-right));
       min-width:0; z-index:20; border-width:0 0 1px; border-radius:0;
     }
-    .brand{display:flex; align-items:center; gap:7px; min-width:0; font-weight:800; font-size:13.5px; flex:0 0 auto}
+    .brand{display:flex; align-items:center; gap:7px; min-width:0; font-weight:800; font-size:0.84375rem; flex:0 0 auto}
     .brand-badge{
       width:30px; height:30px; border-radius:9px; display:grid; place-items:center;
       color:var(--ink); background:linear-gradient(135deg,var(--accent),#7dd3fc); font-weight:900;
@@ -80,9 +84,9 @@
     }
     .brand-name{white-space:nowrap}
     .title-input{
-      flex:1 1 130px; min-width:110px; max-width:240px; border:1px solid var(--line);
+      flex:1 1 130px; min-width:110px; max-width:240px; border:1px solid var(--control-border);
       border-radius:9px; background:rgba(2,6,23,.5); color:var(--text);
-      padding:6px 9px; outline:none; font-weight:650; font-size:12.5px; min-height:32px;
+      padding:6px 9px; outline:none; font-weight:650; font-size:0.78125rem; min-height:32px;
     }
     .title-input:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.14)}
 
@@ -106,15 +110,15 @@
       border:1px solid var(--line-2); background:linear-gradient(180deg,var(--panel-2),var(--panel-3));
       color:var(--text); border-radius:var(--radius-s); min-height:36px; padding:0 12px;
       display:inline-flex; align-items:center; justify-content:center; gap:6px;
-      font-size:12.5px; font-weight:600; white-space:nowrap;
+      font-size:0.78125rem; font-weight:600; white-space:nowrap;
       transition:transform .06s ease, filter .12s ease, border-color .12s ease, box-shadow .12s ease;
       user-select:none; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
     }
-    .btn.icon{width:38px; padding:0; font-size:16px}
-    .btn.small{min-height:32px; padding:0 10px; border-radius:8px; font-size:12px}
+    .btn.icon{width:38px; padding:0; font-size:1rem}
+    .btn.small{min-height:32px; padding:0 10px; border-radius:8px; font-size:0.75rem}
     .btn.symbol-only{width:40px; min-width:40px; padding:0}
     .btn.small.symbol-only{width:36px; min-width:36px; padding:0}
-    .unicode-symbol{font-size:21px;line-height:1;font-weight:700}
+    .unicode-symbol{font-size:1.3125rem;line-height:1;font-weight:700}
     .btn:hover{filter:brightness(1.12); border-color:#33507a}
     .btn:active{transform:translateY(1px)}
     .btn.active{
@@ -127,7 +131,7 @@
     /* Toolbar inside the app bar. Mobile: compact grid under the title.
        Desktop: one flex row. */
     .toolbar{margin-left:auto; display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:5px; flex:1 1 100%; min-width:0}
-    .toolbar .btn{min-width:0; padding:0 4px; font-size:11.5px}
+    .toolbar .btn{min-width:0; padding:0 4px; font-size:0.71875rem}
     .toolbar .btn.icon,.toolbar .btn.symbol-only{width:auto}
     .toolbar .btn.symbol-only{padding:0}
     .view-toggle{display:none}
@@ -170,7 +174,7 @@
     .canvas-hud > *{pointer-events:auto}
     .status-pill{
       background:rgba(2,6,23,.8); border:1px solid var(--line-2); border-radius:999px;
-      padding:5px 10px; font-size:11.5px; color:#cbd5e1; backdrop-filter:blur(6px);
+      padding:5px 10px; font-size:0.71875rem; color:#cbd5e1; backdrop-filter:blur(6px);
     }
     .zoom-controls{
       position:absolute; right:10px; top:10px; display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end;
@@ -179,7 +183,7 @@
     .zoom-controls .btn{min-height:34px; box-shadow:0 4px 14px rgba(0,0,0,.35)}
     .empty-hint{
       position:absolute; inset:auto 16px 96px 16px; padding:10px 12px; border:1px dashed rgba(148,163,184,.4);
-      border-radius:12px; background:rgba(2,6,23,.78); color:#cbd5e1; font-size:12.5px; pointer-events:none; display:none;
+      border-radius:12px; background:rgba(2,6,23,.78); color:#cbd5e1; font-size:0.78125rem; pointer-events:none; display:none;
     }
     .empty .empty-hint{display:block}
 
@@ -193,7 +197,7 @@
     }
     .mode-fab .seg{
       border:none; background:transparent; color:var(--muted); min-height:44px;
-      width:48px; min-width:48px; padding:0; border-radius:999px; font-size:12.5px; font-weight:700;
+      width:48px; min-width:48px; padding:0; border-radius:999px; font-size:0.78125rem; font-weight:700;
     }
     #btnFlipEdges{display:none}
     .canvas-wrap.edge-mode #btnFlipEdges{display:inline-flex}
@@ -298,7 +302,7 @@
     .custom-prop-row{min-width:0}
     .custom-prop-label{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:55%}
     .custom-prop-id{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .custom-prop-type{font-size:11px;font-weight:400;color:var(--muted,#94a3b8);border:1px solid var(--line,#334155);border-radius:999px;padding:0 7px;white-space:nowrap}
+    .custom-prop-type{font-size:0.6875rem;font-weight:400;color:var(--muted,#94a3b8);border:1px solid var(--line,#334155);border-radius:999px;padding:0 7px;white-space:nowrap}
     .custom-prop-row input,.custom-prop-row select{min-width:0;width:100%}
     .custom-props-rows{display:flex;flex-direction:column;gap:8px}
     .custom-props-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px;padding-top:8px;border-top:1px solid var(--line,#334155)}
@@ -317,13 +321,13 @@
     }
     .section summary::-webkit-details-marker{display:none}
     .section summary::before{
-      content:"▸"; color:var(--dim); font-size:10px; transition:transform .15s ease;
+      content:"▸"; color:var(--dim); font-size:0.625rem; transition:transform .15s ease;
       align-self:center; margin-right:2px;
     }
     .section[open] summary::before{transform:rotate(90deg); color:var(--accent)}
     .section summary:hover{background:rgba(148,163,184,.05)}
     .section-title{
-      font-size:11px; color:#cbd5e1; letter-spacing:.07em; text-transform:uppercase; font-weight:800;
+      font-size:0.6875rem; color:#cbd5e1; letter-spacing:.07em; text-transform:uppercase; font-weight:800;
       display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0;
     }
     .section-title .tiny{font-weight:600; letter-spacing:0; text-transform:none}
@@ -331,24 +335,24 @@
     .sec-body > :first-child{margin-top:0}
 
     /* ---------- Compact fields ---------- */
-    .field{display:flex; align-items:center; gap:7px; min-width:0; font-size:12.5px; color:var(--muted)}
+    .field{display:flex; align-items:center; gap:7px; min-width:0; font-size:0.78125rem; color:var(--muted)}
     .field > span{flex:0 0 auto; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
     .field > input:not([type="checkbox"]):not([type="color"]),
     .field > select{flex:1 1 auto; min-width:0}
     .field.col{display:block}
     .field.col > input:not([type="checkbox"]), .field.col > select{width:100%}
     .field input:not([type="checkbox"]), .field select, .field textarea{
-      background:rgba(2,6,23,.55); border:1px solid var(--line-2); color:var(--text);
-      border-radius:8px; padding:7px 9px; min-height:36px; outline:none; font-size:16px; width:100%;
+      background:rgba(2,6,23,.55); border:1px solid var(--control-border); color:var(--text);
+      border-radius:8px; padding:7px 9px; min-height:36px; outline:none; font-size:1rem; width:100%;
     }
     .field input:not([type="checkbox"]):focus, .field select:focus, .field textarea:focus{
       border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,211,238,.12)
     }
     input[type="checkbox"]{accent-color:var(--accent); width:16px; height:16px; flex:0 0 auto}
-    input[type="color"]{padding:2px; height:34px; min-width:0; flex:1 1 44px; background:transparent; border:1px solid var(--line-2); border-radius:8px; cursor:pointer}
+    input[type="color"]{padding:2px; height:34px; min-width:0; flex:1 1 44px; background:transparent; border:1px solid var(--control-border); border-radius:8px; cursor:pointer}
     input[type="color"]::-webkit-color-swatch-wrapper{padding:2px}
     input[type="color"]::-webkit-color-swatch{border:none; border-radius:5px}
-    .chk{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted); min-width:0; cursor:pointer; padding:3px 0}
+    .chk{display:flex; align-items:center; gap:7px; font-size:0.78125rem; color:var(--muted); min-width:0; cursor:pointer; padding:3px 0}
     .chk:hover{color:var(--text)}
     .chk-grid{display:grid; grid-template-columns:1fr 1fr; gap:4px 8px}
     .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px; min-width:0}
@@ -357,7 +361,7 @@
     .grid2 > *, .grid3 > *, .grid4 > *{min-width:0}
     .row{display:flex; align-items:center; gap:7px; flex-wrap:wrap; min-width:0}
     .row + .row{margin-top:7px}
-    .tiny{font-size:12px} .muted{color:var(--muted)} .dim{color:var(--dim)} .nowrap{white-space:nowrap}
+    .tiny{font-size:0.75rem} .muted{color:var(--muted)} .dim{color:var(--dim)} .nowrap{white-space:nowrap}
 
     /* ---------- Import/export: format names plus compact symbolic actions ---------- */
     .io-grid{display:grid;gap:6px;min-width:0}
@@ -403,20 +407,20 @@
       .matrix-controls .btn, .matrix-controls .field{flex:0 0 auto}
     }
     .matrix-controls{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px}
-    .matrix-controls .btn{min-height:30px; font-size:11.5px; padding:0 8px}
-    .matrix-controls .field{font-size:11.5px}
+    .matrix-controls .btn{min-height:30px; font-size:0.71875rem; padding:0 8px}
+    .matrix-controls .field{font-size:0.71875rem}
     .matrix-input{
-      width:62px; min-width:44px; background:rgba(2,6,23,.55); border:1px solid var(--line-2); color:#dbeafe;
+      width:62px; min-width:44px; background:rgba(2,6,23,.55); border:1px solid var(--control-border); color:#dbeafe;
       border-radius:7px; padding:4px 5px; text-align:center; min-height:28px;
     }
     .matrix-input:focus{outline:none; border-color:var(--accent)}
     /* Matrix inputs inside .field labels must keep their compact size —
        the generic .field input rule would otherwise stretch them */
     .field input.matrix-input, .field select.matrix-input{
-      width:62px; min-width:44px; min-height:28px; padding:4px 5px; font-size:12px;
+      width:62px; min-width:44px; min-height:28px; padding:4px 5px; font-size:0.75rem;
     }
     .field input.matrix-label-input{
-      width:80px; min-height:28px; padding:3px 5px; font-size:12px;
+      width:80px; min-height:28px; padding:3px 5px; font-size:0.75rem;
     }
     .matrix-input.matrix-selected,.matrix-label-input.matrix-selected{border-color:var(--accent)!important; box-shadow:0 0 0 2px rgba(34,211,238,.16)}
     .matrix-label-input{
@@ -432,13 +436,13 @@
     .matrix-node-controls .btn.small.icon{width:22px; min-width:22px; height:22px; min-height:22px; padding:0; display:grid; place-items:center; border-radius:6px}
     .matrix-node-controls .btn.small.icon .ui-icon{width:12px;height:12px}
     .matrix-node-controls .btn[disabled]{opacity:.35; pointer-events:none}
-    .matrix-order-badge{font-size:10px; color:var(--muted); background:rgba(2,6,23,.4); border:1px solid var(--line); border-radius:6px; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
+    .matrix-order-badge{font-size:0.625rem; color:var(--muted); background:rgba(2,6,23,.4); border:1px solid var(--line); border-radius:6px; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
     .clipboard-controls .btn.small{flex:0 0 auto}
-    .field.checkbox{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted)}
+    .field.checkbox{display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--muted)}
     .field.checkbox input[type="checkbox"]{width:14px; height:14px}
 
     /* ---------- Tables ---------- */
-    table{border-collapse:separate; border-spacing:0; width:100%; font-size:12px; color:#dbeafe}
+    table{border-collapse:separate; border-spacing:0; width:100%; font-size:0.75rem; color:#dbeafe}
     th,td{border:1px solid rgba(51,65,85,.55); padding:5px 7px; background:rgba(2,6,23,.3); white-space:nowrap; text-align:center}
     th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
     .row-head{position:sticky; left:0; z-index:3; text-align:left}
@@ -449,34 +453,34 @@
     .result-box{
       border:1px solid var(--line-2); border-radius:var(--radius-s); background:rgba(2,6,23,.4);
       padding:10px; color:#dbeafe; min-height:80px; white-space:pre-wrap; overflow:auto; max-height:240px;
-      font-family:var(--mono); font-size:12px; -webkit-overflow-scrolling:touch;
+      font-family:var(--mono); font-size:0.75rem; -webkit-overflow-scrolling:touch;
     }
 
     /* ---------- Camera / hotkeys ---------- */
     .camera-grid{display:grid; grid-template-columns:1fr 1fr; gap:7px; min-width:0}
-    .drag-hint{font-size:10.5px; color:var(--dim); margin-top:3px; line-height:1.3}
+    .drag-hint{font-size:0.65625rem; color:var(--dim); margin-top:3px; line-height:1.3}
     .hotkey-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px}
     .hotkey-row{
       display:flex; align-items:center; gap:6px; padding:6px 8px; background:rgba(2,6,23,.32);
       border:1px solid var(--line); border-radius:9px; min-width:0;
     }
-    .hotkey-row label{flex:1; font-size:11.5px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+    .hotkey-row label{flex:1; font-size:0.71875rem; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
     .hotkey-input{
-      width:74px; min-width:50px; text-align:center; background:rgba(2,6,23,.55); border:1px solid var(--line-2);
-      color:var(--text); border-radius:7px; padding:5px 3px; font-family:var(--mono); font-size:11.5px;
+      width:74px; min-width:50px; text-align:center; background:rgba(2,6,23,.55); border:1px solid var(--control-border);
+      color:var(--text); border-radius:7px; padding:5px 3px; font-family:var(--mono); font-size:0.71875rem;
       cursor:pointer; flex:0 0 auto; min-height:32px;
     }
     .hotkey-input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(34,211,238,.16)}
     .hotkey-input::placeholder{color:var(--dim)}
-    .kbd{border:1px solid rgba(148,163,184,.35); border-bottom-width:2px; border-radius:5px; padding:1px 5px; background:#0f172a; font-size:11px; color:#cbd5e1}
+    .kbd{border:1px solid rgba(148,163,184,.35); border-bottom-width:2px; border-radius:5px; padding:1px 5px; background:#0f172a; font-size:0.6875rem; color:#cbd5e1}
 
     /* ---------- Drag-number (Blender-style) ---------- */
     .drag-number-wrap{display:flex; align-items:stretch; gap:0}
     .drag-number-wrap input[type="number"]{flex:1; min-width:0; border-top-right-radius:0; border-bottom-right-radius:0}
     .drag-handle{
       display:inline-flex; align-items:center; justify-content:center; padding:0 9px; min-width:32px;
-      background:rgba(34,211,238,.12); border:1px solid var(--line-2); border-left:0; border-radius:0 8px 8px 0;
-      cursor:ew-resize; color:var(--accent); font-size:14px; font-weight:800; user-select:none;
+      background:rgba(34,211,238,.12); border:1px solid var(--control-border); border-left:0; border-radius:0 8px 8px 0;
+      cursor:ew-resize; color:var(--accent); font-size:0.875rem; font-weight:800; user-select:none;
       touch-action:none; -webkit-tap-highlight-color:transparent;
     }
     .drag-handle:hover{background:rgba(34,211,238,.22)}
@@ -487,16 +491,28 @@
       position:fixed; inset:0; z-index:90; display:grid; place-items:center; padding:16px;
       background:rgba(2,6,23,.72); backdrop-filter:blur(3px);
     }
+    /* Native modal: the browser puts it in the top layer and makes the rest of
+       the page inert. Reset UA dialog dimensions so it still fills the screen,
+       and let ::backdrop own the dimming instead of doubling it. */
+    dialog.app-dialog{
+      width:100%; max-width:none; height:100%; max-height:none; margin:0; border:0;
+      background:transparent; backdrop-filter:none;
+    }
+    dialog.app-dialog:modal{overscroll-behavior:contain}
+    dialog.app-dialog::backdrop{
+      background:rgba(2,6,23,.72); backdrop-filter:blur(3px);
+      overflow:hidden; overscroll-behavior:contain;
+    }
     .app-dialog-card{
       width:min(420px,100%); background:var(--panel); border:1px solid var(--line-2); border-radius:14px;
       box-shadow:var(--shadow); padding:16px; display:grid; gap:12px;
     }
-    .app-dialog-title{margin:0; font-size:15px; font-weight:800; color:#e2e8f0}
-    .app-dialog-message{margin:0; font-size:12.5px; color:#cbd5e1; line-height:1.45; white-space:pre-wrap}
+    .app-dialog-title{margin:0; font-size:0.9375rem; font-weight:800; color:#e2e8f0}
+    .app-dialog-message{margin:0; font-size:0.78125rem; color:#cbd5e1; line-height:1.45; white-space:pre-wrap}
     .app-dialog-field{margin:0}
     .app-dialog-input{
-      width:100%; background:#020617; border:1px solid var(--line-2); color:#e2e8f0;
-      border-radius:8px; padding:9px 10px; font-size:16px; min-height:40px;
+      width:100%; background:#020617; border:1px solid var(--control-border); color:#e2e8f0;
+      border-radius:8px; padding:9px 10px; font-size:1rem; min-height:40px;
     }
     .app-dialog-input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
     .app-dialog-actions{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap}
@@ -506,9 +522,14 @@
       position:fixed; inset:0; z-index:60; background:rgba(2,6,23,.92); backdrop-filter:blur(8px);
       display:none; flex-direction:column; padding:14px; overflow:auto; -webkit-overflow-scrolling:touch;
     }
-    .presets-overlay.open{display:flex}
+    .presets-overlay.open, .presets-overlay[open]{display:flex}
+    dialog.presets-overlay{
+      width:100%; max-width:none; height:100%; max-height:none; margin:0; border:0;
+      color:inherit; padding:14px;
+    }
+    dialog.presets-overlay::backdrop{background:rgba(2,6,23,.72)}
     .presets-header{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap}
-    .presets-header h3{margin:0; font-size:14px; font-weight:800; color:#e2e8f0}
+    .presets-header h3{margin:0; font-size:0.875rem; font-weight:800; color:#e2e8f0}
     .presets-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px; align-content:start}
     .preset-card-wrap{position:relative}
     .preset-card{
@@ -518,7 +539,7 @@
     }
     .preset-card:hover{border-color:var(--accent); transform:translateY(-1px)}
     .preset-preview{height:46px; display:flex; align-items:center; justify-content:center; gap:7px; background:rgba(2,6,23,.5); border-radius:6px}
-    .preset-name{font-size:11px; color:#cbd5e1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600}
+    .preset-name{font-size:0.6875rem; color:#cbd5e1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600}
     .preset-delete{
       position:absolute; top:2px; right:4px; background:rgba(251,113,133,.2); border:none; color:#fb7185;
       cursor:pointer; padding:3px; border-radius:6px; line-height:1; width:24px; height:24px; display:grid; place-items:center; z-index:2;
@@ -533,10 +554,17 @@
       right:calc(12px + var(--sa-right));
     }
     .toast{
+      display:flex; align-items:center; gap:8px; pointer-events:auto;
       background:rgba(15,23,42,.97); border:1px solid var(--line-2); box-shadow:var(--shadow);
-      border-radius:12px; padding:10px 12px; color:#e2e8f0; font-size:13px; animation:pop .16s ease-out;
+      border-radius:12px; padding:10px 12px; color:#e2e8f0; font-size:0.8125rem; animation:pop .16s ease-out;
       transition:opacity .18s ease, transform .18s ease;
     }
+    .toast > span{min-width:0; overflow-wrap:anywhere}
+    .toast-close{
+      flex:0 0 auto; width:22px; height:22px; padding:0; line-height:1; display:grid; place-items:center;
+      border:1px solid var(--control-border); border-radius:6px; background:transparent; color:var(--muted);
+    }
+    .toast-close:hover{color:var(--text); border-color:var(--accent)}
     @keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
 
     /* ---------- SVG scene styling ----------
@@ -650,20 +678,20 @@
       /* Compact panel header: each control bar is one short, horizontally
          scrollable row instead of wrapping into tall stacks */
       .matrix-controls{flex-wrap:nowrap; overflow-x:auto; gap:4px; margin-bottom:4px; padding-bottom:2px; -webkit-overflow-scrolling:touch}
-      .matrix-controls .btn{flex:0 0 auto; min-height:24px; padding:0 7px; font-size:10.5px; border-radius:7px}
-      .matrix-controls .field{flex:0 0 auto; font-size:10.5px; margin:0}
-      .matrix-controls .field input, .matrix-controls .field select{min-height:24px; font-size:11px; padding:2px 6px; width:auto}
+      .matrix-controls .btn{flex:0 0 auto; min-height:24px; padding:0 7px; font-size:0.65625rem; border-radius:7px}
+      .matrix-controls .field{flex:0 0 auto; font-size:0.65625rem; margin:0}
+      .matrix-controls .field input, .matrix-controls .field select{min-height:24px; font-size:0.6875rem; padding:2px 6px; width:auto}
       .matrix-controls .range-label{display:none}
       .section-title{margin-bottom:5px}
       /* Compact table rows so a small matrix/edge list stays short */
       th,td{padding:3px 5px}
-      td .matrix-input, th .matrix-label-input{min-height:24px; font-size:12px; padding:2px 4px}
+      td .matrix-input, th .matrix-label-input{min-height:24px; font-size:0.75rem; padding:2px 4px}
     }
     /* Phone command bar: two rows of four comfortably sized actions instead
        of eight narrow buttons whose labels collide. */
     @media (max-width:700px) and (orientation:portrait){
       .toolbar{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
-      .toolbar .btn{min-height:40px;font-size:12px}
+      .toolbar .btn{min-height:40px;font-size:0.75rem}
       .menu-btn{min-height:40px;height:40px}
       .zoom-controls .btn{min-height:38px}
       .mode-fab{width:auto}
@@ -701,7 +729,7 @@
        Small phones
        ===================================================================== */
     @media (max-width:360px){
-      .mode-fab .seg{min-width:44px; padding:0 8px; font-size:11.5px}
+      .mode-fab .seg{min-width:44px; padding:0 8px; font-size:0.71875rem}
       .brand-name{display:none}
     }
 
@@ -710,7 +738,7 @@
        ===================================================================== */
     @media (min-width:701px) and (max-width:950px){
       .toolbar{grid-template-columns:repeat(7,minmax(0,1fr))}
-      .toolbar .btn{font-size:12px}
+      .toolbar .btn{font-size:0.75rem}
       .appbar{gap:6px 10px}
     }
 
@@ -730,7 +758,7 @@
       .sheet-grabber{display:none}
       .tab-panels{padding-top:6px}
       .mode-fab{left:12px; right:auto; transform:none; bottom:10px}
-      .mode-fab .seg{min-height:34px; min-width:46px; padding:0 10px; font-size:11.5px}
+      .mode-fab .seg{min-height:34px; min-width:46px; padding:0 10px; font-size:0.71875rem}
       .sel-tools,.edge-tools{left:12px; right:auto; transform:none; bottom:64px}
       .gizmo-tools{left:12px; right:auto; transform:none; bottom:118px}
       .canvas-wrap.select-mode .empty-hint,
@@ -762,12 +790,12 @@
     @media (min-width:951px){
       .app{gap:8px; padding:8px}
       .appbar{flex-wrap:nowrap; gap:10px; padding:7px 10px; border-width:1px; border-radius:var(--radius)}
-      .brand{font-size:13px}
+      .brand{font-size:0.8125rem}
       .brand-name{display:inline}
       .title-input{flex:0 1 220px; width:min(220px,26vw); min-width:120px}
       .toolbar{display:flex; flex:0 0 auto; margin-left:auto; gap:6px; justify-content:flex-end}
-      .toolbar .btn{min-height:32px; padding:0 10px; font-size:12.5px}
-      .toolbar .btn.icon,.toolbar .btn.symbol-only{width:32px; min-width:32px; padding:0; font-size:15px; flex:0 0 32px}
+      .toolbar .btn{min-height:32px; padding:0 10px; font-size:0.78125rem}
+      .toolbar .btn.icon,.toolbar .btn.symbol-only{width:32px; min-width:32px; padding:0; font-size:0.9375rem; flex:0 0 32px}
       .view-toggle{display:flex; align-items:center; gap:3px; flex:0 0 auto; flex-wrap:wrap}
       .view-toggle .btn.small{min-height:30px}
       .view-toggle .btn.small.symbol-only{width:30px;min-width:30px;padding:0}
@@ -823,7 +851,7 @@
       .title-input{flex:0 1 150px; min-width:80px; max-width:150px}
       .toolbar{display:flex; flex:0 1 auto; min-width:0; grid-template-columns:none; gap:4px; margin-left:auto; overflow-x:auto; scrollbar-width:none}
       .toolbar::-webkit-scrollbar{display:none}
-      .toolbar .btn{min-height:30px; font-size:11px; padding:0 6px; flex:0 0 auto}
+      .toolbar .btn{min-height:30px; font-size:0.6875rem; padding:0 6px; flex:0 0 auto}
       .toolbar .btn.icon,.toolbar .btn.symbol-only{width:32px;min-width:32px;padding:0}
       .tab{padding:2px}
       .mode-fab .seg{width:44px;min-height:36px;min-width:44px;padding:0}
@@ -833,7 +861,7 @@
       .canvas-wrap.select-mode .empty-hint,
       .canvas-wrap.edge-mode .empty-hint{bottom:104px}
       .empty-hint{inset:auto 14px 76px 14px}
-      .field input:not([type="checkbox"]),.field select,.field textarea{font-size:14px; min-height:30px; padding:5px 8px}
+      .field input:not([type="checkbox"]),.field select,.field textarea{font-size:0.875rem; min-height:30px; padding:5px 8px}
     }
 
     @media (prefers-reduced-motion:reduce){
@@ -1718,7 +1746,7 @@
     </div>
 
     <!-- Style presets overlay — covers the whole app -->
-    <div id="presetsOverlay" class="presets-overlay" role="dialog" aria-modal="true" aria-labelledby="presetsTitle" aria-hidden="true" tabindex="-1">
+    <dialog id="presetsOverlay" class="presets-overlay" aria-labelledby="presetsTitle">
       <div class="presets-header">
         <h3 id="presetsTitle" data-i18n="style_presets">Style presets</h3>
         <div style="display:flex; gap:6px; flex-wrap:wrap">
@@ -1728,10 +1756,10 @@
       </div>
       <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
       <div id="presetsGrid" class="presets-grid"></div>
-    </div>
+    </dialog>
   </div>
 
-  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+  <div id="toastStack" class="toast-stack" role="region" aria-label="Notifications" data-i18n-aria-label="toast_region" aria-live="polite"></div>
 
   <script>
 (() => {
@@ -2300,6 +2328,8 @@ const I18N = {
         'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
         'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },
         'copied': { en: 'Copied', ru: 'Скопировано' },
+        'toast_region': { en: 'Notifications', ru: 'Уведомления' },
+        'toast_close': { en: 'Dismiss notification', ru: 'Закрыть уведомление' },
         'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание «{name}» — если ничего не произошло, нажмите «Копировать»' },
         'textarea_empty': { en: 'Textarea is empty', ru: 'Поле пусто' },
         'sample_loaded': { en: 'Sample graph loaded', ru: 'Загружен пример графа' },
@@ -2726,6 +2756,10 @@ function closeDialog(result = null) {
     dialogCleanup?.();
     dialogCleanup = null;
     const resolve = dialogResolve;
+    // A native modal must leave the top layer before its element is removed.
+    const active = dialogEl;
+    if (active.open && typeof active.close === 'function')
+        active.close();
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
@@ -2741,10 +2775,17 @@ function showDialog(options) {
         dialogResolve = resolve;
         dialogReturnFocus = document.activeElement;
         const wantsInput = Boolean(options.input);
-        const dialog = document.createElement('div');
+        // Native <dialog> provides inert background, focus containment, top-layer
+        // rendering and platform dismissal. The div path is only a fallback for
+        // environments without showModal() (notably jsdom in our tests).
+        const nativeDialog = typeof window.HTMLDialogElement === 'function'
+            && typeof window.HTMLDialogElement.prototype.showModal === 'function';
+        const dialog = document.createElement(nativeDialog ? 'dialog' : 'div');
         dialog.className = 'app-dialog';
-        dialog.setAttribute('role', 'dialog');
-        dialog.setAttribute('aria-modal', 'true');
+        if (!nativeDialog) {
+            dialog.setAttribute('role', 'dialog');
+            dialog.setAttribute('aria-modal', 'true');
+        }
         dialog.setAttribute('aria-labelledby', 'appDialogTitle');
         if (options.message)
             dialog.setAttribute('aria-describedby', 'appDialogMessage');
@@ -2762,6 +2803,8 @@ function showDialog(options) {
         document.body.appendChild(dialog);
         dialogEl = dialog;
         dialogOpenCount++;
+        if (nativeDialog)
+            dialog.showModal();
         const input = dialog.querySelector('#' + inputId);
         const form = dialog.querySelector('form');
         const finish = (result) => closeDialog(result);
@@ -2772,59 +2815,66 @@ function showDialog(options) {
         dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
         dialog.addEventListener('pointerdown', ev => { if (ev.target === dialog)
             finish(wantsInput ? null : false); });
-        // The handlers live on the document, not on the dialog element: clicking
-        // the dialog's own title or message moves focus to <body> in Chromium,
-        // and a dialog-scoped keydown never fires from there — Escape and the
-        // Tab trap went dead until focus wandered back inside.
-        const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
-        const focusInside = (target) => Boolean(target) && dialog.contains(target);
-        const onKeyDown = (ev) => {
-            if (!dialogEl)
-                return;
-            if (ev.key === 'Escape') {
-                ev.preventDefault();
-                ev.stopPropagation();
-                finish(wantsInput ? null : false);
-                return;
-            }
-            if (ev.key !== 'Tab')
-                return;
-            const items = focusables();
-            if (!items.length) {
-                ev.preventDefault();
-                return;
-            }
-            const first = items[0], last = items[items.length - 1];
-            // Focus parked outside (title click, backdrop, or a stray programmatic
-            // focus) still gets trapped: the next Tab re-enters the dialog.
-            if (!focusInside(document.activeElement)) {
-                ev.preventDefault();
-                (ev.shiftKey ? last : first).focus();
-                return;
-            }
-            if (ev.shiftKey && document.activeElement === first) {
-                ev.preventDefault();
-                last.focus();
-            }
-            else if (!ev.shiftKey && document.activeElement === last) {
-                ev.preventDefault();
-                first.focus();
-            }
-        };
-        // A modal keeps focus: anything that pulls it out is redirected to the
-        // dialog's primary control. The trigger's own focus is restored on close.
-        const onFocusIn = (ev) => {
-            if (!dialogEl || focusInside(ev.target))
-                return;
-            const items = focusables();
-            (items[items.length - 1] || items[0])?.focus();
-        };
-        document.addEventListener('keydown', onKeyDown, true);
-        document.addEventListener('focusin', onFocusIn, true);
-        dialogCleanup = () => {
-            document.removeEventListener('keydown', onKeyDown, true);
-            document.removeEventListener('focusin', onFocusIn, true);
-        };
+        if (nativeDialog) {
+            // Esc and the platform's back gesture fire `cancel`; let the shared
+            // close path resolve the promise and restore focus exactly once.
+            dialog.addEventListener('cancel', ev => { ev.preventDefault(); finish(wantsInput ? null : false); });
+        }
+        else {
+            // The handlers live on the document, not on the dialog element: clicking
+            // the dialog's own title or message moves focus to <body> in Chromium,
+            // and a dialog-scoped keydown never fires from there — Escape and the
+            // Tab trap went dead until focus wandered back inside.
+            const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
+            const focusInside = (target) => Boolean(target) && dialog.contains(target);
+            const onKeyDown = (ev) => {
+                if (!dialogEl)
+                    return;
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    finish(wantsInput ? null : false);
+                    return;
+                }
+                if (ev.key !== 'Tab')
+                    return;
+                const items = focusables();
+                if (!items.length) {
+                    ev.preventDefault();
+                    return;
+                }
+                const first = items[0], last = items[items.length - 1];
+                // Focus parked outside (title click, backdrop, or a stray programmatic
+                // focus) still gets trapped: the next Tab re-enters the dialog.
+                if (!focusInside(document.activeElement)) {
+                    ev.preventDefault();
+                    (ev.shiftKey ? last : first).focus();
+                    return;
+                }
+                if (ev.shiftKey && document.activeElement === first) {
+                    ev.preventDefault();
+                    last.focus();
+                }
+                else if (!ev.shiftKey && document.activeElement === last) {
+                    ev.preventDefault();
+                    first.focus();
+                }
+            };
+            // A modal keeps focus: anything that pulls it out is redirected to the
+            // dialog's primary control. The trigger's own focus is restored on close.
+            const onFocusIn = (ev) => {
+                if (!dialogEl || focusInside(ev.target))
+                    return;
+                const items = focusables();
+                (items[items.length - 1] || items[0])?.focus();
+            };
+            document.addEventListener('keydown', onKeyDown, true);
+            document.addEventListener('focusin', onFocusIn, true);
+            dialogCleanup = () => {
+                document.removeEventListener('keydown', onKeyDown, true);
+                document.removeEventListener('focusin', onFocusIn, true);
+            };
+        }
         setTimeout(() => {
             if (input) {
                 input.focus();
@@ -5096,7 +5146,7 @@ function sortedNodesByOrder() {
     if (sortedNodesCache.arr === arr && sortedNodesCache.len === arr.length && sortedNodesCache.rev === graphRev) {
         return sortedNodesCache.sorted;
     }
-    const sorted = [...arr].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = arr.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     sortedNodesCache.arr = arr;
     sortedNodesCache.len = arr.length;
     sortedNodesCache.rev = graphRev;
@@ -7754,7 +7804,7 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const { values, edgeIds } = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
     // Global order index for each node (for move boundaries)
-    const allSorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const allSorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const orderPos = new Map(allSorted.map((n, i) => [n.id, i]));
     // Build with array push+join instead of repeated += to avoid O(n^2) string copying for large matrices
     const parts = [];
@@ -8696,7 +8746,7 @@ async function clearMatrixEdges() {
 }
 // === Sorting and reordering ===
 function sortNodesById() {
-    const sorted = [...state.nodes].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    const sorted = state.nodes.toSorted((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
@@ -8705,7 +8755,7 @@ function sortNodesById() {
     toast(I18N.t('nodes_sorted_id'));
 }
 function sortNodesByLabel() {
-    const sorted = [...state.nodes].sort((a, b) => (a.label || '').localeCompare(b.label || '', undefined, { numeric: true }));
+    const sorted = state.nodes.toSorted((a, b) => (a.label || '').localeCompare(b.label || '', undefined, { numeric: true }));
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
@@ -8714,7 +8764,7 @@ function sortNodesByLabel() {
     toast(I18N.t('nodes_sorted_label'));
 }
 function renumberNodeOrder() {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
@@ -8724,7 +8774,7 @@ function renumberNodeOrder() {
     toast(I18N.t('node_order_renumbered'));
 }
 function moveNode(nodeId, dir) {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const idx = sorted.findIndex(n => n.id === nodeId);
     if (idx < 0)
         return;
@@ -8741,7 +8791,7 @@ function moveNode(nodeId, dir) {
     saveSoon();
 }
 function moveNodeToPosition(nodeId, newPosition) {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const idx = sorted.findIndex(n => n.id === nodeId);
     if (idx < 0)
         return;
@@ -8758,8 +8808,7 @@ function moveNodeToPosition(nodeId, newPosition) {
     saveSoon();
 }
 function reverseNodeOrder() {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    sorted.reverse();
+    const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0)).toReversed();
     sorted.forEach((n, i) => { n.order = i; });
     state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
@@ -8768,7 +8817,7 @@ function reverseNodeOrder() {
     toast(I18N.t('nodes_reversed'));
 }
 function shuffleNodeOrder() {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     for (let i = sorted.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [sorted[i], sorted[j]] = [sorted[j], sorted[i]];
@@ -9274,7 +9323,7 @@ function pasteClipboardInternal(fromSystemClipboard) {
     const newNodes = [];
     const newNodeIds = [];
     const existingNodeIds = new Set(originalExistingNodeIds);
-    const sortedCopyNodes = [...data.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sortedCopyNodes = data.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const isFreeWithPlaced = (x, y, ignoreIds, placed) => {
         if (!isPositionFree(x, y, ignoreIds))
             return false;
@@ -12648,11 +12697,11 @@ function edgeCsv() {
     return rowsToCsv(rows);
 }
 function nodeCsv() {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     return rowsToCsv([['order', 'id', 'label', 'x', 'y', 'shape', 'color', 'type'], ...sorted.map(n => [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type])]);
 }
 function matrixCsv() {
-    const sorted = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const index = new Map(sorted.map((node, position) => [node.id, position]));
     const sparseRows = Array.from({ length: sorted.length }, () => new Map());
     for (const edge of state.edges) {
@@ -12731,7 +12780,7 @@ function showExportPreview(name, content, type) {
           </div>
         </div>
         <p class="tiny muted" style="margin:0">${esc(I18N.t('export_modal_desc'))}</p>
-        <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid #334155;color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical" spellcheck="false"></textarea>
+        <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid var(--control-border);color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:.6875rem;resize:vertical" spellcheck="false"></textarea>
       </div>`;
     document.body.appendChild(modal);
     const closeModal = () => {
@@ -12956,7 +13005,7 @@ function exportDotText() {
         ? 'layout="neato", inputscale="72"'
         : 'layout="neato"';
     const lines = [header, `  graph [${graphAttrs}];`, '  node [style="filled"];'];
-    for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
+    for (const n of state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
         const v = nodeVisual(n);
         const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${dotCoord(n.x)},${dotCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
         // QVGE DOT: fillcolor=fill, color=stroke.color, penwidth=stroke.size, style=stroke.style
@@ -13254,7 +13303,7 @@ function exportGraphmlText() {
     // Node defaults are serialised per node below (resolved visuals), so no
     // separate <default> block is emitted.
     // Serialize nodes sorted by order
-    const sortedNodes = [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const sortedNodes = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     for (const n of sortedNodes) {
         const v = nodeVisual(n);
         const parts = [`    <node id="${xmlEsc(n.id)}">`];
@@ -15216,58 +15265,86 @@ function layoutGrid() {
     fitView();
     queueRender(true);
 }
-function layoutForce(requestedIter = 180) {
-    const n = state.nodes.length;
+// Yielding an already-running task keeps pending input ahead of the next
+// batch of force-layout passes. Safari has no scheduler.yield() yet, so a
+// setTimeout fallback is part of the contract, not an optional extra.
+const yieldToBrowser = () => {
+    const scheduler = window.scheduler;
+    if (scheduler && typeof scheduler.yield === 'function')
+        return scheduler.yield();
+    return new Promise(resolve => setTimeout(resolve, 0));
+};
+let forceLayoutRunning = false;
+async function layoutForce(requestedIter = 180) {
+    if (forceLayoutRunning)
+        return;
+    const nodes = state.nodes;
+    const n = nodes.length;
     if (n < 2)
         return;
-    // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
-    // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
-    // work instead so one click always finishes in roughly a second; large
-    // graphs get fewer refinement passes rather than an unresponsive page.
-    const pairs = n * (n - 1) / 2;
-    const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
-    const reduced = iter < requestedIter;
-    const area = Math.max(700 * 500, n * 22000), k = Math.sqrt(area / n);
-    for (let step = 0; step < iter; step++) {
-        const disp = new Map(state.nodes.map(v => [v.id, { x: 0, y: 0 }]));
-        for (let i = 0; i < n; i++)
-            for (let j = i + 1; j < n; j++) {
-                const v = state.nodes[i], u = state.nodes[j];
+    forceLayoutRunning = true;
+    const startRev = graphRev;
+    try {
+        // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
+        // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
+        // work so one click finishes in roughly a second, and yield every ~50 ms
+        // so the tab can still paint and answer input while it runs.
+        const pairs = n * (n - 1) / 2;
+        const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
+        const reduced = iter < requestedIter;
+        const area = Math.max(700 * 500, n * 22000), k = Math.sqrt(area / n);
+        let deadline = performance.now() + 50;
+        for (let step = 0; step < iter; step++) {
+            const disp = new Map(nodes.map(v => [v.id, { x: 0, y: 0 }]));
+            for (let i = 0; i < n; i++)
+                for (let j = i + 1; j < n; j++) {
+                    const v = nodes[i], u = nodes[j];
+                    let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
+                    const f = (k * k) / d;
+                    dx /= d;
+                    dy /= d;
+                    disp.get(v.id).x += dx * f;
+                    disp.get(v.id).y += dy * f;
+                    disp.get(u.id).x -= dx * f;
+                    disp.get(u.id).y -= dy * f;
+                }
+            for (const e of state.edges) {
+                const v = nodeById(e.from), u = nodeById(e.to);
+                if (!v || !u)
+                    continue;
                 let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
-                const f = (k * k) / d;
+                const f = (d * d) / k;
                 dx /= d;
                 dy /= d;
-                disp.get(v.id).x += dx * f;
-                disp.get(v.id).y += dy * f;
-                disp.get(u.id).x -= dx * f;
-                disp.get(u.id).y -= dy * f;
+                disp.get(v.id).x -= dx * f;
+                disp.get(v.id).y -= dy * f;
+                disp.get(u.id).x += dx * f;
+                disp.get(u.id).y += dy * f;
             }
-        for (const e of state.edges) {
-            const v = nodeById(e.from), u = nodeById(e.to);
-            if (!v || !u)
-                continue;
-            let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
-            const f = (d * d) / k;
-            dx /= d;
-            dy /= d;
-            disp.get(v.id).x -= dx * f;
-            disp.get(v.id).y -= dy * f;
-            disp.get(u.id).x += dx * f;
-            disp.get(u.id).y += dy * f;
+            const temp = 80 * (1 - step / iter);
+            for (const v of nodes) {
+                const d = disp.get(v.id);
+                const len = Math.hypot(d.x, d.y) || .01;
+                v.x += (d.x / len) * Math.min(len, temp);
+                v.y += (d.y / len) * Math.min(len, temp);
+            }
+            if (performance.now() >= deadline && step < iter - 1) {
+                await yieldToBrowser();
+                deadline = performance.now() + 50;
+                // A document edit or import during the yield invalidates this run.
+                if (graphRev !== startRev)
+                    return;
+            }
         }
-        const temp = 80 * (1 - step / iter);
-        for (const v of state.nodes) {
-            const d = disp.get(v.id);
-            const len = Math.hypot(d.x, d.y) || .01;
-            v.x += (d.x / len) * Math.min(len, temp);
-            v.y += (d.y / len) * Math.min(len, temp);
-        }
+        pushHistory('relax layout');
+        fitView();
+        queueRender(true);
+        if (reduced)
+            toast(I18N.t('layout_force_reduced', { iter, n }));
     }
-    pushHistory('relax layout');
-    fitView();
-    queueRender(true);
-    if (reduced)
-        toast(I18N.t('layout_force_reduced', { iter, n }));
+    finally {
+        forceLayoutRunning = false;
+    }
 }
 async function addSample() {
     if (state.nodes.length && !await uiConfirm(I18N.t('replace_with_sample'), { danger: true }))
@@ -15355,17 +15432,53 @@ function loadSaved() {
 }
 function toast(message) {
     const stack = $('#toastStack');
+    const removeToast = (node) => {
+        const pending = node._toastTimer;
+        if (pending)
+            clearTimeout(pending);
+        node.remove();
+    };
     while (stack.children.length >= 4)
-        stack.firstElementChild?.remove();
+        removeToast(stack.firstElementChild);
     const el = document.createElement('div');
     el.className = 'toast';
-    el.textContent = message;
-    stack.appendChild(el);
-    setTimeout(() => {
+    const text = document.createElement('span');
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.setAttribute('aria-label', I18N.t('toast_close'));
+    close.textContent = '\u00d7';
+    el.append(text, close);
+    // A toast the pointer or keyboard is using must not vanish underneath it.
+    let timer = 0;
+    const disarm = () => {
+        if (timer)
+            clearTimeout(timer);
+        timer = 0;
+        el._toastTimer = 0;
+    };
+    const dismiss = () => {
+        if (!el.isConnected)
+            return;
+        disarm();
         el.style.opacity = '0';
         el.style.transform = 'translateY(6px)';
-        setTimeout(() => el.remove(), 180);
-    }, 2300);
+        window.setTimeout(() => el.remove(), 180);
+    };
+    const arm = () => {
+        disarm();
+        timer = window.setTimeout(dismiss, 2300);
+        el._toastTimer = timer;
+    };
+    el.addEventListener('pointerenter', disarm);
+    el.addEventListener('focusin', disarm);
+    el.addEventListener('pointerleave', arm);
+    el.addEventListener('focusout', () => { if (!el.contains(document.activeElement))
+        arm(); });
+    close.addEventListener('click', dismiss);
+    stack.appendChild(el);
+    arm();
 }
 async function copyText(text) {
     try {
@@ -16358,21 +16471,43 @@ function togglePresetsOverlay(force) {
     const overlay = $('#presetsOverlay');
     if (!overlay)
         return;
-    const isOpen = force == null ? !overlay.classList.contains('open') : force;
+    const supportsModal = typeof window.HTMLDialogElement === 'function'
+        && typeof window.HTMLDialogElement.prototype.showModal === 'function';
+    const isOpen = force == null ? !(overlay.open || overlay.classList.contains('open')) : force;
     if (isOpen) {
         presetsReturnFocus = document.activeElement;
-        overlay.classList.add('open');
-        overlay.setAttribute('aria-hidden', 'false');
+        if (supportsModal)
+            overlay.showModal();
+        else {
+            overlay.classList.add('open');
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.setAttribute('aria-hidden', 'false');
+        }
         renderPresetsGrid();
         setTimeout(() => $('#btnPresetClose').focus({ preventScroll: true }), 0);
     }
     else {
+        const returnFocus = presetsReturnFocus;
+        presetsReturnFocus = null;
+        if (supportsModal && overlay.open)
+            overlay.close();
         overlay.classList.remove('open');
-        overlay.setAttribute('aria-hidden', 'true');
+        if (!supportsModal)
+            overlay.setAttribute('aria-hidden', 'true');
+        if (returnFocus?.isConnected)
+            returnFocus.focus({ preventScroll: true });
+    }
+}
+// Native dismissal (Esc/back gesture) can close the dialog without going
+// through our toggle; restore focus in that case too.
+const presetsDialog = $('#presetsOverlay');
+if (typeof presetsDialog.close === 'function') {
+    presetsDialog.addEventListener('close', () => {
         if (presetsReturnFocus?.isConnected)
             presetsReturnFocus.focus({ preventScroll: true });
         presetsReturnFocus = null;
-    }
+    });
 }
 const CUSTOM_ATTRIBUTE_TYPES = ['boolean', 'int', 'long', 'float', 'double', 'string'];
 // Graph-scope custom property values (document-wide). Node/edge values live in
@@ -16525,6 +16660,10 @@ function renderCustomAttributes(options) {
         });
     }
 }
+// Enter confirms an IME composition in CJK input methods. Committing the
+// field's action from keydown in that case would apply a half-composed
+// value; keyCode 229 is the fallback signal in engines without isComposing.
+const isCommittedEnter = (ev) => ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229;
 function wireUi() {
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
@@ -16764,7 +16903,7 @@ function wireUi() {
         if (ev.key !== 'Escape')
             return;
         const presets = $('#presetsOverlay');
-        if (presets.classList.contains('open')) {
+        if (presets.open || presets.classList.contains('open')) {
             ev.preventDefault();
             ev.stopImmediatePropagation();
             togglePresetsOverlay(false);
@@ -16890,7 +17029,7 @@ function wireUi() {
     $('#btnZoomReset').addEventListener('click', resetZoom);
     $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
-    $('#matrixSize').addEventListener('keydown', ev => { if (ev.key === 'Enter')
+    $('#matrixSize').addEventListener('keydown', ev => { if (isCommittedEnter(ev))
         setMatrixDimension(ev.target.value); });
     $('#btnMatrixAddNode').addEventListener('click', addNodeFromMatrix);
     $('#btnMatrixInsertNode').addEventListener('click', insertNodeFromMatrix);
@@ -16935,7 +17074,7 @@ function wireUi() {
     ['visRangeStart', 'visRangeEnd'].forEach(id => {
         const el = $('#' + id);
         if (el) {
-            el.addEventListener('keydown', ev => { if (ev.key === 'Enter') {
+            el.addEventListener('keydown', ev => { if (isCommittedEnter(ev)) {
                 ev.preventDefault();
                 applyVisibleRange();
             } });
@@ -17244,7 +17383,7 @@ function wireUi() {
         if (el) {
             el.addEventListener('input', () => { el._userDirty = true; el._appliedViaEnter = undefined; });
             el.addEventListener('keydown', ev => {
-                if (ev.key === 'Enter') {
+                if (isCommittedEnter(ev)) {
                     ev.preventDefault();
                     setCameraFromInputs(el);
                     el._appliedViaEnter = el.value;

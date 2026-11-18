@@ -355,7 +355,7 @@
     if(sortedNodesCache.arr === arr && sortedNodesCache.len === arr.length && sortedNodesCache.rev === graphRev){
       return sortedNodesCache.sorted;
     }
-    const sorted = [...arr].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = arr.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     sortedNodesCache.arr = arr; sortedNodesCache.len = arr.length; sortedNodesCache.rev = graphRev; sortedNodesCache.sorted = sorted;
     return sorted;
   }
@@ -2455,7 +2455,7 @@
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
     // Global order index for each node (for move boundaries)
-    const allSorted = [...state.nodes].sort((a,b)=>(a.order??0)-(b.order??0));
+    const allSorted = state.nodes.toSorted((a,b)=>(a.order??0)-(b.order??0));
     const orderPos = new Map(allSorted.map((n,i)=>[n.id,i]));
     // Build with array push+join instead of repeated += to avoid O(n^2) string copying for large matrices
     const parts: string[] = [];

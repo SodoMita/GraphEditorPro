@@ -232,6 +232,9 @@
     dialogCleanup?.();
     dialogCleanup = null;
     const resolve = dialogResolve;
+    // A native modal must leave the top layer before its element is removed.
+    const active = dialogEl as HTMLDialogElement;
+    if(active.open && typeof active.close === 'function') active.close();
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
@@ -246,10 +249,17 @@
       dialogResolve = resolve;
       dialogReturnFocus = document.activeElement as HTMLElement;
       const wantsInput = Boolean(options.input);
-      const dialog = document.createElement('div');
+      // Native <dialog> provides inert background, focus containment, top-layer
+      // rendering and platform dismissal. The div path is only a fallback for
+      // environments without showModal() (notably jsdom in our tests).
+      const nativeDialog = typeof (window as any).HTMLDialogElement === 'function'
+        && typeof (window as any).HTMLDialogElement.prototype.showModal === 'function';
+      const dialog = document.createElement(nativeDialog ? 'dialog' : 'div') as HTMLElement;
       dialog.className = 'app-dialog';
-      dialog.setAttribute('role', 'dialog');
-      dialog.setAttribute('aria-modal', 'true');
+      if(!nativeDialog){
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+      }
       dialog.setAttribute('aria-labelledby', 'appDialogTitle');
       if(options.message) dialog.setAttribute('aria-describedby', 'appDialogMessage');
       const inputId = 'appDialogInput';
@@ -266,6 +276,7 @@
       document.body.appendChild(dialog);
       dialogEl = dialog;
       dialogOpenCount++;
+      if(nativeDialog) (dialog as HTMLDialogElement).showModal();
       const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
       const form = dialog.querySelector('form');
       const finish = (result: string | boolean | null) => closeDialog(result);
@@ -275,6 +286,11 @@
       });
       dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
       dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) finish(wantsInput ? null : false); });
+      if(nativeDialog){
+        // Esc and the platform's back gesture fire `cancel`; let the shared
+        // close path resolve the promise and restore focus exactly once.
+        dialog.addEventListener('cancel', ev => { ev.preventDefault(); finish(wantsInput ? null : false); });
+      } else {
       // The handlers live on the document, not on the dialog element: clicking
       // the dialog's own title or message moves focus to <body> in Chromium,
       // and a dialog-scoped keydown never fires from there — Escape and the
@@ -307,6 +323,7 @@
         document.removeEventListener('keydown', onKeyDown, true);
         document.removeEventListener('focusin', onFocusIn, true);
       };
+      }
       setTimeout(() => {
         if(input){
           input.focus();

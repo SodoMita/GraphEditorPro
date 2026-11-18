@@ -57,11 +57,11 @@
     return rowsToCsv(rows);
   }
   function nodeCsv(){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     return rowsToCsv([['order','id','label','x','y','shape','color','type'], ...sorted.map(n => [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type])]);
   }
   function matrixCsv(){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     const index = new Map(sorted.map((node, position) => [node.id, position]));
     const sparseRows = Array.from({length:sorted.length}, () => new Map());
     for(const edge of state.edges){
@@ -124,7 +124,7 @@
           </div>
         </div>
         <p class="tiny muted" style="margin:0">${esc(I18N.t('export_modal_desc'))}</p>
-        <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid #334155;color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical" spellcheck="false"></textarea>
+        <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid var(--control-border);color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:.6875rem;resize:vertical" spellcheck="false"></textarea>
       </div>`;
     document.body.appendChild(modal);
     const closeModal = () => {
@@ -308,7 +308,7 @@
       ? 'layout="neato", inputscale="72"'
       : 'layout="neato"';
     const lines = [header, `  graph [${graphAttrs}];`, '  node [style="filled"];'];
-    for(const n of [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
+    for(const n of state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0))){
       const v = nodeVisual(n);
       const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${dotCoord(n.x)},${dotCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
       // QVGE DOT: fillcolor=fill, color=stroke.color, penwidth=stroke.size, style=stroke.style
@@ -630,7 +630,7 @@
     // Node defaults are serialised per node below (resolved visuals), so no
     // separate <default> block is emitted.
     // Serialize nodes sorted by order
-    const sortedNodes = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sortedNodes = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     for(const n of sortedNodes){
       const v = nodeVisual(n);
       const parts = [`    <node id="${xmlEsc(n.id)}">`];

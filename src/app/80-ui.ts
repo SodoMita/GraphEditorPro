@@ -1,3 +1,9 @@
+  // Enter confirms an IME composition in CJK input methods. Committing the
+  // field's action from keydown in that case would apply a half-composed
+  // value; keyCode 229 is the fallback signal in engines without isComposing.
+  const isCommittedEnter = (ev: KeyboardEvent): boolean =>
+    ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229;
+
   function wireUi(){
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
@@ -178,7 +184,7 @@
     window.addEventListener('keydown', ev => {
       if(ev.key !== 'Escape') return;
       const presets = $('#presetsOverlay');
-      if(presets.classList.contains('open')){
+      if(presets.open || presets.classList.contains('open')){
         ev.preventDefault(); ev.stopImmediatePropagation(); togglePresetsOverlay(false); return;
       }
       if(sidebarEl.classList.contains('open')){
@@ -271,7 +277,7 @@
     $('#btnZoomOut').addEventListener('click', () => { const r=canvasViewportRect(); zoomAt(1.22, r.left+r.width/2, r.top+r.height/2); });
     $('#btnZoomReset').addEventListener('click', resetZoom); $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
-    $('#matrixSize').addEventListener('keydown', ev => { if(ev.key === 'Enter') setMatrixDimension(ev.target.value); });
+    $('#matrixSize').addEventListener('keydown', ev => { if(isCommittedEnter(ev)) setMatrixDimension(ev.target.value); });
     $('#btnMatrixAddNode').addEventListener('click', addNodeFromMatrix);
     $('#btnMatrixInsertNode').addEventListener('click', insertNodeFromMatrix);
     $('#btnMatrixClear').addEventListener('click', clearMatrixEdges);
@@ -306,7 +312,7 @@
     });
     // Enter key in range inputs applies the range
     ['visRangeStart','visRangeEnd'].forEach(id => {
-      const el = $('#'+id); if(el){ el.addEventListener('keydown', ev => { if(ev.key === 'Enter'){ ev.preventDefault(); applyVisibleRange(); } }); }
+      const el = $('#'+id); if(el){ el.addEventListener('keydown', ev => { if(isCommittedEnter(ev)){ ev.preventDefault(); applyVisibleRange(); } }); }
     });
     // Edge list editing events (delegated)
     const edgeListHost = $('#edgeListHost');
@@ -516,7 +522,7 @@
       if(el){
         el.addEventListener('input', () => { el._userDirty = true; el._appliedViaEnter = undefined; });
         el.addEventListener('keydown', ev => {
-          if(ev.key === 'Enter'){
+          if(isCommittedEnter(ev)){
             ev.preventDefault();
             setCameraFromInputs(el);
             el._appliedViaEnter = el.value;

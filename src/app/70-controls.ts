@@ -705,21 +705,39 @@
     pushHistory('delete preset'); saveSoon(); renderPresetsGrid();
   }
   function togglePresetsOverlay(force?: boolean){
-    const overlay = $('#presetsOverlay');
+    const overlay = $('#presetsOverlay') as HTMLElement & Partial<HTMLDialogElement>;
     if(!overlay) return;
-    const isOpen = force == null ? !overlay.classList.contains('open') : force;
+    const supportsModal = typeof (window as any).HTMLDialogElement === 'function'
+      && typeof (window as any).HTMLDialogElement.prototype.showModal === 'function';
+    const isOpen = force == null ? !(overlay.open || overlay.classList.contains('open')) : force;
     if(isOpen){
       presetsReturnFocus = document.activeElement as HTMLElement;
-      overlay.classList.add('open');
-      overlay.setAttribute('aria-hidden', 'false');
+      if(supportsModal) overlay.showModal();
+      else {
+        overlay.classList.add('open');
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-hidden', 'false');
+      }
       renderPresetsGrid();
       setTimeout(() => $('#btnPresetClose').focus({preventScroll:true}), 0);
     } else {
+      const returnFocus = presetsReturnFocus;
+      presetsReturnFocus = null;
+      if(supportsModal && overlay.open) overlay.close();
       overlay.classList.remove('open');
-      overlay.setAttribute('aria-hidden', 'true');
+      if(!supportsModal) overlay.setAttribute('aria-hidden', 'true');
+      if(returnFocus?.isConnected) returnFocus.focus({preventScroll:true});
+    }
+  }
+  // Native dismissal (Esc/back gesture) can close the dialog without going
+  // through our toggle; restore focus in that case too.
+  const presetsDialog = $('#presetsOverlay') as HTMLDialogElement;
+  if(typeof presetsDialog.close === 'function'){
+    presetsDialog.addEventListener('close', () => {
       if(presetsReturnFocus?.isConnected) presetsReturnFocus.focus({preventScroll:true});
       presetsReturnFocus = null;
-    }
+    });
   }
   const CUSTOM_ATTRIBUTE_TYPES = ['boolean','int','long','float','double','string'];
   // Graph-scope custom property values (document-wide). Node/edge values live in
