@@ -578,6 +578,8 @@ const I18N: I18nService = {
     'pasted_exact_n_m': { en: 'Pasted in place: {n:node}, {m:edge}', ru: 'Вставлено на месте: {n:node}, {m:edge}' },
     'pasted_exact_edges': { en: 'Pasted in place: {n:edge}', ru: 'Вставлено на месте: {n:edge}' },
     'pasted_exact_noop': { en: 'Paste in place: nothing changed', ru: 'Вставка на месте: изменений нет' },
+    'paste_cap_nodes': { en: 'Skipped {n:node}: the document limit is {limit}', ru: 'Пропущено: {n:node} — предел документа {limit}' },
+    'paste_cap_edges': { en: 'Skipped {n:edge}: the document limit is {limit}', ru: 'Пропущено: {n:edge} — предел документа {limit}' },
     'nodes_reversed': { en: 'Node order reversed', ru: 'Порядок узлов обращён' },
     'nodes_shuffled': { en: 'Node order shuffled', ru: 'Порядок узлов перемешан' },
     'no_edge_data': { en: 'No edge data', ru: 'Нет данных рёбер' },

@@ -8,6 +8,11 @@
   // bounds per-frame work at a few milliseconds.
   const DRAG_LIVE_EDGE_LIMIT = 2000;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+  // sanitizeState keeps at most this many entities on load. Every path that
+  // can append to the document (import, paste) must respect the same caps, or
+  // the autosaved graph silently shrinks on the next reopen.
+  const MAX_GRAPH_NODES = 3000;
+  const MAX_GRAPH_EDGES = 8000;
   // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
   // size is capped independently of the user-facing row limit. Every cell is a
   // form control: measured in Chromium on a 350-node document, a full render
@@ -754,10 +759,10 @@
     $('#btnMatrixClear').disabled = !state.edges.length;
     const hasClipboard = Boolean(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
     const pasteBtn = document.getElementById('btnPaste') as HTMLButtonElement | null;
-    const pasteExactBtn = document.getElementById('btnPasteExact') as HTMLButtonElement | null;
     const pasteExtBtn = document.getElementById('btnPasteWithExternal') as HTMLButtonElement | null;
     if(pasteBtn) pasteBtn.disabled = !hasClipboard;
-    if(pasteExactBtn) pasteExactBtn.disabled = !hasClipboard;
+    // Paste in place stays clickable: a fresh tab may have a valid system
+    // clipboard and no in-memory payload to enable the button from.
     if(pasteExtBtn) pasteExtBtn.disabled = !hasClipboard;
     const copyBtn = document.getElementById('btnCopy') as HTMLButtonElement | null;
     const cutBtn = document.getElementById('btnCut') as HTMLButtonElement | null;
@@ -1517,7 +1522,7 @@
 
     const usedNodeIds = new Set<string>();
     const nodeReferences = new Map<string, string>();
-    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, 3000).filter(isRecord) : [];
+    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, MAX_GRAPH_NODES).filter(isRecord) : [];
     const nodes: GraphNode[] = rawNodes.map((n, i) => {
       const rawId = String(n.id || ('n' + (i + 1)));
       const id = uniqueSafeId(rawId, 'n', usedNodeIds);
@@ -1549,7 +1554,7 @@
 
     const nodeIds = new Set(nodes.map(node => node.id));
     const usedEdgeIds = new Set<string>();
-    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, 8000).filter(isRecord) : [];
+    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, MAX_GRAPH_EDGES).filter(isRecord) : [];
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
       const from = nodeReferences.get(String(e.from)) || (nodeIds.has(String(e.from)) ? String(e.from) : '');

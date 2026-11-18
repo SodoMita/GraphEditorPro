@@ -133,7 +133,9 @@ test('the toolbar button exact-pastes the copied selection without offset or dup
   const { dom, errors } = createEditorDom(baseGraph);
   const { window } = dom; const { document } = window;
   await settle(window, 80);
-  assert.equal(document.querySelector('#btnPasteExact').disabled, true, 'no clipboard yet');
+  // The toolbar button is always clickable: a fresh tab can paste straight
+  // from the system clipboard without a local copy to enable it.
+  assert.equal(document.querySelector('#btnPasteExact').disabled, false, 'no local clipboard needed');
 
   await selectNode(window, 'a', 300, 330);
   document.querySelector('#btnCopy').click();
@@ -146,6 +148,128 @@ test('the toolbar button exact-pastes the copied selection without offset or dup
   const a = graph.nodes.find(n => n.id === 'a');
   assert.equal(a.x, -200); assert.equal(a.y, 0, 'the original coordinates are restored, not offset');
   assert.equal(a.label, 'A');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an unrelated custom value survives an exact paste that carries only one key', async () => {
+  const graph = {
+    ...baseGraph,
+    customAttributes: [
+      { id: 'p1', scope: 'node', type: 'string' },
+      { id: 'p2', scope: 'node', type: 'string' },
+    ],
+    nodes: [
+      { ...baseGraph.nodes[0], custom: { p1: 'old', p2: 'keep' } },
+      baseGraph.nodes[1],
+    ],
+  };
+  const payload = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'A*', x: -200, y: 0, order: 0, custom: { p1: 'new' } }],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'p1', scope: 'node', type: 'string' }],
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, payload);
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const node = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.deepEqual(node.custom, { p1: 'new', p2: 'keep' }, 'p2 was never carried, so it stays');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a newer system clipboard beats a stale in-memory copy', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+
+  // Create an in-memory copy of the local node first.
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  // Another tab then copies a different version of the same node.
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'From other tab', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const node = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.equal(node.label, 'From other tab', 'the system payload wins over the stale local one');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('the toolbar button pastes from the system clipboard with no local copy', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Fresh tab', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+
+  assert.equal(document.querySelector('#btnPasteExact').disabled, false);
+  document.querySelector('#btnPasteExact').click();
+  await settle(window, 120);
+
+  const node = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.equal(node.label, 'Fresh tab');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a partial payload with no coordinates does not reset an existing position', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [
+      { id: 'a', label: 'No coordinates', order: 0 },
+      { id: 'c', label: 'New without coordinates' },
+    ],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const graph = exportGraph(document);
+  const a = graph.nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'No coordinates');
+  assert.equal(a.x, -200); assert.equal(a.y, 0, 'omitted axes leave the stored position alone');
+  const c = graph.nodes.find(n => n.id === 'c');
+  assert.ok(c, 'the new node is still created');
+  assert.equal(c.x, 0); assert.equal(c.y, 0, 'new nodes still get finite coordinates');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('exact paste refuses to grow a document past the loader node cap', async () => {
+  const nodes = [];
+  for(let i = 0; i < 3000; i++) nodes.push({ id: 'n' + i, label: 'N', x: i % 100, y: 0, order: i });
+  const { dom, errors } = createEditorDom({ ...baseGraph, nodes, edges: [] });
+  const { window } = dom; const { document } = window;
+  await settle(window, 500);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'extra', label: 'Extra', x: 10, y: 10, order: 3000 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 300);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.length, 3000, 'no entity is added beyond the sanitizer cap');
+  assert.equal(graph.nodes.some(n => n.id === 'extra'), false);
+  assert.match(document.querySelector('.toast-stack').textContent, /3000/, 'the drop is reported');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

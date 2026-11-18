@@ -45,7 +45,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 
 ## Paste in place
 
-`Ctrl+V` (⌘+V) pastes the copied nodes and edges with an increasing offset and never reuses the copied ids. The **Paste in place** button and `Ctrl+Alt+V` / `Ctrl+Shift+V` (⌘+Option+V / ⌘+Shift+V) paste the same payload at its original coordinates instead. Ids already present in the document are updated in place — only fields carried by the clipboard change, so unrelated node/edge data survives — while missing ids are created at their copied coordinates. Repeating an in-place paste is therefore idempotent rather than piling up clones. The system clipboard payload used for cross-tab pastes goes through the same merge.
+`Ctrl+V` (⌘+V) pastes the copied nodes and edges with an increasing offset and never reuses the copied ids. The **Paste in place** button and `Ctrl+Alt+V` / `Ctrl+Shift+V` (⌘+Option+V / ⌘+Shift+V) paste the same payload at its original coordinates instead. Ids already present in the document are updated in place — only fields carried by the clipboard change, so unrelated node/edge data, custom values and omitted coordinates survive — while missing ids are created at their copied coordinates. Repeating an in-place paste is therefore idempotent rather than piling up clones. A readable system-clipboard payload wins over a stale in-memory copy, and both paste modes stop at the same 3,000-node / 8,000-edge limits as the loader so autosaved graphs never shrink on reopen.
 
 ## Moving selections: transform gizmos
 

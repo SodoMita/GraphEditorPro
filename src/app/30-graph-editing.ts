@@ -1158,6 +1158,16 @@
       const resolved = sanitizeCustomValues(entity?.custom, pasteEdgeTypeById, pasteAllSurvivingTypeById);
       if(resolved) entity.custom = resolved; else delete entity?.custom;
     }
+    // Both paste modes must leave a document the loader can read back: the
+    // sanitizer drops entities past these caps, so pasting beyond them would
+    // autosave a graph that silently shrinks on the next open.
+    const nodeCapacity = Math.max(0, MAX_GRAPH_NODES - state.nodes.length);
+    const edgeCapacity = Math.max(0, MAX_GRAPH_EDGES - state.edges.length);
+    let droppedNodes = 0, droppedEdges = 0;
+    const reportDropped = () => {
+      if(droppedNodes) toast(I18N.t('paste_cap_nodes', {n: droppedNodes, limit: MAX_GRAPH_NODES}));
+      if(droppedEdges) toast(I18N.t('paste_cap_edges', {n: droppedEdges, limit: MAX_GRAPH_EDGES}));
+    };
     if(exactPaste){
       // Exact paste is a *merge*, not a clone pass. Each carried id names one
       // entity: if the document already has it, that object is updated and no
@@ -1173,16 +1183,30 @@
         }
         return false;
       };
+      // Custom values are merged key by key, never as a whole map: a payload
+      // carrying only p1 must leave the document's unrelated p2 untouched.
+      const mergeCustom = (target: AnyRecord, carriedCustom: unknown) => {
+        const incoming = cloneCustomMap(carriedCustom);
+        if(!incoming) return false;
+        const out: AnyRecord = Object.create(null);
+        if(isRecord(target.custom)) for(const key of Object.keys(target.custom)) out[key] = target.custom[key];
+        let changed = false;
+        for(const key of Object.keys(incoming)){
+          if(!Object.prototype.hasOwnProperty.call(out, key) || !valuesEqual(out[key], incoming[key])){
+            out[key] = incoming[key]; changed = true;
+          }
+        }
+        if(changed) target.custom = out;
+        return changed;
+      };
       const mergeCarried = (target: AnyRecord, carried: AnyRecord, keep: string[] = []) => {
         let changed = false;
         for(const key of Object.keys(carried)){
-          if(key === 'id' || keep.includes(key)) continue;
-          // A null-prototype copy keeps keys such as "__proto__" harmless and
-          // never shares a mutable custom map with the clipboard payload.
-          const incoming = key === 'custom' ? cloneCustomMap(carried.custom) : carried[key];
-          if(key === 'custom' && !incoming) continue;
+          if(key === 'id' || key === 'custom' || keep.includes(key)) continue;
+          const incoming = carried[key];
           if(!valuesEqual(target[key], incoming)){ target[key] = incoming; changed = true; }
         }
+        if(mergeCustom(target, carried.custom)) changed = true;
         return changed;
       };
       const nodeById = new Map(state.nodes.map(n => [n.id, n] as [string, GraphNode]));
@@ -1192,28 +1216,47 @@
       let changed = false;
       let nextFreeOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1) + 1;
       for(const orig of [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
-        const node = cloneNode(orig) as GraphNode;
-        node.x = finite(node.x, 0); node.y = finite(node.y, 0);
+        const node: AnyRecord = cloneNode(orig);
         const existing = nodeById.get(node.id);
+        // Only coordinates actually carried by the clipboard are written. A
+        // partial payload that omits x/y must never reset a stored position.
+        for(const axis of ['x','y'] as const){
+          if(Object.prototype.hasOwnProperty.call(node, axis)){
+            const numeric = Number(node[axis]);
+            node[axis] = Number.isFinite(numeric) ? numeric : (existing ? finite(existing[axis], 0) : 0);
+          } else if(existing){
+            delete node[axis];
+          } else {
+            node[axis] = 0;
+          }
+        }
         if(existing){
           if(mergeCarried(existing, node, ['order'])) changed = true;
           pastedNodeIds.push(existing.id);
         } else {
+          if(state.nodes.length >= MAX_GRAPH_NODES){ droppedNodes++; continue; }
           const num = Number((node.id.match(/\d+$/)||[0])[0]);
           if(Number.isFinite(num) && num >= state.nextNode) state.nextNode = num + 1;
           const carriedOrder = Number(node.order);
           node.order = Number.isFinite(carriedOrder) ? carriedOrder : nextFreeOrder++;
-          state.nodes.push(node); nodeById.set(node.id, node);
+          state.nodes.push(node as GraphNode); nodeById.set(node.id, node as GraphNode);
           pastedNodeIds.push(node.id); changed = true;
         }
       }
+      const pastedNodeIdSet = new Set(pastedNodeIds);
       for(const { entity: orig } of materializedEdges){
+        // Never create an edge whose carried endpoint was dropped by the cap:
+        // it would be dangling and the loader would discard it on reopen.
+        const from = String(orig.from ?? ''), to = String(orig.to ?? '');
+        if((carriedNodeIds.has(from) && !pastedNodeIdSet.has(from)) ||
+           (carriedNodeIds.has(to) && !pastedNodeIdSet.has(to))){ droppedEdges++; continue; }
         const edge = cloneEdge(orig) as GraphEdge;
         const existing = edgeById.get(edge.id);
         if(existing){
           if(mergeCarried(existing, edge)) changed = true;
           pastedEdgeIds.push(existing.id);
         } else {
+          if(state.edges.length >= MAX_GRAPH_EDGES){ droppedEdges++; continue; }
           const num = Number((edge.id.match(/\d+$/)||[0])[0]);
           if(Number.isFinite(num) && num >= state.nextEdge) state.nextEdge = num + 1;
           // Endpoints are carried verbatim: a pasted node reuses its own id,
@@ -1235,6 +1278,7 @@
       if(!changed) toast(I18N.t('pasted_exact_noop'));
       else if(pastedNodeIds.length) toast(I18N.t('pasted_exact_n_m', {n: pastedNodeIds.length, m: pastedEdgeIds.length}));
       else toast(I18N.t('pasted_exact_edges', {n: pastedEdgeIds.length}));
+      reportDropped();
       saveSoon();
       return true;
     } else {
@@ -1247,6 +1291,7 @@
       const newNodeIds: string[] = [];
       const existingNodeIds = new Set(originalExistingNodeIds);
       const sortedCopyNodes = [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+      droppedNodes = sortedCopyNodes.length - Math.min(sortedCopyNodes.length, nodeCapacity);
       const isFreeWithPlaced = (x:number, y:number, ignoreIds:Set<string>, placed:GraphNode[]) => {
         if(!isPositionFree(x, y, ignoreIds)) return false;
         for(const pn of placed){
@@ -1269,7 +1314,7 @@
         }
         return {x: x + 80, y: y + 80};
       };
-      for(const orig of sortedCopyNodes){
+      for(const orig of sortedCopyNodes.slice(0, nodeCapacity)){
         let newId = orig.id;
         const used = new Set([...existingNodeIds, ...newNodeIds]);
         if(used.has(newId)){
@@ -1318,6 +1363,12 @@
       // The set was resolved before the definitions were minted; idMap now
       // agrees with it one-to-one (an endpoint maps iff it is being pasted).
       for(const { entity: orig } of materializedEdges){
+        const from = String(orig.from ?? ''), to = String(orig.to ?? '');
+        // A node dropped by the node cap has no clone; an edge pointing at it
+        // would be dangling after reload, so it is dropped here as well.
+        if((carriedNodeIds.has(from) && !idMap.has(from)) ||
+           (carriedNodeIds.has(to) && !idMap.has(to))){ droppedEdges++; continue; }
+        if(finalNewEdges.length >= edgeCapacity){ droppedEdges++; continue; }
         const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
         addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
       }
@@ -1334,35 +1385,45 @@
       const totalPastedEdges = finalNewEdges.length;
       if(newNodes.length) toast(I18N.t('pasted_n_m', {n: newNodes.length, m: totalPastedEdges}) || `Pasted ${newNodes.length} node(s), ${totalPastedEdges} edge(s)`);
       else if(totalPastedEdges) toast(I18N.t('pasted_edges', {n: totalPastedEdges}) || `Pasted ${totalPastedEdges} edge(s)`);
+      reportDropped();
       saveSoon();
       return true;
     }
   }
   async function pasteFromClipboardSource(exact: boolean){
-    // Try internal clipboard first (fast path); if empty, try system clipboard
-    if(clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length)){
-      pasteClipboardInternal(null, { exact });
-      return;
-    }
+    const hasInternal = Boolean(clipboardData &&
+      (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
+    let systemData: AnyRecord | null = null;
+    let systemIssue: { key: string; params?: AnyRecord } | null = null;
+    let text = '';
     try {
-      const text = await navigator.clipboard.readText();
-      if(!text) { toast(I18N.t('clipboard_empty')); return; }
-      const data = JSON.parse(text);
-      if(data && data.type === 'graph-editor-clipboard'){
-        pasteClipboardInternal(data, { exact });
-        return;
-      }
-      // Try to parse as generic graph JSON (whole graph paste)
-      // If it looks like a graph (has nodes), import as append?
-      if(data && Array.isArray(data.nodes)){
-        // Use append import logic as fallback
-        toast(I18N.t('paste_failed', {msg: I18N.t('err_not_node_clipboard')}));
-        return;
-      }
-      toast(I18N.t('clipboard_empty'));
+      text = (await navigator.clipboard.readText()) || '';
     } catch(e){
-      toast(I18N.t('paste_failed', {msg: (e as Error).message}));
+      systemIssue = { key:'paste_failed', params:{msg:(e as Error).message} };
     }
+    if(text.trim()){
+      try {
+        const parsed = JSON.parse(text);
+        if(parsed && parsed.type === 'graph-editor-clipboard'){
+          systemData = parsed;
+        } else if(parsed && Array.isArray(parsed.nodes)){
+          systemIssue = { key:'paste_failed', params:{msg:I18N.t('err_not_node_clipboard')} };
+        } else {
+          systemIssue = { key:'clipboard_empty' };
+        }
+      } catch(e){
+        systemIssue = { key:'paste_failed', params:{msg:(e as Error).message} };
+      }
+    } else if(!systemIssue){
+      systemIssue = { key:'clipboard_empty' };
+    }
+    // A well-formed graph payload from the system clipboard wins over the
+    // in-memory buffer: another tab may have copied after our last local copy,
+    // and in-place paste would otherwise overwrite live data with a stale
+    // payload. Unreadable/unrelated system text falls back to the local copy.
+    if(systemData){ pasteClipboardInternal(systemData, { exact }); return; }
+    if(hasInternal){ pasteClipboardInternal(null, { exact }); return; }
+    if(systemIssue) toast(I18N.t(systemIssue.key, systemIssue.params));
   }
   function pasteFromSystemClipboard(){ return pasteFromClipboardSource(false); }
   function pasteExactFromSystemClipboard(){ return pasteFromClipboardSource(true); }
