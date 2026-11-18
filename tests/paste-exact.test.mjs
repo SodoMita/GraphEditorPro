@@ -434,3 +434,120 @@ test('exact paste can restore the editor’s empty shape and color as unset', as
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('a late older write cannot replace a newer local copy', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let systemText = '';
+  const pendingWrites = {};
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      readText: async () => systemText,
+      writeText: (text) => {
+        const key = JSON.parse(text).nodes[0].id;
+        return new Promise(resolve => { pendingWrites[key] = () => { systemText = text; resolve(); }; });
+      },
+    },
+  });
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  await selectNode(window, 'b', 700, 330);
+  document.querySelector('#btnCopy').click();
+  // B's write finishes first, then an unrelated copy overwrites the system
+  // clipboard; A's older write finally lands after both.
+  pendingWrites.b();
+  await settle(window, 20);
+  systemText = JSON.stringify({
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'b', label: 'Changed', x: 200, y: 0, order: 1 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+  assert.equal(exportGraph(document).nodes.find(n => n.id === 'b').label, 'Changed');
+
+  pendingWrites.a();
+  await settle(window, 20);
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.find(n => n.id === 'b').label, 'B', 'the newer local copy wins again');
+  assert.equal(graph.nodes.find(n => n.id === 'a').label, 'A', 'the late older write is ignored');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a denied pre-copy snapshot does not mask a later cross-tab copy', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let reads = 0;
+  const newer = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Later cross-tab', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  };
+  setClipboardWrite(window, {}, async () => { throw new Error('denied'); }, async () => {
+    reads++;
+    if(reads === 1) throw new Error('snapshot denied');
+    return JSON.stringify(newer);
+  });
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 40);
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const a = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'Later cross-tab', 'an unknown baseline is not treated as "always stale"');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a hanging system read does not block a valid local paste', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboardWrite(window, {}, async () => {}, () => new Promise(() => {}));
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  hotkey(window, 'v', { ctrlKey: true });
+  await settle(window, 180);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.length, 3, 'the local copy pasted without waiting for the system read');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('offset paste iterates planned nodes so duplicate normalized ids paste once', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [
+      { id: 'one!', label: 'First', x: 100, y: 0, order: 0, custom: { p1: 'kept' } },
+      { id: 'one', label: 'Second', x: 200, y: 0, order: 1, custom: { p1: 'dropped' } },
+    ],
+    edges: [], externalEdges: [],
+    customAttributes: [{ id: 'p1', scope: 'node', type: 'string' }],
+  });
+  hotkey(window, 'v', { ctrlKey: true });
+  await settle(window, 120);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.length, 3, 'only the first normalized id is pasted');
+  const one = graph.nodes.find(n => n.id === 'one');
+  assert.equal(one.label, 'First');
+  assert.deepEqual(one.custom, { p1: 'kept' }, 'the rejected duplicate cannot smuggle in a value');
+  assert.match(document.querySelector('.toast-stack').textContent, /skipped/i);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

@@ -801,11 +801,36 @@
   function cloneEdge(e){ const c = {...e}; const custom = cloneCustomMap(e?.custom); if(custom) c.custom = custom; else delete c.custom; return c; }
   // Whether the latest local copy was published to the system clipboard. A
   // pending or failed write leaves the system clipboard older than the
-  // in-memory payload, so pastes must not prefer it in that state.
+  // in-memory payload, so pastes must not prefer it in that state. The stamp
+  // identifies the copy whose payload is on the clipboard even if an older
+  // write resolves later and overwrites it.
+  type ClipboardStamp = { t: number; s: number; tab: string };
+  const CLIPBOARD_READ_TIMEOUT_MS = 80;
+  const clipboardTabId = Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+  const compareClipboardStamps = (left: any, right: ClipboardStamp): boolean | null => {
+    if(!isRecord(left) || !Number.isFinite(Number(left.t)) || !Number.isFinite(Number(left.s))) return null;
+    if(Number(left.t) !== right.t) return Number(left.t) > right.t;
+    if(Number(left.s) !== right.s) return Number(left.s) > right.s;
+    if(typeof left.tab !== 'string') return null;
+    return left.tab > right.tab;
+  };
+  const boundedRead = async <T>(promise: Promise<T>, fallback: T): Promise<T> => {
+    let timer: any = null;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), CLIPBOARD_READ_TIMEOUT_MS); }),
+      ]);
+    } finally {
+      if(timer != null) clearTimeout(timer);
+    }
+  };
   let localClipboardWrite: {
     seq: number;
     state: 'pending' | 'published' | 'failed';
-    staleSystemText: Promise<string | null>;
+    stamp: ClipboardStamp;
+    // undefined means the pre-copy snapshot was denied/unknown, not empty.
+    staleSystemText: Promise<string | undefined>;
   } | null = null;
   let localClipboardSeq = 0;
   const clipboardHas = (obj: unknown, key: string) => isRecord(obj) && Object.prototype.hasOwnProperty.call(obj, key);
@@ -960,18 +985,20 @@
     // outcome. An in-memory copy is always newer than the system clipboard
     // until this write resolves successfully.
     const writeSeq = ++localClipboardSeq;
+    const stamp: ClipboardStamp = { t: Date.now(), s: writeSeq, tab: clipboardTabId };
     // Capture what the system clipboard held before this copy. If publishing
     // fails, a later, different system payload is from another tab and is
-    // genuinely newer than our in-memory copy.
-    let staleSystemText: Promise<string | null> = Promise.resolve(null);
+    // genuinely newer than our in-memory copy. A denied snapshot stays
+    // undefined so it is never mistaken for an empty clipboard.
+    let staleSystemText: Promise<string | undefined> = Promise.resolve(undefined);
     try {
       if(navigator.clipboard && typeof navigator.clipboard.readText === 'function'){
-        staleSystemText = navigator.clipboard.readText().catch(() => null);
+        staleSystemText = navigator.clipboard.readText().then(text => text || '', () => undefined);
       }
-    } catch { staleSystemText = Promise.resolve(null); }
-    localClipboardWrite = { seq: writeSeq, state: 'pending', staleSystemText };
+    } catch { staleSystemText = Promise.resolve(undefined); }
+    localClipboardWrite = { seq: writeSeq, state: 'pending', stamp, staleSystemText };
     try {
-      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes });
+      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
       if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
         const outcome: any = navigator.clipboard.writeText(payload);
         if(outcome && typeof outcome.then === 'function'){
@@ -1486,7 +1513,9 @@
         }
         return {x: x + 80, y: y + 80};
       };
-      for(const orig of sortedCopyNodes.slice(0, nodeCapacity)){
+      // data.nodes is the planned set: cap-rejected and duplicate-id entries
+      // were already removed before custom definitions were resolved.
+      for(const orig of data.nodes){
         let newId = orig.id;
         const used = new Set([...existingNodeIds, ...newNodeIds]);
         if(used.has(newId)){
@@ -1568,11 +1597,18 @@
     let systemData: AnyRecord | null = null;
     let systemIssue: { key: string; params?: AnyRecord } | null = null;
     let text = '';
-    try {
-      text = (await navigator.clipboard.readText()) || '';
-    } catch(e){
-      systemIssue = { key:'paste_failed', params:{msg:(e as Error).message} };
-    }
+    let readTimedOut = false;
+    const readPromise = (async (): Promise<{ text: string } | { error: unknown }> => {
+      try { return { text: (await navigator.clipboard.readText()) || '' }; }
+      catch(e){ return { error: e }; }
+    })();
+    const outcome: any = await boundedRead<any>(readPromise, { timeout: true });
+    if(outcome && outcome.timeout) readTimedOut = true;
+    else if(outcome && outcome.error) systemIssue = { key:'paste_failed', params:{msg:(outcome.error as Error)?.message} };
+    else text = outcome?.text || '';
+    // A hung system read must never hold a valid local copy hostage.
+    if(readTimedOut && hasInternal){ pasteClipboardInternal(null, { exact }); return; }
+
     if(text.trim()){
       try {
         const parsed = JSON.parse(text);
@@ -1595,8 +1631,17 @@
     // copy and must be allowed to win over the old local one.
     let systemCanBeNewer = !localClipboardWrite || localClipboardWrite.state === 'published';
     if(localClipboardWrite?.state === 'failed'){
-      const staleText = await localClipboardWrite.staleSystemText;
-      systemCanBeNewer = staleText !== null && text !== staleText;
+      // undefined = the pre-copy snapshot was denied: do not assume every
+      // later value is stale. Stamps below still reject older app payloads.
+      const staleText = await boundedRead<string | undefined>(localClipboardWrite.staleSystemText, undefined);
+      systemCanBeNewer = staleText === undefined ? true : text !== staleText;
+    }
+    // An older write can finish after a newer one and overwrite the system
+    // clipboard. Its stamp is older than the latest local copy's, so it must
+    // not be treated as a fresh cross-tab copy.
+    if(systemData && localClipboardWrite && systemCanBeNewer){
+      const order = compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp);
+      if(order === false) systemCanBeNewer = false;
     }
     if(systemData && systemCanBeNewer){ pasteClipboardInternal(systemData, { exact }); return; }
     if(hasInternal){ pasteClipboardInternal(null, { exact }); return; }
