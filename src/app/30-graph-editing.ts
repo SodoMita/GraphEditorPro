@@ -389,7 +389,7 @@
     if(s.inheritDefaults !== false) return;
     const d = s.nodeDefaults;
     const defType = n.type || d?.type;
-    const dts = (defType && s.nodeTypeStyles && s.nodeTypeStyles[defType]) || {};
+    const dts = getTypeStyle(s.nodeTypeStyles, defType) || {};
     n.shape = (defType && dts.shape) ? dts.shape : s.nodeShape;
     n.color = (defType && dts.color) ? dts.color : s.nodeColor;
     n.width = (defType && dts.width != null) ? dts.width : s.nodeWidth;
@@ -439,7 +439,7 @@
     if(pendingCustom) e.custom = pendingCustom;
     if(s.edgeWeight !== '') e.weight = String(s.edgeWeight).slice(0,50);
     if(effectiveType){
-      const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[effectiveType];
+      const ts = getTypeStyle(state.settings.edgeTypeStyles, effectiveType);
       if(ts){
         if(!ts.color) e.color = s.edgeColor; else e.color = '';
         if(ts.strokeSize == null) e.strokeSize = s.edgeStrokeSize;
@@ -640,7 +640,7 @@
         const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
         if(pendingCustom) e.custom = pendingCustom;
         if(s.edgeType) e.type = s.edgeType;
-        const ts = e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
+        const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type);
         if(ts){
           if(!ts.color) e.color = s.edgeColor; else e.color = '';
           if(ts.strokeSize == null) e.strokeSize = s.edgeStrokeSize;

@@ -607,8 +607,8 @@
         strokeSize:2.4, strokeStyle:'solid', arrowSize: DEFAULT_ARROW_SIZE
       },
       // Per-type style overrides: { 'typeName': { color, shape, width, height, ... }, ... }
-      nodeTypeStyles: {},
-      edgeTypeStyles: {},
+      nodeTypeStyles: Object.create(null),
+      edgeTypeStyles: Object.create(null),
       // Style presets: saved visual styles that can be applied to selection.
       // Each preset: { name, node?: {...style}, edge?: {...style} }
       stylePresets: []
@@ -1687,16 +1687,18 @@
     if(isRecord(settings.nodeTypeStyles)){
       const cleaned: AnyRecord = Object.create(null);
       for(const [key, value] of Object.entries(settings.nodeTypeStyles)){
-        const style = sanitizeTypeStyle(value, true);
-        if(style) cleaned[String(key).slice(0,40)] = style;
+        const name = String(key).trim().slice(0,40);
+        const style = name ? sanitizeTypeStyle(value, true) : undefined;
+        if(style) cleaned[name] = style;
       }
       settings.nodeTypeStyles = cleaned;
     } else { settings.nodeTypeStyles = Object.create(null); }
     if(isRecord(settings.edgeTypeStyles)){
       const cleaned: AnyRecord = Object.create(null);
       for(const [key, value] of Object.entries(settings.edgeTypeStyles)){
-        const style = sanitizeTypeStyle(value, false);
-        if(style) cleaned[String(key).slice(0,40)] = style;
+        const name = String(key).trim().slice(0,40);
+        const style = name ? sanitizeTypeStyle(value, false) : undefined;
+        if(style) cleaned[name] = style;
       }
       settings.edgeTypeStyles = cleaned;
     } else { settings.edgeTypeStyles = Object.create(null); }
@@ -1862,5 +1864,8 @@
   }
   function nodeById(id){ return indexFor(nodeIndex, state.nodes).get(id); }
   function edgeById(id){ return indexFor(edgeIndex, state.edges).get(id); }
+  function getTypeStyle(styles: AnyRecord | null | undefined, type: string | null | undefined): AnyRecord | undefined {
+    return type && styles && Object.prototype.hasOwnProperty.call(styles, type) ? styles[type] : undefined;
+  }
 
   // === Visual resolution: merge per-item overrides → type styles → defaults ===

@@ -325,13 +325,8 @@
     set('defEdgeLabelColor', ed.labelColor);
     set('defEdgeLabelFont', ed.labelFont);
     set('defEdgeLabelSize', ed.labelSize);
-    // Update type datalists with existing types
-    const nodeTypeList = $('#defNodeTypeList');
-    const edgeTypeList = $('#defEdgeTypeList');
-    if(nodeTypeList) nodeTypeList.innerHTML = existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('');
-    if(edgeTypeList) edgeTypeList.innerHTML = existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('');
-    // Update type style dropdowns
-    populateTypeStyleSelects();
+    // Update type datalists with existing and style-defined types
+    syncEditTypeLists();
   }
   function applyNodeDefaultsToAll(){
     const d = state.settings.nodeDefaults;
@@ -347,7 +342,7 @@
         n.color = d.color;
       }
     }
-    invalidateGraphIndex(); pushHistory('apply node defaults'); queueRender(true); toast(I18N.t('node_defaults_applied'));
+    invalidateGraphIndex(); pushHistory('apply node defaults'); queueRender(true, true); syncEditTypeLists(); renderSelectionPanel(); toast(I18N.t('node_defaults_applied'));
   }
   function applyNodeDefaultsToSelected(){
     const nodeIds = state.selection?.nodes || [];
@@ -366,7 +361,7 @@
         n.color = d.color;
       }
     }
-    invalidateGraphIndex(); pushHistory('apply node defaults to selected'); queueRender(true); renderSelectionPanel();
+    invalidateGraphIndex(); pushHistory('apply node defaults to selected'); queueRender(true, true); syncEditTypeLists(); renderSelectionPanel();
     toast(I18N.t('node_defaults_applied_sel', {count: nodeIds.length}));
   }
   function applyEdgeDefaultsToAll(){
@@ -379,7 +374,7 @@
         applyTypeStyleToEdge(e);
       }
     }
-    invalidateGraphIndex(); pushHistory('apply edge defaults'); queueRender(true); toast(I18N.t('edge_defaults_applied'));
+    invalidateGraphIndex(); pushHistory('apply edge defaults'); queueRender(true, true); syncEditTypeLists(); renderSelectionPanel(); toast(I18N.t('edge_defaults_applied'));
   }
   function applyEdgeDefaultsToSelected(){
     const edgeIds = state.selection?.edges || [];
@@ -394,21 +389,14 @@
         applyTypeStyleToEdge(e);
       }
     }
-    invalidateGraphIndex(); pushHistory('apply edge defaults to selected'); queueRender(true); renderSelectionPanel();
+    invalidateGraphIndex(); pushHistory('apply edge defaults to selected'); queueRender(true, true); syncEditTypeLists(); renderSelectionPanel();
     toast(I18N.t('edge_defaults_applied_sel', {count: edgeIds.length}));
   }
 
   // === Type style management ===
-  function populateTypeStyleSelects(){
-    const nList = $('#nodeTypeStyleList');
-    const eList = $('#edgeTypeStyleList');
-    const nodeTypes = [...new Set([...existingNodeTypes(), ...Object.keys(state.settings.nodeTypeStyles || {})])].sort();
-    const edgeTypes = [...new Set([...existingEdgeTypes(), ...Object.keys(state.settings.edgeTypeStyles || {})])].sort();
-    if(nList) nList.innerHTML = nodeTypes.map(t => `<option value="${esc(t)}">`).join('');
-    if(eList) eList.innerHTML = edgeTypes.map(t => `<option value="${esc(t)}">`).join('');
-  }
   function loadNodeTypeStyleForm(type){
-    const ts = (type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[type]) || {};
+    const key = String(type || '').trim().slice(0, 40);
+    const ts = getTypeStyle(state.settings.nodeTypeStyles, key) || {};
     $('#ntsColor').value = ts.color || '#0ea5e9';
     $('#ntsShape').value = ts.shape || '';
     $('#ntsWidth').value = ts.width != null ? ts.width : 50;
@@ -422,7 +410,8 @@
     $('#ntsLabelFont').value = ts.labelFont || '';
   }
   function loadEdgeTypeStyleForm(type){
-    const ts = (type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[type]) || {};
+    const key = String(type || '').trim().slice(0, 40);
+    const ts = getTypeStyle(state.settings.edgeTypeStyles, key) || {};
     $('#etsColor').value = ts.color || '#94a3b8';
     $('#etsStrokeSize').value = ts.strokeSize != null ? ts.strokeSize : 2.4;
     $('#etsStrokeStyle').value = ts.strokeStyle || '';
@@ -432,9 +421,10 @@
     $('#etsLabelFont').value = ts.labelFont || '';
   }
   function saveNodeTypeStyle(){
-    const type = $('#nodeTypeStyleInput').value.trim();
+    const type = $('#nodeTypeStyleInput').value.trim().slice(0, 40);
     if(!type){ toast(I18N.t('enter_type_first')); return; }
-    if(!state.settings.nodeTypeStyles) state.settings.nodeTypeStyles = {};
+    $('#nodeTypeStyleInput').value = type;
+    if(!state.settings.nodeTypeStyles) state.settings.nodeTypeStyles = Object.create(null);
     const o: AnyRecord = {
       color: $('#ntsColor').value,
       width: clamp(finite($('#ntsWidth').value, 50), 10, 300),
@@ -453,13 +443,15 @@
     for(const n of state.nodes){
       if(n.type === type || (!n.type && state.settings.nodeDefaults?.type === type)) applyTypeStyleToNode(n);
     }
-    pushHistory('save node type style'); queueRender(true); saveSoon(); populateTypeStyleSelects();
+    invalidateTypeLists();
+    pushHistory('save node type style'); queueRender(true, true); saveSoon(); syncEditTypeLists(); renderSelectionPanel();
     toast(I18N.t('saved_style_type', {type: type}));
   }
   function saveEdgeTypeStyle(){
-    const type = $('#edgeTypeStyleInput').value.trim();
+    const type = $('#edgeTypeStyleInput').value.trim().slice(0, 40);
     if(!type){ toast(I18N.t('enter_type_first')); return; }
-    if(!state.settings.edgeTypeStyles) state.settings.edgeTypeStyles = {};
+    $('#edgeTypeStyleInput').value = type;
+    if(!state.settings.edgeTypeStyles) state.settings.edgeTypeStyles = Object.create(null);
     const o: AnyRecord = {
       color: $('#etsColor').value,
       strokeSize: clamp(finite($('#etsStrokeSize').value, 2.4), 0, 20),
@@ -474,29 +466,32 @@
     for(const e of state.edges){
       if(e.type === type || (!e.type && state.settings.edgeDefaults?.type === type)) applyTypeStyleToEdge(e);
     }
-    pushHistory('save edge type style'); queueRender(true); saveSoon(); populateTypeStyleSelects();
+    invalidateTypeLists();
+    pushHistory('save edge type style'); queueRender(true, true); saveSoon(); syncEditTypeLists(); renderSelectionPanel();
     toast(I18N.t('saved_style_type', {type: type}));
   }
   function delNodeTypeStyle(){
-    const type = $('#nodeTypeStyleInput').value.trim();
+    const type = $('#nodeTypeStyleInput').value.trim().slice(0, 40);
     if(!type){ toast(I18N.t('enter_type_first')); return; }
-    if(state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[type]){
+    if(getTypeStyle(state.settings.nodeTypeStyles, type)){
       delete state.settings.nodeTypeStyles[type];
-      pushHistory('delete node type style'); queueRender(true); saveSoon(); populateTypeStyleSelects(); loadNodeTypeStyleForm('');
+      invalidateTypeLists();
+      pushHistory('delete node type style'); queueRender(true, true); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); loadNodeTypeStyleForm('');
       toast(I18N.t('deleted_style_type', {type: type}));
     }
   }
   function delEdgeTypeStyle(){
-    const type = $('#edgeTypeStyleInput').value.trim();
+    const type = $('#edgeTypeStyleInput').value.trim().slice(0, 40);
     if(!type){ toast(I18N.t('enter_type_first')); return; }
-    if(state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[type]){
+    if(getTypeStyle(state.settings.edgeTypeStyles, type)){
       delete state.settings.edgeTypeStyles[type];
-      pushHistory('delete edge type style'); queueRender(true); saveSoon(); populateTypeStyleSelects(); loadEdgeTypeStyleForm('');
+      invalidateTypeLists();
+      pushHistory('delete edge type style'); queueRender(true, true); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); loadEdgeTypeStyleForm('');
       toast(I18N.t('deleted_style_type', {type: type}));
     }
   }
   function clearNodeOverridesForType(){
-    const type = $('#nodeTypeStyleInput').value.trim();
+    const type = $('#nodeTypeStyleInput').value.trim().slice(0, 40);
     if(!type){ toast(I18N.t('enter_type_first')); return; }
     let count = 0;
     for(const n of state.nodes){
@@ -508,11 +503,11 @@
         count++;
       }
     }
-    pushHistory('clear per-node overrides'); queueRender(true); saveSoon();
+    pushHistory('clear per-node overrides'); queueRender(true, true); saveSoon(); renderSelectionPanel();
     toast(count > 0 ? I18N.t('cleared_overrides_n', {n: count}) : I18N.t('no_nodes_type'));
   }
   function clearEdgeOverridesForType(){
-    const type = $('#edgeTypeStyleInput').value.trim();
+    const type = $('#edgeTypeStyleInput').value.trim().slice(0, 40);
     if(!type){ toast(I18N.t('enter_type_first')); return; }
     let count = 0;
     for(const e of state.edges){
@@ -523,7 +518,7 @@
         count++;
       }
     }
-    pushHistory('clear per-edge overrides'); queueRender(true); saveSoon();
+    pushHistory('clear per-edge overrides'); queueRender(true, true); saveSoon(); renderSelectionPanel();
     toast(count > 0 ? I18N.t('cleared_overrides_e', {n: count}) : I18N.t('no_edges_type'));
   }
 
@@ -531,7 +526,7 @@
   // so the type style takes effect immediately.
   function applyTypeStyleToNode(n){
     if(!n.type) return;
-    const ts = state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[n.type];
+    const ts = getTypeStyle(state.settings.nodeTypeStyles, n.type);
     if(!ts) return;
     if(ts.shape){ n.shape = ''; }
     if(ts.color){ n.color = ''; }
@@ -547,7 +542,7 @@
   }
   function applyTypeStyleToEdge(e){
     if(!e.type) return;
-    const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
+    const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type);
     if(!ts) return;
     if(ts.color){ e.color = ''; }
     if(ts.strokeSize != null) delete e.strokeSize;

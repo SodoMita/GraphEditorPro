@@ -398,3 +398,240 @@ test('Reset Style syncs the single-node shape, stroke style and label position a
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('types defined in styles appear in selection type dropdowns (preloaded, single, multi, and edge)', async () => {
+  const datalistValues = (document, selector) =>
+    [...document.querySelectorAll(`${selector} option`)].map(o => o.getAttribute('value'));
+
+  const graph = {
+    mode: 'select',
+    settings: {
+      nodeTypeStyles: {
+        server: { color: '#ff0000', shape: 'square', width: 80, height: 60 },
+        client: { color: '#00aa00', shape: 'diamond' },
+      },
+      edgeTypeStyles: {
+        fiber: { color: '#00ff00', strokeSize: 5, strokeStyle: 'dashed' },
+        wireless: { color: '#0088ff', strokeSize: 3 },
+      },
+    },
+    nodes: [
+      { id: 'a', label: 'A', x: -200, y: 0, order: 0 },
+      { id: 'b', label: 'B', x: 200, y: 0, order: 1, type: 'legacy' },
+      { id: 'c', label: 'C', x: 0, y: 200, order: 2 },
+    ],
+    edges: [
+      { id: 'e1', from: 'a', to: 'b', directed: true, weight: '1' },
+      { id: 'e2', from: 'b', to: 'c', directed: true, weight: '2' },
+    ],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom;
+  const { document } = window;
+  await nextFrame(window);
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+
+  // Edit-tab and Style-tab datalists already include the style-defined types.
+  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#defNodeTypeList'), ['client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), ['client', 'legacy', 'server']);
+  assert.deepEqual(datalistValues(document, '#edgeTypeListEdit'), ['fiber', 'wireless']);
+  assert.deepEqual(datalistValues(document, '#defEdgeTypeList'), ['fiber', 'wireless']);
+  assert.deepEqual(datalistValues(document, '#edgeTypeStyleList'), ['fiber', 'wireless']);
+
+  // Single untyped node selection offers all node types, including unused style types.
+  dispatchPointer(window, document.getElementById('node-a'), 'pointerdown', { pointerId: 1, clientX: 300, clientY: 330 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 300, clientY: 330 });
+  await nextFrame(window);
+
+  const selNodeType = document.querySelector('#selNodeType');
+  assert.ok(selNodeType, 'single-node type input is rendered');
+  assert.equal(selNodeType.getAttribute('list'), 'nodeTypeList');
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['client', 'legacy', 'server']);
+
+  // Choosing a style-defined type applies its style immediately and keeps all types listed.
+  selNodeType.value = 'server';
+  selNodeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  const nodeAShape = document.querySelector('#node-a .node-shape');
+  assert.equal(nodeAShape.getAttribute('fill'), '#ff0000');
+  assert.equal(nodeAShape.tagName.toLowerCase(), 'rect');
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['client', 'legacy', 'server']);
+
+  // Multi-node selection offers the style-defined node types and applies them.
+  dispatchPointer(window, document.getElementById('node-c'), 'pointerdown', { pointerId: 1, clientX: 500, clientY: 530, shiftKey: true });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 500, clientY: 530 });
+  await nextFrame(window);
+
+  const mulNodeType = document.querySelector('#mulNodeType');
+  assert.ok(mulNodeType, 'multi-node type input is rendered');
+  assert.equal(mulNodeType.getAttribute('list'), 'nodeTypeList');
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['client', 'legacy', 'server']);
+  mulNodeType.value = 'client';
+  mulNodeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#node-a .node-shape').getAttribute('fill'), '#00aa00');
+  assert.equal(document.querySelector('#node-c .node-shape').getAttribute('fill'), '#00aa00');
+
+  // Single edge selection offers style-defined edge types and applies them.
+  dispatchPointer(window, document.getElementById('edge-e1'), 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 500, clientY: 330 });
+  await nextFrame(window);
+
+  const selEdgeType = document.querySelector('#selEdgeType');
+  assert.ok(selEdgeType, 'single-edge type input is rendered');
+  assert.equal(selEdgeType.getAttribute('list'), 'edgeTypeList');
+  assert.deepEqual(datalistValues(document, '#edgeTypeList'), ['fiber', 'wireless']);
+  selEdgeType.value = 'fiber';
+  selEdgeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#edge-e1 .edge-line').getAttribute('stroke'), '#00ff00');
+  assert.equal(document.querySelector('#edge-e1 .edge-line').getAttribute('stroke-width'), '5');
+
+  // Multi-edge selection offers style-defined edge types and applies them.
+  dispatchPointer(window, document.getElementById('edge-e2'), 'pointerdown', { pointerId: 1, clientX: 600, clientY: 430, shiftKey: true });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 600, clientY: 430 });
+  await nextFrame(window);
+
+  const mulEdgeType = document.querySelector('#mulEdgeType');
+  assert.ok(mulEdgeType, 'multi-edge type input is rendered');
+  assert.equal(mulEdgeType.getAttribute('list'), 'edgeTypeList');
+  assert.deepEqual(datalistValues(document, '#edgeTypeList'), ['fiber', 'wireless']);
+  mulEdgeType.value = 'wireless';
+  mulEdgeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#edge-e1 .edge-line').getAttribute('stroke'), '#0088ff');
+  assert.equal(document.querySelector('#edge-e2 .edge-line').getAttribute('stroke'), '#0088ff');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('saving, deleting, defaulting, and undoing style types live-updates selected type dropdowns', async () => {
+  const datalistValues = (document, selector) =>
+    [...document.querySelectorAll(`${selector} option`)].map(o => o.getAttribute('value'));
+
+  const graph = {
+    mode: 'select',
+    nodes: [
+      { id: 'n1', label: 'N1', x: -150, y: 0, order: 0 },
+      { id: 'n2', label: 'N2', x: 150, y: 0, order: 1 },
+    ],
+    edges: [
+      { id: 'e1', from: 'n1', to: 'n2', directed: true },
+    ],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom;
+  const { document } = window;
+  await nextFrame(window);
+  const svg = document.querySelector('#graphCanvas');
+  setCanvasRect(svg);
+
+  // Select n1 first, then define a new node type style in the Style tab.
+  dispatchPointer(window, document.getElementById('node-n1'), 'pointerdown', { pointerId: 1, clientX: 350, clientY: 330 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 350, clientY: 330 });
+  await nextFrame(window);
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), []);
+
+  const ntsInput = document.querySelector('#nodeTypeStyleInput');
+  const ntsColor = document.querySelector('#ntsColor');
+  const ntsShape = document.querySelector('#ntsShape');
+  ntsInput.value = 'router';
+  ntsColor.value = '#ef4444';
+  ntsShape.value = 'hexagon';
+  document.querySelector('#btnSaveNodeTypeStyle').click();
+
+  // Dropdown for already-selected node updates immediately without re-selecting.
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['router']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['router']);
+  assert.deepEqual(datalistValues(document, '#defNodeTypeList'), ['router']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), ['router']);
+
+  // Default node type in Style tab also surfaces in the selection dropdown.
+  const defNodeType = document.querySelector('#defNodeType');
+  defNodeType.value = 'worker';
+  defNodeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['router', 'worker']);
+
+  // Undo removes 'worker'; undo again removes 'router'; redo brings 'router' back.
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 40));
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['router']);
+
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 40));
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), []);
+
+  document.querySelector('#btnRedo').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 40));
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['router']);
+
+  // Special HTML chars and Object.prototype property names work safely as type names.
+  ntsInput.value = 'A & "B" <C>';
+  ntsColor.value = '#123456';
+  document.querySelector('#btnSaveNodeTypeStyle').click();
+  ntsInput.value = 'constructor';
+  ntsColor.value = '#654321';
+  document.querySelector('#btnSaveNodeTypeStyle').click();
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['A & "B" <C>', 'constructor', 'router']);
+
+  const selNodeType = document.querySelector('#selNodeType');
+  selNodeType.value = 'constructor';
+  selNodeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window);
+  assert.equal(document.querySelector('#node-n1 .node-shape').getAttribute('fill'), '#654321');
+
+  // Deleting an unused style type removes it immediately from all dropdowns.
+  ntsInput.value = 'router';
+  document.querySelector('#btnDelNodeTypeStyle').click();
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['A & "B" <C>', 'constructor']);
+  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['A & "B" <C>', 'constructor']);
+
+  // Select edge e1, then define, default, and delete edge type styles while selected.
+  dispatchPointer(window, document.getElementById('edge-e1'), 'pointerdown', { pointerId: 1, clientX: 500, clientY: 330 });
+  await nextFrame(window);
+  dispatchPointer(window, svg, 'pointerup', { pointerId: 1, clientX: 500, clientY: 330 });
+  await nextFrame(window);
+  assert.deepEqual(datalistValues(document, '#edgeTypeList'), []);
+
+  const etsInput = document.querySelector('#edgeTypeStyleInput');
+  const etsColor = document.querySelector('#etsColor');
+  etsInput.value = 'backbone';
+  etsColor.value = '#22c55e';
+  document.querySelector('#btnSaveEdgeTypeStyle').click();
+  assert.deepEqual(datalistValues(document, '#edgeTypeList'), ['backbone']);
+  assert.deepEqual(datalistValues(document, '#edgeTypeListEdit'), ['backbone']);
+  assert.deepEqual(datalistValues(document, '#defEdgeTypeList'), ['backbone']);
+  assert.deepEqual(datalistValues(document, '#edgeTypeStyleList'), ['backbone']);
+
+  const defEdgeType = document.querySelector('#defEdgeType');
+  defEdgeType.value = 'uplink';
+  defEdgeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.deepEqual(datalistValues(document, '#edgeTypeList'), ['backbone', 'uplink']);
+
+  defEdgeType.value = '';
+  defEdgeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.deepEqual(datalistValues(document, '#edgeTypeList'), ['backbone']);
+
+  etsInput.value = 'backbone';
+  document.querySelector('#btnDelEdgeTypeStyle').click();
+  assert.deepEqual(datalistValues(document, '#edgeTypeList'), []);
+  assert.deepEqual(datalistValues(document, '#edgeTypeListEdit'), []);
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
