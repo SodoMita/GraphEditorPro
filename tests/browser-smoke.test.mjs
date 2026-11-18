@@ -717,3 +717,107 @@ test('the 100% button resets the scale to 1:1 instead of fitting the graph', asy
 
   assert.deepEqual(errors.map(error => error.message), []);
 });
+
+// === Review regressions ===
+function exportedPositions(document) {
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  const graph = JSON.parse(modal.querySelector('textarea').value);
+  modal.remove();
+  return graph.nodes.map(node => ({ id: node.id, x: node.x, y: node.y }));
+}
+
+// Force the first layout pass past its 50 ms deadline, then park the run at a
+// controlled yield so a test can edit the document mid-gesture.
+function controlledLayoutYield(window) {
+  const realNow = window.performance.now.bind(window.performance);
+  let fake = 0;
+  window.performance.now = () => { fake += 100; return fake; };
+  let resume = null;
+  window.scheduler = { yield: () => new Promise(resolve => { resume = resolve; }) };
+  return {
+    async wait() {
+      for (let i = 0; i < 30 && !resume; i++) await nextFrame(window);
+      assert.ok(resume, 'force layout reached its controlled yield');
+    },
+    release() {
+      window.performance.now = realNow;
+      const next = resume;
+      resume = null;
+      next();
+    },
+    restore() { window.performance.now = realNow; },
+  };
+}
+
+test('force layout during a yield does not overwrite a grid layout', async () => {
+  const savedGraph = {
+    title: 'yield-grid',
+    nodes: [{ id: 'n1', label: 'A', x: -90, y: -40, order: 0 }, { id: 'n2', label: 'B', x: 90, y: 40, order: 1 }],
+    edges: [], settings: {},
+  };
+  const { dom, errors } = createEditorDom(savedGraph);
+  const { document } = dom.window;
+  await nextFrame(dom.window);
+  const before = exportedPositions(document);
+  const gate = controlledLayoutYield(dom.window);
+  document.querySelector('#btnLayoutForce').click();
+  await gate.wait();
+  assert.deepEqual(exportedPositions(document), before, 'no partial relaxation is visible during the yield');
+
+  document.querySelector('#btnLayoutGrid').click();
+  const afterGrid = exportedPositions(document);
+  assert.notDeepEqual(afterGrid, before, 'the mid-yield edit really moved the nodes');
+  gate.release();
+  await nextFrame(dom.window);
+  assert.deepEqual(exportedPositions(document), afterGrid, 'the finished force run must not overwrite the grid layout');
+  assert.deepEqual(errors.map(error => error.message), []);
+  gate.restore();
+  dom.window.close();
+});
+
+test('undo during a force-layout yield restores positions without a stale write', async () => {
+  const savedGraph = {
+    title: 'yield-undo',
+    nodes: [{ id: 'n1', label: 'A', x: -90, y: -40, order: 0 }, { id: 'n2', label: 'B', x: 90, y: 40, order: 1 }],
+    edges: [], settings: {},
+  };
+  const { dom, errors } = createEditorDom(savedGraph);
+  const { document } = dom.window;
+  await nextFrame(dom.window);
+  const initial = exportedPositions(document);
+  document.querySelector('#btnLayoutGrid').click();
+  const moved = exportedPositions(document);
+  assert.notDeepEqual(moved, initial);
+
+  const gate = controlledLayoutYield(dom.window);
+  document.querySelector('#btnLayoutForce').click();
+  await gate.wait();
+  document.querySelector('#btnUndo').click();
+  const afterUndo = exportedPositions(document);
+  assert.deepEqual(afterUndo, initial, 'undo restored the pre-grid positions');
+  gate.release();
+  await nextFrame(dom.window);
+  assert.deepEqual(exportedPositions(document), afterUndo, 'resuming the force run must not undo the undo');
+  assert.deepEqual(errors.map(error => error.message), []);
+  gate.restore();
+  dom.window.close();
+});
+
+test('the generated app boots without native ES2023 array helpers', async () => {
+  const { dom, errors } = createEditorDom({
+    title: 'no-es2023', nodes: [{ id: 'n1', label: 'A', x: 0, y: 0, order: 0 }], edges: [], settings: {},
+  }, {}, window => {
+    delete window.Array.prototype.toSorted;
+    delete window.Array.prototype.toReversed;
+  });
+  await nextFrame(dom.window);
+  const prototype = dom.window.Array.prototype;
+  assert.equal(typeof prototype.toSorted, 'function', 'a fallback toSorted is installed');
+  assert.equal(typeof prototype.toReversed, 'function', 'a fallback toReversed is installed');
+  assert.deepEqual([3, 1, 2].toSorted(), [1, 2, 3]);
+  assert.deepEqual([1, 2, 3].toReversed(), [3, 2, 1]);
+  assert.ok(dom.window.document.querySelectorAll('#sceneLayer [id^="node-"]').length > 0, 'rendering still ran');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

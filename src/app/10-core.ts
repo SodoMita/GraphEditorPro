@@ -661,6 +661,7 @@
     cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
+    documentRev++;
     const sane = sanitizeState(data);
     // Restore selection if it survives sanitization (nodes/edges still exist)
     const savedSel = data.selected, savedSelection = data.selection;
@@ -740,6 +741,7 @@
     flushPendingHistory();
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
+    documentRev++;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
     historyBytes += snapshotBytes(snap);
@@ -754,6 +756,7 @@
   }
   function resetHistory(){
     pendingHistoryLabel = null; // a fresh history invalidates any pending entry
+    documentRev++;
     appHistory = [snapshot()];
     appHistoryIndex = 0;
     historyBytes = snapshotBytes(appHistory[0]);
@@ -1866,6 +1869,10 @@
   // array identity, its length, or an explicit invalidation (in-place id
   // rewrite or edge reordering) says the mapping changed.
   let graphRev = 0;
+  // Incremented on committed document changes (history pushes, snapshot restores
+  // and history resets). Unlike graphRev this is not an index cache token, so
+  // async work can use it to notice undo, layouts, imports and other edits.
+  let documentRev = 0;
   function invalidateGraphIndex(){ graphRev++; }
   let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
   let edgeIndex = { arr: null, len: -1, rev: -1, map: new Map() };

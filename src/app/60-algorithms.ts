@@ -73,7 +73,13 @@
     const nodes = state.nodes;
     const n=nodes.length; if(n < 2) return;
     forceLayoutRunning = true;
-    const startRev = graphRev;
+    const startRev = documentRev;
+    // Work on copied positions: a yield must never leave the live document
+    // half-relaxed, and an edit during the yield cannot pull the ground (or a
+    // deleted node id) out from under the remaining passes.
+    const initial = nodes.map(v => ({id:String(v.id), x:v.x, y:v.y}));
+    const edgeSignature = () => state.edges.map(e => `${e.id}\u0000${e.from}\u0000${e.to}`).join('\u0001');
+    const initialEdges = edgeSignature();
     try {
       // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
       // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
@@ -83,22 +89,38 @@
       const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
       const reduced = iter < requestedIter;
       const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
+      const work = initial.map(v => ({...v}));
+      const workById = new Map(work.map(v => [v.id, v]));
       let deadline = performance.now() + 50;
       for(let step=0; step<iter; step++){
-        const disp = new Map(nodes.map(v=>[v.id,{x:0,y:0}]));
+        const disp = new Map(work.map(v => [v.id, {x:0,y:0}]));
         for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
-          const v=nodes[i], u=nodes[j]; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(k*k)/d; dx/=d; dy/=d; disp.get(v.id).x += dx*f; disp.get(v.id).y += dy*f; disp.get(u.id).x -= dx*f; disp.get(u.id).y -= dy*f;
+          const v=work[i], u=work[j]; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(k*k)/d; dx/=d; dy/=d; disp.get(v.id).x += dx*f; disp.get(v.id).y += dy*f; disp.get(u.id).x -= dx*f; disp.get(u.id).y -= dy*f;
         }
-        for(const e of state.edges){ const v=nodeById(e.from), u=nodeById(e.to); if(!v||!u) continue; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(d*d)/k; dx/=d; dy/=d; disp.get(v.id).x -= dx*f; disp.get(v.id).y -= dy*f; disp.get(u.id).x += dx*f; disp.get(u.id).y += dy*f; }
+        for(const e of state.edges){ const v=workById.get(String(e.from)), u=workById.get(String(e.to)); if(!v||!u) continue; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(d*d)/k; dx/=d; dy/=d; disp.get(v.id).x -= dx*f; disp.get(v.id).y -= dy*f; disp.get(u.id).x += dx*f; disp.get(u.id).y += dy*f; }
         const temp = 80 * (1 - step/iter);
-        for(const v of nodes){ const d=disp.get(v.id); const len=Math.hypot(d.x,d.y)||.01; v.x += (d.x/len)*Math.min(len,temp); v.y += (d.y/len)*Math.min(len,temp); }
+        for(const v of work){ const d=disp.get(v.id); const len=Math.hypot(d.x,d.y)||.01; v.x += (d.x/len)*Math.min(len,temp); v.y += (d.y/len)*Math.min(len,temp); }
         if(performance.now() >= deadline && step < iter - 1){
           await yieldToBrowser();
           deadline = performance.now() + 50;
-          // A document edit or import during the yield invalidates this run.
-          if(graphRev !== startRev) return;
+          if(documentRev !== startRev) return;
         }
       }
+      // Commit once, and only when nothing else has moved the document: undo,
+      // another layout, a drag or an import during a yield all abort the run,
+      // leaving the user's result untouched and without a phantom history step.
+      if(documentRev !== startRev || state.nodes !== nodes || state.nodes.length !== initial.length
+         || edgeSignature() !== initialEdges) return;
+      const byId = new Map(state.nodes.map(v => [String(v.id), v]));
+      const targets: any[] = [];
+      for(let i=0;i<initial.length;i++){
+        const current = state.nodes[i], before = initial[i];
+        if(!current || String(current.id) !== before.id || current.x !== before.x || current.y !== before.y) return;
+        const target = byId.get(before.id);
+        if(!target) return;
+        targets.push(target);
+      }
+      for(let i=0;i<work.length;i++){ targets[i].x = work[i].x; targets[i].y = work[i].y; }
       pushHistory('relax layout'); fitView(); queueRender(true);
       if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
     } finally {

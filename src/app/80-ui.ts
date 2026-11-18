@@ -183,6 +183,10 @@
     });
     window.addEventListener('keydown', ev => {
       if(ev.key !== 'Escape') return;
+      // A native <dialog> receives Escape as its own `cancel` action. Our
+      // window listener runs first, so it must stand down whenever a modal is
+      // active — otherwise it closes the presets/sidebar under a name prompt.
+      if(uiDialogOpen()) return;
       const presets = $('#presetsOverlay');
       if(presets.open || presets.classList.contains('open')){
         ev.preventDefault(); ev.stopImmediatePropagation(); togglePresetsOverlay(false); return;

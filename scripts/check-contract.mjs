@@ -71,6 +71,13 @@ inv('no build-time shared snapshot remains before renderPage', sectionIdx > 0 &&
 // --- Round-trip contract: export emits the identity (P2, ⑰) ---
 inv('GraphML export emits qvge:origin for provenance-tracked definitions', /qvge:origin=/.test(imp));
 
+// --- Escape must not close an underlying overlay while a modal owns the key ---
+const uiSource = read('80-ui.ts');
+const escapeHandler = uiSource.slice(uiSource.indexOf("window.addEventListener('keydown', ev => {"));
+inv('window Escape handler stands down for an active dialog before presets/sidebar',
+    escapeHandler.includes('if(uiDialogOpen()) return;')
+    && escapeHandler.indexOf('if(uiDialogOpen()) return;') < escapeHandler.indexOf("$('#presetsOverlay')"));
+
 // --- Display heuristics stay capped (positive control: legitimate caps remain) ---
 inv('definition names stay capped at 128 as a display heuristic', /const rawName = String\(\(attribute as AnyRecord\)\.name \?\? ''\)\.trim\(\)\.slice\(0, 128\)/.test(core));
 

@@ -1764,6 +1764,23 @@
   <script>
 (() => {
   'use strict';
+// The generated file must boot in ES2020-capable browsers that predate
+// Array.prototype.toSorted/toReversed. TypeScript's lib setting only types
+// these calls; it does not provide the methods at runtime.
+if (typeof Array.prototype.toSorted !== 'function') {
+    Object.defineProperty(Array.prototype, 'toSorted', {
+        configurable: true, writable: true,
+        value: function (compareFn) {
+            return Array.prototype.slice.call(this).sort(compareFn);
+        }
+    });
+}
+if (typeof Array.prototype.toReversed !== 'function') {
+    Object.defineProperty(Array.prototype, 'toReversed', {
+        configurable: true, writable: true,
+        value: function () { return Array.prototype.slice.call(this).reverse(); }
+    });
+}
 // Система переводов для Graph Editor Pro
 // Поддерживаемые языки: en, ru
 const I18N = {
@@ -3233,6 +3250,7 @@ function applySnapshot(raw) {
     cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
+    documentRev++;
     const sane = sanitizeState(data);
     // Restore selection if it survives sanitization (nodes/edges still exist)
     const savedSel = data.selected, savedSelection = data.selection;
@@ -3334,6 +3352,7 @@ function pushHistory(_label = 'change') {
     const snap = snapshot();
     if (appHistory[appHistoryIndex] === snap)
         return;
+    documentRev++;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
     historyBytes += snapshotBytes(snap);
@@ -3348,6 +3367,7 @@ function pushHistory(_label = 'change') {
 }
 function resetHistory() {
     pendingHistoryLabel = null; // a fresh history invalidates any pending entry
+    documentRev++;
     appHistory = [snapshot()];
     appHistoryIndex = 0;
     historyBytes = snapshotBytes(appHistory[0]);
@@ -4677,6 +4697,10 @@ function labelFromNumber(num) {
 // array identity, its length, or an explicit invalidation (in-place id
 // rewrite or edge reordering) says the mapping changed.
 let graphRev = 0;
+// Incremented on committed document changes (history pushes, snapshot restores
+// and history resets). Unlike graphRev this is not an index cache token, so
+// async work can use it to notice undo, layouts, imports and other edits.
+let documentRev = 0;
 function invalidateGraphIndex() { graphRev++; }
 let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
 let edgeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
@@ -15283,7 +15307,13 @@ async function layoutForce(requestedIter = 180) {
     if (n < 2)
         return;
     forceLayoutRunning = true;
-    const startRev = graphRev;
+    const startRev = documentRev;
+    // Work on copied positions: a yield must never leave the live document
+    // half-relaxed, and an edit during the yield cannot pull the ground (or a
+    // deleted node id) out from under the remaining passes.
+    const initial = nodes.map(v => ({ id: String(v.id), x: v.x, y: v.y }));
+    const edgeSignature = () => state.edges.map(e => `${e.id}\u0000${e.from}\u0000${e.to}`).join('\u0001');
+    const initialEdges = edgeSignature();
     try {
         // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
         // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
@@ -15293,12 +15323,14 @@ async function layoutForce(requestedIter = 180) {
         const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
         const reduced = iter < requestedIter;
         const area = Math.max(700 * 500, n * 22000), k = Math.sqrt(area / n);
+        const work = initial.map(v => ({ ...v }));
+        const workById = new Map(work.map(v => [v.id, v]));
         let deadline = performance.now() + 50;
         for (let step = 0; step < iter; step++) {
-            const disp = new Map(nodes.map(v => [v.id, { x: 0, y: 0 }]));
+            const disp = new Map(work.map(v => [v.id, { x: 0, y: 0 }]));
             for (let i = 0; i < n; i++)
                 for (let j = i + 1; j < n; j++) {
-                    const v = nodes[i], u = nodes[j];
+                    const v = work[i], u = work[j];
                     let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
                     const f = (k * k) / d;
                     dx /= d;
@@ -15309,7 +15341,7 @@ async function layoutForce(requestedIter = 180) {
                     disp.get(u.id).y -= dy * f;
                 }
             for (const e of state.edges) {
-                const v = nodeById(e.from), u = nodeById(e.to);
+                const v = workById.get(String(e.from)), u = workById.get(String(e.to));
                 if (!v || !u)
                     continue;
                 let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
@@ -15322,7 +15354,7 @@ async function layoutForce(requestedIter = 180) {
                 disp.get(u.id).y += dy * f;
             }
             const temp = 80 * (1 - step / iter);
-            for (const v of nodes) {
+            for (const v of work) {
                 const d = disp.get(v.id);
                 const len = Math.hypot(d.x, d.y) || .01;
                 v.x += (d.x / len) * Math.min(len, temp);
@@ -15331,10 +15363,30 @@ async function layoutForce(requestedIter = 180) {
             if (performance.now() >= deadline && step < iter - 1) {
                 await yieldToBrowser();
                 deadline = performance.now() + 50;
-                // A document edit or import during the yield invalidates this run.
-                if (graphRev !== startRev)
+                if (documentRev !== startRev)
                     return;
             }
+        }
+        // Commit once, and only when nothing else has moved the document: undo,
+        // another layout, a drag or an import during a yield all abort the run,
+        // leaving the user's result untouched and without a phantom history step.
+        if (documentRev !== startRev || state.nodes !== nodes || state.nodes.length !== initial.length
+            || edgeSignature() !== initialEdges)
+            return;
+        const byId = new Map(state.nodes.map(v => [String(v.id), v]));
+        const targets = [];
+        for (let i = 0; i < initial.length; i++) {
+            const current = state.nodes[i], before = initial[i];
+            if (!current || String(current.id) !== before.id || current.x !== before.x || current.y !== before.y)
+                return;
+            const target = byId.get(before.id);
+            if (!target)
+                return;
+            targets.push(target);
+        }
+        for (let i = 0; i < work.length; i++) {
+            targets[i].x = work[i].x;
+            targets[i].y = work[i].y;
         }
         pushHistory('relax layout');
         fitView();
@@ -16901,6 +16953,11 @@ function wireUi() {
     });
     window.addEventListener('keydown', ev => {
         if (ev.key !== 'Escape')
+            return;
+        // A native <dialog> receives Escape as its own `cancel` action. Our
+        // window listener runs first, so it must stand down whenever a modal is
+        // active — otherwise it closes the presets/sidebar under a name prompt.
+        if (uiDialogOpen())
             return;
         const presets = $('#presetsOverlay');
         if (presets.open || presets.classList.contains('open')) {
