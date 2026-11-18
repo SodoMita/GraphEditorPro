@@ -41,10 +41,10 @@ function setClipboard(window, payload) {
     value: { writeText:async()=>{}, readText:async()=> JSON.stringify(payload) },
   });
 }
-function setClipboardWrite(window, payload, writeText) {
+function setClipboardWrite(window, payload, writeText, readText = async () => JSON.stringify(payload)) {
   Object.defineProperty(window.navigator, 'clipboard', {
     configurable: true,
-    value: { writeText, readText:async()=> JSON.stringify(payload) },
+    value: { writeText, readText },
   });
 }
 function hotkey(window, key, modifiers) {
@@ -352,6 +352,85 @@ test('exact paste validates supplied fields and ignores entities without an id',
   assert.equal(a.width, 10, 'an out-of-range width is clamped to the loader range');
   assert.equal(a.x, -200); assert.equal(a.y, 0, 'non-numeric coordinates are treated as omitted');
   assert.equal(a.bogus, undefined, 'unknown fields never reach the live entity');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('offset paste drops edges whose copied nodes were rejected at the cap', async () => {
+  const nodes = [];
+  for(let i = 0; i < 2998; i++) nodes.push({ id: 'n' + i, label: 'N', x: i % 100, y: 0, order: i });
+  nodes.push({ id: 'a', label: 'A', x: 0, y: 0, order: 2998 });
+  nodes.push({ id: 'b', label: 'B', x: 20, y: 0, order: 2999 });
+  const graph = { ...baseGraph, nodes, edges: [{ id: 'e1', from: 'a', to: 'b', label: 'original' }] };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 500);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'A', x: 0, y: 0, order: 2998 }, { id: 'b', label: 'B', x: 20, y: 0, order: 2999 }],
+    edges: [{ id: 'e1', from: 'a', to: 'b', label: 'copied' }],
+    externalEdges: [], customAttributes: [],
+  });
+
+  hotkey(window, 'v', { ctrlKey: true });
+  await settle(window, 300);
+  const exportedGraph = exportGraph(document);
+  assert.equal(exportedGraph.nodes.length, 3000);
+  assert.deepEqual(exportedGraph.edges.map(e => e.id), ['e1'], 'no duplicate edge between the originals');
+  assert.equal(exportedGraph.edges[0].label, 'original');
+  assert.match(document.querySelector('.toast-stack').textContent, /3000/);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a failed local write still allows a genuinely newer cross-tab copy', async () => {
+  const oldPayload = {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Old', x: -100, y: 50, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  };
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let systemText = JSON.stringify(oldPayload);
+  setClipboardWrite(window, oldPayload, async () => { throw new Error('denied'); }, async () => systemText);
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 40);
+  systemText = JSON.stringify({
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Newer from other tab', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const a = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'Newer from other tab', 'a changed system payload outranks the failed local copy');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('exact paste can restore the editor’s empty shape and color as unset', async () => {
+  const graph = { ...baseGraph,
+    nodes: [{ ...baseGraph.nodes[0], shape: 'square', color: '#ff0000' }, baseGraph.nodes[1]],
+  };
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'A', x: -200, y: 0, order: 0, shape: '', color: '' }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const a = exportGraph(document).nodes.find(n => n.id === 'a');
+  assert.equal(a.shape, '', 'an explicit empty shape is a carried value, not an invalid one');
+  assert.equal(a.color, '', 'an explicit empty colour is a carried value, not an invalid one');
+  assert.doesNotMatch(document.querySelector('.toast-stack').textContent, /nothing changed/i);
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

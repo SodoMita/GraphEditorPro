@@ -802,7 +802,11 @@
   // Whether the latest local copy was published to the system clipboard. A
   // pending or failed write leaves the system clipboard older than the
   // in-memory payload, so pastes must not prefer it in that state.
-  let localClipboardWrite: { seq: number; state: 'pending' | 'published' | 'failed' } | null = null;
+  let localClipboardWrite: {
+    seq: number;
+    state: 'pending' | 'published' | 'failed';
+    staleSystemText: Promise<string | null>;
+  } | null = null;
   let localClipboardSeq = 0;
   const clipboardHas = (obj: unknown, key: string) => isRecord(obj) && Object.prototype.hasOwnProperty.call(obj, key);
   const clipboardText = (value: unknown, max: number, trim = false) => {
@@ -817,7 +821,13 @@
   };
   const clipboardColor = (value: unknown) => {
     const text = String(value ?? '');
+    // '' is the editor's stored value for "unset", not a bad payload value.
+    if(text === '') return '';
     return /^#[0-9a-f]{6}$/i.test(text) ? text : undefined;
+  };
+  const clipboardChoice = (value: unknown, allowed: readonly string[]) => {
+    const text = String(value ?? '');
+    return text === '' || allowed.includes(text) ? text : undefined;
   };
   // Clipboard is foreign input. Only fields the app itself writes are copied,
   // and each supplied field is normalized exactly as load/sanitize would.
@@ -847,7 +857,7 @@
     if(kind === 'node'){
       take('x', finiteCoordinate); take('y', finiteCoordinate);
       take('label', v => clipboardText(v, 80));
-      take('shape', v => NODE_SHAPES.includes(String(v)) ? String(v) : undefined);
+      take('shape', v => clipboardChoice(v, NODE_SHAPES));
       take('color', clipboardColor);
       take('type', v => clipboardText(v, 40));
       take('order', v => clipboardNumber(v, 0, 2147483647, true));
@@ -855,10 +865,10 @@
       take('height', v => clipboardNumber(v, 10, 300));
       take('strokeColor', clipboardColor);
       take('strokeSize', v => clipboardNumber(v, 0, 20));
-      take('strokeStyle', v => STROKE_STYLES.includes(String(v)) ? String(v) : undefined);
+      take('strokeStyle', v => clipboardChoice(v, STROKE_STYLES));
       take('labelColor', clipboardColor);
       take('labelSize', v => clipboardNumber(v, 4, 72));
-      take('labelPosition', v => LABEL_POSITIONS.includes(String(v)) ? String(v) : undefined);
+      take('labelPosition', v => clipboardChoice(v, LABEL_POSITIONS));
       take('labelFont', v => clipboardText(v, 60));
     } else {
       take('from', endpointId);
@@ -870,7 +880,7 @@
       take('weight', v => clipboardText(v, 50));
       take('color', clipboardColor);
       take('strokeSize', v => clipboardNumber(v, 0, 20));
-      take('strokeStyle', v => STROKE_STYLES.includes(String(v)) ? String(v) : undefined);
+      take('strokeStyle', v => clipboardChoice(v, STROKE_STYLES));
       take('arrowSize', v => clipboardNumber(v, 4, 40));
       take('labelColor', clipboardColor);
       take('labelSize', v => clipboardNumber(v, 4, 72));
@@ -950,7 +960,16 @@
     // outcome. An in-memory copy is always newer than the system clipboard
     // until this write resolves successfully.
     const writeSeq = ++localClipboardSeq;
-    localClipboardWrite = { seq: writeSeq, state: 'pending' };
+    // Capture what the system clipboard held before this copy. If publishing
+    // fails, a later, different system payload is from another tab and is
+    // genuinely newer than our in-memory copy.
+    let staleSystemText: Promise<string | null> = Promise.resolve(null);
+    try {
+      if(navigator.clipboard && typeof navigator.clipboard.readText === 'function'){
+        staleSystemText = navigator.clipboard.readText().catch(() => null);
+      }
+    } catch { staleSystemText = Promise.resolve(null); }
+    localClipboardWrite = { seq: writeSeq, state: 'pending', staleSystemText };
     try {
       const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes });
       if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
@@ -1034,14 +1053,18 @@
     const sortedCopyNodes = [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     const plannedNodes: AnyRecord[] = [];
     const plannedNodeIds = new Set<string>();
+    // A carried node rejected by the cap must still be remembered: its id may
+    // name a real node in this document, but it is NOT an external endpoint
+    // for this paste — it was carried and dropped, so edges through it go too.
+    const rejectedNodeIds = new Set<string>();
     let nodeSlots = nodeCapacity;
     for(const orig of sortedCopyNodes){
       const id = String(orig?.id ?? '');
-      if(!id || plannedNodeIds.has(id)){ droppedNodes++; continue; }
+      if(!id || plannedNodeIds.has(id)){ droppedNodes++; if(id) rejectedNodeIds.add(id); continue; }
       plannedNodeIds.add(id);
       // In exact mode an existing id is an update, so it consumes no slot.
       if(!exactPaste || !originalExistingNodeIds.has(id)){
-        if(nodeSlots <= 0){ droppedNodes++; continue; }
+        if(nodeSlots <= 0){ droppedNodes++; rejectedNodeIds.add(id); continue; }
         nodeSlots--;
       }
       plannedNodes.push(orig);
@@ -1056,6 +1079,7 @@
     const carriedNodeIds = new Set(data.nodes.map(n => String(n?.id)));
     const endpointFate = (id: unknown): 'pasted' | 'existing' | 'absent' => {
       const key = String(id ?? '');
+      if(rejectedNodeIds.has(key)) return 'absent';
       return carriedNodeIds.has(key) ? 'pasted' : originalExistingNodeIds.has(key) ? 'existing' : 'absent';
     };
     const edgeMaterializes = (orig: AnyRecord, isExternal: boolean): boolean => {
@@ -1565,11 +1589,15 @@
     } else if(!systemIssue){
       systemIssue = { key:'clipboard_empty' };
     }
-    // The system clipboard is only newer than the in-memory buffer if the
-    // latest local copy was actually published there. A rejected or still
-    // pending writeText leaves stale system data behind, which an in-place
-    // paste must never use to overwrite the current graph.
-    const systemCanBeNewer = !localClipboardWrite || localClipboardWrite.state === 'published';
+    // A published local copy makes the system clipboard current; another tab
+    // may then replace it with a newer payload. A failed write leaves stale
+    // data behind, but once the system text changes it is a newer cross-tab
+    // copy and must be allowed to win over the old local one.
+    let systemCanBeNewer = !localClipboardWrite || localClipboardWrite.state === 'published';
+    if(localClipboardWrite?.state === 'failed'){
+      const staleText = await localClipboardWrite.staleSystemText;
+      systemCanBeNewer = staleText !== null && text !== staleText;
+    }
     if(systemData && systemCanBeNewer){ pasteClipboardInternal(systemData, { exact }); return; }
     if(hasInternal){ pasteClipboardInternal(null, { exact }); return; }
     // With no trustworthy local copy, even a system payload written before
