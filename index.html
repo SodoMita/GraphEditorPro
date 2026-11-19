@@ -376,12 +376,12 @@
     .bottom-pane{display:none}
     .main.v-matrix .bottom,.main.v-edges .bottom{display:grid}
     .main.v-matrix .bottom-pane:nth-child(1),.main.v-edges .bottom-pane:nth-child(2){display:block}
-    .main.v-matrix.v-edges .bottom{grid-template-rows:auto auto; grid-template-columns:1fr}
+    .main.v-matrix.v-edges .bottom{grid-template-rows:var(--data-y, auto auto); grid-template-columns:1fr}
     .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:0; border-top:1px solid var(--line-2)}
     /* Panels are sized by their content (row: auto) and capped at 50% of
        the screen via max-height — a short matrix/edge list never leaves
        blank half-screen space, and big ones scroll inside the panel. */
-    .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
+    .main.v-matrix,.main.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) auto); grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
     .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0;grid-template-rows:minmax(0,1fr)}
     /* Vertical split with the canvas hidden: the two visible panes split the
@@ -390,7 +390,7 @@
        height pools below the edge list. The side-by-side arrangements are
        kept in the landscape/portrait(h)/desktop blocks, which load later
        with equal specificity. */
-    .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:repeat(2,minmax(0,1fr)); grid-template-columns:1fr}
+    .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:var(--data-y, repeat(2,minmax(0,1fr))); grid-template-columns:1fr}
     .main:not(.v-canvas) .bottom-pane{height:100%;min-height:0}
     .main:not(.v-canvas).v-matrix .bottom-pane:nth-child(1),
     .main:not(.v-canvas).v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; overflow:hidden}
@@ -690,8 +690,8 @@
       .canvas-wrap.sheet-open .sel-tools,
       .canvas-wrap.sheet-open .edge-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 68px); z-index:31}
       .canvas-wrap.sheet-open .gizmo-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 122px); z-index:31}
-      .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
-      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) auto); grid-template-areas:"canvas" "bottom"}
+      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1fr) minmax(0,1fr))}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
@@ -740,13 +740,13 @@
          best use of a short wide screen. The pane is a flex column whose
          table area stretches to fill the column, so a short matrix/edge
          list never leaves a dead gap. */
-      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
+      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--canvas-x, minmax(0,1.15fr) minmax(0,1fr)); grid-template-areas:"canvas bottom"}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .bottom{grid-template-rows:minmax(0,1fr); max-height:none}
-      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1fr) minmax(0,1fr))}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
-      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1fr) minmax(0,1fr))}
       .main:not(.v-canvas).v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
       .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
       .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
@@ -789,19 +789,19 @@
       .canvas-wrap.select-mode .empty-hint,
       .canvas-wrap.edge-mode .empty-hint{bottom:136px}
       /* Default: canvas + both panels visible (all three v-* classes) */
-      .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,26vh); grid-template-areas:"canvas" "bottom"}
+      .main.v-matrix,.main.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) minmax(0,26vh)); grid-template-areas:"canvas" "bottom"}
       .main:not(.v-matrix):not(.v-edges){grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas"}
       .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
-      .main.v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1.05fr .95fr}
+      .main.v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1.05fr) minmax(0,.95fr))}
       .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
       .main.v-matrix .bottom-pane:nth-child(1),
       .main.v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden}
       .main:not(.v-canvas) .bottom{max-height:none; height:100%; min-height:0; grid-template-rows:minmax(0,1fr)}
-      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1.05fr .95fr}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1.05fr) minmax(0,.95fr))}
       .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
       .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
       /* Horizontal split (↔): canvas left, panels right for every view */
-      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
+      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--canvas-x, minmax(0,1.1fr) minmax(0,1fr)); grid-template-areas:"canvas bottom"}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .table-scroll{max-height:none}
@@ -838,6 +838,52 @@
 
     @media (prefers-reduced-motion:reduce){
       *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+    }
+
+    /* Invisible hit strips centred on the existing pane edges. The axes
+       mirror the responsive grid tracks above. */
+    .main,.bottom{position:relative}
+    .pane-split{
+      --split-axis:y;
+      --split-half:6px;
+      display:none; position:absolute; z-index:5;
+      left:0; right:0; bottom:calc(-1 * var(--split-half));
+      height:calc(2 * var(--split-half)); cursor:row-resize;
+      touch-action:none; user-select:none;
+    }
+    @media (pointer:coarse){.pane-split{--split-half:16px}}
+    #canvasSplit{grid-area:canvas}
+    #dataSplit{grid-area:1 / 1 / 2 / 2}
+    .main.v-canvas:is(.v-matrix,.v-edges) #canvasSplit,
+    .main.v-matrix.v-edges #dataSplit{display:block}
+    .main.canvas-row-resized .bottom{max-height:none; min-height:0}
+    .main.panes-resized .bottom > .bottom-pane{overflow:auto}
+    .main.panes-resized .table-scroll{max-height:none; min-height:36px}
+    @media (min-width:951px), (orientation:landscape){
+      .main[data-orient="h"] #canvasSplit{
+        --split-axis:x;
+        top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+        width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+      }
+    }
+    .main[data-orient="h"] #dataSplit{
+      --split-axis:x;
+      top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+      width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+    }
+    @media (min-width:951px){
+      #dataSplit{
+        --split-axis:x;
+        top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+        width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+      }
+    }
+    @media (max-width:950px) and (orientation:landscape){
+      .main:not(.v-canvas) #dataSplit{
+        --split-axis:x;
+        top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+        width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+      }
     }
   </style>
 </head>
@@ -1680,6 +1726,7 @@
           <div class="empty-hint" data-i18n="empty_hint">Choose Node, then click the canvas — or open Help to load the sample graph.</div>
         </section>
 
+        <div id="canvasSplit" class="pane-split" aria-hidden="true"></div>
         <section class="panel bottom">
           <div class="bottom-pane thin-scroll">
             <div class="section-title"><span data-i18n="adjacency_matrix">Adjacency matrix</span> <span id="matrixNote" class="tiny muted"></span></div>
@@ -1713,6 +1760,7 @@
             </div>
             <div id="edgeListHost" class="table-scroll thin-scroll"></div>
           </div>
+          <div id="dataSplit" class="pane-split" aria-hidden="true"></div>
         </section>
       </main>
     </div>
@@ -16525,6 +16573,83 @@ function renderCustomAttributes(options) {
         });
     }
 }
+function wirePaneResize(split, first, group, key) {
+    let drag = null;
+    const main = key === 'canvas' ? group : group.parentElement;
+    const tracks = (ratio) => `minmax(0,${ratio}fr) minmax(0,${1 - ratio}fr)`;
+    let frame = 0;
+    const axis = () => getComputedStyle(split).getPropertyValue('--split-axis').trim();
+    const position = (ev, dir) => dir === 'x' ? ev.clientX : ev.clientY;
+    const paint = () => {
+        frame = 0;
+        if (!drag || !split.getClientRects().length || axis() !== drag.axis)
+            return;
+        const ratio = drag.next;
+        const canvasChanged = key === 'canvas' || drag.keepCanvas !== undefined;
+        if (drag.keepCanvas !== undefined) {
+            // Keep the outer split in place when replacing content-sized rows.
+            main.style.setProperty('--canvas-y', tracks(drag.keepCanvas));
+            drag.keepCanvas = undefined;
+        }
+        group.style.setProperty(`--${key}-${drag.axis}`, tracks(ratio));
+        main.classList.add('panes-resized');
+        if (main.style.getPropertyValue('--canvas-y'))
+            main.classList.add('canvas-row-resized');
+        drag.changed = true;
+        if (canvasChanged)
+            applyCameraTransform(currentCamera());
+    };
+    split.addEventListener('pointerdown', ev => {
+        if (drag || !ev.isPrimary || ev.button !== 0)
+            return;
+        const dir = axis();
+        const horizontal = dir === 'x';
+        const style = getComputedStyle(group);
+        const gap = parseFloat(horizontal ? style.columnGap : style.rowGap) || 0;
+        const total = (horizontal ? group.clientWidth : group.clientHeight) - gap;
+        if (total < 2)
+            return;
+        const rect = first.getBoundingClientRect();
+        const size = horizontal ? rect.width : rect.height;
+        split.setPointerCapture(ev.pointerId);
+        ev.preventDefault();
+        drag = { id: ev.pointerId, axis: dir, start: position(ev, dir), size, total, next: size / total };
+        if (key === 'data' && !horizontal && main.classList.contains('v-canvas') && !main.style.getPropertyValue('--canvas-y')) {
+            const height = canvasWrap.getBoundingClientRect().height;
+            drag.keepCanvas = height / (height + group.getBoundingClientRect().height);
+        }
+    });
+    const move = (ev) => {
+        if (!drag || ev.pointerId !== drag.id)
+            return;
+        const delta = position(ev, drag.axis) - drag.start;
+        const min = Math.min(120 / drag.total, 0.3);
+        const initial = drag.size / drag.total;
+        const next = clamp(initial + delta / drag.total, Math.min(initial, min), Math.max(initial, 1 - min));
+        if (next === drag.next || (!frame && !delta && !drag.changed))
+            return;
+        drag.next = next;
+        if (!frame)
+            frame = requestAnimationFrame(paint);
+    };
+    const finish = (ev) => {
+        if (!drag || ev.pointerId !== drag.id)
+            return;
+        if (ev.type === 'pointerup')
+            move(ev);
+        if (frame) {
+            cancelAnimationFrame(frame);
+            paint();
+        }
+        if (drag.changed && key === 'canvas')
+            applyCamera();
+        drag = null;
+    };
+    split.addEventListener('pointermove', move);
+    split.addEventListener('pointerup', finish);
+    split.addEventListener('pointercancel', finish);
+    split.addEventListener('lostpointercapture', finish);
+}
 function wireUi() {
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
@@ -17340,6 +17465,9 @@ function wireUi() {
     // View toggle controls
     const mainEl = document.querySelector('.main');
     if (mainEl) {
+        const dataPane = mainEl.querySelector('.bottom');
+        wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas');
+        wirePaneResize($('#dataSplit'), dataPane.querySelector('.bottom-pane'), dataPane, 'data');
         // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
         // classes on .main). At least one view must stay visible.
         const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;

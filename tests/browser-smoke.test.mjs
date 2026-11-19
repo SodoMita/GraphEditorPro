@@ -717,3 +717,49 @@ test('the 100% button resets the scale to 1:1 instead of fitting the graph', asy
 
   assert.deepEqual(errors.map(error => error.message), []);
 });
+
+test('pane edge drags resize the correct axis, respect bounds, and clean up capture', async () => {
+  const { dom, errors } = createEditorDom();
+  const { document } = dom.window;
+  try {
+    const canvas = document.querySelector('#canvasSplit');
+    const main = canvas.parentElement;
+    const data = document.querySelector('#dataSplit');
+    const bottom = data.parentElement;
+    main.classList.add('v-matrix', 'v-edges');
+    Object.defineProperty(main, 'clientHeight', { value: 1000 });
+    Object.defineProperty(bottom, 'clientWidth', { value: 800 });
+    bottom.firstElementChild.getBoundingClientRect = () => ({ width: 400 });
+    let captured;
+    for (const split of [canvas, data]) {
+      split.setPointerCapture = id => { captured = id; };
+      split.getClientRects = () => [{ width: 32 }];
+    }
+    const pointer = (target, type, x, y, id = 1) => {
+      const event = new dom.window.MouseEvent(type, { clientX: x, clientY: y, cancelable: true });
+      Object.defineProperties(event, { pointerId: { value: id }, isPrimary: { value: id === 1 } });
+      target.dispatchEvent(event);
+    };
+    pointer(canvas, 'pointerdown', 400, 660);
+    pointer(canvas, 'pointerup', 400, 660);
+    assert.equal(main.style.getPropertyValue('--canvas-y'), '', 'tapping does not resize');
+    pointer(canvas, 'pointerdown', 400, 660);
+    assert.equal(captured, 1);
+    pointer(canvas, 'pointermove', 800, 500);
+    await nextFrame(dom.window);
+    assert.match(main.style.getPropertyValue('--canvas-y'), /minmax\(0,0\.5fr\)/);
+    pointer(canvas, 'pointerup', 800, 0);
+    assert.match(main.style.getPropertyValue('--canvas-y'), /minmax\(0,0\.12fr\)/);
+    data.style.setProperty('--split-axis', 'x');
+    pointer(data, 'pointerdown', 400, 750);
+    pointer(data, 'pointermove', 500, 750, 2);
+    pointer(data, 'pointercancel', 400, 750);
+    assert.equal(bottom.style.getPropertyValue('--data-x'), '');
+    pointer(data, 'pointerdown', 400, 750);
+    pointer(data, 'pointerup', 500, 700);
+    assert.match(bottom.style.getPropertyValue('--data-x'), /minmax\(0,0\.625fr\)/);
+    assert.deepEqual(errors, []);
+  } finally {
+    dom.window.close();
+  }
+});

@@ -19,6 +19,10 @@ CI (`.github/workflows/ci.yml`) runs `npm run check` on Node 20 and 22 for every
 
 After a successful build, open `index.html` in any modern browser.
 
+## Resizing the workspace
+
+Drag the shared edge between the canvas and the data area, or between the adjacency matrix and edge list. The existing borders double as resize targets, with a wider touch zone on mobile. If a pane is hidden, use the view buttons to show it first (in the Data tab on mobile).
+
 ## Source layout
 
 The TypeScript files are deliberately ordered in `tsconfig.json`. They form one typed program and are wrapped in a private IIFE in the final HTML, preserving the original application's shared runtime state without exposing implementation globals.

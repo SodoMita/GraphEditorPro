@@ -1,3 +1,70 @@
+  function wirePaneResize(split: HTMLElement, first: HTMLElement, group: HTMLElement, key: string){
+    let drag: {
+      id: number; axis: string; start: number; size: number; total: number; next: number;
+      keepCanvas?: number; changed?: boolean;
+    } | null = null;
+    const main = key === 'canvas' ? group : group.parentElement!;
+    const tracks = (ratio: number) => `minmax(0,${ratio}fr) minmax(0,${1 - ratio}fr)`;
+    let frame = 0;
+    const axis = () => getComputedStyle(split).getPropertyValue('--split-axis').trim();
+    const position = (ev: PointerEvent, dir: string) => dir === 'x' ? ev.clientX : ev.clientY;
+    const paint = () => {
+      frame = 0;
+      if(!drag || !split.getClientRects().length || axis() !== drag.axis) return;
+      const ratio = drag.next;
+      const canvasChanged = key === 'canvas' || drag.keepCanvas !== undefined;
+      if(drag.keepCanvas !== undefined){
+        // Keep the outer split in place when replacing content-sized rows.
+        main.style.setProperty('--canvas-y', tracks(drag.keepCanvas));
+        drag.keepCanvas = undefined;
+      }
+      group.style.setProperty(`--${key}-${drag.axis}`, tracks(ratio));
+      main.classList.add('panes-resized');
+      if(main.style.getPropertyValue('--canvas-y')) main.classList.add('canvas-row-resized');
+      drag.changed = true;
+      if(canvasChanged) applyCameraTransform(currentCamera());
+    };
+    split.addEventListener('pointerdown', ev => {
+      if(drag || !ev.isPrimary || ev.button !== 0) return;
+      const dir = axis();
+      const horizontal = dir === 'x';
+      const style = getComputedStyle(group);
+      const gap = parseFloat(horizontal ? style.columnGap : style.rowGap) || 0;
+      const total = (horizontal ? group.clientWidth : group.clientHeight) - gap;
+      if(total < 2) return;
+      const rect = first.getBoundingClientRect();
+      const size = horizontal ? rect.width : rect.height;
+      split.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+      drag = { id: ev.pointerId, axis: dir, start: position(ev, dir), size, total, next: size / total };
+      if(key === 'data' && !horizontal && main.classList.contains('v-canvas') && !main.style.getPropertyValue('--canvas-y')){
+        const height = canvasWrap.getBoundingClientRect().height;
+        drag.keepCanvas = height / (height + group.getBoundingClientRect().height);
+      }
+    });
+    const move = (ev: PointerEvent) => {
+      if(!drag || ev.pointerId !== drag.id) return;
+      const delta = position(ev, drag.axis) - drag.start;
+      const min = Math.min(120 / drag.total, 0.3);
+      const initial = drag.size / drag.total;
+      const next = clamp(initial + delta / drag.total, Math.min(initial, min), Math.max(initial, 1 - min));
+      if(next === drag.next || (!frame && !delta && !drag.changed)) return;
+      drag.next = next;
+      if(!frame) frame = requestAnimationFrame(paint);
+    };
+    const finish = (ev: PointerEvent) => {
+      if(!drag || ev.pointerId !== drag.id) return;
+      if(ev.type === 'pointerup') move(ev);
+      if(frame){ cancelAnimationFrame(frame); paint(); }
+      if(drag.changed && key === 'canvas') applyCamera();
+      drag = null;
+    };
+    split.addEventListener('pointermove', move);
+    split.addEventListener('pointerup', finish);
+    split.addEventListener('pointercancel', finish);
+    split.addEventListener('lostpointercapture', finish);
+  }
+
   function wireUi(){
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
@@ -603,6 +670,9 @@
     // View toggle controls
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
+      const dataPane = mainEl.querySelector<HTMLElement>('.bottom')!;
+      wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas');
+      wirePaneResize($('#dataSplit'), dataPane.querySelector<HTMLElement>('.bottom-pane')!, dataPane, 'data');
       // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
       // classes on .main). At least one view must stay visible.
       const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
