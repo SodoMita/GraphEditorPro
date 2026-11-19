@@ -53,10 +53,19 @@ inv('import paths never re-decode an already-internal identity (originFromForeig
 inv('exact-pair merge requires recorded origin equality (no "no origin = free merge")', /pairOrigin === incOriginPair/.test(imp) && !imp.includes('!pairOrigin || pairOrigin === incOriginPair'));
 inv('exact-pair default identity is the existing definition\'s own id', /String\(\(pairHit as AnyRecord\)\?\.origin \?\? ''\)\.trim\(\) \|\| String\(pairHit\?\.id \?\? ''\)\.trim\(\)/.test(imp));
 
+// --- Clipboard/keyboard ingress guards ---
+const ui = read('80-ui.ts');
+inv('editable matrix fields keep native shortcuts (only read-only inputs route to the graph)', /if\(isInput && !readonlyInput\) return;/.test(ui));
+inv('plain paste respects the produced key; physical KeyV is an Alt-only fallback', /const isV = key === 'v' \|\| \(ev\.altKey && ev\.code === 'KeyV'\)/.test(ui));
+inv('clipboard publication is serialized instead of issuing overlapping writes', /if\(clipboardWriteInFlight == null\) issueClipboardWrite\(attempt\);\s*else queuedClipboardWrite = attempt;/.test(paste));
+
 // --- Reusable change core ---
 inv('exact paste applies through the DOM-free GraphPatchCore', /GraphPatchCore\.applyExactPatch\(state/.test(paste));
 inv('shared safe-counter/allocator helpers delegate to the core', /GraphPatchCore\.safeCounter/.test(core) && /GraphPatchCore\.allocateId/.test(paste) && /GraphPatchCore\.advanceCounter/.test(paste));
-inv('server changes reuse the same exact-patch core', /function applyServerChange/.test(readFileSync(join(root, 'src/core/graph-patch.ts'), 'utf8')));
+const patchCore = readFileSync(join(root, 'src/core/graph-patch.ts'), 'utf8');
+inv('server changes reuse the same exact-patch core', /function applyServerChange/.test(patchCore));
+inv('server patches validate supplied endpoints against the resulting node set', /!nodeById\.has\(from\)/.test(patchCore) && /!nodeById\.has\(to\)/.test(patchCore));
+inv('server changes distinguish partial and rejected work from acknowledged work', /status: 'applied' \| 'partial' \| 'rejected'/.test(patchCore) && /if\(status === 'applied'\) options\.appliedIds\?\.add/.test(patchCore));
 
 // --- Paste exact-pair branch: same rule (P3, ⑳) ---
 inv('paste exact-pair: an origin-less destination is evidence only by its own id', /String\(existing\?\.origin \?\? ''\)\.trim\(\) \|\| String\(existing\?\.id \?\? ''\)\.trim\(\)/.test(paste));
