@@ -1933,6 +1933,17 @@ const GraphPatchCore = (() => {
                 droppedEdges++;
                 continue;
             }
+            const existingById = edgeById.get(edgeId);
+            // A server patch may change an endpoint to a node that does not exist in
+            // the resulting graph. That edge would be silently discarded on the next
+            // load, so reject the edge here instead of reporting a false success.
+            const suppliedFrom = Object.prototype.hasOwnProperty.call(orig, 'from');
+            const suppliedTo = Object.prototype.hasOwnProperty.call(orig, 'to');
+            if ((suppliedFrom && !nodeById.has(from)) || (suppliedTo && !nodeById.has(to)) ||
+                (!existingById && (!suppliedFrom || !suppliedTo))) {
+                droppedEdges++;
+                continue;
+            }
             const edge = cloneEntity(orig);
             const id = String(edge.id ?? '');
             if (!id) {
@@ -1984,8 +1995,15 @@ const GraphPatchCore = (() => {
             return { ...empty, status: 'stale', id: change.id, revision: change.revision };
         }
         const result = applyExactPatch(target, change.patch, options);
-        options.appliedIds?.add(change.id);
-        return { ...result, status: 'applied', id: change.id, revision: change.revision };
+        const requested = (Array.isArray(change.patch.nodes) ? change.patch.nodes.length : 0)
+            + (Array.isArray(change.patch.edges) ? change.patch.edges.length : 0);
+        const dropped = result.droppedNodes + result.droppedEdges;
+        // Do not acknowledge work that still has to be retried. Exact patches are
+        // idempotent, so replaying a partial change is safe once capacity exists.
+        const status = dropped === 0 ? 'applied' : dropped === requested ? 'rejected' : 'partial';
+        if (status === 'applied')
+            options.appliedIds?.add(change.id);
+        return { ...result, status, id: change.id, revision: change.revision };
     }
     return {
         isRecord, cloneCustomMap, cloneEntity, valuesEqual, mergeCustom, mergeCarried,
@@ -9232,6 +9250,14 @@ const publishClipboardStamp = (stamp) => {
     }
     catch { }
 };
+const newestOutstandingClipboardStamp = () => {
+    let best = null;
+    for (const attempt of outstandingClipboardWrites.values()) {
+        if (!best || compareClipboardStamps(attempt.stamp, best) === true)
+            best = attempt.stamp;
+    }
+    return best;
+};
 const boundedRead = async (promise, fallback) => {
     let timer = null;
     try {
@@ -9247,6 +9273,79 @@ const boundedRead = async (promise, fallback) => {
 };
 let localClipboardWrite = null;
 let localClipboardSeq = 0;
+// Only one graph write is in flight. A newer copy waits in the queue so two
+// overlapping writes cannot land out of order and leave an older payload on
+// the system clipboard for fresh tabs.
+const outstandingClipboardWrites = new Map();
+let queuedClipboardWrite = null;
+let clipboardWriteInFlight = null;
+let lastIssuedClipboardText = null;
+// A queued copy is published only when it is still safe to do so. If the
+// clipboard changed to something else while waiting (another app, another
+// tab, or a history restore), we keep the copy local instead of overwriting
+// that newer content.
+async function maybePublishQueuedClipboard() {
+    if (clipboardWriteInFlight != null)
+        return;
+    const queued = queuedClipboardWrite;
+    if (!queued)
+        return;
+    queuedClipboardWrite = null;
+    let current;
+    try {
+        current = navigator.clipboard && typeof navigator.clipboard.readText === 'function'
+            ? (await navigator.clipboard.readText()) || ''
+            : undefined;
+    }
+    catch {
+        current = undefined;
+    }
+    const stale = await boundedRead(queued.staleSystemText, undefined);
+    const stillOurs = current === queued.payload || current === lastIssuedClipboardText;
+    const unchanged = stale !== undefined && current === stale;
+    if (current === undefined || (!stillOurs && !unchanged)) {
+        outstandingClipboardWrites.delete(queued.seq);
+        if (localClipboardWrite?.seq === queued.seq)
+            localClipboardWrite.state = 'failed';
+        if (queuedClipboardWrite)
+            void maybePublishQueuedClipboard();
+        return;
+    }
+    // A newer copy arrived while the clipboard was being checked.
+    if (queuedClipboardWrite && queuedClipboardWrite.seq > queued.seq) {
+        outstandingClipboardWrites.delete(queued.seq);
+        void maybePublishQueuedClipboard();
+        return;
+    }
+    issueClipboardWrite(queued);
+}
+function issueClipboardWrite(attempt) {
+    clipboardWriteInFlight = attempt.seq;
+    lastIssuedClipboardText = attempt.payload;
+    const settled = (published) => {
+        if (clipboardWriteInFlight === attempt.seq)
+            clipboardWriteInFlight = null;
+        outstandingClipboardWrites.delete(attempt.seq);
+        if (localClipboardWrite?.seq === attempt.seq) {
+            localClipboardWrite.state = published ? 'published' : 'failed';
+            if (published)
+                publishClipboardStamp(attempt.stamp);
+        }
+        void maybePublishQueuedClipboard();
+    };
+    try {
+        const outcome = navigator.clipboard.writeText(attempt.payload);
+        if (outcome && typeof outcome.then === 'function') {
+            outcome.then(() => settled(true), () => settled(false));
+        }
+        else {
+            settled(true);
+        }
+    }
+    catch {
+        settled(false);
+    }
+}
 // A paste read still in flight. Its generation token is invalidated by the
 // next paste command, so a hanging read can never paste a second time.
 let pasteGeneration = 0;
@@ -9435,38 +9534,25 @@ function copySelectedNodes() {
         staleSystemText = Promise.resolve(undefined);
     }
     localClipboardWrite = { seq: writeSeq, state: 'pending', stamp, staleSystemText };
-    let payload = '';
     try {
-        payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
+        const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
+        const attempt = { seq: writeSeq, payload, stamp, staleSystemText };
+        outstandingClipboardWrites.set(writeSeq, attempt);
         if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            const settleWrite = (published) => {
-                if (localClipboardWrite?.seq === writeSeq) {
-                    localClipboardWrite.state = published ? 'published' : 'failed';
-                    if (published) {
-                        // Shared with other tabs only now that the payload is really on
-                        // the system clipboard. A failed write leaves the previous stamp
-                        // (and therefore the previous valid payload) untouched.
-                        publishClipboardStamp(stamp);
-                    }
-                    return;
-                }
-                // An obsolete write is simply ignored. Never start a compensating
-                // write here: anything copied since it began (including plain text
-                // from another app) must stay on the clipboard.
-            };
-            const outcome = navigator.clipboard.writeText(payload);
-            if (outcome && typeof outcome.then === 'function') {
-                outcome.then(() => settleWrite(true), () => settleWrite(false));
-            }
-            else {
-                settleWrite(true);
-            }
+            // Serialize publication: at most one graph write is ever in flight, so
+            // a slower older copy cannot land after a newer one.
+            if (clipboardWriteInFlight == null)
+                issueClipboardWrite(attempt);
+            else
+                queuedClipboardWrite = attempt;
         }
         else {
+            outstandingClipboardWrites.delete(writeSeq);
             localClipboardWrite.state = 'failed';
         }
     }
     catch {
+        outstandingClipboardWrites.delete(writeSeq);
         if (localClipboardWrite?.seq === writeSeq)
             localClipboardWrite.state = 'failed';
     }
@@ -10110,18 +10196,18 @@ async function pasteFromClipboardSource(exact) {
                 return; // cancelled during the snapshot wait
             systemCanBeNewer = staleText !== undefined && text !== staleText;
         }
-        if (systemData && localClipboardWrite) {
-            // A newer stamped payload is valid regardless of our local write being
-            // pending or failed; an older one is never valid. Only the local write
-            // provides evidence here: a persistent stamp is clipboard history and
-            // cannot tell what the user currently has on the clipboard.
-            const order = compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp);
-            if (order === true)
-                systemCanBeNewer = true;
-            else if (order === false) {
-                systemCanBeNewer = false;
-                systemRejectedByStamp = true;
-            }
+        // A genuinely newer stamped payload wins over any local write. Only a
+        // KNOWN outstanding write may REJECT a payload as obsolete: after all
+        // writes settle, even an older restored history item is current intent.
+        if (systemData && localClipboardWrite &&
+            compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp) === true) {
+            systemCanBeNewer = true;
+        }
+        const outstandingStamp = newestOutstandingClipboardStamp();
+        if (systemData && outstandingStamp &&
+            compareClipboardStamps(systemData.clipboardStamp, outstandingStamp) === false) {
+            systemCanBeNewer = false;
+            systemRejectedByStamp = true;
         }
         if (token !== pasteGeneration)
             return;
@@ -17908,17 +17994,17 @@ function wireUi() {
         if (!mod)
             return;
         const target = ev.target;
-        const isInput = target && (target.matches && (target.matches('input, textarea, [contenteditable]') || target.isContentEditable));
-        // If focus is in matrix/edge input that is readonly (selection mode), we still want clipboard shortcuts
+        const isInput = target && (target.matches && (target.matches('input, textarea, select, [contenteditable]') || target.isContentEditable));
+        // Even matrix fields are editable when they are not read-only. Only a
+        // read-only matrix cell represents graph selection, not text entry.
         const readonlyInput = isInput && target.readOnly;
-        if (isInput && !readonlyInput && !(target.matches && target.matches('.matrix-input,.matrix-label-input'))) {
-            // typing in a visible text field — don't hijack
+        if (isInput && !readonlyInput)
             return;
-        }
         const key = ev.key.toLowerCase();
-        // Option changes `key` on Mac layouts (V becomes "√"); the physical
-        // code keeps Cmd+Option+V working regardless of the produced glyph.
-        const isV = ev.code === 'KeyV' || key === 'v';
+        // Option changes `key` on Mac layouts (V becomes "√"). Only the
+        // modified exact-paste command needs the physical-key fallback; plain
+        // Cmd/Ctrl+V must respect the produced key (e.g. KeyV -> "k" on Dvorak).
+        const isV = key === 'v' || (ev.altKey && ev.code === 'KeyV');
         if (key === 'c' && !ev.shiftKey && !ev.altKey) {
             // Ctrl+C copy
             if (state.selection?.nodes?.length || state.selection?.edges?.length || state.selected) {

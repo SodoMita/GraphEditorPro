@@ -869,6 +869,13 @@
     if(current && compareClipboardStamps(stamp, current) !== true) return;
     try { localStorage.setItem(CLIPBOARD_STAMP_KEY, JSON.stringify(stamp)); } catch {}
   };
+  const newestOutstandingClipboardStamp = (): ClipboardStamp | null => {
+    let best: ClipboardStamp | null = null;
+    for(const attempt of outstandingClipboardWrites.values()){
+      if(!best || compareClipboardStamps(attempt.stamp, best) === true) best = attempt.stamp;
+    }
+    return best;
+  };
   const boundedRead = async <T>(promise: Promise<T>, fallback: T): Promise<T> => {
     let timer: any = null;
     try {
@@ -880,14 +887,82 @@
       if(timer != null) clearTimeout(timer);
     }
   };
+
+  type ClipboardWriteAttempt = {
+    seq: number;
+    payload: string;
+    stamp: ClipboardStamp;
+    // undefined means the pre-copy snapshot was denied/unknown, not empty.
+    staleSystemText: Promise<string | undefined>;
+  };
   let localClipboardWrite: {
     seq: number;
     state: 'pending' | 'published' | 'failed';
     stamp: ClipboardStamp;
-    // undefined means the pre-copy snapshot was denied/unknown, not empty.
     staleSystemText: Promise<string | undefined>;
   } | null = null;
   let localClipboardSeq = 0;
+  // Only one graph write is in flight. A newer copy waits in the queue so two
+  // overlapping writes cannot land out of order and leave an older payload on
+  // the system clipboard for fresh tabs.
+  const outstandingClipboardWrites = new Map<number, ClipboardWriteAttempt>();
+  let queuedClipboardWrite: ClipboardWriteAttempt | null = null;
+  let clipboardWriteInFlight: number | null = null;
+  let lastIssuedClipboardText: string | null = null;
+
+  // A queued copy is published only when it is still safe to do so. If the
+  // clipboard changed to something else while waiting (another app, another
+  // tab, or a history restore), we keep the copy local instead of overwriting
+  // that newer content.
+  async function maybePublishQueuedClipboard(){
+    if(clipboardWriteInFlight != null) return;
+    const queued = queuedClipboardWrite;
+    if(!queued) return;
+    queuedClipboardWrite = null;
+    let current: string | undefined;
+    try {
+      current = navigator.clipboard && typeof navigator.clipboard.readText === 'function'
+        ? (await navigator.clipboard.readText()) || ''
+        : undefined;
+    } catch { current = undefined; }
+    const stale = await boundedRead<string | undefined>(queued.staleSystemText, undefined);
+    const stillOurs = current === queued.payload || current === lastIssuedClipboardText;
+    const unchanged = stale !== undefined && current === stale;
+    if(current === undefined || (!stillOurs && !unchanged)){
+      outstandingClipboardWrites.delete(queued.seq);
+      if(localClipboardWrite?.seq === queued.seq) localClipboardWrite.state = 'failed';
+      if(queuedClipboardWrite) void maybePublishQueuedClipboard();
+      return;
+    }
+    // A newer copy arrived while the clipboard was being checked.
+    if(queuedClipboardWrite && queuedClipboardWrite.seq > queued.seq){
+      outstandingClipboardWrites.delete(queued.seq);
+      void maybePublishQueuedClipboard();
+      return;
+    }
+    issueClipboardWrite(queued);
+  }
+  function issueClipboardWrite(attempt: ClipboardWriteAttempt){
+    clipboardWriteInFlight = attempt.seq;
+    lastIssuedClipboardText = attempt.payload;
+    const settled = (published: boolean) => {
+      if(clipboardWriteInFlight === attempt.seq) clipboardWriteInFlight = null;
+      outstandingClipboardWrites.delete(attempt.seq);
+      if(localClipboardWrite?.seq === attempt.seq){
+        localClipboardWrite.state = published ? 'published' : 'failed';
+        if(published) publishClipboardStamp(attempt.stamp);
+      }
+      void maybePublishQueuedClipboard();
+    };
+    try {
+      const outcome: any = navigator.clipboard.writeText(attempt.payload);
+      if(outcome && typeof outcome.then === 'function'){
+        outcome.then(() => settled(true), () => settled(false));
+      } else {
+        settled(true);
+      }
+    } catch { settled(false); }
+  }
   // A paste read still in flight. Its generation token is invalidated by the
   // next paste command, so a hanging read can never paste a second time.
   let pasteGeneration = 0;
@@ -1056,35 +1131,21 @@
       }
     } catch { staleSystemText = Promise.resolve(undefined); }
     localClipboardWrite = { seq: writeSeq, state: 'pending', stamp, staleSystemText };
-    let payload = '';
     try {
-      payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
+      const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
+      const attempt: ClipboardWriteAttempt = { seq: writeSeq, payload, stamp, staleSystemText };
+      outstandingClipboardWrites.set(writeSeq, attempt);
       if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
-        const settleWrite = (published: boolean) => {
-          if(localClipboardWrite?.seq === writeSeq){
-            localClipboardWrite.state = published ? 'published' : 'failed';
-            if(published){
-              // Shared with other tabs only now that the payload is really on
-              // the system clipboard. A failed write leaves the previous stamp
-              // (and therefore the previous valid payload) untouched.
-              publishClipboardStamp(stamp);
-            }
-            return;
-          }
-          // An obsolete write is simply ignored. Never start a compensating
-          // write here: anything copied since it began (including plain text
-          // from another app) must stay on the clipboard.
-        };
-        const outcome: any = navigator.clipboard.writeText(payload);
-        if(outcome && typeof outcome.then === 'function'){
-          outcome.then(() => settleWrite(true), () => settleWrite(false));
-        } else {
-          settleWrite(true);
-        }
+        // Serialize publication: at most one graph write is ever in flight, so
+        // a slower older copy cannot land after a newer one.
+        if(clipboardWriteInFlight == null) issueClipboardWrite(attempt);
+        else queuedClipboardWrite = attempt;
       } else {
+        outstandingClipboardWrites.delete(writeSeq);
         localClipboardWrite.state = 'failed';
       }
     } catch {
+      outstandingClipboardWrites.delete(writeSeq);
       if(localClipboardWrite?.seq === writeSeq) localClipboardWrite.state = 'failed';
     }
     // Try to use copyText helper if available
@@ -1643,14 +1704,17 @@
         if(token !== pasteGeneration) return; // cancelled during the snapshot wait
         systemCanBeNewer = staleText !== undefined && text !== staleText;
       }
-      if(systemData && localClipboardWrite){
-        // A newer stamped payload is valid regardless of our local write being
-        // pending or failed; an older one is never valid. Only the local write
-        // provides evidence here: a persistent stamp is clipboard history and
-        // cannot tell what the user currently has on the clipboard.
-        const order = compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp);
-        if(order === true) systemCanBeNewer = true;
-        else if(order === false){ systemCanBeNewer = false; systemRejectedByStamp = true; }
+      // A genuinely newer stamped payload wins over any local write. Only a
+      // KNOWN outstanding write may REJECT a payload as obsolete: after all
+      // writes settle, even an older restored history item is current intent.
+      if(systemData && localClipboardWrite &&
+         compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp) === true){
+        systemCanBeNewer = true;
+      }
+      const outstandingStamp = newestOutstandingClipboardStamp();
+      if(systemData && outstandingStamp &&
+         compareClipboardStamps(systemData.clipboardStamp, outstandingStamp) === false){
+        systemCanBeNewer = false; systemRejectedByStamp = true;
       }
       if(token !== pasteGeneration) return;
 

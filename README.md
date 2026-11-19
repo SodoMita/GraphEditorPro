@@ -44,7 +44,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 
 `index.html` is generated and should not be edited directly.
 
-`src/core/graph-patch.ts` is the reusable change-application layer. `GraphPatchCore.applyExactPatch(target, patch, options)` mutates a plain graph-shaped target (`nodes`, `edges`, `nextNode`, `nextEdge`) and reports what changed; it has no DOM, clipboard, history, or toast dependencies. `GraphPatchCore.applyServerChange(target, change, options)` wraps it with idempotency and monotonic-revision checks for server-delivered patches. Clipboard paste in `src/app/30-graph-editing.ts` is a thin adapter that validates clipboard data, calls the same core, then performs selection/history/render/save side effects.
+`src/core/graph-patch.ts` is the reusable change-application layer. `GraphPatchCore.applyExactPatch(target, patch, options)` mutates a plain graph-shaped target (`nodes`, `edges`, `nextNode`, `nextEdge`) and reports what changed; it has no DOM, clipboard, history, or toast dependencies. `GraphPatchCore.applyServerChange(target, change, options)` wraps it with idempotency and monotonic-revision checks for server-delivered patches. Its result distinguishes `applied`, `partial`, and `rejected`: work affected by the document caps is not acknowledged, so the caller can retry it when capacity returns. Clipboard paste in `src/app/30-graph-editing.ts` is a thin adapter that validates clipboard data, calls the same core, then performs selection/history/render/save side effects.
 
 ## Paste in place
 

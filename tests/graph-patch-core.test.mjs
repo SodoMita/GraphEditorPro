@@ -129,3 +129,47 @@ test('applyServerChange adds idempotency and revision checks around the same mer
   assert.equal(newer.status, 'applied');
   assert.equal(target.nodes[0].label, 'Newer from server');
 });
+
+test('server patches never leave a dangling edge', () => {
+  const target = graph();
+  const appliedIds = new Set();
+  const change = {
+    id: 'dangling', revision: 1,
+    patch: { nodes: [], edges: [{ id: 'e1', from: 'a', to: 'missing', label: 'bad' }] },
+  };
+  const result = core.applyServerChange(target, change, { appliedIds });
+  assert.equal(result.status, 'rejected');
+  assert.equal(result.droppedEdges, 1);
+  assert.equal(target.edges[0].to, 'a', 'the existing edge is unchanged');
+  assert.equal(appliedIds.has('dangling'), false);
+});
+
+test('partial and rejected server changes remain retryable', () => {
+  const target = graph();
+  const appliedIds = new Set();
+  const change = {
+    id: 'capacity', revision: 1,
+    patch: {
+      nodes: [
+        { id: 'n2', label: 'Fits', x: 0, y: 0, order: 1 },
+        { id: 'n3', label: 'Needs space', x: 10, y: 0, order: 2 },
+      ],
+      edges: [],
+    },
+  };
+  const partial = core.applyServerChange(target, change, { appliedIds, maxNodes: 2 });
+  assert.equal(partial.status, 'partial');
+  assert.equal(partial.droppedNodes, 1);
+  assert.equal(appliedIds.has('capacity'), false);
+
+  const applied = core.applyServerChange(target, change, { appliedIds, maxNodes: 3 });
+  assert.equal(applied.status, 'applied');
+  assert.equal(appliedIds.has('capacity'), true);
+  assert.ok(target.nodes.some(n => n.id === 'n2'));
+  assert.ok(target.nodes.some(n => n.id === 'n3'));
+
+  const rejected = core.applyServerChange(graph(), { id: 'full', revision: 1, patch: change.patch },
+    { appliedIds, maxNodes: 1 });
+  assert.equal(rejected.status, 'rejected');
+  assert.equal(appliedIds.has('full'), false);
+});

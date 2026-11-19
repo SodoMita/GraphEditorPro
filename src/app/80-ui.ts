@@ -446,17 +446,16 @@
       const mod = ev.ctrlKey || ev.metaKey;
       if(!mod) return;
       const target = ev.target as HTMLElement;
-      const isInput = target && ((target as any).matches && ((target as HTMLElement).matches('input, textarea, [contenteditable]') || (target as any).isContentEditable));
-      // If focus is in matrix/edge input that is readonly (selection mode), we still want clipboard shortcuts
+      const isInput = target && ((target as any).matches && ((target as HTMLElement).matches('input, textarea, select, [contenteditable]') || (target as any).isContentEditable));
+      // Even matrix fields are editable when they are not read-only. Only a
+      // read-only matrix cell represents graph selection, not text entry.
       const readonlyInput = isInput && (target as HTMLInputElement).readOnly;
-      if(isInput && !readonlyInput && !((target as HTMLElement).matches && (target as HTMLElement).matches('.matrix-input,.matrix-label-input'))) {
-        // typing in a visible text field — don't hijack
-        return;
-      }
+      if(isInput && !readonlyInput) return;
       const key = ev.key.toLowerCase();
-      // Option changes `key` on Mac layouts (V becomes "√"); the physical
-      // code keeps Cmd+Option+V working regardless of the produced glyph.
-      const isV = ev.code === 'KeyV' || key === 'v';
+      // Option changes `key` on Mac layouts (V becomes "√"). Only the
+      // modified exact-paste command needs the physical-key fallback; plain
+      // Cmd/Ctrl+V must respect the produced key (e.g. KeyV -> "k" on Dvorak).
+      const isV = key === 'v' || (ev.altKey && ev.code === 'KeyV');
       if(key === 'c' && !ev.shiftKey && !ev.altKey){
         // Ctrl+C copy
         if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){

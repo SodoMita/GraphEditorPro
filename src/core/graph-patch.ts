@@ -51,7 +51,7 @@ type ServerApplyOptions = ExactPatchOptions & {
 };
 
 type ServerApplyResult = ExactPatchResult & {
-  status: 'applied' | 'duplicate' | 'stale' | 'invalid';
+  status: 'applied' | 'partial' | 'rejected' | 'duplicate' | 'stale' | 'invalid';
   id?: string;
   revision?: number;
   reason?: string;
@@ -227,6 +227,14 @@ const GraphPatchCore = (() => {
       // the next load, so it is dropped here too.
       if((carriedNodeIds.has(from) && !pastedNodeIdSet.has(from)) ||
          (carriedNodeIds.has(to) && !pastedNodeIdSet.has(to))){ droppedEdges++; continue; }
+      const existingById = edgeById.get(edgeId);
+      // A server patch may change an endpoint to a node that does not exist in
+      // the resulting graph. That edge would be silently discarded on the next
+      // load, so reject the edge here instead of reporting a false success.
+      const suppliedFrom = Object.prototype.hasOwnProperty.call(orig, 'from');
+      const suppliedTo = Object.prototype.hasOwnProperty.call(orig, 'to');
+      if((suppliedFrom && !nodeById.has(from)) || (suppliedTo && !nodeById.has(to)) ||
+         (!existingById && (!suppliedFrom || !suppliedTo))){ droppedEdges++; continue; }
       const edge = cloneEntity(orig);
       const id = String(edge.id ?? '');
       if(!id){ droppedEdges++; continue; }
@@ -271,8 +279,14 @@ const GraphPatchCore = (() => {
       return { ...empty, status: 'stale', id: change.id, revision: change.revision };
     }
     const result = applyExactPatch(target, change.patch, options);
-    options.appliedIds?.add(change.id);
-    return { ...result, status: 'applied', id: change.id, revision: change.revision };
+    const requested = (Array.isArray(change.patch.nodes) ? change.patch.nodes.length : 0)
+      + (Array.isArray(change.patch.edges) ? change.patch.edges.length : 0);
+    const dropped = result.droppedNodes + result.droppedEdges;
+    // Do not acknowledge work that still has to be retried. Exact patches are
+    // idempotent, so replaying a partial change is safe once capacity exists.
+    const status = dropped === 0 ? 'applied' : dropped === requested ? 'rejected' : 'partial';
+    if(status === 'applied') options.appliedIds?.add(change.id);
+    return { ...result, status, id: change.id, revision: change.revision };
   }
 
   return {

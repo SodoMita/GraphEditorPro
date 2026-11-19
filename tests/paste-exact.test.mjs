@@ -435,50 +435,48 @@ test('exact paste can restore the editor’s empty shape and color as unset', as
   dom.window.close();
 });
 
-test('a late older write cannot replace a newer local copy', async () => {
+test('writes are serialized so a fresh tab sees the newest copy', async () => {
   const { dom, errors } = createEditorDom(baseGraph);
   const { window } = dom; const { document } = window;
   await settle(window, 80);
   let systemText = '';
-  const pendingWrites = {};
+  const writes = [];
+  const pendingWrites = [];
   Object.defineProperty(window.navigator, 'clipboard', {
     configurable: true,
     value: {
       readText: async () => systemText,
       writeText: (text) => {
-        const key = JSON.parse(text).nodes[0].id;
-        return new Promise(resolve => { pendingWrites[key] = () => { systemText = text; resolve(); }; });
+        writes.push(text);
+        return new Promise(resolve => { pendingWrites.push(() => { systemText = text; resolve(); }); });
       },
     },
   });
 
   await selectNode(window, 'a', 300, 330);
   document.querySelector('#btnCopy').click();
-  // Distinct wall-clock stamps: equal timestamps are ambiguous across tabs.
   await settle(window, 15);
   await selectNode(window, 'b', 700, 330);
   document.querySelector('#btnCopy').click();
-  pendingWrites.b();
-  await settle(window, 20);
-  systemText = JSON.stringify({
-    type: 'graph-editor-clipboard',
-    nodes: [{ id: 'b', label: 'Changed', x: 200, y: 0, order: 1 }],
-    edges: [], externalEdges: [], customAttributes: [],
-  });
-  hotkey(window, 'v', { ctrlKey: true, altKey: true });
-  await settle(window, 120);
-  assert.equal(exportGraph(document).nodes.find(n => n.id === 'b').label, 'Changed');
+  await settle(window, 15);
+  assert.equal(writes.length, 1, 'the second copy waits for the first write');
 
-  pendingWrites.a();
+  pendingWrites[0]();               // A publishes
+  await settle(window, 60);
+  assert.equal(writes.length, 2, 'the queued B copy is published after A');
+  pendingWrites[1]();
   await settle(window, 20);
-  hotkey(window, 'v', { ctrlKey: true, altKey: true });
-  await settle(window, 120);
+  assert.equal(systemText, writes[1], 'the newest copy is the published clipboard value');
 
-  const graph = exportGraph(document);
-  assert.equal(graph.nodes.find(n => n.id === 'b').label, 'B', 'the newer local copy wins again');
-  assert.equal(graph.nodes.find(n => n.id === 'a').label, 'A', 'the late older write is ignored');
+  // A fresh destination tab has no local history to arbitrate with.
+  const fresh = createEditorDom(baseGraph);
+  await settle(fresh.dom.window, 80);
+  setClipboard(fresh.dom.window, JSON.parse(writes[1]));
+  hotkey(fresh.dom.window, 'v', { ctrlKey: true, altKey: true });
+  await settle(fresh.dom.window, 120);
+  assert.equal(exportGraph(fresh.dom.window.document).nodes.find(n => n.id === 'b').label, 'B');
   assert.deepEqual(errors.map(e => e.message), []);
-  dom.window.close();
+  dom.window.close(); fresh.dom.window.close();
 });
 
 test('an unavailable snapshot keeps an old unstamped legacy payload out', async () => {
@@ -684,7 +682,7 @@ test('a fresh tab trusts its current clipboard even when the stamp is older', as
   dom.window.close();
 });
 
-test('an obsolete write never starts a background clipboard repair', async () => {
+test('a queued copy never overwrites unrelated clipboard content', async () => {
   const { dom, errors } = createEditorDom(baseGraph);
   const { window } = dom; const { document } = window;
   await settle(window, 80);
@@ -707,18 +705,13 @@ test('an obsolete write never starts a background clipboard repair', async () =>
   await settle(window, 15);
   await selectNode(window, 'b', 700, 330);
   document.querySelector('#btnCopy').click();
-  pendingWrites[1]();               // B (newer) publishes
-  await settle(window, 10);
-  pendingWrites[0]();               // A (older) lands afterwards
-  await settle(window, 20);
-  assert.equal(writes.length, 2, 'no extra system write is started after B publishes');
-  assert.equal(systemText, writes[0], 'the stale payload is left alone rather than repaired in the background');
+  await settle(window, 15);
+  pendingWrites[0]();               // A publishes; B is now ready to publish
+  systemText = 'plain text copied by another app';
+  await settle(window, 80);
 
-  // The same-tab stamp still prevents that stale payload from replacing B.
-  hotkey(window, 'v', { ctrlKey: true, altKey: true });
-  await settle(window, 120);
-  const graph = exportGraph(document);
-  assert.equal(graph.nodes.find(n => n.id === 'b').label, 'B');
+  assert.equal(writes.length, 1, 'B is never written over the newer plain text');
+  assert.equal(systemText, 'plain text copied by another app');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
@@ -963,16 +956,21 @@ test('same-tab sequence numbers break equal-timestamp ties', async () => {
   await settle(window, 80);
   window.Date.now = () => 12345;
   let localStamp = null;
+  let writeCalls = 0;
   setClipboardWrite(window, {}, (text) => {
     localStamp = JSON.parse(text).clipboardStamp;
-    return new Promise(() => {});       // keep the newest write pending
+    writeCalls++;
+    // The first copy settles; the second stays outstanding so its stamp can
+    // correctly reject an older same-tab payload.
+    return writeCalls === 1 ? Promise.resolve() : new Promise(() => {});
   }, async () => '');
 
   await selectNode(window, 'a', 300, 330);
   document.querySelector('#btnCopy').click();
+  await settle(window, 30);
   await selectNode(window, 'b', 700, 330);
   document.querySelector('#btnCopy').click();
-  await settle(window, 20);
+  await settle(window, 30);
   assert.equal(localStamp.s, 2, 'both copies share the mocked timestamp');
 
   const payloadWithStamp = (seq, label) => ({
@@ -991,6 +989,92 @@ test('same-tab sequence numbers break equal-timestamp ties', async () => {
   hotkey(window, 'v', { ctrlKey: true, altKey: true });
   await settle(window, 120);
   assert.equal(exportGraph(document).nodes.find(n => n.id === 'b').label, 'Newer same-tab copy');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('editable matrix fields keep native clipboard shortcuts', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Hijacked', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  const input = document.createElement('input');
+  input.className = 'matrix-label-input';
+  document.body.appendChild(input);
+
+  let event = new window.KeyboardEvent('keydown', {
+    key: 'v', code: 'KeyV', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
+  });
+  input.dispatchEvent(event);
+  await settle(window, 120);
+  assert.equal(event.defaultPrevented, false, 'an editable matrix field keeps its native paste');
+  assert.equal(exportGraph(document).nodes.find(n => n.id === 'a').label, 'A');
+
+  input.readOnly = true;
+  event = new window.KeyboardEvent('keydown', {
+    key: 'v', code: 'KeyV', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
+  });
+  input.dispatchEvent(event);
+  await settle(window, 120);
+  assert.equal(event.defaultPrevented, true, 'a read-only matrix field represents graph selection');
+  assert.equal(exportGraph(document).nodes.find(n => n.id === 'a').label, 'Hijacked');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a physical KeyV producing another character does not paste', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Wrong layout paste', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+  const event = new window.KeyboardEvent('keydown', {
+    key: 'k', code: 'KeyV', ctrlKey: true, bubbles: true, cancelable: true,
+  });
+  document.dispatchEvent(event);
+  await settle(window, 120);
+
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(exportGraph(document).nodes.find(n => n.id === 'a').label, 'A');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a restored older clipboard item is pasted in the source tab', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let systemText = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text) => { systemText = text; }, readText: async () => systemText },
+  });
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 40);
+  const firstCopy = JSON.parse(systemText);
+  await selectNode(window, 'b', 700, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 40);
+
+  const restored = JSON.parse(JSON.stringify(firstCopy));
+  restored.nodes[0].label = 'Restored A';
+  systemText = JSON.stringify(restored);
+  hotkey(window, 'v', { ctrlKey: true, altKey: true });
+  await settle(window, 120);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.find(n => n.id === 'a').label, 'Restored A',
+    'the restored item is the current clipboard, not an obsolete outstanding write');
+  assert.equal(graph.nodes.find(n => n.id === 'b').label, 'B');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
