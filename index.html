@@ -1385,6 +1385,19 @@
               </summary>
               <div class="sec-body">
                 <label class="chk" for="optImportAppend" style="margin-bottom:6px"><input id="optImportAppend" type="checkbox" /> <span data-i18n="append_mode">Append to current graph</span></label>
+                <label class="field col" for="optDotUnits"><span data-i18n="dot_import_units">DOT import units</span>
+                  <select id="optDotUnits">
+                    <option value="auto" data-i18n="dot_units_auto">Auto (GraphViz signals)</option>
+                    <option value="inches" data-i18n="dot_units_inches">Read as inches (QVGE)</option>
+                    <option value="legacyPixels" data-i18n="dot_units_pixels">Read as pixels (old GEP)</option>
+                  </select>
+                </label>
+                <label class="field col" for="optDotExportUnits"><span data-i18n="dot_export_units">DOT export units</span>
+                  <select id="optDotExportUnits">
+                    <option value="inches" data-i18n="dot_export_inches">Inches (QVGE-compatible)</option>
+                    <option value="points" data-i18n="dot_export_points">Points + inputscale=72 (neato -n)</option>
+                  </select>
+                </label>
                 <div class="io-grid">
                   <div class="io-row">
                     <span class="io-format">JSON</span>
@@ -1412,21 +1425,24 @@
                     <button id="btnExportEdgesCsv" class="btn small symbol-only good" title="Export Edges CSV" data-i18n-title="export_edges_csv" aria-label="Export Edges CSV" data-i18n-aria-label="export_edges_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
                     <button id="btnCopyEdgeCsv" class="btn small symbol-only" title="Copy Edges" data-i18n-title="copy_edges" aria-label="Copy Edges" data-i18n-aria-label="copy_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
                     <button id="btnPasteEdgesCsv" class="btn small symbol-only" title="Paste Edges" data-i18n-title="paste_edges" aria-label="Paste Edges" data-i18n-aria-label="paste_edges"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportEdgesCsv" class="btn small symbol-only" title="Import Edges CSV" data-i18n-title="import_edges_csv" aria-label="Import Edges CSV" data-i18n-aria-label="import_edges_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
                   </div>
                   <div class="io-row">
                     <span class="io-format" data-i18n="matrix_csv">Matrix CSV</span>
                     <button id="btnExportMatrixCsv" class="btn small symbol-only good" title="Export Matrix CSV" data-i18n-title="export_matrix_csv" aria-label="Export Matrix CSV" data-i18n-aria-label="export_matrix_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
                     <button id="btnCopyMatrixCsv" class="btn small symbol-only" title="Copy Matrix" data-i18n-title="copy_matrix" aria-label="Copy Matrix" data-i18n-aria-label="copy_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
                     <button id="btnPasteMatrixCsv" class="btn small symbol-only" title="Paste Matrix" data-i18n-title="paste_matrix" aria-label="Paste Matrix" data-i18n-aria-label="paste_matrix"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportMatrixCsv" class="btn small symbol-only" title="Import Matrix CSV" data-i18n-title="import_matrix_csv" aria-label="Import Matrix CSV" data-i18n-aria-label="import_matrix_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
                   </div>
                   <div class="io-row">
                     <span class="io-format" data-i18n="nodes_csv">Nodes CSV</span>
                     <button id="btnExportNodesCsv" class="btn small symbol-only good" title="Export Nodes CSV" data-i18n-title="export_nodes_csv" aria-label="Export Nodes CSV" data-i18n-aria-label="export_nodes_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-export"></use></svg></button>
                     <button id="btnCopyNodesCsv" class="btn small symbol-only" title="Copy Nodes" data-i18n-title="copy_nodes" aria-label="Copy Nodes" data-i18n-aria-label="copy_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"></use></svg></button>
                     <button id="btnPasteNodesCsv" class="btn small symbol-only" title="Paste Nodes" data-i18n-title="paste_nodes" aria-label="Paste Nodes" data-i18n-aria-label="paste_nodes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+                    <button id="btnImportNodesCsv" class="btn small symbol-only" title="Import Nodes CSV" data-i18n-title="import_nodes_csv" aria-label="Import Nodes CSV" data-i18n-aria-label="import_nodes_csv"><svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg></button>
                   </div>
                 </div>
-                <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml" hidden />
+                <input id="fileImport" type="file" accept="application/json,.json,.dot,.gv,.graphml,.xml,.csv,text/csv" hidden />
               </div>
             </details>
 
@@ -2041,6 +2057,13 @@ const I18N = {
         'attribute_type_changed': { en: 'Type changed; removed {n:value} that cannot be represented as the new type.', ru: 'Тип изменён; удалено несовместимых значений: {n}.' },
         'attribute_deleted': { en: 'Custom attribute deleted', ru: 'Пользовательский атрибут удалён' },
         'import_export': { en: 'Import / export', ru: 'Импорт / экспорт' },
+        'dot_import_units': { en: 'DOT import units', ru: 'Единицы импорта DOT' },
+        'dot_export_units': { en: 'DOT export units', ru: 'Единицы экспорта DOT' },
+        'dot_units_auto': { en: 'Auto (GraphViz signals)', ru: 'Авто (признаки GraphViz)' },
+        'dot_units_inches': { en: 'Read as inches (QVGE)', ru: 'Читать как дюймы (QVGE)' },
+        'dot_units_pixels': { en: 'Read as pixels (old GEP)', ru: 'Читать как пиксели (старый GEP)' },
+        'dot_export_inches': { en: 'Inches (QVGE-compatible)', ru: 'Дюймы (совместимо с QVGE)' },
+        'dot_export_points': { en: 'Points + inputscale=72 (neato -n)', ru: 'Пункты + inputscale=72 (neato -n)' },
         'append_mode': { en: 'Append to current graph (keep existing nodes/edges, styles, and background)', ru: 'Добавить к текущему графу (сохранить существующие узлы, рёбра, стили и фон)' },
         'export_json': { en: 'Export JSON', ru: 'Экспорт JSON' },
         'copy_json': { en: 'Copy JSON', ru: 'Копировать JSON' },
@@ -2057,14 +2080,17 @@ const I18N = {
         'import_graphml': { en: 'Import GraphML', ru: 'Импорт GraphML' },
         'edges_csv': { en: 'Edges CSV', ru: 'Рёбра CSV' },
         'export_edges_csv': { en: 'Export Edges CSV', ru: 'Экспорт рёбер CSV' },
+        'import_edges_csv': { en: 'Import Edges CSV', ru: 'Импорт рёбер CSV' },
         'copy_edges': { en: 'Copy Edges', ru: 'Копировать рёбра' },
         'paste_edges': { en: 'Paste Edges', ru: 'Вставить рёбра' },
         'matrix_csv': { en: 'Matrix CSV', ru: 'Матрица CSV' },
         'export_matrix_csv': { en: 'Export Matrix CSV', ru: 'Экспорт матрицы CSV' },
+        'import_matrix_csv': { en: 'Import Matrix CSV', ru: 'Импорт матрицы CSV' },
         'copy_matrix': { en: 'Copy Matrix', ru: 'Копировать матрицу' },
         'paste_matrix': { en: 'Paste Matrix', ru: 'Вставить матрицу' },
         'nodes_csv': { en: 'Nodes CSV', ru: 'Узлы CSV' },
         'export_nodes_csv': { en: 'Export Nodes CSV', ru: 'Экспорт узлов CSV' },
+        'import_nodes_csv': { en: 'Import Nodes CSV', ru: 'Импорт узлов CSV' },
         'copy_nodes': { en: 'Copy Nodes', ru: 'Копировать узлы' },
         'paste_nodes': { en: 'Paste Nodes', ru: 'Вставить узлы' },
         'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Включите «Добавить», чтобы влить импортированные узлы и рёбра в текущий граф без изменения стилей и фона.' },
@@ -2266,6 +2292,8 @@ const I18N = {
         'no_matrix_data': { en: 'No matrix data', ru: 'Нет данных матрицы' },
         'no_node_data': { en: 'No node data', ru: 'Нет данных узлов' },
         'csv_needs_cols': { en: 'CSV needs source_id and target_id columns', ru: 'CSV требует колонки source_id и target_id' },
+        'dot_legacy_units': { en: 'DOT positions were read as pixels (an older GEP export), so the graph came in {f}× larger than its node sizes — use Fit', ru: 'Позиции DOT прочитаны как пиксели (старый экспорт GEP), граф пришёл в {f}× крупнее размеров узлов — нажмите «Fit»' },
+        'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
         'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
         'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
         'nothing_to_import': { en: 'Nothing to import: {label} contains no nodes or edges', ru: 'Нечего импортировать: {label} не содержит узлов или рёбер' },
@@ -4632,12 +4660,24 @@ function positiveInteger(value, fallback) {
     const numeric = Math.trunc(finite(value, fallback));
     return numeric > 0 ? numeric : fallback;
 }
+// IDs keep letters and digits of ANY script. GraphML, JSON and the editor's
+// own model treat an id as an opaque string, and the places an id reaches —
+// `g.id`, `dataset.id`, the lists built with `esc()` — are text, not CSS
+// selectors. Stripping non-ASCII turned `"ключ"` into an empty string and
+// then into a RANDOM id (`n80jmqx` one import, `nu1qtab` the next), so a file
+// could not identify its own nodes. Only characters that break markup or
+// selectors are removed, and DOT export maps the rest to a stable alias.
+// The pattern is inline, not a module constant: `tests/dot-core-harness.mjs`
+// pulls this function out verbatim and evaluates it alone, so it must not
+// reference anything from this module's scope.
 function safeId(value, prefix) {
-    const id = String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    const id = String(value ?? '').replace(/[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/g, '').slice(0, 40);
+    // A random fallback is a last resort for genuinely unusable input; a real
+    // name must survive, including one written in a non-Latin script.
     return id || (prefix + Math.random().toString(36).slice(2, 8));
 }
 function uniqueSafeId(value, prefix, used) {
-    const base = String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || prefix;
+    const base = String(value ?? '').replace(/[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/g, '').slice(0, 40) || prefix;
     let id = base;
     for (let suffix = 2; used.has(id); suffix++) {
         const ending = `-${suffix}`;
@@ -10640,6 +10680,36 @@ function commitZoomPreview() {
 }
 function flushZoomPreview() { if (zoomPreview)
     commitZoomPreview(); }
+// "100%" has to mean the scale the camera fields describe, not "make
+// everything fit". `cameraReadout` prints zoom as 1000/viewBox.w*100 (a
+// 1000-unit-wide camera is 100%), so resetting to 1:1 means a 1000-unit-wide
+// window centred where the camera already is. Keeping the same aspect ratio
+// as the viewport means the visible area keeps its shape; Fit stays on its
+// own button. QVGE does the same with `zoomTo(1.0)`.
+function resetZoom() {
+    const cur = currentCamera();
+    cancelZoomPreview();
+    if (pan) {
+        state.viewBox = { ...pan.previewViewBox };
+        pan = null;
+        $('#canvasWrap').classList.remove('panning');
+        gestureActive = false;
+    }
+    if (pinch) {
+        state.viewBox = { ...pinch.previewViewBox };
+        pinch = null;
+        $('#canvasWrap').classList.remove('panning');
+        gestureActive = false;
+    }
+    const rect = canvasViewportRect();
+    updateCameraViewportAspect(rect);
+    const aspect = (rect.width > 0 && rect.height > 0) ? rect.width / rect.height : 1000 / 660;
+    const w = 1000, h = w / aspect;
+    const cx = cur.x + cur.w / 2, cy = cur.y + cur.h / 2;
+    state.viewBox = boundedCamera({ x: cx - w / 2, y: cy - h / 2, w, h });
+    applyCamera();
+    saveSoon();
+}
 function fitView() {
     cancelZoomPreview();
     if (!state.nodes.length) {
@@ -12000,8 +12070,23 @@ function scanDotStructure(src) {
 // Arrow-size constants, copied from 10-core.ts — this section must stay
 // self-contained (the unit-test harness evaluates it in isolation).
 const DOT_DEFAULT_ARROW_SIZE = 12, DOT_ARROW_SIZE_MIN = 4, DOT_ARROW_SIZE_MAX = 40;
+// DOT lengths are inches when neato/fdp read them back (GraphViz `inputscale`
+// defaults to "no scaling, units on input are inches"), and QVGE writes and
+// reads them the same way (`CFileSerializerDOT.cpp`: `pos().x() / 72`, and
+// `x * 72` on import). The editor works in pixels at the same 72-per-inch
+// ratio `width`/`height` already use, so `pos` converts on both sides.
+// Copied here for the same self-containment reason as the arrow constants;
+// the exporter (50-import-export.ts) keeps its own copy under this name.
+const DOT_PX_PER_INCH = 72;
+// Attribute prefix marking the editor's own custom values (see 50-import-export.ts
+// `gepCustomAttr`). This module must stay self-contained for its unit-test
+// harness, so the value is repeated rather than imported; the name is distinct
+// because every module lands in one shared scope after bundling.
+const DOT_CUSTOM_ATTR_PREFIX = '_gep_custom_';
+// Copied from 10-core.ts for the same self-containment reason.
+const DOT_LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
 const dotClampArrowSize = (v) => Math.min(DOT_ARROW_SIZE_MAX, Math.max(DOT_ARROW_SIZE_MIN, v));
-function parseDot(text) {
+function parseDot(text, options = {}) {
     // Strip comments once, up front: the structure test and the
     // directed-graph default both derive from the comment-free source, so a
     // keyword hiding inside a comment can never rescue garbage input.
@@ -12020,8 +12105,29 @@ function parseDot(text) {
     let body = stripped;
     if (open >= 0 && close > open)
         body = stripped.slice(open + 1, close);
+    // `pos` units, resolved from the graph's own declarations.
+    //
+    // GraphViz: `neato -n`/`-n2` treat `pos` as POINTS (and ignore
+    // `inputscale`), which is also the unit layout programs write on output;
+    // a plain `neato`/`fdp` run treats an unmarked `pos` as INCHES. See
+    // `dotGraphUnits` below for how this file decides which case it is.
+    // The reader may state the convention outright. `legacyPixels` is the
+    // migration path for files this app wrote before the units fix (pixel `pos`
+    // against inch `width`); `inches` forces the QVGE/neato reading even for a
+    // file whose numbers look like pixels. `auto` keeps the format signals.
+    const unitsChoice = options.units || 'auto';
+    const dotUnits = unitsChoice === 'legacyPixels'
+        ? { pointsPerInch: DOT_PX_PER_INCH, legacyPixels: true }
+        : unitsChoice === 'inches' ? { pointsPerInch: 1 } : dotGraphUnits(body);
+    const dotPosScale = DOT_PX_PER_INCH / dotUnits.pointsPerInch;
     const hasStructure = (open >= 0 && close > open) && headerOk;
     const nodes = new Map(), edges = [];
+    // An exported node may be an ASCII alias with the real id in `id="..."`, and
+    // edges then reference the alias. Node statements are read AFTER edges (the
+    // edge regex needs the raw text), so the mapping is collected in a quick
+    // pre-scan and applied when an edge names its endpoints.
+    const aliasToReal = new Map();
+    const realOf = (name) => aliasToReal.get(name) || name;
     const ensureNode = id => { if (!nodes.has(id))
         nodes.set(id, { id: safeId(id, 'n'), original: id, label: id, x: 0, y: 0, shape: 'circle', color: '#0ea5e9' }); return nodes.get(id); };
     // A bare token must contain at least one word-ish character: a run of
@@ -12042,14 +12148,42 @@ function parseDot(text) {
     // reparses identically; later lists override duplicate keys, matching
     // how a single repeated key is handled.
     const work = maskDotSyntax(body).replace(/\]\s*\[/g, ',');
+    // Pre-scan the node statements for `id="..."` so that an edge naming the
+    // ASCII alias resolves to the real id. The edge loop below runs first and
+    // would otherwise create a second node under the alias name.
+    {
+        const preNodeRe = new RegExp('(?:^|;|[\\r\\n]|\\{)\\s*' + id + '\\s*\\[([^\\]]*)\\]', 'g');
+        let pm;
+        while ((pm = preNodeRe.exec(work))) {
+            const name = cleanDotToken(pm[1]);
+            if (['graph', 'node', 'edge'].includes(name.toLowerCase()))
+                continue;
+            const pre = parseAttrList(pm[2] || '');
+            const real = pre.id ? safeId(String(pre.id), 'n') : '';
+            if (real && real !== name && !aliasToReal.has(name))
+                aliasToReal.set(name, real);
+        }
+    }
     let m;
     while ((m = edgeRe.exec(work))) {
         const fromOrig = cleanDotToken(m[1]), toOrig = cleanDotToken(m[3]), attrs = parseAttrList(m[4] || '');
-        const a = ensureNode(fromOrig), b = ensureNode(toOrig);
-        const dotWeight = attrs.weight != null ? attrs.weight : (attrs.label || '');
+        const a = ensureNode(realOf(fromOrig)), b = ensureNode(realOf(toOrig));
+        // `label` is a LABEL, not a weight. This used to fall back to it, so a
+        // plain GraphViz file with `a -> b [label="heeft"]` arrived with the
+        // weight "heeft": the algorithms then read Number("heeft") = NaN and
+        // silently used 1, and the label was duplicated into the weight field.
+        // DOT has a real `weight` attribute for this; when it is absent the edge
+        // has no weight, which is what an empty string means to the model.
+        const dotWeight = attrs.weight != null ? attrs.weight : '';
         // QVGE tristate: '->' and the graph's directedness both mean "directed".
         const initDir = m[2] === '->' || directedGraph ? 'directed' : 'undirected';
-        const e = { id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: String(attrs.label && attrs.label !== attrs.weight ? attrs.label : ''), directed: initDir !== 'undirected', direction: initDir };
+        // The exporter prints the weight as `label` when the document shows edge
+        // weights (`edgeWeightMode`), and tags only that synthetic label with
+        // `_gepWeightLabel` (attribute keys are lower-cased by `parseAttrList`).
+        // Comparing the two texts instead dropped real labels, because "3" on a
+        // 3-weight edge is a perfectly ordinary label.
+        const eLabel = attrs._gepweightlabel ? '' : (attrs.label != null ? String(attrs.label) : '');
+        const e = { id: 'e' + (edges.length + 1), from: a.id, to: b.id, weight: dotWeight, label: eLabel, directed: initDir !== 'undirected', direction: initDir };
         if (attrs.directed) {
             const dd = String(attrs.directed).toLowerCase();
             const direction = dd === 'undirected' || dd === 'none' ? 'undirected' : dd === 'mutual' || dd === 'both' ? 'mutual' : 'directed';
@@ -12080,12 +12214,10 @@ function parseDot(text) {
             const mv = Number.isFinite(mul) ? mul : 1;
             // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
             // Heuristic for legacy files that stored absolute size (e.g. 12): values > 5 are treated as absolute
-            if (mv > 5) {
-                e.arrowSize = dotClampArrowSize(mv);
-            }
-            else {
-                e.arrowSize = dotClampArrowSize(mv * DOT_DEFAULT_ARROW_SIZE);
-            }
+            // The exporter writes the multiplier to four decimals, so 20/12 comes
+            // back as 1.6667 and 20 as 20.0004. The editor's sizes are whole
+            // numbers; a fraction of a pixel is not a size.
+            e.arrowSize = Math.round(dotClampArrowSize(mv > 5 ? mv : mv * DOT_DEFAULT_ARROW_SIZE) * 100) / 100;
         }
         // Label styling and type, spelled the way Graphviz spells them. The
         // exporter writes these from the resolved visual, so reading them back is
@@ -12116,6 +12248,19 @@ function parseDot(text) {
                 e.directed = true;
             }
         }
+        if (attrs.type)
+            e.type = String(attrs.type).slice(0, 40);
+        const edgeCustom = {};
+        for (const key of Object.keys(attrs)) {
+            if (!key.startsWith(DOT_CUSTOM_ATTR_PREFIX))
+                continue;
+            const cid = key.slice(DOT_CUSTOM_ATTR_PREFIX.length);
+            if (cid)
+                edgeCustom[cid] = String(attrs[key]);
+        }
+        if (Object.keys(edgeCustom).length)
+            e.custom = edgeCustom;
+        readDotLabelAttrs(attrs, e);
         edges.push(e);
     }
     const withoutEdges = work.replace(edgeRe, '');
@@ -12126,8 +12271,17 @@ function parseDot(text) {
             if (['graph', 'node', 'edge'].includes(name.toLowerCase()))
                 continue;
             const attrs = parseAttrList(m[2] || ''), n = ensureNode(name);
+            const realId = attrs.id ? safeId(attrs.id, 'n') : '';
+            if (realId && realId !== name && !aliasToReal.has(name))
+                aliasToReal.set(name, realId);
             if (attrs.label)
                 n.label = attrs.label;
+            // `id=` on a node statement is the real identifier when the name had to be
+            // an ASCII alias (see `dotAlias` in 50-import-export.ts). It is read the
+            // same way the edge id already is, so a rename cannot drift.
+            if (attrs.id)
+                n.id = safeId(attrs.id, 'n');
+            readDotLabelAttrs(attrs, n);
             if (attrs.fillcolor || attrs.color)
                 n.color = /^#[0-9a-f]{6}$/i.test(attrs.fillcolor || attrs.color) ? (attrs.fillcolor || attrs.color) : n.color;
             if (attrs.shape) {
@@ -12160,18 +12314,11 @@ function parseDot(text) {
                 if (ss)
                     n.strokeStyle = ss;
             }
-            // Label styling and label placement, matching what the exporter writes.
-            // Without these a round trip silently restyled every label and moved it
-            // back to the centre.
-            if (attrs.fontcolor) {
-                const lc = parseColor(attrs.fontcolor);
-                if (lc)
-                    n.labelColor = lc;
-            }
-            if (attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize)))
-                n.labelSize = Number(attrs.fontsize);
-            if (attrs.fontname)
-                n.labelFont = String(attrs.fontname).slice(0, 120);
+            // Label colour, size and family are read by `readDotLabelAttrs`, which runs a
+            // few lines above: it also strips the bold/italic suffix QVGE appends to the
+            // family. Re-reading `fontname` here overwrote that cleaned value with the raw
+            // one, so a QVGE font arrived as "DejaVu Sans bold" and the editor's
+            // family-only field round-tripped a style word as part of the name.
             if (attrs.labelloc) {
                 const loc = String(attrs.labelloc).toLowerCase();
                 if (loc === 't' || loc === 'top')
@@ -12181,18 +12328,81 @@ function parseDot(text) {
             }
             // width/height from DOT are in inches (72 dpi -> px)
             if (attrs.width != null && Number.isFinite(Number(attrs.width)))
-                n.width = Math.max(10, Math.round(Number(attrs.width) * 72));
+                n.width = Math.max(10, Math.round(Number(attrs.width) * DOT_PX_PER_INCH));
             if (attrs.height != null && Number.isFinite(Number(attrs.height)))
-                n.height = Math.max(10, Math.round(Number(attrs.height) * 72));
+                n.height = Math.max(10, Math.round(Number(attrs.height) * DOT_PX_PER_INCH));
+            // `pos` is in inches too (GraphViz `inputscale` default), so it converts
+            // with the same 72 as width/height above; `dotPosScale` is that 72 unless
+            // the file declares `inputscale`, which switches the unit to points.
             if (attrs.pos) {
                 const parts = attrs.pos.replace('!', '').split(',').map(Number);
                 if (Number.isFinite(parts[0]))
-                    n.x = parts[0];
+                    n.x = parts[0] * dotPosScale;
                 if (Number.isFinite(parts[1]))
-                    n.y = -parts[1];
+                    n.y = -parts[1] * dotPosScale;
+                // "no positions at all" is decided by whether the attribute was
+                // DECLARED, not by whether the numbers happen to be zero. A graph whose
+                // nodes all sit at the origin is a real graph; inferring it as missing
+                // moved it onto a circle.
+                n.__hasPos = true;
+            }
+            // DOT carries arbitrary attributes — that is what the format is FOR — so
+            // the editor's own values ride along as `_gep_custom_<id>`. The prefix
+            // keeps them out of GraphViz's namespace and marks them as ours, exactly
+            // like `_gepWeightLabel` marks a drawn weight.
+            const custom = {};
+            for (const key of Object.keys(attrs)) {
+                if (!key.startsWith(DOT_CUSTOM_ATTR_PREFIX))
+                    continue;
+                const id = key.slice(DOT_CUSTOM_ATTR_PREFIX.length);
+                if (id)
+                    custom[id] = String(attrs[key]);
+            }
+            if (Object.keys(custom).length)
+                n.custom = custom;
+            if (attrs._gep_labelposition && DOT_LABEL_POSITIONS.includes(String(attrs._gep_labelposition))) {
+                n.labelPosition = String(attrs._gep_labelposition);
             }
         }
-    const arr = [...nodes.values()];
+    // DOT's z-order is the order of DECLARATION, so that is the order the
+    // document must come back in — but the parse above reads edges BEFORE node
+    // statements (the edge regex has to see the raw text), so insertion order
+    // here is "whichever node an edge mentioned first": in
+    // `first; second; third; second -> third` the Map held second, third, first.
+    //
+    // The order is recovered from the source instead: one scan over `work` for
+    // every statement start, and each node is placed at the offset where it
+    // first appears. A node only an edge mentions takes that edge's offset,
+    // which is where DOT would put it too.
+    const declaredAt = new Map();
+    {
+        const stmtRe = new RegExp('(?:^|[;\\r\\n]|\\{)\\s*' + id +
+            '(?:\\s*(?:--|->)\\s*' + id + ')?', 'g');
+        let dm;
+        while ((dm = stmtRe.exec(work))) {
+            const name = cleanDotToken(dm[1]);
+            if (!['graph', 'node', 'edge'].includes(name.toLowerCase()) && !declaredAt.has(name))
+                declaredAt.set(name, dm.index);
+            if (dm[2] != null) {
+                const other = cleanDotToken(dm[2]);
+                if (!declaredAt.has(other))
+                    declaredAt.set(other, dm.index);
+            }
+        }
+    }
+    // An alias and its real id are the same node; the pre-scan made the edge
+    // resolve to the real id, and the node statement created the real node, so
+    // the alias entry left over from the edge pass is a duplicate. Drop it.
+    for (const [alias, real] of aliasToReal) {
+        const dup = nodes.get(alias);
+        if (!dup || alias === real || !nodes.has(real))
+            continue;
+        nodes.delete(alias);
+        declaredAt.delete(alias);
+    }
+    const arr = [...nodes.values()].sort((a, b) => (declaredAt.get(a.original) ?? 0) - (declaredAt.get(b.original) ?? 0));
+    arr.forEach((n, i) => { if (n.order == null)
+        n.order = i; });
     // A structurally recognized DOT graph with zero nodes is a valid empty
     // document ONLY when its body consists solely of no-content statements —
     // the exporter's empty output satisfies this. Anything else ("digraph G {
@@ -12202,11 +12412,39 @@ function parseDot(text) {
         const after = close >= 0 ? stripped.slice(close + 1) : '';
         return (hasStructure && /^\s*$/.test(after) && scanDotStructure(body)) ? { title: 'imported-dot', nodes: [], edges: [] } : null;
     }
-    if (arr.every(n => n.x === 0 && n.y === 0) && arr.length > 1) {
+    // Only lay the nodes out when the file declared no position at all. Testing
+    // `x === 0 && y === 0` instead re-placed graphs that legitimately sit on the
+    // origin, and a file whose coordinates rounded to zero (see `dotCoord`) fell
+    // into the same branch.
+    if (arr.length > 1 && !arr.some((n) => n.__hasPos)) {
         const r = Math.max(120, arr.length * 24);
         arr.forEach((n, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / arr.length; n.x = Math.cos(a) * r; n.y = Math.sin(a) * r; });
     }
-    return { title: 'imported-dot', nodes: arr.map(({ original, ...n }) => n), edges };
+    // Custom values only survive `sanitizeState` when their DEFINITION exists:
+    // an unknown key is an orphan and is dropped. DOT cannot declare one, so the
+    // definitions are synthesized from the values that were read — scope from
+    // where the attribute appeared, type `string` because DOT carries text
+    // verbatim. QVGE does the same (`attr.name` equals the attribute id).
+    const customSeen = new Map();
+    for (const n of arr) {
+        for (const cid of Object.keys(n.custom || {})) {
+            if (!customSeen.has('node:' + cid))
+                customSeen.set('node:' + cid, { id: cid, scope: 'node', type: 'string', name: cid });
+        }
+    }
+    for (const e of edges) {
+        for (const cid of Object.keys(e.custom || {})) {
+            if (!customSeen.has('edge:' + cid))
+                customSeen.set('edge:' + cid, { id: cid, scope: 'edge', type: 'string', name: cid });
+        }
+    }
+    return {
+        title: 'imported-dot',
+        nodes: arr.map(({ original, __hasPos, ...n }) => n),
+        edges,
+        customAttributes: [...customSeen.values()],
+        legacyPixels: dotUnits.legacyPixels === true
+    };
 }
 function parseShape(raw) {
     const s = String(raw || '').toLowerCase();
@@ -12218,7 +12456,10 @@ function parseShape(raw) {
         return 'square';
     // "invtriangle" is DOT's downward triangle; it must be tested before the
     // generic "triangle" rule below or every downward triangle becomes upward.
-    if (s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down')
+    // `triangle2` is QVGE's internal name for the same shape (it appears in XGR
+    // files and class attributes), so it belongs on this branch too — without
+    // it the generic rule below turned it into an upward triangle.
+    if (s.includes('invtri') || s.includes('triangledown') || s === 'triangle down' || s === 'triangle-down' || s === 'triangle2')
         return 'triangleDown';
     if (s.includes('triangleup') || s === 'triangle up' || s === 'triangle-up')
         return 'triangleUp';
@@ -12268,6 +12509,245 @@ const NAMED_COLORS = {
     indigo: '#4b0082', gold: '#ffd700', coral: '#ff7f50', salmon: '#fa8072',
     khaki: '#f0e68c', lavender: '#e6e6fa', tan: '#d2b48c', turquoise: '#40e0d0'
 };
+// Blank the *contents* of every quoted and HTML-like string, keeping the
+// length identical so every index still lines up with the original source.
+//
+// `maskDotSyntax` protects the parser from brackets inside labels but leaves
+// their text intact, which is right for reading values and wrong for deciding
+// what a file *declares*: a node labelled `inputscale=72` would otherwise read
+// as a units declaration and rescale the whole document.
+function blankDotStrings(src) {
+    const out = src.split('');
+    const hide = (from, to) => { for (let k = from; k < to && k < out.length; k++)
+        out[k] = ' '; };
+    for (let i = 0; i < src.length;) {
+        if (src[i] === '"') {
+            let j = i + 1;
+            while (j < src.length) {
+                if (src[j] === '\\') {
+                    j += 2;
+                    continue;
+                }
+                if (src[j] === '"')
+                    break;
+                j++;
+            }
+            hide(i + 1, Math.min(j, src.length));
+            i = j + 1;
+            continue;
+        }
+        if (src[i] === '<') {
+            let depth = 1, j = i + 1;
+            while (j < src.length && depth > 0) {
+                if (src[j] === '<')
+                    depth++;
+                else if (src[j] === '>') {
+                    depth--;
+                    if (depth === 0)
+                        break;
+                }
+                j++;
+            }
+            hide(i + 1, Math.min(j, src.length));
+            i = j + 1;
+            continue;
+        }
+        i++;
+    }
+    return out.join('');
+}
+// Which unit a DOT file's `pos` values are in, expressed as points per inch.
+//
+// Three spellings reach this reader and they do not agree on a unit:
+//
+//  * a layout program's output (`dot -Tdot`, `neato -Tdot`) — POINTS, the unit
+//    GraphViz documents for `pos` output and the one `neato -n` consumes;
+//  * a hand-written `neato`/`fdp` input — INCHES unless `inputscale` says
+//    otherwise, and `inputscale` is a graph attribute only;
+//  * this editor's own export — INCHES, like QVGE's, naming `neato` in the
+//    graph attributes so another tool can reproduce the layout.
+//
+// Guessing from the numbers alone cannot work (a graph can legitimately span
+// hundreds of points or a few inches), so the units come from what the file
+// says about itself, in this order:
+//
+//  1. an explicit `inputscale` graph attribute — points per inch, directly.
+//     `inputscale=0` is GraphViz's documented alias for 72;
+//  2. `pin` or a `!` on any `pos` — the file asks for its positions to be
+//     kept as they are, which is `neato -n` semantics: points;
+//  3. an engine that only lays out (`dot`, `circo`, `twopi`, `osage`,
+//     `patchwork`) can only have produced these positions itself: points;
+//  4. otherwise inches, which is what unmarked `neato`/`fdp` input means.
+//
+// Every step looks at the graph's own attributes, never at arbitrary text: a
+// label reading "inputscale=72" must not rescale the document, so quoted and
+// HTML strings are blanked before anything is matched.
+function dotGraphUnits(body) {
+    // A graph-level `graph [...]` statement wins over a `name = value` written
+    // anywhere in the body: the latter also matches a statement's stray text,
+    // and a declaration placed after the nodes is still a graph declaration.
+    // Both are read from the string-blanked source.
+    // Two views of the same source: `valuesReadable` keeps attribute values
+    // (needed for `inputscale=72`, `layout="dot"`, `pos="…!"`), while
+    // `declarationsOnly` blanks every string so text cannot impersonate a
+    // declaration. Lengths are preserved, so both index the same positions.
+    const valuesReadable = maskDotSyntax(body);
+    const unquote = (raw) => {
+        if (raw[0] === '"' && raw.length > 1)
+            return dotUnescape(raw.slice(1, -1)).trim();
+        if (raw[0] === '<')
+            return raw.slice(1, -1).trim();
+        return raw.trim();
+    };
+    // Graph-level attributes, and only those. `readScalar` used to accept a
+    // `name = value` anywhere in the body — including inside a node's attribute
+    // list, so `a [pos="1,2", inputscale=72]` rescaled the whole document from
+    // a node property. GraphViz binds `inputscale` at graph scope; the same key
+    // on a node or edge is that element's own attribute.
+    //
+    // A `graph [ ... ]` statement is a graph attribute wherever it appears, even
+    // after nodes, as is `graph.attr = value` and a bare `key = value` at body
+    // scope. `subgraph x { ... }` is a nested scope and is skipped whole.
+    //
+    // The walk runs over the ORIGINAL body: `maskDotSyntax` replaces `[`, `]`
+    // and `{` with sentinels, so it cannot be used to find statement structure
+    // (that is what broke the first attempt at this). Values are taken from the
+    // masked copies, whose indices line up one-to-one with the original.
+    const graphAttrs = {};
+    {
+        const start = blankDotStrings(body);
+        const valueAt = (from, to) => valuesReadable.slice(from, to);
+        let i = 0;
+        const skipBalanced = (from, openCh, closeCh) => {
+            // `from` points at the opening bracket in the blanked source.
+            let d = 0, j = from;
+            while (j < start.length) {
+                if (start[j] === openCh)
+                    d++;
+                else if (start[j] === closeCh) {
+                    d--;
+                    if (d === 0)
+                        return j + 1;
+                }
+                j++;
+            }
+            return start.length;
+        };
+        while (i < start.length) {
+            const ch = start[i];
+            if (ch === ';' || ch === ',' || /\s/.test(ch)) {
+                i++;
+                continue;
+            }
+            // The graph's own header is not part of `body`, but a stray `digraph`
+            // would otherwise be read as a node name.
+            const sub = /^(?:strict\s+)?(?:di|)graph\b/i.exec(start.slice(i));
+            if (sub) {
+                i += sub[0].length;
+                continue;
+            }
+            const subg = /^subgraph\b[^{]*\{/i.exec(start.slice(i));
+            if (subg) {
+                i = skipBalanced(i + subg[0].length - 1, '{', '}');
+                continue;
+            }
+            const gb = /^graph\s*\[/i.exec(start.slice(i));
+            if (gb) {
+                const from = i + gb[0].length - 1;
+                const to = skipBalanced(from, '[', ']');
+                const parsed = parseAttrList(valueAt(from + 1, to - 1));
+                for (const k of Object.keys(parsed))
+                    graphAttrs[k] = parsed[k];
+                i = to;
+                continue;
+            }
+            // `graph.name = value`, and bare `name = value` at body scope.
+            const kv = /^(?:graph\s*\.\s*)?([A-Za-z_][\w.]*)\s*=(?!=)\s*/i.exec(start.slice(i));
+            if (kv) {
+                const from = i + kv[0].length;
+                const literal = /^("(?:[^"\\]|\\.)*"|<[^>]*>|[^,;\s\]}]+)/.exec(valueAt(from, start.length));
+                if (literal) {
+                    graphAttrs[kv[1].toLowerCase()] = unquote(valueAt(from, from + literal[0].length));
+                    i = from + literal[0].length;
+                    continue;
+                }
+            }
+            // An element statement: its attribute list belongs to the element, so
+            // skip the whole list — this is what stops a node's `inputscale`.
+            const el = /^(?:"(?:[^"\\]|\\.)*"|[A-Za-z0-9_:.\-]+)\s*(?:--|->)?\s*\[/i.exec(start.slice(i));
+            if (el) {
+                const bracket = i + el[0].length - 1;
+                i = skipBalanced(bracket, '[', ']');
+                continue;
+            }
+            i++;
+        }
+    }
+    const readScalar = (name) => {
+        const key = name.toLowerCase();
+        return Object.prototype.hasOwnProperty.call(graphAttrs, key) ? String(graphAttrs[key]).trim() : null;
+    };
+    const inputscale = readScalar('inputscale');
+    if (inputscale != null && inputscale !== '') {
+        const value = Number(inputscale);
+        // 0 is GraphViz's alias for 72. Anything else that is not a positive
+        // number is not a units declaration; ignoring it beats letting a typo
+        // rescale the whole document.
+        if (Number.isFinite(value) && value === 0)
+            return { pointsPerInch: 72 };
+        if (Number.isFinite(value) && value > 0)
+            return { pointsPerInch: value };
+    }
+    // A `!` on `pos` is NOT a units marker: our own export (and QVGE) writes
+    // inches with `!` to pin the node, and `neato -n` reads points with the same
+    // suffix. Treating it as "points" made every file this app produced import
+    // 72x too small. What does identify a laid-out GraphViz file is `bb` or a
+    // concrete engine in `layout`, both checked below.
+    const layout = (readScalar('layout') || '').toLowerCase();
+    if (/^(dot|circo|twopi|osage|patchwork)\b/.test(layout))
+        return { pointsPerInch: 72 };
+    // `dot -Tdot` stamps the bounding box in points; `neato`/`fdp` do not. When
+    // `layout` is absent (a raw `-Tdot` file names no engine) this is the only
+    // reliable signal that the numbers were produced by a layout run.
+    if (readScalar('bb') != null)
+        return { pointsPerInch: 72 };
+    // NOTHING ELSE IS GUESSED. An earlier version inferred pixels from wide
+    // coordinate spans, and the review was right that it is unsound in both
+    // directions: two nodes with inch `pos` 0 and 100 imported at 100 instead of
+    // 7200, and an old pixel file whose nodes sat 30 apart imported at 2160.
+    // Units are not recoverable from the numbers; the reader picks them
+    // (`importDot`'s legacy option) instead.
+    return { pointsPerInch: 1 };
+}
+// Label typography, one table for nodes and edges. QVGE writes a label's
+// colour/size/font as the GraphViz `fontcolor`/`fontsize`/`fontname`
+// attributes (`CFileSerializerDOT::doWriteLabel`), and reads `xlabel` as a
+// label when `label` is absent (`CFormatDOT::readLabel`). Neither was
+// understood here, so a QVGE file lost its label text and every file lost
+// the label's typography. Keep the names in sync with `dotLabelAttrs` in
+// 50-import-export.ts, which writes them back.
+function readDotLabelAttrs(attrs, target) {
+    // `label` wins whenever the attribute is PRESENT, including when its text
+    // happens to equal the node id or is empty — `n [label="n", xlabel="other"]`
+    // says the label is "n", and inferring "absent" from the text turned it into
+    // "other". Only a file that declares no `label` at all falls back to
+    // `xlabel`, which is what `CFormatDOT::readLabel` does.
+    const labelDeclared = Object.prototype.hasOwnProperty.call(attrs, 'label');
+    if (!labelDeclared && attrs.xlabel != null && attrs.xlabel !== '')
+        target.label = String(attrs.xlabel).slice(0, 80);
+    const lc = parseColor(attrs.fontcolor);
+    if (lc)
+        target.labelColor = lc;
+    if (attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize))) {
+        target.labelSize = Math.min(72, Math.max(4, Number(attrs.fontsize)));
+    }
+    if (attrs.fontname) {
+        // QVGE appends the style to the family when it writes a bold/italic
+        // font ("DejaVu Sans bold"); the editor's field is a family only.
+        target.labelFont = String(attrs.fontname).replace(/\s+(bold|italic)\s*$/gi, '').slice(0, 60);
+    }
+    return target;
+}
 function parseColor(raw) {
     if (!raw)
         return null;
@@ -12291,7 +12771,13 @@ function assertImportTextSize(text) {
         throw new Error(I18N.t('import_too_large', { mb: Math.round(MAX_IMPORT_BYTES / 1024 / 1024) }));
     }
 }
-function fmtCoord(v) { return (Math.round(v * 10000) / 10000).toString(); }
+// Four decimals of an INCH is 0.0001 in = 0.0072 px, which is finer than the
+// editor's own grid but not fine enough for every coordinate: a node at x=0.001
+// px rounds to 0, and two nodes 0.001 px apart collapse onto each other. Six
+// decimals keep a pixel exact to ~1e-6 px while still holding the trailing
+// zeros out of the file (0.5 stays "0.5"). The value is a DOT length in inches,
+// so the digits are meaningful, not noise.
+function fmtCoord(v) { return (Math.round(v * 1e6) / 1e6).toString(); }
 // Spreadsheet apps execute a cell that starts with =, +, @, tab or CR as a
 // formula. Graph labels and weights are user/import-controlled text, so a
 // malicious .json could otherwise run code on the exporter's machine when the
@@ -12473,7 +12959,7 @@ function showExportPreview(name, content, type) {
             if (format === 'json')
                 importGraphData(decodeForeignGraphJson(JSON.parse(text)), 'JSON', appendChk.checked);
             else if (format === 'dot')
-                importGraphData(parseDot(text), 'DOT', appendChk.checked);
+                importGraphData(parseDot(text, { units: dotUnitsChoice() }), 'DOT', appendChk.checked);
             else if (format === 'graphml')
                 importGraphData(parseGraphml(text), 'GraphML', appendChk.checked);
             else if (format === 'edges-csv')
@@ -12528,15 +13014,98 @@ function showExportPreview(name, content, type) {
 function fileBase() { return (state.title || 'graph').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'graph'; }
 function exportJson() { showExportPreview(`${fileBase()}.graph.json`, jsonExportText(), 'application/json;charset=utf-8'); }
 // Map the editor's shape names onto DOT's vocabulary (and back in parseDot).
+//
+// `hexagon` and not `polygon`: GraphViz knows a real `hexagon` shape, and it
+// is the name QVGE stores internally (`CNode.cpp` draws the `hexagon` branch,
+// `fromDotShape` passes it through). Emitting `polygon` + `sides=6` made a
+// round-trip through QVGE turn every hexagon into a disc, because `polygon`
+// matches none of its branches — see QVGE_GAP_ANALYSIS.md §1.8.
 function dotShapeName(shape) {
     return shape === 'diamond' ? 'diamond'
         : shape === 'square' ? 'box'
             : shape === 'triangleUp' ? 'triangle'
                 : shape === 'triangleDown' ? 'invtriangle'
-                    : shape === 'hexagon' ? 'polygon'
+                    : shape === 'hexagon' ? 'hexagon'
                         : 'ellipse';
 }
+// DOT does not have one scale — different readers assume different ones, so
+// the exporter states which convention a file follows instead of claiming a
+// universal one (that claim was in an earlier version of this comment and the
+// review was right to reject it):
+//
+//   inches (default) — `pos` in inches with `!`, no `inputscale`. This is what
+//     QVGE's reader assumes (it multiplies by 72 and never reads
+//     `inputscale`) and what its writer emits (`pos/72`, its own
+//     `inputscale` line commented out). It also agrees with `width`/`height`,
+//     which are DOT inches in every format. `neato`/`fdp` read it at 1:1, so
+//     running a layout engine on the file keeps the authored positions.
+//   points — `pos` in points plus `inputscale=72`, for `neato -n`/`-n2`,
+//     which take `pos` as points and ignore `inputscale`.
+//
+// The one combination that is wrong for BOTH is what this shipped before the
+// review: pixel `pos` against inch `width`.
+// QVGE_GAP_ANALYSIS.md §1.7.
+const DOT_UNITS_PER_INCH = 72;
+// A DOT attribute name must be a plain identifier, while a custom id is
+// user-defined and may hold anything, so it is sanitized into one. The prefix
+// is the marker: an attribute starting with it is the editor's, not GraphViz's.
+const GEP_CUSTOM_PREFIX = '_gep_custom_';
+function gepCustomAttr(id) { return GEP_CUSTOM_PREFIX + String(id).replace(/[^A-Za-z0-9_]/g, '_').slice(0, 32); }
+function gepCustomAttrs(custom) {
+    if (!isRecord(custom))
+        return [];
+    const out = [];
+    for (const [cid, value] of Object.entries(custom)) {
+        if (!cid || value == null)
+            continue;
+        out.push(`${gepCustomAttr(cid)}=${dotString(String(value))}`);
+    }
+    return out;
+}
+function dotExportProfile() {
+    const el = document.querySelector('#optDotExportUnits');
+    return el?.value === 'points' ? 'points' : 'inches';
+}
+let dotProfile = 'inches';
+function dotCoord(value) {
+    return dotProfile === 'points' ? fmtCoord(value) : fmtCoord(value / DOT_UNITS_PER_INCH);
+}
+// Label typography, mirroring `readDotLabelAttrs` in 46-dot-core.ts: QVGE
+// writes a label's colour/size/font as `fontcolor`/`fontsize`/`fontname`
+// (`CFileSerializerDOT::doWriteLabel`), so a file that only carried `label`
+// reached QVGE with the right text but the wrong typography. Only values the
+// element actually sets are written; an unset colour/size/font stays unset,
+// exactly like every other visual attribute here.
+function dotLabelAttrs(v) {
+    const out = [];
+    if (v.labelColor)
+        out.push(`fontcolor=${dotString(v.labelColor)}`);
+    if (v.labelSize != null)
+        out.push(`fontsize=${dotString(v.labelSize)}`);
+    // Bold/italic is a suffix on the family in QVGE's format; the editor
+    // stores a plain family, so nothing is appended here.
+    if (v.labelFont)
+        out.push(`fontname=${dotString(v.labelFont)}`);
+    return out;
+}
 function dotId(id) { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : '"' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
+// DOT node names are ASCII identifiers in practice: QVGE and older GraphViz
+// builds treat a quoted non-ASCII name as opaque bytes, and a name that is not
+// reproducible across tools is not an identity. So a non-ASCII id is written
+// as a STABLE ASCII alias (`n` + a hash of the id) and the original is kept in
+// `id="..."`, which import prefers — the same trick the edge ids already use.
+// Deterministic, not random: the same document must produce the same DOT.
+function dotAlias(id) {
+    const s = String(id);
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s))
+        return s;
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return 'n_' + h.toString(36);
+}
 function dotString(v) { return '"' + String(v ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'; }
 // DOT style mapping for QVGE parity: QVGE uses style values solid/dashed/dotted/dashdot/dashdotdot/none
 // (CUtils::penStyleToText). DOT natively supports solid/dashed/dotted/bold/invis/filled,
@@ -12557,6 +13126,17 @@ function dotStrokeStyle(style) {
         return 'invis';
     return style;
 }
+// The reader's choice of DOT coordinate units. `auto` trusts the file's own
+// signals (`inputscale`, a layout engine, `bb`); the other two force a
+// convention for files that carry no reliable signal — in particular this
+// app's own exports before the units change, which put raw pixels in `pos`
+// against inch `width`. Units are NOT inferred from the numbers: the review
+// showed any such guess is wrong in both directions.
+function dotUnitsChoice() {
+    const el = document.querySelector('#optDotUnits');
+    const v = el?.value;
+    return v === 'inches' || v === 'legacyPixels' ? v : 'auto';
+}
 function exportDotText() {
     // DOT grammar: the edge operator is fixed by the graph kind — `graph` takes
     // only `--`, `digraph` takes only `->`. Emitting `--` for an undirected edge
@@ -12568,12 +13148,17 @@ function exportDotText() {
     const header = `${allUndirected ? 'graph' : 'digraph'} ${dotId(fileBase())} {`;
     // `graph` may only use `--`, and a mutual edge is invalid there anyway.
     const op = allUndirected ? '--' : '->';
-    const lines = [header, '  graph [layout="neato"];', '  node [style="filled"];'];
+    // The profile decides both the unit of `pos` and whether the file declares
+    // it: inches need no declaration (that is `inputscale`'s default), points
+    // must say so or `neato`/`fdp` would divide them by 72 a second time.
+    dotProfile = dotExportProfile();
+    const graphAttrs = dotProfile === 'points'
+        ? 'layout="neato", inputscale="72"'
+        : 'layout="neato"';
+    const lines = [header, `  graph [${graphAttrs}];`, '  node [style="filled"];'];
     for (const n of [...state.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
         const v = nodeVisual(n);
-        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${fmtCoord(n.x)},${fmtCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
-        if (v.shape === 'hexagon')
-            attrs.push('sides=6', 'regular=true');
+        const attrs = [`label=${dotString(n.label)}`, `pos=${dotString(`${dotCoord(n.x)},${dotCoord(-n.y)}!`)}`, `shape=${dotString(dotShapeName(v.shape))}`];
         // QVGE DOT: fillcolor=fill, color=stroke.color, penwidth=stroke.size, style=stroke.style
         attrs.push(`fillcolor=${dotString(v.color)}`);
         attrs.push(`color=${dotString(v.strokeColor)}`);
@@ -12597,33 +13182,40 @@ function exportDotText() {
                 attrs.push(`style=${dotString('filled')}`);
             }
         }
-        attrs.push(`width=${(v.width / 72).toFixed(4)}`, `height=${(v.height / 72).toFixed(4)}`);
+        attrs.push(`width=${(v.width / DOT_UNITS_PER_INCH).toFixed(4)}`, `height=${(v.height / DOT_UNITS_PER_INCH).toFixed(4)}`);
         attrs.push(`order=${n.order ?? 0}`);
+        // `labelloc`/`labeljust` are real GraphViz attributes but cannot express
+        // this editor's five-way position, so it goes under a reserved name too.
+        if (n.labelPosition)
+            attrs.push(`_gep_labelPosition=${dotString(n.labelPosition)}`);
+        // Only when the node name had to be aliased: the real id must survive, and
+        // `id` is already the attribute the edge exporter uses for the same job.
+        if (dotAlias(n.id) !== n.id)
+            attrs.push(`id=${dotString(n.id)}`);
+        // Read the resolved visual: a type the element does not carry itself is
+        // inherited from the defaults and is what the UI shows, so writing the raw
+        // field recorded nothing for those nodes.
         if (v.type)
             attrs.push(`type=${dotString(v.type)}`);
-        // Label styling, spelled the way Graphviz spells it. Read the resolved
-        // visual like every other attribute here: a value the element leaves unset
-        // is inherited, and writing the raw field would record nothing at all.
-        if (v.labelColor)
-            attrs.push(`fontcolor=${dotString(v.labelColor)}`);
-        if (v.labelSize != null)
-            attrs.push(`fontsize=${v.labelSize}`);
-        if (v.labelFont)
-            attrs.push(`fontname=${dotString(v.labelFont)}`);
-        if (v.labelPosition === 'top')
-            attrs.push(`labelloc=${dotString('t')}`);
-        else if (v.labelPosition === 'bottom')
-            attrs.push(`labelloc=${dotString('b')}`);
-        lines.push(`  ${dotId(n.id)} [${attrs.join(', ')}];`);
+        attrs.push(...dotLabelAttrs(v));
+        attrs.push(...gepCustomAttrs(n.custom));
+        lines.push(`  ${dotId(dotAlias(n.id))} [${attrs.join(', ')}];`);
     }
     for (const e of state.edges) {
         const v = edgeVisual(e);
         const dir = edgeDirection(e);
         const attrs = [`id=${dotString(e.id)}`, `weight=${dotString(e.weight)}`];
-        if (e.label)
+        // A real label may legitimately repeat the weight ("3" on a "3" edge), so
+        // text alone cannot tell a label from the number the document draws for
+        // display. The synthetic one is tagged; `label` without the tag is always
+        // a real label, whatever it says.
+        if (e.label) {
             attrs.push(`label=${dotString(e.label)}`);
-        else if (e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number')
+        }
+        else if (e.weight && (state.settings.graphDefaults?.edgeWeightMode || 'number') === 'number') {
             attrs.push(`label=${dotString(e.weight)}`);
+            attrs.push(`_gepWeightLabel=true`);
+        }
         // QVGE: store direction explicitly via dir for DOT
         // QVGE DOT: color, penwidth, style, dir
         attrs.push(`color=${dotString(v.color)}`);
@@ -12654,7 +13246,18 @@ function exportDotText() {
             attrs.push(`arrowsize=${dotString(txt)}`);
             attrs.push(`arrow_size=${dotString(String(v.arrowSize))}`);
         }
-        lines.push(`  ${dotId(e.from)} ${op} ${dotId(e.to)} [${attrs.join(', ')}];`);
+        // `type` was the one edge field this exporter never wrote, so a
+        // round-trip through DOT silently dropped it while every other edge
+        // property survived. QVGE keeps arbitrary edge attributes, so the name
+        // is free to use.
+        if (v.type)
+            attrs.push(`type=${dotString(v.type)}`);
+        attrs.push(...gepCustomAttrs(e.custom));
+        attrs.push(...dotLabelAttrs(v));
+        // Endpoints are written with the SAME alias the node statements use, or
+        // the file would name a node twice: `n_ebrlx5 [id="ключ"]` plus
+        // `"ключ" -> "узел"` created a second, empty `ключ` on re-import.
+        lines.push(`  ${dotId(dotAlias(e.from))} ${op} ${dotId(dotAlias(e.to))} [${attrs.join(', ')}];`);
     }
     lines.push('}');
     return lines.join('\n') + '\n';
@@ -12929,8 +13532,8 @@ function exportGraphmlText() {
         const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${directedBool ? 'true' : 'false'}">`];
         parts.push(`      <data key="weight">${xmlEsc(e.weight)}</data>`);
         parts.push(`      <data key="edgeLabel">${xmlEsc(e.label)}</data>`);
-        if (e.type)
-            parts.push(`      <data key="edgeType">${xmlEsc(e.type)}</data>`);
+        if (v.type)
+            parts.push(`      <data key="edgeType">${xmlEsc(v.type)}</data>`);
         parts.push(`      <data key="edgeColor">${xmlEsc(v.color)}</data>`);
         parts.push(`      <data key="edgeStrokeSize">${xmlEsc(v.strokeSize)}</data>`);
         parts.push(`      <data key="edgeStrokeStyle">${xmlEsc(v.strokeStyle)}</data>`);
@@ -13590,7 +14193,15 @@ async function pasteFromClipboard(format) {
             importGraphData(decodeForeignGraphJson(data), 'JSON', append);
         }
         else if (format === 'dot') {
-            importGraphData(parseDot(text), 'DOT', append);
+            const parsed = parseDot(text, { units: dotUnitsChoice() });
+            importGraphData(parsed, 'DOT', append);
+            // A file from an older GEP carries pixels in `pos` while its node sizes
+            // are inches; the parser rescales those (46-dot-core.ts `dotGraphUnits`)
+            // and flags it, and the reader deserves to know why the nodes sit far
+            // apart rather than discovering it through Fit.
+            if (parsed && parsed.legacyPixels) {
+                toast(I18N.t('dot_legacy_units', { f: DOT_UNITS_PER_INCH }));
+            }
         }
         else if (format === 'graphml') {
             importGraphData(parseGraphml(text), 'GraphML', append);
@@ -13675,16 +14286,89 @@ function commitCsvGraph(nodes, edges, label) {
     saveSoon();
     return { droppedNodes, droppedEdges };
 }
-function csvImportToast(imported, dropped, skipped, limit, key) {
+function csvImportToast(imported, dropped, skipped, limit, key, renamed = 0) {
+    // One toast, not a stack of four: the import reports itself once, and a
+    // rename note is appended rather than pushed on top of the summary.
+    const suffix = renamed > 0 ? ' · ' + I18N.t('csv_ids_renamed', { n: renamed }) : '';
     if (dropped > 0) {
-        toast(I18N.t('csv_import_capped', { imported, dropped, limit }));
+        toast(I18N.t('csv_import_capped', { imported, dropped, limit }) + suffix);
         return;
     }
     if (skipped > 0) {
-        toast(I18N.t('csv_import_skipped', { imported, skipped }));
+        toast(I18N.t('csv_import_skipped', { imported, skipped }) + suffix);
         return;
     }
-    toast(I18N.t(key, { n: imported }));
+    toast(I18N.t(key, { n: imported }) + suffix);
+}
+// Allocate ids for a CSV import so that no row can take an id that a *later*
+// row declares explicitly.
+//
+// Two separate bugs met here. First the id was taken raw and only then
+// sanitized, so a cell `e!1` became `e1` after the fact and collided with a
+// real `e1` — the rename happened where nothing could report it. Second, the
+// allocator only knew the ids it had already handed out, so with rows
+// [implicit, e2] the first row took `e2` and the second was pushed aside: the
+// row that *declared* the id lost it to a row that had not.
+//
+// So: sanitize first, reserve every declared id up front, and let the
+// generated ones fill the gaps. `renamed` counts rows that did not keep the id
+// they asked for (or that declared none and took a generated one), which is
+// what the toast reports — each rename, not just the first.
+function reserveCsvIds(rows, idIndex, prefix, stateNext, existing, sanitize) {
+    const declared = rows.map(row => (idIndex >= 0 ? String(row[idIndex] ?? '').trim() : ''));
+    // An explicit id that is already in the document cannot be handed out again:
+    // the sanitizer would drop one of the two holders. Existing ids are not
+    // "declared", so the replay below never yields them to a CSV row either.
+    const taken = new Set(existing);
+    for (const cell of declared) {
+        const sane = sanitize(cell);
+        if (cell)
+            taken.add(sane);
+    }
+    const seen = new Set(existing);
+    // The generated counter is a NUMBER, and it used to be incremented without
+    // bound. `state.nextNode`/`nextEdge` are derived from the ids in the
+    // document, so a node legitimately named `n9007199254740992` put the
+    // counter at 2^53: `gen++` stopped advancing and the `do/while` below span
+    // forever — an infinite loop on the main thread, i.e. a frozen tab.
+    //
+    // So the counter is treated as a hint, not a guarantee: it only runs while
+    // it stays in safe-integer range, and if it exhausts that range (or the
+    // generated id is somehow still taken) the search falls back to probing a
+    // suffixed form, which always terminates.
+    let renamed = 0, gen = Number.isSafeInteger(stateNext) && stateNext > 0 ? stateNext : 1;
+    return {
+        renamed: () => renamed,
+        next(index) {
+            const cell = declared[index];
+            const wanted = cell ? sanitize(cell) : '';
+            if (wanted && !seen.has(wanted)) {
+                seen.add(wanted);
+                return wanted;
+            }
+            let id = '';
+            while (gen < Number.MAX_SAFE_INTEGER - 1) {
+                const candidate = sanitize(prefix + gen++);
+                if (!taken.has(candidate) && !seen.has(candidate)) {
+                    id = candidate;
+                    break;
+                }
+            }
+            if (!id) {
+                // Counter exhausted (or every value in range is occupied): probe a
+                // deterministic suffix instead of spinning.
+                let probe = 1;
+                do {
+                    id = sanitize(prefix + probe);
+                    probe++;
+                } while (taken.has(id) || seen.has(id));
+            }
+            seen.add(id);
+            taken.add(id);
+            renamed++;
+            return id;
+        }
+    };
 }
 function importEdgesCsv(text, append) {
     const rows = parseCsv(text);
@@ -13717,6 +14401,13 @@ function importEdgesCsv(text, append) {
     };
     const initialEdges = append ? state.edges.length : 0;
     const edges = append ? state.edges.slice() : [];
+    // An imported id that is already taken must not silently rename an existing
+    // edge: the sanitizer names the *second* holder, which used to be the old
+    // edge, so an import could rewrite the document it was appending to. Claims
+    // are tracked here and the newcomer yields instead, with a count the toast
+    // reports. Same rule for the generated `e<N>` fallback.
+    const bodyRows = rows.slice(1);
+    const edgeIds = reserveCsvIds(bodyRows, iId, 'e', state.nextEdge, edges.map(e => e.id), v => safeId(v, 'e'));
     let parsed = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -13729,9 +14420,10 @@ function importEdgesCsv(text, append) {
             continue;
         }
         const e = {
-            // Duplicate/invalid ids are normalised by the sanitizer below, so no
-            // quadratic uniqueness scan is needed here.
-            id: (iId >= 0 && row[iId]) ? row[iId] : 'e' + (state.nextEdge + parsed),
+            id: edgeIds.next(r - 1),
+            // `from`/`to` are what the state model and the sanitizer read; `source`
+            // and `target` are only export aliases, so writing those two would make
+            // the sanitizer drop the edge without an error.
             from, to,
             weight: iWeight >= 0 ? String(row[iWeight] ?? '').slice(0, 50) : '',
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
@@ -13759,7 +14451,7 @@ function importEdgesCsv(text, append) {
         return;
     }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
-    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', edgeIds.renamed());
 }
 function importMatrixCsv(text, append) {
     const rows = parseCsv(text);
@@ -13878,6 +14570,8 @@ function importNodesCsv(text, append) {
     // existing nodes in append mode.
     const orderBase = append ? state.nodes.length : 0;
     const nodes = append ? state.nodes.slice() : [];
+    const bodyRows = rows.slice(1);
+    const nodeIds = reserveCsvIds(bodyRows, iId, 'n', state.nextNode, append ? state.nodes.map(n => n.id) : [], v => safeId(v, 'n'));
     let parsed = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -13888,7 +14582,7 @@ function importNodesCsv(text, append) {
         const orderCell = iOrder >= 0 ? String(row[iOrder] ?? '').trim() : '';
         const parsedOrder = orderCell === '' ? NaN : parseInt(orderCell, 10);
         const n = {
-            id: (iId >= 0 && row[iId]) ? row[iId] : 'n' + (state.nextNode + parsed),
+            id: nodeIds.next(r - 1),
             label: (iLabel >= 0 ? row[iLabel] : '') || '',
             x: iX >= 0 ? parseFloat(row[iX]) || 0 : 0,
             y: iY >= 0 ? parseFloat(row[iY]) || 0 : 0,
@@ -13936,7 +14630,7 @@ function importNodesCsv(text, append) {
     }
     const replacedEdges = append ? 0 : state.edges.length;
     const { droppedNodes } = commitCsvGraph(nodes, append ? state.edges : [], 'import nodes csv');
-    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes');
+    csvImportToast(state.nodes.length - initialNodes, droppedNodes, 0, 3000, 'imported_n_nodes', nodeIds.renamed());
     if (replacedEdges > 0)
         toast(I18N.t('csv_nodes_replaced_edges', { n: state.nodes.length, e: replacedEdges }));
 }
@@ -14700,10 +15394,25 @@ function importFile(file, forcedFormat = 'auto') {
             const name = (file.name || '').toLowerCase();
             const format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
             const append = $('#optImportAppend')?.checked;
+            // An explicit CSV kind (chosen with a per-format Import button) skips
+            // the filename/header heuristic below: a user who pressed "Import Nodes
+            // CSV" means nodes, whatever the file is called. The three readers keep
+            // their own column validation, so a mismatched file reports itself.
+            if (format !== 'auto' && format.endsWith('-csv')) {
+                if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
+                    return;
+                if (format === 'edges-csv')
+                    importEdgesCsv(text, append);
+                else if (format === 'matrix-csv')
+                    importMatrixCsv(text, append);
+                else
+                    importNodesCsv(text, append);
+                return;
+            }
             if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
                 return;
             if (format === 'dot')
-                importGraphData(parseDot(text), 'DOT', append);
+                importGraphData(parseDot(text, { units: dotUnitsChoice() }), 'DOT', append);
             else if (format === 'graphml')
                 importGraphData(parseGraphml(text), 'GraphML', append);
             else if (format === 'csv') {
@@ -16588,7 +17297,7 @@ function wireUi() {
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { const r = canvasViewportRect(); zoomAt(.82, r.left + r.width / 2, r.top + r.height / 2); });
     $('#btnZoomOut').addEventListener('click', () => { const r = canvasViewportRect(); zoomAt(1.22, r.left + r.width / 2, r.top + r.height / 2); });
-    $('#btnZoomReset').addEventListener('click', fitView);
+    $('#btnZoomReset').addEventListener('click', resetZoom);
     $('#btnFit').addEventListener('click', fitView);
     $('#btnMatrixResize').addEventListener('click', () => setMatrixDimension($('#matrixSize').value));
     $('#matrixSize').addEventListener('keydown', ev => { if (ev.key === 'Enter')
@@ -16907,6 +17616,14 @@ function wireUi() {
     $('#btnImportDot').addEventListener('click', () => chooseImport('dot', '.dot,.gv,text/vnd.graphviz,text/plain'));
     $('#btnExportGraphml').addEventListener('click', exportGraphml);
     $('#btnImportGraphml').addEventListener('click', () => chooseImport('graphml', '.graphml,.xml,application/graphml+xml,application/xml,text/xml'));
+    // CSV has had a parser and three importers for a long time, but no way in
+    // from a file: `#fileImport` did not list .csv in `accept` and nothing ever
+    // called chooseImport('csv'), so the branch in importFile() was dead. Each
+    // row now has its own Import button; the format is passed explicitly so a
+    // file called "export.csv" is parsed as the kind the user asked for.
+    $('#btnImportEdgesCsv').addEventListener('click', () => chooseImport('edges-csv', '.csv,text/csv,text/plain'));
+    $('#btnImportMatrixCsv').addEventListener('click', () => chooseImport('matrix-csv', '.csv,text/csv,text/plain'));
+    $('#btnImportNodesCsv').addEventListener('click', () => chooseImport('nodes-csv', '.csv,text/csv,text/plain'));
     $('#fileImport').addEventListener('change', e => { importFile(e.target.files[0], e.target.dataset.format || 'auto'); e.target.value = ''; e.target.dataset.format = 'auto'; });
     $('#btnExportEdgesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-edges.csv`, edgeCsv(), 'text/csv;charset=utf-8'); });
     $('#btnExportMatrixCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-matrix.csv`, matrixCsv(), 'text/csv;charset=utf-8'); });

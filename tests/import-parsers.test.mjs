@@ -4856,3 +4856,630 @@ test('exported bounds include every node, whatever the camera is showing', async
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// === DOT interoperability units and shapes (QVGE_GAP_ANALYSIS.md §1.7, §1.8) ===
+test('DOT export states its convention: pos and node size agree, no reader gets both wrong', async () => {
+  // The decisive check is positions AND sizes together against a stated
+  // convention; a GEP-only round trip cannot distinguish them, because it reads
+  // back whatever it wrote.
+  const saved = {
+    title: 'units',
+    nodes: [
+      {id:'n1', label:'A', x:72, y:-144, width:72, height:72, order:0},
+      {id:'n2', label:'B', x:-36, y:36, order:1},
+    ],
+    edges: [],
+  };
+
+  // Default profile: inches, which is what QVGE reads and writes.
+  const inchesDom = createEditorDom(saved);
+  const inchesDoc = inchesDom.dom.window.document;
+  inchesDoc.querySelector('#btnExportDot').click();
+  let dot = inchesDoc.querySelector('.export-modal textarea').value;
+  inchesDoc.querySelector('#expCloseBtn').click();
+  assert.match(dot, /pos="1,2!"/, 'a 72px node is 1in from the origin');
+  assert.match(dot, /pos="-0\.5,-0\.5!"/);
+  assert.match(dot, /width=1\.0000/, 'the node is 1in wide — the same unit as pos');
+  assert.doesNotMatch(dot, /inputscale/, 'inches is the default, so nothing is declared');
+  // QVGE multiplies `pos` and `width` by the same 72, so a node lands at the
+  // right distance relative to its own size — which is what Fit cannot repair
+  // once a file mixes the two units.
+
+  // Points profile: for `neato -n`, which reads points and ignores inputscale.
+  const pointsDom = createEditorDom(saved);
+  const pointsDoc = pointsDom.dom.window.document;
+  pointsDoc.querySelector('#optDotExportUnits').value = 'points';
+  pointsDoc.querySelector('#btnExportDot').click();
+  dot = pointsDoc.querySelector('.export-modal textarea').value;
+  pointsDoc.querySelector('#expCloseBtn').click();
+  assert.match(dot, /pos="72,144!"/, 'the same node in points');
+  assert.match(dot, /width=1\.0000/, 'width stays a DOT inch, as the format defines it');
+  assert.match(dot, /graph \[layout="neato", inputscale="72"\]/, 'the file declares the scale it was written at');
+
+  // Both profiles round-trip through this app unchanged.
+  for(const prof of ['inches', 'points']){
+    const {dom} = createEditorDom();
+    const {document} = dom.window;
+    document.querySelector('#optDotExportUnits').value = prof;
+    const source = createEditorDom(saved);
+    source.dom.window.document.querySelector('#optDotExportUnits').value = prof;
+    source.dom.window.document.querySelector('#btnExportDot').click();
+    const text = source.dom.window.document.querySelector('.export-modal textarea').value;
+    source.dom.window.document.querySelector('#expCloseBtn').click();
+    await paste(document, dom.window, '#btnPasteDot', text);
+    const graph = exportedGraph(document);
+    const a = graph.nodes.find(n => n.id === 'n1');
+    assert.equal(a.x, 72, `${prof}: x survives`);
+    assert.equal(a.y, -144, `${prof}: y survives`);
+  }
+});
+
+test('DOT import reads pos as inches and honours an explicit inputscale in points', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  const dot = [
+    'digraph G {',
+    '  a [pos="1,2!"];',
+    '  b [pos="3,-4!"];',
+    '  a -> b;',
+    '}',
+  ].join('\n');
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+  // A bare `pos` with no `inputscale` and no layout engine output is inches,
+  // which is neato's own default (`inputscale` defaults to "no scaling").
+  // A `!` does NOT mean points: this app and QVGE both write inches with it to
+  // pin the node, and `neato -n` writes points with the same suffix.
+  assert.equal(byId.a.x, 72, '1 inch is 72 px');
+  assert.equal(byId.a.y, -144, 'the y axis flips back');
+  assert.equal(byId.b.y, 288, '-4 becomes +288');
+
+  // `inputscale=72` means the numbers are points: 72 points = 1 inch = 72 px.
+  const {dom: dom2} = createEditorDom();
+  const {document: document2} = dom2.window;
+  await paste(document2, dom2.window, '#btnPasteDot', [
+    'digraph G {',
+    '  graph [inputscale=72];',
+    '  a [pos="72,144!"];',
+    '}',
+  ].join('\n'));
+  const points = exportedGraph(document2);
+  assert.equal(points.nodes[0].x, 72, '72 points stay 72 px');
+  assert.equal(points.nodes[0].y, -144, 'and the sign still flips');
+});
+
+test('DOT export names the hexagon hexagon, so QVGE does not turn it into a disc', async () => {
+  const saved = {
+    title: 'shapes',
+    nodes: [
+      {id:'n1', label:'H', x:0, y:0, shape:'hexagon', order:0},
+      {id:'n2', label:'D', x:100, y:0, shape:'triangleDown', order:1},
+      {id:'n3', label:'U', x:200, y:0, shape:'triangleUp', order:2},
+      {id:'n4', label:'S', x:300, y:0, shape:'square', order:3},
+      {id:'n5', label:'C', x:400, y:0, shape:'circle', order:4},
+      {id:'n6', label:'R', x:500, y:0, shape:'diamond', order:5},
+    ],
+    edges: [],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(dot, /shape="hexagon"/, 'the GraphViz/QVGE name, not polygon');
+  assert.doesNotMatch(dot, /shape="polygon"/, 'polygon is unknown to QVGE and degrades to a disc');
+  assert.doesNotMatch(dot, /sides=6/, 'sides only means anything for shape=polygon');
+  assert.match(dot, /shape="invtriangle"/);
+  assert.match(dot, /shape="triangle"/);
+  assert.match(dot, /shape="box"/);
+  assert.match(dot, /shape="ellipse"/);
+});
+
+test('DOT import maps QVGE\'s triangle2 to a downward triangle, not an upward one', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [shape="triangle2"];',
+    '  b [shape="triangle"];',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+  assert.equal(byId.a.shape, 'triangleDown', 'triangle2 is QVGE for the inverted triangle');
+  assert.equal(byId.b.shape, 'triangleUp');
+});
+
+test('an appended edges CSV never renames the edges already in the document', async () => {
+  const saved = {
+    title: 'dup',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', weight:'3', label:'original'}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#optImportAppend').checked = true;
+  pickFile(dom.window, document, 'id,source_id,target_id,weight,label\ne1,n1,n2,9,imported', 'edges.csv', 'edges-csv');
+  await settle(dom.window, 120);
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges.length, 2);
+  const original = graph.edges.find(e => e.id === 'e1');
+  assert.ok(original, 'the pre-existing edge keeps its id');
+  assert.equal(original.label, 'original', 'and its own data — the newcomer yields');
+  assert.equal(original.weight, '3');
+  const imported = graph.edges.find(e => e.id !== 'e1');
+  assert.equal(imported.label, 'imported');
+  assert.equal(imported.weight, '9');
+});
+
+// === CSV file import is reachable (QVGE_GAP_ANALYSIS.md §1.5) ===
+// The parsers existed and were tested through the clipboard, but `#fileImport`
+// did not accept .csv and no control ever called chooseImport('csv'), so the
+// file branch of importFile() was dead code. These drive the real element.
+function pickFile(window, document, text, name, forcedFormat) {
+  const input = document.querySelector('#fileImport');
+  const file = new window.File([text], name, {type: 'text/csv'});
+  if(forcedFormat) input.dataset.format = forcedFormat;
+  Object.defineProperty(input, 'files', {configurable: true, value: [file]});
+  input.dispatchEvent(new window.Event('change', {bubbles: true}));
+}
+
+test('each CSV row has a file-import button, and #fileImport accepts .csv', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  for(const id of ['btnImportEdgesCsv', 'btnImportMatrixCsv', 'btnImportNodesCsv']){
+    assert.ok(document.querySelector(`#${id}`), `${id} exists`);
+  }
+  const accept = document.querySelector('#fileImport').getAttribute('accept') || '';
+  assert.ok(accept.includes('.csv'), `the file picker lists .csv, got "${accept}"`);
+  // The dialog has to be pre-narrowed per button, or a user importing edges
+  // would be shown .dot files the reader cannot parse.
+  document.querySelector('#btnImportNodesCsv').click();
+  assert.ok((document.querySelector('#fileImport').getAttribute('accept') || '').includes('.csv'));
+  assert.equal(document.querySelector('#fileImport').dataset.format, 'nodes-csv');
+});
+
+test('the nodes CSV button imports a .csv file, ignoring its name', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  // Named "export.csv" on purpose: the old heuristic guessed the kind from the
+  // filename, so an explicit button has to win over it.
+  pickFile(dom.window, document, 'order,id,label,x,y,shape,color,type\n0,n1,Alpha,10,20,circle,#0ea5e9,\n1,n2,Beta,30,40,square,#8b5cf6,', 'export.csv');
+  await settle(dom.window, 120);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(n => n.label), ['Alpha', 'Beta']);
+  assert.deepEqual(graph.nodes.map(n => n.x), [10, 30]);
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+test('the edges CSV button imports edges against the existing nodes', async () => {
+  const saved = {
+    title: 'csv',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  // Appending to the existing graph keeps the nodes the edges point at.
+  document.querySelector('#optImportAppend').checked = true;
+  pickFile(dom.window, document, 'id,source_id,target_id,weight\ne1,n1,n2,7', 'anything.csv');
+  await settle(dom.window, 120);
+  const graph = exportedGraph(document);
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].weight, '7');
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+// === DOT labels are labels, not weights (QVGE round-trip audit) ===
+// `att.weight ?? att.label` made every GraphViz label a weight. The algorithms
+// then read Number("heeft") = NaN and fell back to 1, and the same string
+// showed up twice on the edge.
+test('a DOT edge label never becomes its weight', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a -> b [label="heeft"];',
+    '  b -> c [weight="7"];',
+    '  c -> d [label="5"];',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const byLabel = edge => graph.edges.find(e => e.from === edge[0] && e.to === edge[1]);
+  // An absent weight is an absent property, not an empty string: the model
+  // only materialises `weight` when DOT declared one.
+  assert.equal(byLabel(['a', 'b']).weight, undefined, 'a label is not a weight');
+  assert.equal(byLabel(['a', 'b']).label, 'heeft', 'and it survives as the label');
+  assert.equal(byLabel(['b', 'c']).weight, '7', 'a real weight attribute still wins');
+  assert.equal(byLabel(['b', 'c']).label, '', 'no label was declared, so none is invented');
+  // A numeric label is still a label; it must not turn into a weight just
+  // because it happens to parse as a number.
+  assert.equal(byLabel(['c', 'd']).weight, undefined, 'a numeric label is still a label');
+  assert.equal(byLabel(['c', 'd']).label, '5');
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+test('the editor\'s own DOT export keeps weight and label apart', async () => {
+  const saved = {
+    title: 'w',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', weight:'9', label:'uses'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(dot, /weight="9"/, 'the weight is written as weight');
+  assert.match(dot, /label="uses"/, 'and the label as label');
+  const {dom: dom2} = createEditorDom();
+  await paste(dom2.window.document, dom2.window, '#btnPasteDot', dot);
+  const back = exportedGraph(dom2.window.document).edges[0];
+  assert.equal(back.weight, '9');
+  assert.equal(back.label, 'uses');
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+// === QVGE DOT label interoperability (xlabel + font attributes) ===
+// QVGE writes a label as `xlabel` and its typography as fontcolor/fontsize/
+// fontname (`CFileSerializerDOT::doWriteLabel`), and reads `xlabel` when
+// `label` is absent (`CFormatDOT::readLabel`). Neither was understood, so a
+// file from QVGE arrived with node ids for labels and no typography.
+test('a QVGE DOT file keeps its labels and label typography', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  graph [layout="neato"];',
+    '  node_1 [pos="1,2!", shape="ellipse", xlabel="ServerAlpha",',
+    '          fontcolor="#ff0000", fontname="DejaVu Sans", fontsize="14"];',
+    '  node_2 [pos="3,4!", shape="rect", xlabel="DB"];',
+    '  node_1 -> node_2 [xlabel="replicates", fontcolor="#00ff00", fontsize="11", dir="both"];',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const n1 = graph.nodes.find(n => n.id === 'node_1');
+  assert.equal(n1.label, 'ServerAlpha', 'xlabel is the label QVGE writes');
+  assert.equal(n1.labelColor, '#ff0000');
+  assert.equal(n1.labelSize, 14);
+  assert.equal(n1.labelFont, 'DejaVu Sans');
+  const n2 = graph.nodes.find(n => n.id === 'node_2');
+  assert.equal(n2.label, 'DB');
+  assert.equal(n2.labelColor, undefined, 'an absent fontcolor stays unset');
+  const edge = graph.edges[0];
+  assert.equal(edge.label, 'replicates', 'edge xlabel survives too');
+  assert.equal(edge.labelColor, '#00ff00');
+  assert.equal(edge.labelSize, 11);
+  assert.equal(edge.direction, 'mutual');
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+test('label typography and edge type round-trip through the editor\'s own DOT', async () => {
+  const saved = {
+    title: 'typography',
+    nodes: [
+      {id:'n1', label:'A', x:0, y:0, order:0, labelColor:'#ff0000', labelSize:16, labelFont:'Georgia'},
+      {id:'n2', label:'B', x:120, y:0, order:1},
+    ],
+    edges: [{id:'e1', from:'n1', to:'n2', weight:'2', type:'depends', labelColor:'#00ffff', labelSize:10}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(dot, /fontcolor="#ff0000"/, 'the label colour is written');
+  assert.match(dot, /fontsize="16"/, 'and the size');
+  assert.match(dot, /fontname="Georgia"/, 'and the family');
+  assert.match(dot, /type="depends"/, 'the edge type is written — it used to be dropped');
+  const {dom: dom2} = createEditorDom();
+  await paste(dom2.window.document, dom2.window, '#btnPasteDot', dot);
+  const back = exportedGraph(dom2.window.document);
+  const n1 = back.nodes.find(n => n.id === 'n1');
+  assert.equal(n1.labelColor, '#ff0000');
+  assert.equal(n1.labelSize, 16);
+  assert.equal(n1.labelFont, 'Georgia');
+  assert.equal(back.edges[0].type, 'depends');
+  assert.equal(back.edges[0].labelColor, '#00ffff');
+  assert.equal(back.edges[0].labelSize, 10);
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+test('a bold QVGE font name keeps only the family, and label= still wins over xlabel', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [xlabel="from-xlabel", label="from-label", fontname="DejaVu Sans bold"];',
+    '  b [xlabel="only-xlabel"];',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const a = graph.nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'from-label', 'label takes precedence, as QVGE reads it');
+  assert.equal(a.labelFont, 'DejaVu Sans', 'the bold suffix is style, not family');
+  assert.equal(graph.nodes.find(n => n.id === 'b').label, 'only-xlabel');
+  assert.deepEqual(errors.map(error => error.message), []);
+});
+
+// === Review round 2: units, labels, CSV id allocation (PR #39) ===
+test('a label that spells inputscale=72 is text, not a units declaration', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  // Reading the raw body found `inputscale=72` inside the label and divided
+  // every coordinate by 72, so a 72,144 node arrived at 1,2.
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [pos="1,2", label="inputscale=72"];',
+    '}',
+  ].join('\n'));
+  const a = exportedGraph(document).nodes[0];
+  assert.equal(a.x, 72, 'an inch coordinate stays an inch coordinate');
+  assert.equal(a.y, -144);
+});
+
+test('a graph-level inputscale is found even though graph[ is not an element', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  graph [inputscale=72];',
+    '  a [pos="72,144"];',
+    '}',
+  ].join('\n'));
+  const a = exportedGraph(document).nodes[0];
+  assert.equal(a.x, 72, '72 points at inputscale=72 are 72 px');
+  assert.equal(a.y, -144);
+});
+
+test('xlabel never overrides a declared label, even when that label is the node id', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', 'digraph G { a [label="a", xlabel="other"]; }');
+  assert.equal(exportedGraph(document).nodes[0].label, 'a');
+
+  const second = createEditorDom();
+  await paste(second.dom.window.document, second.dom.window, '#btnPasteDot', 'digraph G { a [xlabel="from-xlabel"]; }');
+  assert.equal(exportedGraph(second.dom.window.document).nodes[0].label, 'from-xlabel', 'xlabel still fills in for a node that declares no label');
+});
+
+test('an edge label equal to its weight survives the DOT round-trip', async () => {
+  const saved = {
+    title: 'edge-label', nodes: [
+      {id:'n1', label:'A', x:0, y:0, order:0},
+      {id:'n2', label:'B', x:100, y:0, order:1},
+    ],
+    edges: [
+      {id:'e1', from:'n1', to:'n2', label:'3', weight:'3', directed:true},
+      {id:'e2', from:'n1', to:'n2', label:'', weight:'7', directed:true},
+    ],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  // Only the synthetic label carries the marker; a real label is written bare,
+  // whatever its text, so "3" is not mistaken for a drawn weight.
+  assert.match(dot, /label="3"/);
+  assert.match(dot, /_gepWeightLabel=true/);
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const edges = exportedGraph(document).edges;
+  assert.equal(edges[0].label, '3', 'a real label that repeats the weight is kept');
+  assert.equal(edges[0].weight, '3');
+  assert.equal(edges[1].label, '', 'the drawn weight is not a label');
+  assert.equal(edges[1].weight, '7');
+});
+
+test('DOT coordinates keep six decimals and an explicit zero is a position, not a missing one', async () => {
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  // x=0 and x=0.001 both rounded to 0 at four decimals, and "every node at the
+  // origin" then read as "no positions declared" and was re-placed on a circle.
+  await paste(document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  a [pos="0,0"];',
+    '  b [pos="0.001,0"];',
+    '  a -> b;',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
+  assert.equal(byId.a.x, 0);
+  assert.ok(Math.abs(byId.b.x - 0.072) < 1e-9, `0.001in is 0.072px, not 0 (got ${byId.b.x})`);
+  assert.ok(Math.abs(byId.b.x - byId.a.x) > 0, 'the two nodes are not collapsed onto one point');
+});
+
+test('DOT coordinate units are chosen by the reader, never guessed from spans', async () => {
+  // Units are not recoverable from the numbers: an inch file with x=0 and x=100
+  // and an old pixel file with x=0 and x=30 are the same digits. Inferring them
+  // from the span (as an earlier version did) rescales valid data in both
+  // directions, so the reader states the convention instead.
+  const ambiguousInches = 'digraph G{ a [pos="0,0", width=0.75]; b [pos="100,0", width=0.75]; a->b; }';
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', ambiguousInches);
+  assert.equal(exportedGraph(document).nodes.find(n => n.id === 'b').x, 7200,
+    'an unmarked inch file keeps inches: 100in is 7200px, never 100px');
+
+  // The explicit "old GEP pixels" choice reads the same digits as pixels.
+  const legacy = createEditorDom();
+  const legacyDocument = legacy.dom.window.document;
+  legacyDocument.querySelector('#optDotUnits').value = 'legacyPixels';
+  await paste(legacyDocument, legacy.dom.window, '#btnPasteDot', ambiguousInches);
+  assert.equal(exportedGraph(legacyDocument).nodes.find(n => n.id === 'b').x, 100,
+    'the legacy profile keeps pixel coordinates at their pixel value');
+});
+
+test('DOT inputscale is read from graph scope only, wherever the declaration sits', async () => {
+  const probe = async (dot) => {
+    const {dom} = createEditorDom();
+    await paste(dom.window.document, dom.window, '#btnPasteDot', dot);
+    return exportedGraph(dom.window.document).nodes.find(n => n.id === 'a').x;
+  };
+  // At inputscale=72 the numbers ARE points, so 72pt is 72px.
+  assert.equal(await probe('digraph G{ graph [inputscale=72]; a [pos="72,144"]; }'), 72, 'leading graph block');
+  assert.equal(await probe('digraph G{ a [pos="72,144"]; graph [inputscale=72]; }'), 72, 'graph block after a node');
+  assert.equal(await probe('digraph G{ a [pos="72,144"]; graph.inputscale=72; }'), 72, 'graph.attr = value');
+  // A node attribute is the node's, not the graph's: this stays inches (1in = 72px).
+  assert.equal(await probe('digraph G{ a [pos="1,2", inputscale=72]; }'), 72, 'node-level key does not rescale the document');
+});
+
+test('a DOT file with a huge id cannot spin the CSV counter', async () => {
+  // The generated-id counter started at state.nextNode, which a node named
+  // n9007199254740992 pushes to 2^53; `gen++` stops advancing there and the
+  // search looped forever on the main thread.
+  const saved = { title: 'huge', nodes: [{id:'n9007199254740992', label:'X', x:0, y:0, order:0}], edges: [] };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, dom.window, '#btnPasteNodesCsv', 'order,id,label,x,y\n,,New,10,10\n');
+  const nodes = exportedGraph(document).nodes;
+  assert.equal(nodes.length, 2, 'the import completed instead of hanging');
+  assert.ok(nodes.every(n => n.id), 'every node has an id');
+});
+
+test('a large DOT file does not overflow the stack while reading units', async () => {
+  // `Math.max(...xs)` on 150k positions threw RangeError from the argument
+  // limit; the units reader no longer spreads anything.
+  const parts = ['digraph G {'];
+  for(let i = 0; i < 3000; i++) parts.push(`n${i} [pos="${i},0", width=0.75];`);
+  parts.push('}');
+  const {dom} = createEditorDom();
+  const {document} = dom.window;
+  await paste(document, dom.window, '#btnPasteDot', parts.join('\n'));
+  const nodes = exportedGraph(document).nodes;
+  assert.equal(nodes.length, 3000, 'every node imported with no stack error');
+});
+test('CSV ids reserve explicit ids from later rows, and every rename is reported', async () => {
+  const saved = {
+    title: 'csv-ids',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#optImportAppend').checked = true;
+  // Row 1 declares nothing and must not steal `e2` from row 2; `e!1` sanitizes
+  // to `e1`, which the existing document already holds, so it yields with a
+  // counted rename instead of silently becoming `e1-2`.
+  await paste(document, dom.window, '#btnPasteEdgesCsv', [
+    'id,source_id,target_id,weight',
+    ',n1,n2,5',
+    'e2,n2,n1,6',
+    'e!1,n1,n2,9',
+  ].join('\n'));
+  const graph = exportedGraph(document);
+  const byId = Object.fromEntries(graph.edges.map(e => [e.id, e]));
+  // The generated row steps over `e2` because a later row declares it, so it
+  // takes `e3`; the declared `e2` keeps its own id, and `e!1` (which sanitizes
+  // to the already-present `e1`) yields a fresh one.
+  assert.equal(byId.e2.weight, '6', 'the explicit e2 is not taken by the generated row');
+  assert.equal(byId.e3.weight, '5', 'the generated row stepped over the reserved id');
+  assert.ok(!graph.edges.some(e => e.id === 'e1-2' || e.id.startsWith('e1-')), 'no opaque suffixed id');
+  assert.match(toasts(document), /2 imported edge id/i, 'both renames are counted');
+});
+
+// === DOT as a full carrier: z-order, custom attributes, label position ===
+test('DOT z-order follows declaration order, not the order edges mention nodes', async () => {
+  // The parser reads edges before node statements, so its Map held
+  // second, third, first for this file — the node nothing points at came last.
+  const {dom} = createEditorDom();
+  await paste(dom.window.document, dom.window, '#btnPasteDot', [
+    'digraph G {',
+    '  first [pos="0,0"];',
+    '  second [pos="100,0"];',
+    '  third [pos="200,0"];',
+    '  second -> third;',
+    '}',
+  ].join('\n'));
+  const graph = exportedGraph(dom.window.document);
+  assert.deepEqual(graph.nodes.map(n => n.id), ['first', 'second', 'third'],
+    'the document keeps the order the file declares');
+  assert.deepEqual(graph.nodes.map(n => n.order), [0, 1, 2],
+    'and writes it as the explicit order that drives drawing');
+});
+
+test('custom attribute values survive a DOT round-trip', async () => {
+  const saved = {
+    title: 'custom-dot',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0, custom:{cap:'5'}}],
+    edges: [],
+    customAttributes: [{id:'cap', name:'capacity', scope:'node', type:'string'}],
+    graphCustom: {},
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.match(dot, /_gep_custom_cap="5"/, 'DOT carries it as an ordinary attribute');
+
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].custom.cap, '5', 'the value comes back');
+  assert.ok(graph.customAttributes.some(a => a.id === 'cap' && a.scope === 'node'),
+    'and its definition is synthesized, or the sanitizer drops it as orphaned');
+});
+
+test('label position and arrow size survive a DOT round-trip', async () => {
+  const saved = {
+    title: 'misc-dot',
+    nodes: [{id:'n1', label:'A', x:0, y:0, order:0, labelPosition:'top'}, {id:'n2', label:'B', x:100, y:0, order:1}],
+    edges: [{id:'e1', from:'n1', to:'n2', label:'', weight:'1', directed:true, arrowSize:20}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes[0].labelPosition, 'top', 'label position survives');
+  assert.equal(graph.edges[0].arrowSize, 20, 'a 4-decimal multiplier rounds back to the whole size');
+});
+
+// === Non-ASCII identifiers ===
+test('a non-ASCII id survives import unchanged and is not randomised', async () => {
+  // `safeId` stripped everything outside [A-Za-z0-9_-], so "ключ" became an
+  // empty string and then a RANDOM id — a different one on every import.
+  const dot = 'digraph G{ "ключ" [pos="0,0"]; "узел" [pos="100,0"]; "ключ" -> "узел"; }';
+  const once = createEditorDom();
+  await paste(once.dom.window.document, once.dom.window, '#btnPasteDot', dot);
+  const first = exportedGraph(once.dom.window.document);
+
+  const twice = createEditorDom();
+  await paste(twice.dom.window.document, twice.dom.window, '#btnPasteDot', dot);
+  const second = exportedGraph(twice.dom.window.document);
+
+  assert.deepEqual(first.nodes.map(n => n.id), ['ключ', 'узел'], 'the id is the one the file gave');
+  assert.deepEqual(second.nodes.map(n => n.id), first.nodes.map(n => n.id),
+    'and it is the same on the next import');
+  assert.equal(first.edges.length, 1, 'the edge still connects them');
+});
+
+test('DOT export aliases a non-ASCII node name and brings the real id back', async () => {
+  const saved = {
+    title: 'unicode',
+    nodes: [{id:'ключ', label:'Ключ', x:0, y:0, order:0}, {id:'узел', label:'Узел', x:100, y:0, order:1}],
+    edges: [{id:'связь', from:'ключ', to:'узел', label:'L', weight:'1', directed:true}],
+  };
+  const {dom} = createEditorDom(saved);
+  const {document} = dom.window;
+  document.querySelector('#btnExportDot').click();
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  // The statement name is a portable ASCII alias; the real id rides in `id=`.
+  assert.match(dot, /n_[a-z0-9]+ \[/, 'the node name is an ASCII alias');
+  assert.match(dot, /id="ключ"/, 'the real id is kept as an attribute');
+  assert.doesNotMatch(dot, /"ключ" ->/, 'edges use the same alias, not the raw name');
+
+  await paste(document, dom.window, '#btnPasteDot', dot);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(n => n.id), ['ключ', 'узел'],
+    'no duplicate node appears under the alias');
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].from, 'ключ');
+  assert.equal(graph.edges[0].to, 'узел');
+});
