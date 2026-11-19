@@ -205,7 +205,17 @@
   function graphBounds(){
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for(const n of state.nodes){
-      if(!isRenderablePoint(n.x, n.y)) continue;
+      // Every node, including the ones the current camera cannot paint.
+      //
+      // isRenderablePoint is a *painting* concern: it is bounded by renderScale,
+      // which the camera sets, so filtering on it made the exported extent depend
+      // on where the user was looking — zoom in far enough and a far node fell
+      // outside the safe window and vanished from the bounds, zoom back out and it
+      // reappeared. The file has to describe the document, so it uses the
+      // coordinates the document actually holds. They are finite by
+      // sanitizeState, so an unrenderable node still has a real position to
+      // include.
+      if(!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
       const v = nodeVisual(n);
       const hw = (v.width != null ? v.width : 50) / 2, hh = (v.height != null ? v.height : 50) / 2;
       if(n.x - hw < minX) minX = n.x - hw;

@@ -332,22 +332,21 @@
   // Graphviz measures in inches (72 per inch), so this is the same conversion the
   // DOT exporter does inline for `width`/`height`. Kept as one function so the
   // two exporters cannot drift apart again.
-  const graphmlInches = (px: number) => Number((finite(px, 0) / 72).toFixed(4));
-  // ...and back, for node size in a file.
+  // Node size in GraphML is PIXELS, like this editor's own model.
   //
-  // Size is written in inches, but builds before that fix wrote pixels, so a file
-  // may hold either. Nothing the editor draws is under 10px, so an inch value is
-  // at most ~4.2 — a number under 10 can only be inches and is converted; a
-  // larger one is a pixel size from an old file and is taken as-is. The convert
-  // has to happen BEFORE the range clamp, or a valid 0.69in would be clamped up
-  // to the 10px floor and then multiplied into nonsense.
-  const nodeSizeFromGraphml = (raw: string) => {
-    const value = Number(raw);
-    if(!Number.isFinite(value) || value <= 0) return num(raw, 50, 10, 300);
-    // Rounded: inches carry four decimals, so 50px comes back as 49.9968 without
-    // this, and every re-export would drift a little further from the original.
-    return Math.round(clamp(value < 10 ? value * 72 : value, 10, 300));
-  };
+  // I briefly converted it to inches, on the theory that a GraphML reader maps
+  // each <data> onto a Graphviz attribute of the same name and Graphviz measures
+  // in inches. That was wrong for the reader this format actually targets: QVGE
+  // stores the value verbatim and passes it straight to resize()
+  // (CFormatGraphML::readNode -> CNode::setAttribute(attr_width)), and its own
+  // exporter writes getSize() unconverted. Dividing by 72 shrank a 50px node to
+  // 0.69 for every QVGE user. Sizes are written and read as pixels, unchanged.
+  //
+  // Fractions are kept: a node may legitimately be 50.5 x 45.25, and rounding on
+  // the way in silently resized every such node. The clamp stays, since that is
+  // the editor's own node range, not a unit conversion.
+  const nodeSizeFromGraphml = (raw: string) => clamp(finite(raw, 50), 10, 300);
+
   const colorOrUndef = (raw: unknown) => parseColor(raw) || undefined;
   const NODE_FIELDS_MODEL: readonly GraphmlField[] = [
     {field: 'label', name: 'label', aliases: ['name']},
@@ -577,15 +576,10 @@
       if(n.type) parts.push(`      <data key="type">${xmlEsc(n.type)}</data>`);
       parts.push(`      <data key="shape">${xmlEsc(v.shape)}</data>`);
       parts.push(`      <data key="color">${xmlEsc(v.color)}</data>`);
-      // Size is inches, like every other Graphviz-family writer, and like our own
-      // DOT exporter (which divides by 72 for the same reason). A GraphML reader
-      // maps each <data> onto a graph attribute of the same attr.name, and
-      // Graphviz reads `width`/`height` in inches — so publishing the editor's
-      // pixel size here made a 50px node declare itself 50 INCHES: a two-node
-      // graph rendered on a 50 x 100 inch canvas, 72x too large. The reader
-      // still accepts pixel-sized files from older builds (see importGraphml).
-      parts.push(`      <data key="width">${xmlEsc(graphmlInches(v.width))}</data>`);
-      parts.push(`      <data key="height">${xmlEsc(graphmlInches(v.height))}</data>`);
+      // Pixels, unconverted — see nodeSizeFromGraphml above. (DOT is the format
+      // that carries inches; GraphML carries the editor's own units.)
+      parts.push(`      <data key="width">${xmlEsc(v.width)}</data>`);
+      parts.push(`      <data key="height">${xmlEsc(v.height)}</data>`);
       parts.push(`      <data key="strokeColor">${xmlEsc(v.strokeColor)}</data>`);
       parts.push(`      <data key="strokeSize">${xmlEsc(v.strokeSize)}</data>`);
       parts.push(`      <data key="strokeStyle">${xmlEsc(v.strokeStyle)}</data>`);
@@ -729,16 +723,32 @@
     // sanitizer decide their fate; throwing would reject the whole import,
     // including the entries that are perfectly good.
     const isRecord = value => value != null && typeof value === 'object';
+    // A default's own *type* carries a style too, and the renderer resolves an
+    // element through it: nodeVisual(n) reads states.nodeTypeStyles[d.type] and
+    // lets it override the plain default. Copying only the raw default therefore
+    // materialised the wrong visual — a source graph whose nodes rendered red at
+    // width 99 through its default type arrived with the raw default colour and
+    // width 50. The effective value is what the element was actually drawn with,
+    // so that is what has to be materialised. Type styles win over the plain
+    // default exactly as they do in nodeVisual/edgeVisual.
+    const nodeTypeStyle = (nd.type && settings?.nodeTypeStyles && settings.nodeTypeStyles[nd.type]) || {};
+    const edgeTypeStyle = (ed.type && settings?.edgeTypeStyles && settings.edgeTypeStyles[ed.type]) || {};
+    const effectiveDefault = (defaults, typeStyle, field) =>
+      typeStyle[field] != null ? typeStyle[field] : defaults[field];
     for(const n of nodes){
       if(!isRecord(n)) continue;
       for(const field of NODE_FIELDS){
-        if(unset(n[field]) && nd[field] != null) n[field] = nd[field];
+        if(!unset(n[field])) continue;
+        const value = effectiveDefault(nd, nodeTypeStyle, field);
+        if(value != null) n[field] = value;
       }
     }
     for(const e of edges){
       if(!isRecord(e)) continue;
       for(const field of EDGE_FIELDS){
-        if(unset(e[field]) && ed[field] != null) e[field] = ed[field];
+        if(!unset(e[field])) continue;
+        const value = effectiveDefault(ed, edgeTypeStyle, field);
+        if(value != null) e[field] = value;
       }
     }
   }
@@ -823,7 +833,13 @@
     // defines an order of its own.
     const incomingOrder = new Map(sane.nodes.map(node => [node.id, node.order]));
     sane.nodes.sort((a, b) => (incomingOrder.get(a.id) ?? 0) - (incomingOrder.get(b.id) ?? 0));
-    sane.nodes.forEach((node, index) => { node.order = state.nodes.length + index; });
+    // Continue from the highest order actually in the document, not from the node
+    // count. Orders are not guaranteed consecutive — a document loaded from a file,
+    // or one the user has reordered, can hold 100 and 200 with two nodes — so
+    // `state.nodes.length` gave an appended node order 2, which sorted it to the
+    // top of the list and made it the first row of the matrix.
+    let nextOrder = state.nodes.reduce((max, node) => Math.max(max, (node.order ?? 0) + 1), 0);
+    sane.nodes.forEach(node => { node.order = nextOrder++; });
     // Remap edge endpoints — DISCARD edges with dangling references.
     // An edge is dangling if its endpoint wasn't in the imported nodes list
     // AND doesn't already exist in the current graph (would "snap" to wrong node).
@@ -852,8 +868,23 @@
       e.id = newId;
       validEdges.push(e);
     }
-    state.nodes.push(...sane.nodes);
-    state.edges.push(...validEdges);
+    // The document must stay inside the same ceiling the loader applies, or the
+    // appended entries are written to autosave and then silently dropped on the
+    // next reload: the toast says "appended", the user keeps the node until they
+    // reopen the app, and then it is gone. The ceiling is a property of the whole
+    // document, so append has to account for what the host already holds.
+    const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
+    const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
+    const keptNodes = sane.nodes.slice(0, nodeRoom);
+    // An endpoint is valid if it is a node that was kept OR one the host already
+    // has — an appended edge is allowed to attach to the existing document.
+    const keptIds = new Set(keptNodes.map(node => node.id));
+    const endpointOk = (id) => keptIds.has(id) || existingIds.has(id);
+    // A node that did not fit takes its incident edges with it; keeping them would
+    // leave edges pointing at nodes that are not there.
+    const keptEdges = validEdges.filter(edge => endpointOk(edge.from) && endpointOk(edge.to)).slice(0, edgeRoom);
+    state.nodes.push(...keptNodes);
+    state.edges.push(...keptEdges);
     // sanitizeState(merged) is the authoritative definition list: current
     // definitions first (they win on same-id-and-scope conflicts), imported
     // definitions after, with scope-aware renames already applied and values
@@ -870,16 +901,20 @@
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
     const capped = takeImportDropped();
+    // Entries cut by the *document* ceiling, on top of whatever the payload itself
+    // lost while it was sanitised.
+    capped.nodes += sane.nodes.length - keptNodes.length;
+    capped.edges += validEdges.length - keptEdges.length;
     const lost = capped.nodes + capped.edges;
     // Truncation first: it means the document itself did not fit, so the counts
     // below would understate what the user expected to see.
     if(lost > 0){
-      toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: sane.nodes.length, m: validEdges.length}), dropped: I18N.t('n_nodes_m_edges', {n: capped.nodes, m: capped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})}));
+      toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: keptNodes.length, m: keptEdges.length}), dropped: I18N.t('n_nodes_m_edges', {n: capped.nodes, m: capped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})}));
       return;
     }
     toast(discarded > 0
-      ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
-      : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
+      ? I18N.t('appended_n_m_discarded', {label, n: keptNodes.length, m: keptEdges.length, d: discarded})
+      : I18N.t('appended_n_m', {label, n: keptNodes.length, m: keptEdges.length}));
   }
   // Identity of an imported definition against the current document (and the
   // payload itself), in one pass over the carried list:

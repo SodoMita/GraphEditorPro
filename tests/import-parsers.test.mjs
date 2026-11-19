@@ -4688,12 +4688,13 @@ test('an empty document exports finite zero bounds, not Infinity', async () => {
   dom.window.close();
 });
 
-test('GraphML writes node size in inches, so a renderer does not draw it 72x too large', async () => {
-  // A GraphML reader maps each <data> onto a graph attribute of the same
-  // attr.name, and Graphviz reads `width`/`height` in inches (72 per inch). This
-  // exporter published the editor's pixel size under those names, so a 50px node
-  // declared itself 50 INCHES and a two-node graph rendered on a 50 x 100 inch
-  // canvas. Node size is now written the way the DOT exporter already wrote it.
+test('GraphML writes node size in pixels, which is what a GraphML reader uses', async () => {
+  // GraphML `width`/`height` are pixels to the reader this format targets: QVGE
+  // stores the <data> value verbatim and hands it to resize()
+  // (CFormatGraphML::readNode -> CNode::setAttribute(attr_width)), and its own
+  // exporter writes getSize() unconverted. Dividing by 72 to satisfy Graphviz's
+  // inch convention shrank every node to 1/72nd for QVGE users, so the size is
+  // written exactly as the editor holds it.
   const {dom, errors} = createEditorDom();
   const {window} = dom;
   const {document} = window;
@@ -4706,66 +4707,152 @@ test('GraphML writes node size in inches, so a renderer does not draw it 72x too
   const xml = document.querySelector('.export-modal textarea').value;
   document.querySelector('#expCloseBtn').click();
 
-  const widths = [...xml.matchAll(/<data key="width">([^<]+)<\/data>/g)].map(m => Number(m[1]));
+  const widths = [...xml.matchAll(/<data key="width">([^<]+)<\/data>/g)].map(m => m[1]);
   assert.equal(widths.length, 2, 'both nodes carry a width');
-  for (const w of widths) {
-    assert.ok(w < 5, `a 50px node must not be written as ${w} inches`);
-    assert.ok(Math.abs(w - 50 / 72) < 0.001, `50px is ${50 / 72} inches, got ${w}`);
-  }
+  assert.deepEqual(widths, ['50', '50'], 'a 50px node is written as 50, not as 0.6944 inches');
+
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
 
-test('GraphML node size still reads files written in either unit', async () => {
-  // Files from builds before the fix hold pixels; a pixel size is 72x the same
-  // size in inches, and nothing the editor draws is under 10px, so the two are
-  // told apart by magnitude. Both must land on the same node size.
-  const xmlFor = size => [
-    '<?xml version="1.0"?>',
-    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
-    '  <key id="x" for="node" attr.name="x" attr.type="double"/>',
-    '  <key id="y" for="node" attr.name="y" attr.type="double"/>',
-    '  <key id="width" for="node" attr.name="width" attr.type="double"/>',
-    '  <key id="height" for="node" attr.name="height" attr.type="double"/>',
-    '  <graph id="g" edgedefault="directed">',
-    `    <node id="n1"><data key="x">0</data><data key="y">0</data><data key="width">${size}</data><data key="height">${size}</data></node>`,
-    '  </graph>',
-    '</graphml>',
-  ].join('\n');
-
-  for (const [size, label] of [[50, 'pixels (older build)'], [0.6944, 'inches (current build)']]) {
-    const {dom, errors} = createEditorDom();
-    const {window} = dom;
-    const {document} = window;
-    await paste(document, window, '#btnPasteGraphml', xmlFor(size));
-    const node = exportedGraph(document).nodes[0];
-    assert.equal(node.width, 50, `${label} reads as a 50px node`);
-    assert.equal(node.height, 50, `${label} reads as a 50px node`);
-    assert.deepEqual(errors.map(error => error.message), []);
-    dom.window.close();
-  }
-});
-
-test('a GraphML round trip keeps node size exactly, without drifting', async () => {
-  // Inches carry four decimals, so an unrounded conversion returns 49.9968 for a
-  // 50px node and each re-export would drift further from the original.
+test('GraphML round-trips a fractional node size unchanged', async () => {
+  // Node size is not a whole number: the resize handles produce fractions, and
+  // rounding on import silently resized every such node (50.5 x 45.25 came back
+  // as 51 x 45). The clamp stays — that is the editor's node range — but it is
+  // not a reason to round.
   const {dom, errors} = createEditorDom();
   const {window} = dom;
   const {document} = window;
   await paste(document, window, '#btnPasteJson', JSON.stringify({
-    title: 't', nodes: [{id:'n1', x:0, y:0}], edges: [],
+    title: 't', nodes: [{id:'n1', x:0, y:0, width:50.5, height:45.25}], edges: [],
   }));
-  let xml;
-  for (let i = 0; i < 4; i++) {
-    document.querySelector('#btnExportGraphml').click();
-    await settle(window, 60);
-    xml = document.querySelector('.export-modal textarea').value;
-    document.querySelector('#expCloseBtn').click();
-    await paste(document, window, '#btnPasteGraphml', xml);
-  }
+
+  document.querySelector('#btnExportGraphml').click();
+  await settle(window, 60);
+  const xml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(document, window, '#btnPasteGraphml', xml);
+
   const node = exportedGraph(document).nodes[0];
-  assert.equal(node.width, 50, 'width is still exactly the original');
-  assert.equal(node.height, 50, 'height is still exactly the original');
+  assert.equal(node.width, 50.5, 'the fractional width survives');
+  assert.equal(node.height, 45.25, 'the fractional height survives');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('appending at the document ceiling keeps the document loadable', async () => {
+  // The loader caps a document at MAX_IMPORT_NODES. Append pushed into state
+  // without checking what the host already held, so a full graph plus one pasted
+  // node became 3000+1 in memory and in autosave — reported as a success — and the
+  // next reload silently dropped the node. The ceiling belongs to the document,
+  // so append has to respect the space that is actually left.
+  const nodes = Array.from({length: 3000}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'full', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+  assert.equal(exportedGraph(document).nodes.length, 3000, 'the host starts at the ceiling');
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'extra', nodes: [{id:'extra', x:0, y:0}], edges: [],
+  }));
+
+  // It may not exceed the ceiling, and the toast must not claim it did.
+  const after = exportedGraph(document);
+  assert.equal(after.nodes.length, 3000, 'the document stays inside the ceiling');
+  assert.doesNotMatch(toasts(document), /appended 1/, 'the toast does not claim a node that was dropped');
+
+  // Whatever was written for autosave must load back to the same thing.
+  const saved = JSON.parse(window.localStorage.getItem('graph-editor-pro-v2') || 'null');
+  if (saved) assert.ok(saved.nodes.length <= 3000, 'autosave stays inside the ceiling too');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an appended node follows a non-consecutive host order instead of sorting first', async () => {
+  // Orders are a user-visible sequence and are not guaranteed consecutive: a file
+  // can carry 100 and 200 for two nodes. Continuing from the node *count* gave the
+  // newcomer order 2, which put it at the top of the list and the first matrix row.
+  const {dom, errors} = createEditorDom({
+    title: 't',
+    nodes: [{id:'a', order:100, x:0, y:0}, {id:'b', order:200, x:100, y:0}],
+    edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'x', nodes: [{id:'c', x:0, y:100}], edges: [],
+  }));
+
+  // The appended node is renamed off its colliding id, so identify it by position
+  // in the document (it is pushed last), not by the id it arrived with.
+  const nodes = exportedGraph(document).nodes;
+  assert.equal(nodes.length, 3, 'the node was appended');
+  const appended = nodes[nodes.length - 1];
+  assert.ok(appended.order > 200, `the appended node sorts last, got order ${appended.order}`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append materialises the style a default *type* gives, not the raw default', async () => {
+  // The renderer resolves an element through its default's type style
+  // (nodeVisual reads nodeTypeStyles[d.type] and lets it win over the plain
+  // default), so a node inheriting through the default type is drawn with the
+  // type's colour and size. Materialisation copied the raw default instead, so
+  // that node silently changed appearance on append.
+  const {dom, errors} = createEditorDom({
+    title: 'host', nodes: [{id:'h1', label:'H', x:0, y:0}], edges: [],
+    settings: {nodeDefaults: {type:'', color:'#000000', width:50}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'src',
+    nodes: [{id:'s1', label:'S', x:500, y:500}],
+    edges: [],
+    settings: {
+      nodeDefaults: {type:'alert', color:'#111111'},
+      nodeTypeStyles: {alert: {color:'#ff0000', width:99}},
+    },
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.color, '#ff0000', 'the type style colour is materialised, not the raw default');
+  assert.equal(node.width, 99, 'the type style width is materialised, not the raw default');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('exported bounds include every node, whatever the camera is showing', async () => {
+  // graphBounds filtered through isRenderablePoint, which is bounded by the render
+  // scale the camera sets. Zooming in far enough pushed a distant node outside the
+  // safe window, so it vanished from the exported bounds and reappeared on zooming
+  // out — the file still described the viewport. Renderability is a painting
+  // concern; the file describes the document.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'a', x:0, y:0}, {id:'b', x:50000000, y:0}], edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  const atRest = exportedGraph(document).viewBox;
+  assert.ok(atRest.w > 50000000, 'both nodes are in the bounds at rest');
+
+  for (let i = 0; i < 40; i++) {
+    document.querySelector('#graphCanvas').dispatchEvent(new window.WheelEvent('wheel', {
+      deltaY: -120, clientX: 400, clientY: 300, bubbles: true, cancelable: true,
+    }));
+  }
+  await settle(window, 120);
+  assert.deepEqual(exportedGraph(document).viewBox, atRest, 'zooming in does not drop a node from the bounds');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
