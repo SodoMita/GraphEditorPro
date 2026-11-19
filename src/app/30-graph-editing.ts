@@ -867,8 +867,14 @@
     if(!isRecord(left) || !isRecord(right)) return null;
     if(!Number.isFinite(Number(left.t)) || !Number.isFinite(Number(right.t))) return null;
     if(Number(left.t) !== Number(right.t)) return Number(left.t) > Number(right.t);
-    // Equal wall-clock timestamps are ambiguous across tabs: a per-tab
-    // counter is not a shared order, so never infer an order from it.
+    // Sequence numbers are only comparable within one tab. Across tabs they
+    // are independent counters, so an equal timestamp stays ambiguous.
+    if(left.tab === right.tab && typeof left.tab === 'string'){
+      const leftSeq = Number(left.s), rightSeq = Number(right.s);
+      if(Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq){
+        return leftSeq > rightSeq;
+      }
+    }
     return null;
   };
   const readGlobalClipboardStamp = (): any => {
@@ -902,17 +908,10 @@
     staleSystemText: Promise<string | undefined>;
   } | null = null;
   let localClipboardSeq = 0;
-  // The newest copy that actually reached the system clipboard. Only this may
-  // repair an out-of-order write: a failed copy was never published and must
-  // not become authoritative.
-  let latestPublishedClipboard: { text: string; stamp: ClipboardStamp } | null = null;
   // A paste read still in flight. Its generation token is invalidated by the
   // next paste command, so a hanging read can never paste a second time.
   let pasteGeneration = 0;
-  let pendingSystemRead: {
-    token: number;
-    promise: Promise<{ text: string } | { error: unknown }>;
-  } | null = null;
+  let pendingSystemRead: { token: number } | null = null;
   const clipboardHas = (obj: unknown, key: string) => isRecord(obj) && Object.prototype.hasOwnProperty.call(obj, key);
   const clipboardText = (value: unknown, max: number, trim = false) => {
     if(typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
@@ -1088,22 +1087,13 @@
               // Shared with other tabs only now that the payload is really on
               // the system clipboard. A failed write leaves the previous stamp
               // (and therefore the previous valid payload) untouched.
-              latestPublishedClipboard = { text: payload, stamp };
               publishClipboardStamp(stamp);
             }
             return;
           }
-          // An older write landed after a newer copy. Restore the newest
-          // *published* payload so a failed copy cannot displace valid data.
-          if(published && latestPublishedClipboard){
-            const repairTarget = latestPublishedClipboard;
-            try {
-              const repair: any = navigator.clipboard.writeText(repairTarget.text);
-              if(repair && typeof repair.then === 'function'){
-                repair.then(() => publishClipboardStamp(repairTarget.stamp), () => {});
-              }
-            } catch {}
-          }
+          // An obsolete write is simply ignored. Never start a compensating
+          // write here: anything copied since it began (including plain text
+          // from another app) must stay on the clipboard.
         };
         const outcome: any = navigator.clipboard.writeText(payload);
         if(outcome && typeof outcome.then === 'function'){
@@ -1691,82 +1681,86 @@
   async function pasteFromClipboardSource(exact: boolean){
     const hasInternal = Boolean(clipboardData &&
       (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
-    let systemData: AnyRecord | null = null;
-    let systemIssue: { key: string; params?: AnyRecord } | null = null;
-    let text = '';
-    let outcome: any;
     if(pendingSystemRead){
-      // Any second paste command cancels the first one. Its delayed read must
-      // not paste again or overwrite edits made after the explicit fallback.
+      // Supersede the in-flight command. Another paste is still a request to
+      // read the CURRENT system clipboard, never an implicit request to use
+      // the older local copy.
       pasteGeneration++;
       pendingSystemRead = null;
-      if(hasInternal){
-        toast(I18N.t('paste_local_fallback'));
-        pasteClipboardInternal(null, { exact });
-        return;
-      }
-      // With no local copy, start a fresh read rather than reviving the
-      // command that the user just superseded.
     }
     const token = ++pasteGeneration;
-    const readPromise = (async (): Promise<{ text: string } | { error: unknown }> => {
-      try { return { text: (await navigator.clipboard.readText()) || '' }; }
-      catch(e){ return { error: e }; }
-    })();
-    const pending = { token, promise: readPromise };
+    const pending = { token };
+    // Keep the marker for the whole command: the snapshot wait below is just
+    // as cancellable as the clipboard read itself.
     pendingSystemRead = pending;
-    try { outcome = await readPromise; }
-    finally { if(pendingSystemRead === pending) pendingSystemRead = null; }
-    if(token !== pasteGeneration) return; // superseded by another paste command
-    if(outcome && outcome.error) systemIssue = { key:'paste_failed', params:{msg:(outcome.error as Error)?.message} };
-    else text = outcome?.text || '';
+    try {
+      const outcome: any = await (async (): Promise<{ text: string } | { error: unknown }> => {
+        try { return { text: (await navigator.clipboard.readText()) || '' }; }
+        catch(e){ return { error: e }; }
+      })();
+      if(token !== pasteGeneration) return; // superseded by another paste
 
-    if(text.trim()){
-      try {
-        const parsed = JSON.parse(text);
-        if(parsed && parsed.type === 'graph-editor-clipboard'){
-          systemData = parsed;
-        } else if(parsed && Array.isArray(parsed.nodes)){
-          systemIssue = { key:'paste_failed', params:{msg:I18N.t('err_not_node_clipboard')} };
-        } else {
-          systemIssue = { key:'clipboard_empty' };
+      let systemData: AnyRecord | null = null;
+      let systemIssue: { key: string; params?: AnyRecord } | null = null;
+      let text = '';
+      if(outcome && outcome.error){
+        systemIssue = { key:'paste_failed', params:{msg:(outcome.error as Error)?.message} };
+        // Falling back to the in-memory copy is an explicit response to an
+        // unavailable system clipboard, not a side effect of another paste.
+        if(hasInternal){
+          toast(I18N.t('paste_local_fallback'));
+          pasteClipboardInternal(null, { exact });
+          return;
         }
-      } catch(e){
-        systemIssue = { key:'paste_failed', params:{msg:(e as Error).message} };
+      } else {
+        text = outcome?.text || '';
       }
-    } else if(!systemIssue){
-      systemIssue = { key:'clipboard_empty' };
-    }
 
-    let systemCanBeNewer = !localClipboardWrite || localClipboardWrite.state === 'published';
-    let systemRejectedByStamp = false;
-    if(localClipboardWrite?.state === 'failed'){
-      // An unavailable snapshot gives no ordering evidence: keep the local
-      // copy authoritative rather than letting an old legacy payload win.
-      const staleText = await boundedRead<string | undefined>(localClipboardWrite.staleSystemText, undefined);
-      systemCanBeNewer = staleText !== undefined && text !== staleText;
-    }
-    if(systemData && localClipboardWrite){
-      // A newer stamped payload is valid regardless of our local write being
-      // pending or failed; an older one is never valid. Equal timestamps are
-      // ambiguous, so the local-state decision above stands.
-      const order = compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp);
-      if(order === true) systemCanBeNewer = true;
-      else if(order === false){ systemCanBeNewer = false; systemRejectedByStamp = true; }
-    } else if(systemData){
-      // Fresh destination tab: the shared stamp still rejects a payload that
-      // an older, out-of-order write left on the system clipboard.
-      const globalStamp = readGlobalClipboardStamp();
-      if(globalStamp && compareClipboardStamps(systemData.clipboardStamp, globalStamp) === false){
-        systemCanBeNewer = false; systemRejectedByStamp = true;
+      if(text.trim()){
+        try {
+          const parsed = JSON.parse(text);
+          if(parsed && parsed.type === 'graph-editor-clipboard'){
+            systemData = parsed;
+          } else if(parsed && Array.isArray(parsed.nodes)){
+            systemIssue = { key:'paste_failed', params:{msg:I18N.t('err_not_node_clipboard')} };
+          } else {
+            systemIssue = { key:'clipboard_empty' };
+          }
+        } catch(e){
+          systemIssue = { key:'paste_failed', params:{msg:(e as Error).message} };
+        }
+      } else if(!systemIssue){
+        systemIssue = { key:'clipboard_empty' };
       }
-    }
 
-    if(systemData && systemCanBeNewer && !systemRejectedByStamp){ pasteClipboardInternal(systemData, { exact }); return; }
-    if(hasInternal){ pasteClipboardInternal(null, { exact }); return; }
-    if(systemData && !systemRejectedByStamp){ pasteClipboardInternal(systemData, { exact }); return; }
-    if(systemIssue) toast(I18N.t(systemIssue.key, systemIssue.params));
-    else if(systemRejectedByStamp) toast(I18N.t('clipboard_empty'));
+      let systemCanBeNewer = !localClipboardWrite || localClipboardWrite.state === 'published';
+      let systemRejectedByStamp = false;
+      if(localClipboardWrite?.state === 'failed'){
+        // An unavailable snapshot gives no ordering evidence: keep the local
+        // copy authoritative rather than letting an old legacy payload win.
+        const staleText = await boundedRead<string | undefined>(localClipboardWrite.staleSystemText, undefined);
+        if(token !== pasteGeneration) return; // cancelled during the snapshot wait
+        systemCanBeNewer = staleText !== undefined && text !== staleText;
+      }
+      if(systemData && localClipboardWrite){
+        // A newer stamped payload is valid regardless of our local write being
+        // pending or failed; an older one is never valid. Only the local write
+        // provides evidence here: a persistent stamp is clipboard history and
+        // cannot tell what the user currently has on the clipboard.
+        const order = compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp);
+        if(order === true) systemCanBeNewer = true;
+        else if(order === false){ systemCanBeNewer = false; systemRejectedByStamp = true; }
+      }
+      if(token !== pasteGeneration) return;
+
+      if(systemData && systemCanBeNewer && !systemRejectedByStamp){ pasteClipboardInternal(systemData, { exact }); return; }
+      if(hasInternal){ pasteClipboardInternal(null, { exact }); return; }
+      if(systemData && !systemRejectedByStamp){ pasteClipboardInternal(systemData, { exact }); return; }
+      if(systemIssue) toast(I18N.t(systemIssue.key, systemIssue.params));
+      else if(systemRejectedByStamp) toast(I18N.t('clipboard_empty'));
+    } finally {
+      if(pendingSystemRead === pending) pendingSystemRead = null;
+    }
   }
   function pasteFromSystemClipboard(){ return pasteFromClipboardSource(false); }
   function pasteExactFromSystemClipboard(){ return pasteFromClipboardSource(true); }
