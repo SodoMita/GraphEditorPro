@@ -652,6 +652,21 @@
             </details>
 
             <details class="section">
+              <summary class="section-title"><span data-i18n="pane_sizes">Pane sizes</span></summary>
+              <div class="sec-body">
+                <div class="grid2">
+                  <label class="field" for="canvasShare"><span data-i18n="canvas_share">Canvas (%)</span> <input id="canvasShare" type="number" min="0" max="100" step="any" inputmode="decimal" disabled></label>
+                  <label class="field" for="matrixShare"><span data-i18n="matrix_share">Matrix (%)</span> <input id="matrixShare" type="number" min="0" max="100" step="any" inputmode="decimal" disabled></label>
+                </div>
+                <div class="grid2">
+                  <label class="chk" for="paneDragEnabled"><input id="paneDragEnabled" type="checkbox" checked> <span data-i18n="pane_drag_enabled">Resize by dragging</span></label>
+                  <label class="field" for="paneDragSize"><span data-i18n="pane_drag_size">Drag zone (px)</span> <input id="paneDragSize" type="number" min="8" max="64" step="1" value="32" inputmode="numeric"></label>
+                </div>
+                <p class="tiny muted" data-i18n="pane_sizes_hint">The data area gets the rest of the canvas split. The edge list gets the rest of the matrix split. Show both sides of a split to edit its size.</p>
+              </div>
+            </details>
+
+            <details class="section">
               <summary class="section-title">
                 <span data-i18n="reliability_options">Reliability options</span>
               </summary>
@@ -845,6 +860,7 @@
           <div class="empty-hint" data-i18n="empty_hint">Choose Node, then click the canvas — or open Help to load the sample graph.</div>
         </section>
 
+        <div id="canvasSplit" class="pane-split" aria-hidden="true"></div>
         <section class="panel bottom">
           <div class="bottom-pane thin-scroll">
             <div class="section-title"><span data-i18n="adjacency_matrix">Adjacency matrix</span> <span id="matrixNote" class="tiny muted"></span></div>
@@ -878,6 +894,7 @@
             </div>
             <div id="edgeListHost" class="table-scroll thin-scroll"></div>
           </div>
+          <div id="dataSplit" class="pane-split" aria-hidden="true"></div>
         </section>
       </main>
     </div>

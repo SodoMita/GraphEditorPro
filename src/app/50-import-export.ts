@@ -1143,7 +1143,7 @@
     // The append path keeps the current settings, but may contribute new
     // definitions — repaint every custom-property surface so the Data tab,
     // the pending-defaults editors and the selection panel show them.
-    flushDeferredCustomAttributes(); renderSelectionPanel();
+    flushDeferredCustomAttributes(); syncEditTypeLists(); renderSelectionPanel();
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
     const capped = takeImportDropped();
