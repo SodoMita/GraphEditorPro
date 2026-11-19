@@ -820,3 +820,27 @@ test('a huge numeric id cannot freeze a later offset paste', async () => {
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('Cmd+Option+V works when Option changes the key character', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  setClipboard(window, {
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'a', label: 'Mac exact paste', x: -200, y: 0, order: 0 }],
+    edges: [], externalEdges: [], customAttributes: [],
+  });
+
+  document.dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: '√', code: 'KeyV', metaKey: true, altKey: true, bubbles: true, cancelable: true,
+  }));
+  await settle(window, 120);
+
+  const graph = exportGraph(document);
+  assert.equal(graph.nodes.length, 2, 'the physical V key is recognized');
+  const a = graph.nodes.find(n => n.id === 'a');
+  assert.equal(a.label, 'Mac exact paste');
+  assert.equal(a.x, -200); assert.equal(a.y, 0);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

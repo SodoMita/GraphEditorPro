@@ -1793,6 +1793,9 @@
       safeGraphCounter(source.nextEdge,1)-1,
       edges.length
     ));
+    // maxN/maxE may legitimately be MAX_SAFE_INTEGER. Adding one there would
+    // produce an unsafe counter again, so wrap to a fresh safe range.
+    const nextCounter = (max: number) => max >= Number.MAX_SAFE_INTEGER ? 1 : max + 1;
     return {
       ...base,
       title: String(source.title || 'untitled').slice(0,80),
@@ -1800,8 +1803,8 @@
       selectTool: ['single','rect','brush','lasso','line','polygon'].includes(source.selectTool) ? source.selectTool : 'single',
       selectCombine: ['replace','add','subtract'].includes(source.selectCombine) ? source.selectCombine : 'replace',
       selection: {nodes: [], edges: []},
-      nextNode: maxN + 1,
-      nextEdge: maxE + 1,
+      nextNode: nextCounter(maxN),
+      nextEdge: nextCounter(maxE),
       nodes, edges, customAttributes, graphCustom, settings,
       viewBox: boundedCamera({ x:finite(vb.x,-500), y:finite(vb.y,-330), w:finite(vb.w,1000), h:finite(vb.h,660) })
     };

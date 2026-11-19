@@ -454,6 +454,9 @@
         return;
       }
       const key = ev.key.toLowerCase();
+      // Option changes `key` on Mac layouts (V becomes "√"); the physical
+      // code keeps Cmd+Option+V working regardless of the produced glyph.
+      const isV = ev.code === 'KeyV' || key === 'v';
       if(key === 'c' && !ev.shiftKey && !ev.altKey){
         // Ctrl+C copy
         if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
@@ -463,12 +466,12 @@
         if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
           ev.preventDefault(); cutSelectedNodes();
         }
-      } else if(key === 'v' && (ev.shiftKey || ev.altKey)){
+      } else if(isV && (ev.shiftKey || ev.altKey)){
         // Ctrl/Cmd+Alt+V (Illustrator-style "paste in place") and
         // Ctrl/Cmd+Shift+V both restore the copied coordinates. The latter is
         // normally "paste as plain text" in a browser; here the canvas owns it.
         ev.preventDefault(); pasteExactFromSystemClipboard();
-      } else if(key === 'v' && !ev.shiftKey && !ev.altKey){
+      } else if(isV && !ev.shiftKey && !ev.altKey){
         ev.preventDefault(); pasteFromSystemClipboard();
       } else if(key === 'd' && !ev.shiftKey && !ev.altKey){
         // Ctrl+D duplicate — prevent browser bookmark

@@ -813,10 +813,13 @@
     for(const n of sane.nodes){
       let newId = n.id;
       if(existingIds.has(newId)){
-        // Generate a unique ID
-        while(existingIds.has('n' + counter)) counter++;
-        newId = 'n' + counter;
-        counter++;
+        // Bounded allocation: an unsafe or exhausted counter cannot be
+        // incremented in a loop, so fall back to a fresh safe id instead.
+        const allocated = allocateLocalId('n', existingIds, counter);
+        newId = allocated.id;
+        counter = allocated.next;
+      } else {
+        counter = advanceCounterFromId(counter, newId);
       }
       existingIds.add(newId);
       idMap.set(n.id, newId);
@@ -845,9 +848,11 @@
       e.to = newTo;
       let newId = e.id;
       if(existingEdgeIds.has(newId)){
-        while(existingEdgeIds.has('e' + edgeCounter)) edgeCounter++;
-        newId = 'e' + edgeCounter;
-        edgeCounter++;
+        const allocated = allocateLocalId('e', existingEdgeIds, edgeCounter);
+        newId = allocated.id;
+        edgeCounter = allocated.next;
+      } else {
+        edgeCounter = advanceCounterFromId(edgeCounter, newId);
       }
       existingEdgeIds.add(newId);
       e.id = newId;

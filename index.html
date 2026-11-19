@@ -4577,6 +4577,9 @@ function sanitizeState(input) {
     };
     const maxN = Math.min(Number.MAX_SAFE_INTEGER, Math.max(...nodes.map(idSuffix), safeGraphCounter(source.nextNode, 1) - 1, nodes.length));
     const maxE = Math.min(Number.MAX_SAFE_INTEGER, Math.max(...edges.map(idSuffix), safeGraphCounter(source.nextEdge, 1) - 1, edges.length));
+    // maxN/maxE may legitimately be MAX_SAFE_INTEGER. Adding one there would
+    // produce an unsafe counter again, so wrap to a fresh safe range.
+    const nextCounter = (max) => max >= Number.MAX_SAFE_INTEGER ? 1 : max + 1;
     return {
         ...base,
         title: String(source.title || 'untitled').slice(0, 80),
@@ -4584,8 +4587,8 @@ function sanitizeState(input) {
         selectTool: ['single', 'rect', 'brush', 'lasso', 'line', 'polygon'].includes(source.selectTool) ? source.selectTool : 'single',
         selectCombine: ['replace', 'add', 'subtract'].includes(source.selectCombine) ? source.selectCombine : 'replace',
         selection: { nodes: [], edges: [] },
-        nextNode: maxN + 1,
-        nextEdge: maxE + 1,
+        nextNode: nextCounter(maxN),
+        nextEdge: nextCounter(maxE),
         nodes, edges, customAttributes, graphCustom, settings,
         viewBox: boundedCamera({ x: finite(vb.x, -500), y: finite(vb.y, -330), w: finite(vb.w, 1000), h: finite(vb.h, 660) })
     };
@@ -14078,11 +14081,14 @@ function appendImportedGraph(data, label = 'graph') {
     for (const n of sane.nodes) {
         let newId = n.id;
         if (existingIds.has(newId)) {
-            // Generate a unique ID
-            while (existingIds.has('n' + counter))
-                counter++;
-            newId = 'n' + counter;
-            counter++;
+            // Bounded allocation: an unsafe or exhausted counter cannot be
+            // incremented in a loop, so fall back to a fresh safe id instead.
+            const allocated = allocateLocalId('n', existingIds, counter);
+            newId = allocated.id;
+            counter = allocated.next;
+        }
+        else {
+            counter = advanceCounterFromId(counter, newId);
         }
         existingIds.add(newId);
         idMap.set(n.id, newId);
@@ -14112,10 +14118,12 @@ function appendImportedGraph(data, label = 'graph') {
         e.to = newTo;
         let newId = e.id;
         if (existingEdgeIds.has(newId)) {
-            while (existingEdgeIds.has('e' + edgeCounter))
-                edgeCounter++;
-            newId = 'e' + edgeCounter;
-            edgeCounter++;
+            const allocated = allocateLocalId('e', existingEdgeIds, edgeCounter);
+            newId = allocated.id;
+            edgeCounter = allocated.next;
+        }
+        else {
+            edgeCounter = advanceCounterFromId(edgeCounter, newId);
         }
         existingEdgeIds.add(newId);
         e.id = newId;
@@ -17796,6 +17804,9 @@ function wireUi() {
             return;
         }
         const key = ev.key.toLowerCase();
+        // Option changes `key` on Mac layouts (V becomes "√"); the physical
+        // code keeps Cmd+Option+V working regardless of the produced glyph.
+        const isV = ev.code === 'KeyV' || key === 'v';
         if (key === 'c' && !ev.shiftKey && !ev.altKey) {
             // Ctrl+C copy
             if (state.selection?.nodes?.length || state.selection?.edges?.length || state.selected) {
@@ -17809,14 +17820,14 @@ function wireUi() {
                 cutSelectedNodes();
             }
         }
-        else if (key === 'v' && (ev.shiftKey || ev.altKey)) {
+        else if (isV && (ev.shiftKey || ev.altKey)) {
             // Ctrl/Cmd+Alt+V (Illustrator-style "paste in place") and
             // Ctrl/Cmd+Shift+V both restore the copied coordinates. The latter is
             // normally "paste as plain text" in a browser; here the canvas owns it.
             ev.preventDefault();
             pasteExactFromSystemClipboard();
         }
-        else if (key === 'v' && !ev.shiftKey && !ev.altKey) {
+        else if (isV && !ev.shiftKey && !ev.altKey) {
             ev.preventDefault();
             pasteFromSystemClipboard();
         }
