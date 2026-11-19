@@ -243,10 +243,14 @@
   function boundedBox(minX, minY, maxX, maxY){
     const span = (lo, hi) => {
       const w = hi - lo;
-      if(Number.isFinite(w) && w > 0) return w;
-      // A non-finite span means the endpoints are beyond double precision of each
-      // other. Report the largest extent a finite origin can still subtract from,
-      // which is the full representable range.
+      // A FINITE span is reported as computed, including zero. Two coordinates can
+      // be distinct in intent and equal in floating point — at x = 1e18 a 50-unit
+      // node's left and right edges are the same double — and that is a zero-width
+      // box, not an overflow. Conflating the two reported 1.7976931348623157e+308.
+      if(Number.isFinite(w)) return w > 0 ? w : 0;
+      // Only a non-finite span means the endpoints are beyond double precision of
+      // each other. Report the largest extent a finite origin can still subtract
+      // from, which is the full representable range.
       return Number.isFinite(lo) && Number.isFinite(hi) ? Number.MAX_VALUE - Math.abs(lo) : 0;
     };
     const origin = (value) => Number.isFinite(value) ? value : 0;

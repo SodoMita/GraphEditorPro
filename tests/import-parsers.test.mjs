@@ -5607,3 +5607,132 @@ test('extreme but finite coordinates still export a numeric viewBox', async () =
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a dropped incoming id never resolves to a same-named host node', async () => {
+  // `dropped` is ambiguous: the payload ships a node under that id AND the host
+  // already has one. The payload's definition has to win even when the cap then
+  // rejects it — otherwise the edge silently re-points at a node it never
+  // referenced, attaching an import to unrelated content with no error anywhere.
+  const host = [...Array.from({length: 2998}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0})),
+    {id: 'dropped', label: 'HOST', x: 5, y: 5}];
+  const {dom, errors} = createEditorDom({title: 'h', nodes: host, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'p', label:'P', x:0, y:0}, {id:'dropped', label:'INCOMING', x:100, y:0}],
+    edges: [{id:'pe', from:'p', to:'dropped'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.find(node => node.label === 'INCOMING'), undefined, 'the second node did not fit');
+  const hostNode = graph.nodes.find(node => node.label === 'HOST');
+  const attached = graph.edges.filter(edge => edge.to === hostNode.id || edge.from === hostNode.id);
+  assert.deepEqual(attached, [], 'the edge is not re-pointed at the host node of the same id');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append resolves endpoints with the sanitizer\'s id normalisation', async () => {
+  // A payload may carry `id: 123` on a node and `"from": "123"` on an edge — the
+  // shape every real exporter produces. The fit filter compared raw values with
+  // strict equality, so 123 !== "123" and the edge was dropped while both nodes
+  // imported. The sanitizer normalises both to the string id; the filter has to
+  // use the same rule.
+  const {dom, errors} = createEditorDom({title: 't', nodes: [{id:'base', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:123, label:'A', x:0, y:0}, {id:456, label:'B', x:100, y:0}],
+    edges: [{id:'e', from:'123', to:'456'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'both nodes imported');
+  assert.equal(graph.edges.length, 1, 'and the edge that names them by string survived');
+  const endpoints = new Set([graph.edges[0].from, graph.edges[0].to]);
+  const imported = new Set(graph.nodes.filter(n => n.label === 'A' || n.label === 'B').map(n => n.id));
+  assert.deepEqual([...endpoints].sort(), [...imported].sort(), 'it is the edge between those two nodes');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edge CSV keeps an inherited zero-width stroke at zero', async () => {
+  // `parseFloat(cell) || 2.4` cannot tell 0 from an unparseable cell, so an edge
+  // drawn with a zero-width stroke (inherited from its type) round-tripped through
+  // the edge CSV and came back visible at 2.4. Zero is a width the model allows.
+  const {dom, errors} = createEditorDom({
+    title: 't',
+    nodes: [{id:'a', x:0, y:0}, {id:'b', x:100, y:0}],
+    edges: [{id:'e1', from:'a', to:'b', type:'invis'}],
+    settings: {edgeTypeStyles: {invis: {strokeSize: 0}}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#btnExportEdgesCsv').click();
+  await settle(window, 60);
+  const csv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  await paste(document, window, '#btnPasteEdgesCsv', csv);
+  const edge = exportedGraph(document).edges[0];
+  assert.ok(edge, 'the edge came back');
+  assert.equal(edge.strokeSize, 0, 'zero stayed zero instead of becoming 2.4');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a span that collapses in floating point exports as zero, not as MAX_VALUE', async () => {
+  // At x = 1e18 a 50-unit node's two edges are the same double, so maxX - minX is a
+  // finite 0. Treating that as an overflow reported 1.7976931348623157e+308 — an
+  // enormous bound for a graph that is one node wide. Only a non-finite difference
+  // is an overflow.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'a', x:1e18, y:0, width:50, height:50}], edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  const viewBox = exportedGraph(document).viewBox;
+  assert.equal(viewBox.w, 0, 'the collapsed width is zero');
+  assert.ok(Number.isFinite(viewBox.h) && viewBox.h === 50, 'the unaffected axis is untouched');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an id-less appended node is numbered, not left as a bare prefix', async () => {
+  // sanitizeState numbers a node with no id by its position ('n1'), so the fit
+  // filter has to do the same. Deriving the bare prefix 'n' instead would let such
+  // a node claim the id of a host node actually named `n`, and the edge the payload
+  // wrote to it would vanish with no error.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'n', label:'HOST-N', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{label:'A', x:0, y:100}, {label:'B', x:100, y:100}],
+    edges: [{id:'e', from:'n1', to:'n2'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'both nodes imported');
+  assert.equal(graph.edges.length, 1, 'the edge between them survived');
+  const hostNode = graph.nodes.find(node => node.label === 'HOST-N');
+  assert.ok(!graph.edges.some(edge => edge.from === hostNode.id || edge.to === hostNode.id),
+    'and it did not attach to the host node');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

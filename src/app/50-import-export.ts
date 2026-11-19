@@ -910,13 +910,43 @@
     const droppedBeforeResolve = Math.max(0, incomingNodes.length - nodeRoom);
     const fittingNodes = incomingNodes.slice(0, nodeRoom);
     const hostIdsForFit = new Set(state.nodes.map(n => n.id));
-    // An endpoint may be an incoming node that fits OR a node the host already has
-    // — an appended edge is allowed to attach to the existing document, which is
-    // what sanitizeState's hostIds argument is for as well.
+    // Can this edge survive the append?
+    //
+    // Endpoint resolution has to agree with sanitizeState, which runs later and is
+    // the authority on what an endpoint means. Two things follow from that, and
+    // getting either wrong silently sends an edge somewhere it never pointed:
+    //
+    //  * Incoming ids take precedence over host ids, for EVERY incoming node —
+    //    including one the capacity limit drops. `dropped` is ambiguous when the
+    //    payload also ships a node called `dropped`; resolving the name to the host's
+    //    node attached the edge to a node it never referenced, quietly. If the
+    //    payload defined that name, the host does not get to answer for it, so an
+    //    edge to it is dropped rather than re-pointed.
+    //  * Ids are compared the way the sanitizer compares them — as strings, after its
+    //    own normalisation — not as raw payload values. A payload with the numeric
+    //    node id 123 and an edge "from": "123" refers to that node, and strict
+    //    equality on 123 vs "123" dropped the edge.
+    // `uniqueSafeId` is sanitizeState's normalisation (it stringifies, strips the
+    // characters it strips, and bounds the length), so applying it to both sides of
+    // this comparison makes the filter agree with the step that actually builds the
+    // ids. A throwaway Set per call is what keeps it a pure "what does this name
+    // denote" question rather than a de-duplication: de-duplication depends on
+    // position in the list, which is the caller's business.
+    const idOf = (value) => uniqueSafeId(value, 'n', new Set());
+    // A node with no id is numbered by its POSITION, exactly as sanitizeState does.
+    // Using the bare fallback 'n' here would let an id-less node shadow a host node
+    // named `n` and drop edges that legitimately point at it.
+    const payloadIds = new Set<string>();
+    incomingNodes.forEach((node, i) => { if(isRecord(node)) payloadIds.add(uniqueSafeId(node.id || ('n' + (i + 1)), 'n', new Set())); });
     const fitEdges = (nodes, edges) => {
-      const retained = new Set(nodes.map(node => node?.id));
-      const endpointFits = (id) => retained.has(id) || hostIdsForFit.has(id);
-      return edges.filter(edge => endpointFits(edge?.from) && endpointFits(edge?.to));
+      const retained = new Set(nodes.map((node, i) => isRecord(node) ? uniqueSafeId(node.id || ('n' + (i + 1)), 'n', new Set()) : ''));
+      const endpointFits = (raw) => {
+        const id = idOf(raw);
+        if(retained.has(id)) return true;            // an incoming node that fits
+        if(payloadIds.has(id)) return false;         // defined by the payload, but dropped
+        return hostIdsForFit.has(id);                // the host's own node
+      };
+      return edges.filter(edge => isRecord(edge) && endpointFits(edge.from) && endpointFits(edge.to));
     };
     const fittingEdges = fitEdges(fittingNodes, incomingEdges);
     // The definitions worth spending the document's remaining capacity on are the
@@ -1581,11 +1611,16 @@
         type: (iType >= 0 ? row[iType] : '') || ''
       };
       if(iColor >= 0 && row[iColor]) e.color = row[iColor];
-      if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(parseFloat(row[iStrokeSize])||2.4, 0, 20);
+      // A parsed number, not a truthy one. `parseFloat(cell) || 2.4` treats 0 the same
+      // as an unparseable cell, so an edge exported with an inherited zero-width
+      // stroke came back visible at 2.4 — 0 is a width the model allows and the
+      // exporter writes. NaN is what "could not parse" looks like.
+      const numCell = (cell, fallback) => { const n = parseFloat(cell); return Number.isFinite(n) ? n : fallback; };
+      if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(numCell(row[iStrokeSize], 2.4), 0, 20);
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
-      if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(parseFloat(row[iArrowSize])||DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(numCell(row[iArrowSize], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
       if(iLabelColor >= 0 && /^#[0-9a-f]{6}$/i.test(row[iLabelColor] || '')) e.labelColor = row[iLabelColor];
-      if(iLabelSize >= 0 && row[iLabelSize]) e.labelSize = clamp(parseFloat(row[iLabelSize])||12, 4, 72);
+      if(iLabelSize >= 0 && row[iLabelSize]) e.labelSize = clamp(numCell(row[iLabelSize], 12), 4, 72);
       edges.push(e); parsed++;
     }
     if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
