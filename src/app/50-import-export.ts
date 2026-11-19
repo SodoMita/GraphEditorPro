@@ -894,6 +894,7 @@
     // only a guard against a pathological payload; past it the ids are not knowable
     // and the real cap has already rejected those entries.
     const PLANNING_LIMIT = 200000;
+    const plannedTrace = { nodes: [] as number[], edges: [] as number[] };
     const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
     const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
     const hostIds = new Set(state.nodes.map(n => n.id));
@@ -918,8 +919,13 @@
     // name. `MAX_IMPORT_NODES` is far above the node ceiling for memory, so a
     // payload longer than it is truncated for the plan too — beyond that the ids are
     // not knowable and the cap has already rejected the entries.
-    const planned = sanitizeState({...data, settings: state.settings}, hostIds, false,
-      {nodes: PLANNING_LIMIT, edges: PLANNING_LIMIT});
+    const planned = sanitizeState({...data, settings: state.settings}, {
+      externalNodeIds: hostIds, recordDropped: false,
+      limits: {nodes: PLANNING_LIMIT, edges: PLANNING_LIMIT},
+      // The plan remembers which payload entry produced each survivor, so the
+      // authoritative pass can reuse those entries instead of matching text.
+      trace: plannedTrace
+    });
     // Entries the sanitizer rejected outright (an invalid record, or an edge to a
     // node that exists in neither document) never reach the capacity question, so
     // they do not spend a slot and are not counted as capacity losses — the payload
@@ -928,6 +934,11 @@
     // valid. Invalid entries no longer consume a slot, and the count below is of
     // genuinely dropped valid entries.
     const keptPlannedNodes = planned.nodes.slice(0, nodeRoom);
+    // The payload index of each survivor, from the plan's own trace. Positions are
+    // kept alongside the entries rather than recomputed later: every attempt to
+    // re-derive them by comparing ids or endpoint text eventually met a payload where
+    // those strings no longer agreed with the entries they described.
+    const keptNodeSources = plannedTrace.nodes.slice(0, nodeRoom);
     const keptPlannedNodeIds = new Set(keptPlannedNodes.map(node => node.id));
     // Every id the payload itself defines, whether or not it fits. This is what makes
     // an ambiguous name resolvable: `dropped` means the payload's node even when the
@@ -942,8 +953,17 @@
       if(payloadPlannedIds.has(id)) return false;   // the payload's own node, dropped
       return hostIds.has(id);                        // a node the host already has
     };
-    const survivingPlannedEdges = planned.edges.filter(edge => endpointSurvives(edge.from) && endpointSurvives(edge.to));
+    // The surviving edges and their payload indexes, kept in step.
+    const survivingPlannedEdges = [];
+    const survivingEdgeSources = [];
+    for(let i = 0; i < planned.edges.length; i++){
+      const edge = planned.edges[i];
+      if(!endpointSurvives(edge.from) || !endpointSurvives(edge.to)) continue;
+      survivingPlannedEdges.push(edge);
+      survivingEdgeSources.push(plannedTrace.edges[i]);
+    }
     const keptPlannedEdges = survivingPlannedEdges.slice(0, edgeRoom);
+    const keptEdgeSources = survivingEdgeSources.slice(0, edgeRoom);
     const droppedByCap = {
       nodes: Math.max(0, planned.nodes.length - keptPlannedNodes.length),
       edges: Math.max(0, planned.edges.length - keptPlannedEdges.length)
@@ -963,8 +983,16 @@
         neededDefIds.add(String(key));
       }
     };
-    for(const el of [...keptPlannedNodes, ...keptPlannedEdges]) if(isRecord(el)) noteValueKeys(el.custom);
-    noteValueKeys(planned.graphCustom);
+    // Read from the PAYLOAD entries, not the plan's. The sanitizer truncates a custom
+    // key to the 128-character storage cap, so two long ids that share their first
+    // 128 characters are one key in the plan — and the retained node's value would be
+    // attributed to the definition of whichever node was dropped. The payload holds
+    // both keys at full length, which is the form the definitions are declared under.
+    const payloadNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const payloadEdges = Array.isArray(data?.edges) ? data.edges : [];
+    for(const index of keptNodeSources) if(isRecord(payloadNodes[index])) noteValueKeys(payloadNodes[index].custom);
+    for(const index of keptEdgeSources) if(isRecord(payloadEdges[index])) noteValueKeys(payloadEdges[index].custom);
+    noteValueKeys(data?.graphCustom);
     const isNeeded = (def) => {
       if(!isRecord(def)) return false;
       const id = String(def.id ?? '').trim();
@@ -987,63 +1015,42 @@
     if(defsSkipped) toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
     if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
     // Definitions re-created under a fresh id (or reused across an earlier mint)
-    // bind their payload's values to the RESOLVED id.
-    data = remapImportedCustomValues(data, renameByPair);
-    // The remap returns NEW element objects, so the surviving entries are taken from
-    // its output — keeping the pre-remap array silently discarded every value whose
-    // definition had been renamed.
+    // bind their payload's values to the RESOLVED id. Done in phase 4, immediately
+    // before the traced entries are read, so nothing re-reads the unremapped payload.
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
-    const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
-    // Phase 4 — pair each survivor with the payload entry it came from.
+    // Phase 4 — take each survivor's content from the payload entry the plan traced it
+    // to.
     //
     // The plan resolves IDENTITY (which node an edge really reaches, what id a node
-    // really gets); the payload supplies CONTENT (values, labels, styling). Each pass
-    // is good at exactly one of those. The plan is also read against the payload's own
-    // uncapped definitions, where two foreign keys that truncate to the same
-    // 128-character id collapse and one value is lost — so its content is not
-    // trustworthy, and the authoritative read below uses the payload's.
+    // really gets); the payload supplies CONTENT (labels, weights, values, styling).
+    // The plan's own content is not usable: it was read against the payload's uncapped
+    // definitions, where two keys that truncate to the same 128-character id collapse
+    // and one value is lost.
     //
-    // Pairing is positional and the positions are taken once, from the same two
-    // lists: the plan is the payload with invalid and dangling entries removed, so
-    // walking both in order and advancing the raw list only when the plan contains
-    // that entry reconstructs the correspondence exactly. Relying on `indexOf` into
-    // the plan instead silently shifted by one the first time the plan dropped a
-    // dangling edge — the survivor then wore the dropped edge's content.
-    const validRawNodes = (Array.isArray(data?.nodes) ? data.nodes : []).filter(isRecord);
-    // Nodes: the plan holds every valid node, so the k-th planned node is the k-th
-    // valid raw node.
+    // The link is the trace, not a comparison. Matching sanitized edges back to raw
+    // ones by id and endpoint text failed in three different ways: an endpoint
+    // normalised from `a!` to `a` no longer matched; two parallel edges with the same
+    // endpoints matched each other; and an omitted id colliding with an explicit `e1`
+    // matched the wrong entry — each time silently, and each time giving an edge
+    // another edge's label, weight, direction, type, colour and values.
+    data = remapImportedCustomValues(data, renameByPair);
+    // Graph-scope values are remapped with the same call, so the merged map must be
+    // read AFTER it. Building it from the un-remapped payload left every graph value
+    // keyed by the id its own file used, which the final read then resolved against
+    // the RENAMED definitions — the value landed on whichever definition now held that
+    // spelling, or on nothing at all.
+    const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
+    const remappedNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const remappedEdges = Array.isArray(data?.edges) ? data.edges : [];
     const keptNodesSource = keptPlannedNodes.map((plannedNode, k) => {
-      const raw = validRawNodes[k];
+      const raw = remappedNodes[keptNodeSources[k]];
       return { ...(isRecord(raw) ? raw : {}), id: plannedNode.id };
     });
-    // Remap first, so the content already names the definitions this pass will use.
-    data = remapImportedCustomValues(data, renameByPair);
-    // Edges: the plan drops dangling ones, so a raw edge is consumed only when the plan
-    // contains it. Matching is by the payload's own endpoints, which the plan preserved
-    // for every edge it kept.
-    const remappedEdges = (Array.isArray(data?.edges) ? data.edges : []).filter(isRecord);
-    const usedRawEdges = new Set<number>();
-    const keptEdgesSource = keptPlannedEdges.map(plannedEdge => {
-      let match = -1;
-      for(let i = 0; i < remappedEdges.length; i++){
-        if(usedRawEdges.has(i)) continue;
-        if(String(remappedEdges[i].from) === String(plannedEdge.from)
-          && String(remappedEdges[i].to) === String(plannedEdge.to)
-          && String(remappedEdges[i].id ?? '') === String(plannedEdge.id)){
-          match = i; break;
-        }
-      }
-      // Fall back to endpoint agreement alone: a payload id may have been normalised.
-      if(match < 0){
-        for(let i = 0; i < remappedEdges.length; i++){
-          if(usedRawEdges.has(i)) continue;
-          if(String(remappedEdges[i].from) === String(plannedEdge.from)
-            && String(remappedEdges[i].to) === String(plannedEdge.to)){ match = i; break; }
-        }
-      }
-      if(match >= 0) usedRawEdges.add(match);
-      const raw = match >= 0 ? remappedEdges[match] : {};
-      return { ...raw, id: plannedEdge.id, from: plannedEdge.from, to: plannedEdge.to };
+    // Endpoints come from the plan (they are resolved); everything else from the traced
+    // payload entry.
+    const keptEdgesSource = keptPlannedEdges.map((plannedEdge, k) => {
+      const raw = remappedEdges[keptEdgeSources[k]];
+      return { ...(isRecord(raw) ? raw : {}), id: plannedEdge.id, from: plannedEdge.from, to: plannedEdge.to };
     });
     // Resolve the visual the source document drew, using the defaults THAT document
     // was opened with. `data.settings` is only what the file spelled out; a payload
@@ -1051,7 +1058,7 @@
     // passing the raw object resolved against nothing and the elements arrived at
     // the host's styling.
     materializeDefaults(keptNodesSource, keptEdgesSource, effectiveDefaults(data?.settings));
-    const sane = sanitizeState({...data, nodes: keptNodesSource, edges: keptEdgesSource, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, hostIds);
+    const sane = sanitizeState({...data, nodes: keptNodesSource, edges: keptEdgesSource, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, {externalNodeIds: hostIds});
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();

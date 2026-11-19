@@ -5898,3 +5898,168 @@ test('invalid entries do not spend node capacity', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('an appended edge keeps its properties when its endpoint id was normalised', async () => {
+  // The planner used to match sanitized edges back to raw ones by id AND endpoint
+  // text. `a!` normalises to `a`, so the match failed and the survivor was built from
+  // an empty object: the edge silently lost its label, weight, direction, type,
+  // colour and custom value. The link is now the plan's source trace, not a guess.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'a', x:0, y:0}, {id:'b', x:100, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'a!', label:'A', x:0, y:0}, {id:'b', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'a!', to:'b', label:'LBL', weight:'7', color:'#ff0000', type:'t1', custom:{dk:'dv'}}],
+    customAttributes: [{id:'dk', name:'dk', scope:'edge', type:'string', origin:'dk'}],
+  }));
+
+  const edge = exportedGraph(document).edges.find(candidate => candidate.label === 'LBL');
+  assert.ok(edge, 'the edge arrived under its own label');
+  assert.equal(edge.weight, '7', 'weight kept');
+  assert.equal(edge.color, '#ff0000', 'colour kept');
+  assert.equal(edge.type, 't1', 'type kept');
+  assert.equal(edge.custom?.dk, 'dv', 'custom value kept');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('parallel appended edges do not swap their properties', async () => {
+  // Two edges between the same pair. The old matcher looked for a raw edge with the
+  // same endpoints AND the same id, and fell back to endpoints alone — so any payload
+  // where the plan assigned ids in a different order than the raw list declared them
+  // paired the two across, and each edge wore the other's label and weight. The trace
+  // makes the correspondence exact rather than inferred, which is what this asserts:
+  // every property stays with the edge that declared it, under every id shape.
+  const cases = [
+    {name: 'omitted id before an explicit e1', edges: [
+      {from:'c', to:'d', label:'ONE', weight:'1'},
+      {id:'e1', from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+    {name: 'explicit e1 before an omitted id', edges: [
+      {id:'e1', from:'c', to:'d', label:'ONE', weight:'1'},
+      {from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+    {name: 'a duplicate id between them', edges: [
+      {id:'e1', from:'c', to:'d', label:'ONE', weight:'1'},
+      {id:'e1', from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+    {name: 'a dangling edge between them', edges: [
+      {id:'e1', from:'c', to:'d', label:'ONE', weight:'1'},
+      {from:'c', to:'zzz', label:'X'},
+      {from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+  ];
+  for (const testCase of cases) {
+    const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'a', x:0, y:0}], edges: []});
+    const {window} = dom;
+    const {document} = window;
+    await settle(window, 80);
+    document.querySelector('#optImportAppend').checked = true;
+    await paste(document, window, '#btnPasteJson', JSON.stringify({
+      title: 'p',
+      nodes: [{id:'c', label:'C', x:0, y:100}, {id:'d', label:'D', x:100, y:100}],
+      edges: testCase.edges,
+    }));
+    const edges = exportedGraph(document).edges;
+    for (const expected of testCase.edges.filter(edge => edge.label && edge.label !== 'X')) {
+      const found = edges.find(edge => edge.label === expected.label);
+      assert.ok(found, `${testCase.name}: ${expected.label} arrived`);
+      assert.equal(found.weight, expected.weight, `${testCase.name}: ${expected.label} kept its weight`);
+    }
+    assert.deepEqual(errors.map(error => error.message), [], `${testCase.name}: no errors`);
+    dom.window.close();
+  }
+});
+
+test('definition priority reads custom keys from the payload, not the truncated plan', async () => {
+  // The plan's custom keys are already cut to the 128-character storage cap, so two
+  // long ids sharing that prefix are ONE key there. Prioritising from the plan meant
+  // the retained node's value was attributed to the dropped node's definition: that
+  // definition took the last slot, the one the retained node actually needs was
+  // skipped, and the value survived only because the plan's truncated binding made it
+  // look bound — it would not survive a reload. The payload holds both keys at full
+  // length, which is the form the definitions are declared under.
+  const base = 'K' + 'z'.repeat(130);      // longer than the 128-char cap
+  const keepId = base + 'KEEP', dropId = base + 'DROP';
+  assert.equal(keepId.slice(0, 128), dropId.slice(0, 128), 'the two ids share their truncated form');
+  const hostDefs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: [], customAttributes: hostDefs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [
+      {id:'keep', label:'KEEP', x:0, y:0, custom:{[keepId]:'KEEPVAL'}},
+      {id:'drop', label:'DROP', x:100, y:0, custom:{[dropId]:'DROPVAL'}},
+    ],
+    edges: [],
+    // The dropped node's definition is declared FIRST, so payload order alone would
+    // hand it the last slot.
+    customAttributes: [
+      {id:dropId, name:'dropProp', scope:'node', type:'string', origin:dropId},
+      {id:keepId, name:'keepProp', scope:'node', type:'string', origin:keepId},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  // The definition the retained node's value actually names is the one that has to
+  // arrive. Checking the value alone is not enough: a truncated binding can carry the
+  // value in memory while its definition was never imported.
+  const names = (graph.customAttributes || []).map(def => def.name);
+  assert.ok(names.includes('keepProp'), `the retained node's definition was imported, got ${JSON.stringify(names.filter(Boolean))}`);
+  assert.ok(!names.includes('dropProp'), 'and the dropped node\'s definition did not take the last slot');
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the retained node arrived');
+  const bound = Object.entries(kept.custom || {});
+  assert.equal(bound.length, 1, 'its single value is bound');
+  assert.equal(bound[0][1], 'KEEPVAL', 'to the retained value');
+  const defs = new Set((graph.customAttributes || []).map(def => def.id));
+  assert.ok(defs.has(bound[0][0]), 'and that binding names a definition the document actually holds');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('appending many dangling edges stays linear in the payload size', async () => {
+  // Pairing used to scan the whole raw edge list for every retained edge: 12,000
+  // dangling edges ahead of 3,000 valid ones took ~7.8s against ~0.14s for the valid
+  // ones alone. The trace makes it one pass. The assertion is deliberately loose — a
+  // timing test on shared CI hardware should only catch a return to quadratic
+  // behaviour, not a few milliseconds of noise.
+  const build = async (danglingCount) => {
+    const {dom} = createEditorDom({title:'h', nodes:[{id:'h1', x:0, y:0}, {id:'h2', x:100, y:0}], edges: []});
+    const {window} = dom;
+    const {document} = window;
+    await settle(window, 80);
+    document.querySelector('#optImportAppend').checked = true;
+    const valid = Array.from({length: 300}, (_, i) => ({id:'v' + i, from:'h1', to:'h2'}));
+    const dangling = Array.from({length: danglingCount}, (_, i) => ({id:'d' + i, from:'h1', to:'missing' + i}));
+    const payload = JSON.stringify({title:'p', nodes:[{id:'p1', label:'P', x:0, y:0}], edges:[...dangling, ...valid]});
+    Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{writeText:async()=>{}, readText:async()=>payload}});
+    await settle(window, 40);
+    const started = Date.now();
+    document.querySelector('#btnPasteJson').click();
+    // The paste is asynchronous; let it finish before tearing the document down, so
+    // the measurement covers the append and never a half-torn-down window.
+    await settle(window, 30);
+    const elapsed = Date.now() - started;
+    dom.window.close();
+    return elapsed;
+  };
+  const small = await build(0);
+  const large = await build(6000);
+  // 6,000 extra dangling edges against a 300-edge payload is a 20x larger input. A
+  // quadratic scan would be ~400x the work; allow a generous constant-factor margin
+  // over "twenty times the linear cost".
+  assert.ok(large < Math.max(1500, small * 40),
+    `6,000 dangling edges took ${large}ms against ${small}ms with none`);
+});

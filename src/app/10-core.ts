@@ -1619,7 +1619,20 @@
       inheritDefaults: input.inheritDefaults !== false
     };
   }
-  function sanitizeState(input: unknown, externalNodeIds?: Set<string>, recordDropped = true, limits: {nodes: number, edges: number} = {nodes: MAX_IMPORT_NODES, edges: MAX_IMPORT_EDGES}): GraphState {
+  // `trace` is how a caller learns which payload entry each survivor came from.
+  //
+  // Positions in the inputs and positions in the output are different questions once
+  // entries can be rejected, and re-deriving the correspondence afterwards by
+  // comparing ids and endpoints is guesswork: an id that was normalised, omitted or
+  // collided compares wrong, and a parallel edge matches its twin. The sanitizer is
+  // the only place that knows, so it records it. Off by default — it allocates.
+  type SanitizeTrace = { nodes: number[], edges: number[] };
+  type SanitizeOptions = { externalNodeIds?: Set<string> | null, recordDropped?: boolean, limits?: {nodes: number, edges: number}, trace?: SanitizeTrace | null };
+  function sanitizeState(input: unknown, options: SanitizeOptions = {}): GraphState {
+    const externalNodeIds = options.externalNodeIds ?? null;
+    const recordDropped = options.recordDropped !== false;
+    const limits = options.limits ?? { nodes: MAX_IMPORT_NODES, edges: MAX_IMPORT_EDGES };
+    const trace = options.trace ?? null;
     const base = defaultState();
     lastImportDropped = {nodes: 0, edges: 0};
     if(!isRecord(input)) return base;
@@ -1682,8 +1695,13 @@
     // import lose" — the caller counts the loss itself.
     if(recordDropped) lastImportDropped = {nodes: nodeOverflow, edges: edgeOverflow};
     const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, limits.nodes).filter(isRecord) : [];
+    // The source position of each valid entry, so a trace can name the payload entry a
+    // survivor came from rather than its position among the survivors.
+    const rawNodeIndex = (Array.isArray(source.nodes) ? source.nodes.slice(0, limits.nodes) : [])
+      .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const nodes: GraphNode[] = rawNodes.map((n, i) => {
       const rawId = String(n.id || ('n' + (i + 1)));
+      if(trace) trace.nodes.push(rawNodeIndex[i] ?? i);
       const id = uniqueSafeId(rawId, 'n', usedNodeIds);
       // Ambiguous duplicate source IDs deliberately resolve to the first node.
       if(!nodeReferences.has(rawId)) nodeReferences.set(rawId, id);
@@ -1714,6 +1732,8 @@
     const nodeIds = new Set(nodes.map(node => node.id));
     const usedEdgeIds = new Set<string>();
     const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, limits.edges).filter(isRecord) : [];
+    const rawEdgeIndex = (Array.isArray(source.edges) ? source.edges.slice(0, limits.edges) : [])
+      .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
       const resolveEndpoint = (raw: unknown): string => {
@@ -1749,6 +1769,7 @@
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
       const customValues = sanitizeCustomValues(e.custom, edgeDefaultTypeById, allSurvivingTypeById);
       if(customValues) edge.custom = customValues;
+      if(trace) trace.edges.push(rawEdgeIndex[i] ?? i);
       edges.push(edge);
     });
     const inputSettings = isRecord(source.settings) ? source.settings : {};
