@@ -1,4 +1,4 @@
-  function wirePaneResize(split: HTMLElement, first: HTMLElement, group: HTMLElement, key: string){
+  function wirePaneResize(split: HTMLElement, first: HTMLElement, group: HTMLElement, key: string, input: HTMLInputElement){
     let drag: {
       id: number; axis: string; start: number; size: number; total: number; next: number;
       keepCanvas?: number; changed?: boolean;
@@ -8,46 +8,79 @@
     let frame = 0;
     const axis = () => getComputedStyle(split).getPropertyValue('--split-axis').trim();
     const position = (ev: PointerEvent, dir: string) => dir === 'x' ? ev.clientX : ev.clientY;
+    const measure = () => {
+      const dir = axis();
+      const dimension = dir === 'x' ? 'width' : 'height';
+      const style = getComputedStyle(group);
+      const gap = parseFloat(dir === 'x' ? style.columnGap : style.rowGap) || 0;
+      const total = (dir === 'x' ? group.clientWidth : group.clientHeight) - gap;
+      return { dir, total, size: first.getBoundingClientRect()[dimension] };
+    };
+    const boundedRatio = (ratio: number, size: number, total: number) => {
+      const min = Math.min(120 / total, 0.3);
+      const initial = clamp(size / total, 0, 1);
+      return clamp(ratio, Math.min(initial, min), Math.max(initial, 1 - min));
+    };
+    const outerShare = (dir: string) => {
+      if(key !== 'data' || dir !== 'y' || !main.classList.contains('v-canvas') || main.style.getPropertyValue('--canvas-y')) return undefined;
+      const height = canvasWrap.getBoundingClientRect().height;
+      return height / (height + group.getBoundingClientRect().height);
+    };
+    const setRatio = (dir: string, ratio: number, keepCanvas?: number) => {
+      // Keep the outer split in place when replacing content-sized rows.
+      if(keepCanvas !== undefined) main.style.setProperty('--canvas-y', tracks(keepCanvas));
+      group.style.setProperty(`--${key}-${dir}`, tracks(ratio));
+      main.classList.add('panes-resized');
+      if(main.style.getPropertyValue('--canvas-y')) main.classList.add('canvas-row-resized');
+      if(key === 'canvas' || keepCanvas !== undefined) applyCameraTransform(currentCamera());
+    };
+    let editing = false;
+    const sync = () => {
+      const visible = split.getClientRects().length > 0;
+      const { size, total } = visible ? measure() : { size: 0, total: 0 };
+      input.disabled = total < 2;
+      if(!input.disabled && editing) return;
+      editing = false;
+      const value = input.disabled ? '' : String(Math.round(clamp(size / total, 0, 1) * 1000) / 10);
+      if(input.value !== value) input.value = value;
+    };
+    input.addEventListener('input', () => { editing = true; });
+    input.addEventListener('blur', () => { editing = false; sync(); });
+    input.addEventListener('change', () => {
+      editing = false;
+      if(split.getClientRects().length && Number.isFinite(input.valueAsNumber)){
+        const { dir, size, total } = measure();
+        if(total >= 2){
+          setRatio(dir, boundedRatio(input.valueAsNumber / 100, size, total), outerShare(dir));
+          if(key === 'canvas') applyCamera();
+        }
+      }
+      sync();
+    });
+    if(typeof ResizeObserver !== 'undefined'){
+      const observer = new ResizeObserver(sync);
+      for(const el of [split, first, group]) observer.observe(el);
+    }
     const paint = () => {
       frame = 0;
       if(!drag || !split.getClientRects().length || axis() !== drag.axis) return;
-      const ratio = drag.next;
-      const canvasChanged = key === 'canvas' || drag.keepCanvas !== undefined;
-      if(drag.keepCanvas !== undefined){
-        // Keep the outer split in place when replacing content-sized rows.
-        main.style.setProperty('--canvas-y', tracks(drag.keepCanvas));
-        drag.keepCanvas = undefined;
-      }
-      group.style.setProperty(`--${key}-${drag.axis}`, tracks(ratio));
-      main.classList.add('panes-resized');
-      if(main.style.getPropertyValue('--canvas-y')) main.classList.add('canvas-row-resized');
+      setRatio(drag.axis, drag.next, drag.keepCanvas);
+      drag.keepCanvas = undefined;
       drag.changed = true;
-      if(canvasChanged) applyCameraTransform(currentCamera());
     };
     split.addEventListener('pointerdown', ev => {
       if(drag || !ev.isPrimary || ev.button !== 0) return;
-      const dir = axis();
-      const horizontal = dir === 'x';
-      const style = getComputedStyle(group);
-      const gap = parseFloat(horizontal ? style.columnGap : style.rowGap) || 0;
-      const total = (horizontal ? group.clientWidth : group.clientHeight) - gap;
+      const { dir, size, total } = measure();
       if(total < 2) return;
-      const rect = first.getBoundingClientRect();
-      const size = horizontal ? rect.width : rect.height;
       split.setPointerCapture(ev.pointerId);
       ev.preventDefault();
       drag = { id: ev.pointerId, axis: dir, start: position(ev, dir), size, total, next: size / total };
-      if(key === 'data' && !horizontal && main.classList.contains('v-canvas') && !main.style.getPropertyValue('--canvas-y')){
-        const height = canvasWrap.getBoundingClientRect().height;
-        drag.keepCanvas = height / (height + group.getBoundingClientRect().height);
-      }
+      drag.keepCanvas = outerShare(dir);
     });
     const move = (ev: PointerEvent) => {
       if(!drag || ev.pointerId !== drag.id) return;
       const delta = position(ev, drag.axis) - drag.start;
-      const min = Math.min(120 / drag.total, 0.3);
-      const initial = drag.size / drag.total;
-      const next = clamp(initial + delta / drag.total, Math.min(initial, min), Math.max(initial, 1 - min));
+      const next = boundedRatio((drag.size + delta) / drag.total, drag.size, drag.total);
       if(next === drag.next || (!frame && !delta && !drag.changed)) return;
       drag.next = next;
       if(!frame) frame = requestAnimationFrame(paint);
@@ -58,11 +91,13 @@
       if(frame){ cancelAnimationFrame(frame); paint(); }
       if(drag.changed && key === 'canvas') applyCamera();
       drag = null;
+      sync();
     };
     split.addEventListener('pointermove', move);
     split.addEventListener('pointerup', finish);
     split.addEventListener('pointercancel', finish);
     split.addEventListener('lostpointercapture', finish);
+    return sync;
   }
 
   function wireUi(){
@@ -671,8 +706,10 @@
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
       const dataPane = mainEl.querySelector<HTMLElement>('.bottom')!;
-      wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas');
-      wirePaneResize($('#dataSplit'), dataPane.querySelector<HTMLElement>('.bottom-pane')!, dataPane, 'data');
+      const syncCanvasShare = wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas', $('#canvasShare'));
+      const syncMatrixShare = wirePaneResize($('#dataSplit'), dataPane.querySelector<HTMLElement>('.bottom-pane')!, dataPane, 'data', $('#matrixShare'));
+      const syncPaneShares = () => { syncCanvasShare(); syncMatrixShare(); };
+      window.addEventListener('resize', syncPaneShares);
       // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
       // classes on .main). At least one view must stay visible.
       const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
@@ -681,6 +718,7 @@
       if(isDesktop){ mainEl.classList.add('v-matrix', 'v-edges'); }
       const VIEW_CLASS: Record<string, string> = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
       const syncViewButtons = () => {
+        syncPaneShares();
         document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => {
           const active = mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || '');
           b.classList.toggle('active', active);
@@ -721,6 +759,7 @@
           const cur = mainEl.dataset.orient || 'v';
           mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
           if(syncOrientBtn) syncOrientBtn();
+          syncPaneShares();
           setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); }, 0);
         });
         if(mainEl.dataset.orient) syncOrientBtn();

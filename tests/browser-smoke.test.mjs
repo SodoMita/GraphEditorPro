@@ -758,6 +758,17 @@ test('pane edge drags resize the correct axis, respect bounds, and clean up capt
     pointer(data, 'pointerdown', 400, 750);
     pointer(data, 'pointerup', 500, 700);
     assert.match(bottom.style.getPropertyValue('--data-x'), /minmax\(0,0\.625fr\)/);
+    const canvasShare = document.querySelector('#canvasShare');
+    const matrixShare = document.querySelector('#matrixShare');
+    assert.equal(canvasShare.value, '66', 'shows the measured size, not the requested track value');
+    assert.equal(matrixShare.value, '50');
+    matrixShare.value = '75';
+    matrixShare.dispatchEvent(new dom.window.Event('change'));
+    assert.match(bottom.style.getPropertyValue('--data-x'), /minmax\(0,0\.75fr\)/);
+    data.getClientRects = () => [];
+    dom.window.dispatchEvent(new dom.window.Event('resize'));
+    assert.equal(matrixShare.disabled, true);
+    assert.equal(matrixShare.value, '');
     assert.deepEqual(errors, []);
   } finally {
     dom.window.close();

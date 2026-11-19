@@ -21,7 +21,7 @@ After a successful build, open `index.html` in any modern browser.
 
 ## Resizing the workspace
 
-Drag the shared edge between the canvas and the data area, or between the adjacency matrix and edge list. The existing borders double as resize targets, with a wider touch zone on mobile. If a pane is hidden, use the view buttons to show it first (in the Data tab on mobile).
+Drag the shared edge between the canvas and the data area, or between the adjacency matrix and edge list. The existing borders double as resize targets, with a wider touch zone on mobile. If a pane is hidden, use the view buttons to show it first (in the Data tab on mobile). In **Data → Pane sizes**, enter the canvas or matrix share as a percentage. The fields reflect the current layout after dragging or changing views.
 
 ## Source layout
 
