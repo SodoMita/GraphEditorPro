@@ -63,13 +63,13 @@
     }
     const paint = () => {
       frame = 0;
-      if(!drag || !split.getClientRects().length || axis() !== drag.axis) return;
+      if(!drag || main.classList.contains('no-pane-drag') || !split.getClientRects().length || axis() !== drag.axis) return;
       setRatio(drag.axis, drag.next, drag.keepCanvas);
       drag.keepCanvas = undefined;
       drag.changed = true;
     };
     split.addEventListener('pointerdown', ev => {
-      if(drag || !ev.isPrimary || ev.button !== 0) return;
+      if(drag || main.classList.contains('no-pane-drag') || !ev.isPrimary || ev.button !== 0) return;
       const { dir, size, total } = measure();
       if(total < 2) return;
       split.setPointerCapture(ev.pointerId);
@@ -98,6 +98,32 @@
     split.addEventListener('pointercancel', finish);
     split.addEventListener('lostpointercapture', finish);
     return sync;
+  }
+
+  function wirePaneDragSettings(main: HTMLElement){
+    const enabled: HTMLInputElement = $('#paneDragEnabled');
+    const size: HTMLInputElement = $('#paneDragSize');
+    const key = 'graph-editor-pro-pane-drag';
+    let width = size.valueAsNumber;
+    const apply = () => {
+      width = clamp(Math.round(Number.isFinite(size.valueAsNumber) ? size.valueAsNumber : width), 8, 64);
+      size.value = String(width);
+      size.disabled = !enabled.checked;
+      main.style.setProperty('--pane-drag-size', `${width}px`);
+      main.classList.toggle('no-pane-drag', !enabled.checked);
+    };
+    try{
+      const saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if(typeof saved?.enabled === 'boolean') enabled.checked = saved.enabled;
+      if(Number.isFinite(saved?.width)) size.value = String(saved.width);
+    }catch{}
+    apply();
+    const update = () => {
+      apply();
+      try{ localStorage.setItem(key, JSON.stringify({ enabled: enabled.checked, width })); }catch{}
+    };
+    enabled.addEventListener('change', update);
+    size.addEventListener('change', update);
   }
 
   function wireUi(){
@@ -705,6 +731,7 @@
     // View toggle controls
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
+      wirePaneDragSettings(mainEl);
       const dataPane = mainEl.querySelector<HTMLElement>('.bottom')!;
       const syncCanvasShare = wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas', $('#canvasShare'));
       const syncMatrixShare = wirePaneResize($('#dataSplit'), dataPane.querySelector<HTMLElement>('.bottom-pane')!, dataPane, 'data', $('#matrixShare'));

@@ -838,13 +838,13 @@
     .main,.bottom{position:relative}
     .pane-split{
       --split-axis:y;
-      --split-half:6px;
+      --split-half:calc(var(--pane-drag-size, 32px) / 2);
       display:none; position:absolute; z-index:5;
       left:0; right:0; bottom:calc(-1 * var(--split-half));
       height:calc(2 * var(--split-half)); cursor:row-resize;
       touch-action:none; user-select:none;
     }
-    @media (pointer:coarse){.pane-split{--split-half:16px}}
+    .main.no-pane-drag .pane-split{pointer-events:none}
     #canvasSplit{grid-area:canvas}
     #dataSplit{grid-area:1 / 1 / 2 / 2}
     .main.v-canvas:is(.v-matrix,.v-edges) #canvasSplit,

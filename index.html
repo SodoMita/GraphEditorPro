@@ -845,13 +845,13 @@
     .main,.bottom{position:relative}
     .pane-split{
       --split-axis:y;
-      --split-half:6px;
+      --split-half:calc(var(--pane-drag-size, 32px) / 2);
       display:none; position:absolute; z-index:5;
       left:0; right:0; bottom:calc(-1 * var(--split-half));
       height:calc(2 * var(--split-half)); cursor:row-resize;
       touch-action:none; user-select:none;
     }
-    @media (pointer:coarse){.pane-split{--split-half:16px}}
+    .main.no-pane-drag .pane-split{pointer-events:none}
     #canvasSplit{grid-area:canvas}
     #dataSplit{grid-area:1 / 1 / 2 / 2}
     .main.v-canvas:is(.v-matrix,.v-edges) #canvasSplit,
@@ -1539,6 +1539,10 @@
                   <label class="field" for="canvasShare"><span data-i18n="canvas_share">Canvas (%)</span> <input id="canvasShare" type="number" min="0" max="100" step="any" inputmode="decimal" disabled></label>
                   <label class="field" for="matrixShare"><span data-i18n="matrix_share">Matrix (%)</span> <input id="matrixShare" type="number" min="0" max="100" step="any" inputmode="decimal" disabled></label>
                 </div>
+                <div class="grid2">
+                  <label class="chk" for="paneDragEnabled"><input id="paneDragEnabled" type="checkbox" checked> <span data-i18n="pane_drag_enabled">Resize by dragging</span></label>
+                  <label class="field" for="paneDragSize"><span data-i18n="pane_drag_size">Drag zone (px)</span> <input id="paneDragSize" type="number" min="8" max="64" step="1" value="32" inputmode="numeric"></label>
+                </div>
                 <p class="tiny muted" data-i18n="pane_sizes_hint">The data area gets the rest of the canvas split. The edge list gets the rest of the matrix split. Show both sides of a split to edit its size.</p>
               </div>
             </details>
@@ -2163,6 +2167,8 @@ const I18N = {
         'pane_sizes': { en: 'Pane sizes', ru: 'Размеры панелей' },
         'canvas_share': { en: 'Canvas (%)', ru: 'Холст (%)' },
         'matrix_share': { en: 'Matrix (%)', ru: 'Матрица (%)' },
+        'pane_drag_enabled': { en: 'Resize by dragging', ru: 'Изменять размер перетаскиванием' },
+        'pane_drag_size': { en: 'Drag zone (px)', ru: 'Зона перетаскивания (пкс)' },
         'pane_sizes_hint': { en: 'The data area gets the rest of the canvas split. The edge list gets the rest of the matrix split. Show both sides of a split to edit its size.', ru: 'Оставшееся место в области холста занимают панели данных, а рядом с матрицей — список рёбер. Чтобы изменить размер, покажите обе стороны разделителя.' },
         'camera_position': { en: 'Camera position', ru: 'Позиция камеры' },
         'center_x': { en: 'Center X', ru: 'Центр X' },
@@ -16658,14 +16664,14 @@ function wirePaneResize(split, first, group, key, input) {
     }
     const paint = () => {
         frame = 0;
-        if (!drag || !split.getClientRects().length || axis() !== drag.axis)
+        if (!drag || main.classList.contains('no-pane-drag') || !split.getClientRects().length || axis() !== drag.axis)
             return;
         setRatio(drag.axis, drag.next, drag.keepCanvas);
         drag.keepCanvas = undefined;
         drag.changed = true;
     };
     split.addEventListener('pointerdown', ev => {
-        if (drag || !ev.isPrimary || ev.button !== 0)
+        if (drag || main.classList.contains('no-pane-drag') || !ev.isPrimary || ev.button !== 0)
             return;
         const { dir, size, total } = measure();
         if (total < 2)
@@ -16705,6 +16711,37 @@ function wirePaneResize(split, first, group, key, input) {
     split.addEventListener('pointercancel', finish);
     split.addEventListener('lostpointercapture', finish);
     return sync;
+}
+function wirePaneDragSettings(main) {
+    const enabled = $('#paneDragEnabled');
+    const size = $('#paneDragSize');
+    const key = 'graph-editor-pro-pane-drag';
+    let width = size.valueAsNumber;
+    const apply = () => {
+        width = clamp(Math.round(Number.isFinite(size.valueAsNumber) ? size.valueAsNumber : width), 8, 64);
+        size.value = String(width);
+        size.disabled = !enabled.checked;
+        main.style.setProperty('--pane-drag-size', `${width}px`);
+        main.classList.toggle('no-pane-drag', !enabled.checked);
+    };
+    try {
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        if (typeof saved?.enabled === 'boolean')
+            enabled.checked = saved.enabled;
+        if (Number.isFinite(saved?.width))
+            size.value = String(saved.width);
+    }
+    catch { }
+    apply();
+    const update = () => {
+        apply();
+        try {
+            localStorage.setItem(key, JSON.stringify({ enabled: enabled.checked, width }));
+        }
+        catch { }
+    };
+    enabled.addEventListener('change', update);
+    size.addEventListener('change', update);
 }
 function wireUi() {
     renderCustomAttributes();
@@ -17521,6 +17558,7 @@ function wireUi() {
     // View toggle controls
     const mainEl = document.querySelector('.main');
     if (mainEl) {
+        wirePaneDragSettings(mainEl);
         const dataPane = mainEl.querySelector('.bottom');
         const syncCanvasShare = wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas', $('#canvasShare'));
         const syncMatrixShare = wirePaneResize($('#dataSplit'), dataPane.querySelector('.bottom-pane'), dataPane, 'data', $('#matrixShare'));

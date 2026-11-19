@@ -383,6 +383,8 @@ const I18N: I18nService = {
     'pane_sizes': { en: 'Pane sizes', ru: 'Размеры панелей' },
     'canvas_share': { en: 'Canvas (%)', ru: 'Холст (%)' },
     'matrix_share': { en: 'Matrix (%)', ru: 'Матрица (%)' },
+    'pane_drag_enabled': { en: 'Resize by dragging', ru: 'Изменять размер перетаскиванием' },
+    'pane_drag_size': { en: 'Drag zone (px)', ru: 'Зона перетаскивания (пкс)' },
     'pane_sizes_hint': { en: 'The data area gets the rest of the canvas split. The edge list gets the rest of the matrix split. Show both sides of a split to edit its size.', ru: 'Оставшееся место в области холста занимают панели данных, а рядом с матрицей — список рёбер. Чтобы изменить размер, покажите обе стороны разделителя.' },
     'camera_position': { en: 'Camera position', ru: 'Позиция камеры' },
     'center_x': { en: 'Center X', ru: 'Центр X' },
