@@ -5736,3 +5736,165 @@ test('an id-less appended node is numbered, not left as a bare prefix', async ()
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('a capped append never re-points an edge at a node whose id merely normalises alike', async () => {
+  // `a!` and `a` normalise to the same id. Planning compared normalised ids without
+  // resolving the collision, so with one slot left the edge meant for the dropped `a`
+  // was attached to the kept `a!` — a wrong connection rather than a missing one.
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'a!', label:'KEEP', x:0, y:0}, {id:'a', label:'DROP', x:100, y:0}],
+    edges: [{id:'e', from:'a!', to:'a'}],
+  }));
+
+  const graph = exportedGraph(document);
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the first node fits');
+  assert.equal(graph.nodes.find(node => node.label === 'DROP'), undefined, 'the second does not');
+  const selfLoop = graph.edges.filter(edge => edge.from === kept.id && edge.to === kept.id);
+  assert.deepEqual(selfLoop, [], 'the edge to the dropped node did not become a self-loop on the kept one');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edge the capacity drops cannot spend the definition a kept edge needs', async () => {
+  // Definition priority was computed from every endpoint-valid edge, before the edge
+  // ceiling was applied. With one edge slot and one definition slot left, a dangling
+  // edge's definition took the slot and the edge that actually survived lost its
+  // custom value.
+  const edges = Array.from({length: 7999}, (_, i) => ({id: 'he' + i, from: 'h1', to: 'h2'}));
+  const defs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'edge', type: 'string', origin: 'hd' + i}
+  ));
+  const {dom, errors} = createEditorDom({
+    title: 'h', nodes: [{id:'h1', x:0, y:0}, {id:'h2', x:100, y:0}], edges, customAttributes: defs,
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    // A node is required or the payload is rejected as "no graph".
+    nodes: [{id:'p1', label:'P', x:0, y:0}],
+    // BOTH edges are endpoint-valid; the second is dropped by the EDGE ceiling, which
+    // is the capacity the priority calculation used to ignore.
+    edges: [
+      {id:'survives', from:'p1', to:'h1', custom:{keepDef:'y'}},
+      {id:'capacitydrop', from:'p1', to:'h2', custom:{dropDef:'x'}},
+    ],
+    // The dropped edge's definition is declared first, so declaration order alone
+    // would give it the last slot.
+    customAttributes: [
+      {id:'dropDef', name:'dropDef', scope:'edge', type:'string', origin:'dropDef'},
+      {id:'keepDef', name:'keepDef', scope:'edge', type:'string', origin:'keepDef'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const imported = new Set(graph.customAttributes.filter(d => !d.id.startsWith('hd')).map(d => d.id));
+  assert.ok(imported.has('keepDef'), 'the surviving edge\'s definition was imported');
+  const keptEdge = graph.edges.find(edge => !edge.id.startsWith('he'));
+  assert.ok(keptEdge, 'the edge survived');
+  assert.equal(keptEdge.custom?.keepDef, 'y', 'and kept its value');
+  assert.ok(!imported.has('dropDef'), 'the edge the ceiling dropped spent no definition slot');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('prioritising definitions does not split a property id on a pipe', async () => {
+  // A value key is a definition id verbatim. Stripping everything through the first
+  // pipe assumed keys carry a scope prefix, so a definition called `region|A` looked
+  // unreferenced and lost the last slot to a definition nothing used.
+  const defs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: [], customAttributes: defs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [
+      {id:'keep', label:'KEEP', x:0, y:0, custom:{'region|A':'EU'}},
+      {id:'drop', label:'DROP', x:100, y:0, custom:{unusedDef:'z'}},
+    ],
+    edges: [],
+    customAttributes: [
+      {id:'unusedDef', name:'unusedDef', scope:'node', type:'string', origin:'unusedDef'},
+      {id:'region|A', name:'region', scope:'node', type:'string', origin:'region|A'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the retained node arrived');
+  assert.equal(kept.custom?.['region|A'], 'EU', 'its value survived under the piped id');
+  const ids = new Set(graph.customAttributes.map(def => def.id));
+  assert.ok(ids.has('region|A'), 'and so did its definition');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append resolves against the defaults its source document was opened with', async () => {
+  // A payload that carries no `settings` at all is still opened against the built-in
+  // defaults. Resolving against the raw (empty) settings object instead resolved
+  // against nothing, so the appended node took the HOST's styling — a visible restyle
+  // on an append that should have changed nothing.
+  const {dom, errors} = createEditorDom({
+    title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: [],
+    // The host is deliberately styled unlike the built-ins.
+    settings: {nodeDefaults: {width: 99, color: '#ff0000'}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 100);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p', nodes: [{id:'s1', label:'S', x:900, y:900}], edges: [],
+    // no settings
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.width, 50, 'it kept the built-in width its source was drawn with');
+  assert.equal(node.color, '#0ea5e9', 'and the built-in colour, not the host\'s');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('invalid entries do not spend node capacity', async () => {
+  // The raw list was sliced to the remaining room before the sanitizer dropped its
+  // invalid entries, so `[null, valid]` with one slot left imported nothing: the null
+  // took the slot and the valid node was cut.
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [null, {id:'valid', label:'VALID', x:0, y:0}],
+    edges: [],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.ok(graph.nodes.find(node => node.label === 'VALID'), 'the valid node took the slot');
+  assert.equal(graph.nodes.length, 3000, 'and the document is full, not over-full');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

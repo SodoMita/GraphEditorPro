@@ -1594,7 +1594,26 @@
   // graph already has. They are treated as *known* endpoints only — never as an id
   // to resolve a colliding node onto, which is what merging the host's nodes into
   // the payload used to cause.
-  function sanitizeState(input: unknown, externalNodeIds?: Set<string>): GraphState {
+  // The settings a document is read with, without reading the document.
+  //
+  // `sanitizeState` merges whatever the payload carries over the defaults, so a
+  // document that carries no `settings` at all is still drawn with them. Append
+  // resolves an incoming element against the defaults its source document was
+  // opened with; passing the payload's raw `settings` object instead (empty when it
+  // omits them) resolved against nothing, and the element arrived at whatever the
+  // HOST's defaults said — a visible restyle on an append that changed nothing.
+  function effectiveDefaults(inputSettings: unknown): AnyRecord {
+    const base = defaultState();
+    const input = isRecord(inputSettings) ? inputSettings : {};
+    return {
+      nodeDefaults: { ...base.settings.nodeDefaults, ...(isRecord(input.nodeDefaults) ? input.nodeDefaults : {}) },
+      edgeDefaults: { ...base.settings.edgeDefaults, ...(isRecord(input.edgeDefaults) ? input.edgeDefaults : {}) },
+      nodeTypeStyles: isRecord(input.nodeTypeStyles) ? input.nodeTypeStyles : {},
+      edgeTypeStyles: isRecord(input.edgeTypeStyles) ? input.edgeTypeStyles : {},
+      inheritDefaults: input.inheritDefaults !== false
+    };
+  }
+  function sanitizeState(input: unknown, externalNodeIds?: Set<string>, recordDropped = true, limits: {nodes: number, edges: number} = {nodes: MAX_IMPORT_NODES, edges: MAX_IMPORT_EDGES}): GraphState {
     const base = defaultState();
     lastImportDropped = {nodes: 0, edges: 0};
     if(!isRecord(input)) return base;
@@ -1651,10 +1670,12 @@
     // How many entries the ceilings cut, so an importer can tell the user instead
     // of appearing to succeed. Counted against the raw list, before the record
     // filter, because that filter is a per-entry concern and already silent.
-    const nodeOverflow = Array.isArray(source.nodes) ? Math.max(0, source.nodes.length - MAX_IMPORT_NODES) : 0;
-    const edgeOverflow = Array.isArray(source.edges) ? Math.max(0, source.edges.length - MAX_IMPORT_EDGES) : 0;
-    lastImportDropped = {nodes: nodeOverflow, edges: edgeOverflow};
-    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, MAX_IMPORT_NODES).filter(isRecord) : [];
+    const nodeOverflow = Array.isArray(source.nodes) ? Math.max(0, source.nodes.length - limits.nodes) : 0;
+    const edgeOverflow = Array.isArray(source.edges) ? Math.max(0, source.edges.length - limits.edges) : 0;
+    // A dry run answers "what ids would these entries get", not "what did this
+    // import lose" — the caller counts the loss itself.
+    if(recordDropped) lastImportDropped = {nodes: nodeOverflow, edges: edgeOverflow};
+    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, limits.nodes).filter(isRecord) : [];
     const nodes: GraphNode[] = rawNodes.map((n, i) => {
       const rawId = String(n.id || ('n' + (i + 1)));
       const id = uniqueSafeId(rawId, 'n', usedNodeIds);
@@ -1686,7 +1707,7 @@
 
     const nodeIds = new Set(nodes.map(node => node.id));
     const usedEdgeIds = new Set<string>();
-    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, MAX_IMPORT_EDGES).filter(isRecord) : [];
+    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, limits.edges).filter(isRecord) : [];
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
       const resolveEndpoint = (raw: unknown): string => {

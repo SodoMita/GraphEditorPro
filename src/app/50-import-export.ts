@@ -888,150 +888,170 @@
     // then throws "is not iterable", which aborted the whole append and surfaced as
     // "Paste failed". materializeDefaults takes the raw entries by design, so the
     // shape is normalised here, where every caller's input is known to be foreign.
-    const incomingNodes = Array.isArray(data?.nodes) ? data.nodes : [];
-    const incomingEdges = Array.isArray(data?.edges) ? data.edges : [];
-    // Which entries can fit is decided FIRST, before anything is resolved for
-    // them.
-    //
-    // The document ceilings used to be applied at the very end, to lists that had
-    // already been validated, de-duplicated and resolved against. Everything
-    // downstream then described entries that were about to be thrown away:
-    // endpoint validation accepted an edge because its node was in the payload,
-    // and the node was then cut by the cap, leaving a dangling edge in a document
-    // that had passed its own checks; definitions were capped in payload order, so
-    // a dropped node's definition could take the last slot and a retained node lost
-    // its custom value. Capacity is a property of the destination, so it is
-    // applied here and every later stage sees only survivors.
+    // A planning pass reads the payload with no meaningful ceiling: it answers "what
+    // does this payload say", and every incoming id has to be in the answer so a
+    // dropped node is never mistaken for a host node of the same name. The bound is
+    // only a guard against a pathological payload; past it the ids are not knowable
+    // and the real cap has already rejected those entries.
+    const PLANNING_LIMIT = 200000;
     const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
     const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
-    // Only nodes can be dropped here: an edge's endpoints are not yet resolved, so
-    // there is no way to tell a dangling one until the payload is sanitised. Edges
-    // are capped by the ceiling in the tail, where their endpoints are known.
-    const droppedBeforeResolve = Math.max(0, incomingNodes.length - nodeRoom);
-    const fittingNodes = incomingNodes.slice(0, nodeRoom);
-    const hostIdsForFit = new Set(state.nodes.map(n => n.id));
-    // Can this edge survive the append?
+    const hostIds = new Set(state.nodes.map(n => n.id));
+    // Phase 1 — ask the sanitizer what the payload MEANS.
     //
-    // Endpoint resolution has to agree with sanitizeState, which runs later and is
-    // the authority on what an endpoint means. Two things follow from that, and
-    // getting either wrong silently sends an edge somewhere it never pointed:
-    //
-    //  * Incoming ids take precedence over host ids, for EVERY incoming node —
-    //    including one the capacity limit drops. `dropped` is ambiguous when the
-    //    payload also ships a node called `dropped`; resolving the name to the host's
-    //    node attached the edge to a node it never referenced, quietly. If the
-    //    payload defined that name, the host does not get to answer for it, so an
-    //    edge to it is dropped rather than re-pointed.
-    //  * Ids are compared the way the sanitizer compares them — as strings, after its
-    //    own normalisation — not as raw payload values. A payload with the numeric
-    //    node id 123 and an edge "from": "123" refers to that node, and strict
-    //    equality on 123 vs "123" dropped the edge.
-    // `uniqueSafeId` is sanitizeState's normalisation (it stringifies, strips the
-    // characters it strips, and bounds the length), so applying it to both sides of
-    // this comparison makes the filter agree with the step that actually builds the
-    // ids. A throwaway Set per call is what keeps it a pure "what does this name
-    // denote" question rather than a de-duplication: de-duplication depends on
-    // position in the list, which is the caller's business.
-    const idOf = (value) => uniqueSafeId(value, 'n', new Set());
-    // A node with no id is numbered by its POSITION, exactly as sanitizeState does.
-    // Using the bare fallback 'n' here would let an id-less node shadow a host node
-    // named `n` and drop edges that legitimately point at it.
-    const payloadIds = new Set<string>();
-    incomingNodes.forEach((node, i) => { if(isRecord(node)) payloadIds.add(uniqueSafeId(node.id || ('n' + (i + 1)), 'n', new Set())); });
-    const fitEdges = (nodes, edges) => {
-      const retained = new Set(nodes.map((node, i) => isRecord(node) ? uniqueSafeId(node.id || ('n' + (i + 1)), 'n', new Set()) : ''));
-      const endpointFits = (raw) => {
-        const id = idOf(raw);
-        if(retained.has(id)) return true;            // an incoming node that fits
-        if(payloadIds.has(id)) return false;         // defined by the payload, but dropped
-        return hostIdsForFit.has(id);                // the host's own node
-      };
-      return edges.filter(edge => isRecord(edge) && endpointFits(edge.from) && endpointFits(edge.to));
+    // Every question append has to answer before it can spend capacity is a question
+    // sanitizeState already answers: which id a node really gets, which edge points
+    // at which node, which entries are simply invalid. Re-deriving those answers was
+    // wrong four review rounds running, each time in a new way:
+    //   * normalising ids without resolving collisions collapsed `a!` and `a` onto
+    //     one name, so an edge meant for the node the cap dropped was attached to the
+    //     one that stayed;
+    //   * skipping invalid entries happened after the cap, so `[null, valid]` spent
+    //     the last slot on the null and imported nothing;
+    //   * edges were validated and then capped, so an edge that could not be kept
+    //     still counted as "referenced" when definitions were prioritised.
+    // So the payload is read once, in full, with no capacity applied. Its output is
+    // the identity map — nothing here is kept; it is the answer to "what does the
+    // payload say", not a decision about what to keep.
+    // The planning pass reads the payload with NO node ceiling, so every incoming id
+    // is in the plan and `dropped` can never be mistaken for a host node of the same
+    // name. `MAX_IMPORT_NODES` is far above the node ceiling for memory, so a
+    // payload longer than it is truncated for the plan too — beyond that the ids are
+    // not knowable and the cap has already rejected the entries.
+    const planned = sanitizeState({...data, settings: state.settings}, hostIds, false,
+      {nodes: PLANNING_LIMIT, edges: PLANNING_LIMIT});
+    // Entries the sanitizer rejected outright (an invalid record, or an edge to a
+    // node that exists in neither document) never reach the capacity question, so
+    // they do not spend a slot and are not counted as capacity losses — the payload
+    // could not express them, which is not the destination's ceiling to report.
+    // Phase 2 — spend capacity, in the payload's own order, on entries that are
+    // valid. Invalid entries no longer consume a slot, and the count below is of
+    // genuinely dropped valid entries.
+    const keptPlannedNodes = planned.nodes.slice(0, nodeRoom);
+    const keptPlannedNodeIds = new Set(keptPlannedNodes.map(node => node.id));
+    // Every id the payload itself defines, whether or not it fits. This is what makes
+    // an ambiguous name resolvable: `dropped` means the payload's node even when the
+    // cap rejected that node, so an edge to it is dropped rather than silently
+    // re-pointed at a host node that happens to share the name. Without this, the
+    // two ids are one string and nothing downstream can tell them apart.
+    const payloadPlannedIds = new Set(planned.nodes.map(node => node.id));
+    // An edge survives only if BOTH endpoints exist after the cap: a node that fits,
+    // or one the host already has — never a payload node that did not fit.
+    const endpointSurvives = (id) => {
+      if(keptPlannedNodeIds.has(id)) return true;
+      if(payloadPlannedIds.has(id)) return false;   // the payload's own node, dropped
+      return hostIds.has(id);                        // a node the host already has
     };
-    const fittingEdges = fitEdges(fittingNodes, incomingEdges);
-    // The definitions worth spending the document's remaining capacity on are the
-    // ones its surviving nodes and edges actually reference. A definition the
-    // payload carries only for an element that did not fit is dead weight: importing
-    // it consumes a slot and, with one slot left, can be the very reason a retained
-    // node's own property is the one that gets skipped.
-    //
-    // Ordered, never filtered. Unreferenced definitions move to the back and still
-    // go through the capper, so one that does not fit is still counted and reported
-    // as skipped, and a payload that only declares definitions keeps declaring them.
-    // Within each group the payload order is untouched: the capper mints a colliding
-    // id in declaration order, so reordering would change which of two incoming
-    // properties keeps the id and which has to dodge.
-    //
-    // Matching is by id, and by the recorded name as a fallback for a payload whose
-    // values are keyed by name. Keys are taken from this payload BEFORE the remap,
-    // because that is when they still spell the carried ids that `id` holds.
-    const referencedIds = new Set<string>(), referencedNames = new Set<string>();
-    const carryValueKeys = (custom) => {
+    const survivingPlannedEdges = planned.edges.filter(edge => endpointSurvives(edge.from) && endpointSurvives(edge.to));
+    const keptPlannedEdges = survivingPlannedEdges.slice(0, edgeRoom);
+    const droppedByCap = {
+      nodes: Math.max(0, planned.nodes.length - keptPlannedNodes.length),
+      edges: Math.max(0, planned.edges.length - keptPlannedEdges.length)
+    };
+    // Phase 3 — definitions the kept elements need get first claim on the remaining
+    // budget. A definition is needed when a KEPT element's values name it; an edge
+    // that the capacity dropped cannot spend a slot a kept edge needs.
+    const neededDefIds = new Set<string>(), neededDefNames = new Set<string>();
+    const noteValueKeys = (custom) => {
       if(!isRecord(custom)) return;
       for(const key of Object.keys(custom)){
-        referencedIds.add(String(key).replace(/^[^|]*\|/, ''));
-        referencedNames.add(String(key).toLowerCase());
+        // A value key is a definition id verbatim. Splitting on `|` looked
+        // reasonable when keys were assumed to carry a scope prefix, but a pipe is
+        // an ordinary character in a property id: a definition called `region|A` was
+        // read as `A`, so the value looked unreferenced and its definition lost the
+        // slot to an unused one.
+        neededDefIds.add(String(key));
       }
     };
-    for(const el of [...fittingNodes, ...fittingEdges]) if(isRecord(el)) carryValueKeys(el.custom);
-    carryValueKeys(data?.graphCustom);
-    const isReferenced = (def) => {
+    for(const el of [...keptPlannedNodes, ...keptPlannedEdges]) if(isRecord(el)) noteValueKeys(el.custom);
+    noteValueKeys(planned.graphCustom);
+    const isNeeded = (def) => {
       if(!isRecord(def)) return false;
       const id = String(def.id ?? '').trim();
+      if(id && neededDefIds.has(id)) return true;
+      // The recorded name is a fallback for a payload whose values are keyed by the
+      // property name rather than the definition id.
       const name = String(def.name ?? '').trim().toLowerCase();
-      return (!!id && referencedIds.has(id)) || (!!name && referencedNames.has(name));
+      return !!name && [...neededDefNames].length > 0 && neededDefNames.has(name);
     };
     const carriedDefs = Array.isArray(data?.customAttributes) ? data.customAttributes : [];
+    // Ordered, never filtered: unneeded definitions move to the back but still go
+    // through the capper, so one that does not fit is still counted and reported.
+    // Order is otherwise untouched — the capper mints a colliding id in declaration
+    // order.
     const orderedDefs = [
-      ...carriedDefs.filter(def => isReferenced(def)),
-      ...carriedDefs.filter(def => !isReferenced(def))
+      ...carriedDefs.filter(def => isNeeded(def)),
+      ...carriedDefs.filter(def => !isNeeded(def))
     ];
-    // Sanitise against the *merged* node set, not just the incoming one.
-    //
-    // sanitizeState drops edges whose endpoints it cannot resolve, which is right
-    // for a document that stands alone. An append is not that: an incoming edge
-    // may legitimately end on a node that already exists here, and passing only
-    // the incoming nodes made every such edge look dangling and disappear.
-    // Merging the host's nodes in first lets the check see both sides; the host's
-    // own nodes are discarded immediately afterwards.
-    // The payload is sanitised on its own, with the host's node ids declared as
-    // known endpoints. Both halves matter:
-    //   * on its own, so a colliding id (`n1`) resolves to the payload's node
-    //     rather than the host's — merging the host nodes in made sanitizeState
-    //     match the host first and silently re-point the appended edge at it;
-    //   * with the host ids known, so an edge that legitimately ends on an
-    //     existing node is not mistaken for a dangling one.
-    const hostIds = new Set(state.nodes.map(n => n.id));
-    // Keep the current graph's attribute definitions while still learning the
-    // import's: values in the imported file reference the imported definitions,
-    // and pruning against the merged set drops nothing legitimate. Document-wide
-    // (graph-scope) values merge with the imported ones taking precedence.
-    // Imported definitions that fit the remaining capacity are merged; the
-    // rest are skipped with a toast. Identity is scope-aware and provenance-
-    // aware (see capCustomDefinitions): an identical property merges or
-    // reuses for free, a different property sharing the id gets a fresh id
-    // here, and same id AND scope with matching provenance — the current
-    // definition wins.
     const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(orderedDefs, state.customAttributes);
     if(defsSkipped) toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
     if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
-    // Definitions re-created under a fresh id (or reused across an earlier
-    // mint) bind their payload's values to the RESOLVED id.
+    // Definitions re-created under a fresh id (or reused across an earlier mint)
+    // bind their payload's values to the RESOLVED id.
     data = remapImportedCustomValues(data, renameByPair);
-    // The remap returns NEW element objects with their value keys rewritten to the
-    // resolved definition ids, so the fitting entities have to be taken from its
-    // output. Keeping the pre-remap array here silently discarded the remapped
-    // values: definitions were renamed and the elements still pointed at the old
-    // keys, so every appended custom value dangled.
-    const finalNodes = (Array.isArray(data?.nodes) ? data.nodes : []).slice(0, nodeRoom);
-    const finalEdges = fitEdges(finalNodes, Array.isArray(data?.edges) ? data.edges : []);
+    // The remap returns NEW element objects, so the surviving entries are taken from
+    // its output — keeping the pre-remap array silently discarded every value whose
+    // definition had been renamed.
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
     const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
-    // Sanitise only what can fit: the payload's own defaults are resolved onto its
-    // survivors, so the elements that are about to be discarded neither spend
-    // capacity nor get a say in what the survivors resolve to.
-    materializeDefaults(finalNodes, finalEdges, data?.settings || {});
-    const sane = sanitizeState({...data, nodes: finalNodes, edges: finalEdges, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, hostIds);
+    // Phase 4 — pair each survivor with the payload entry it came from.
+    //
+    // The plan resolves IDENTITY (which node an edge really reaches, what id a node
+    // really gets); the payload supplies CONTENT (values, labels, styling). Each pass
+    // is good at exactly one of those. The plan is also read against the payload's own
+    // uncapped definitions, where two foreign keys that truncate to the same
+    // 128-character id collapse and one value is lost — so its content is not
+    // trustworthy, and the authoritative read below uses the payload's.
+    //
+    // Pairing is positional and the positions are taken once, from the same two
+    // lists: the plan is the payload with invalid and dangling entries removed, so
+    // walking both in order and advancing the raw list only when the plan contains
+    // that entry reconstructs the correspondence exactly. Relying on `indexOf` into
+    // the plan instead silently shifted by one the first time the plan dropped a
+    // dangling edge — the survivor then wore the dropped edge's content.
+    const validRawNodes = (Array.isArray(data?.nodes) ? data.nodes : []).filter(isRecord);
+    // Nodes: the plan holds every valid node, so the k-th planned node is the k-th
+    // valid raw node.
+    const keptNodesSource = keptPlannedNodes.map((plannedNode, k) => {
+      const raw = validRawNodes[k];
+      return { ...(isRecord(raw) ? raw : {}), id: plannedNode.id };
+    });
+    // Remap first, so the content already names the definitions this pass will use.
+    data = remapImportedCustomValues(data, renameByPair);
+    // Edges: the plan drops dangling ones, so a raw edge is consumed only when the plan
+    // contains it. Matching is by the payload's own endpoints, which the plan preserved
+    // for every edge it kept.
+    const remappedEdges = (Array.isArray(data?.edges) ? data.edges : []).filter(isRecord);
+    const usedRawEdges = new Set<number>();
+    const keptEdgesSource = keptPlannedEdges.map(plannedEdge => {
+      let match = -1;
+      for(let i = 0; i < remappedEdges.length; i++){
+        if(usedRawEdges.has(i)) continue;
+        if(String(remappedEdges[i].from) === String(plannedEdge.from)
+          && String(remappedEdges[i].to) === String(plannedEdge.to)
+          && String(remappedEdges[i].id ?? '') === String(plannedEdge.id)){
+          match = i; break;
+        }
+      }
+      // Fall back to endpoint agreement alone: a payload id may have been normalised.
+      if(match < 0){
+        for(let i = 0; i < remappedEdges.length; i++){
+          if(usedRawEdges.has(i)) continue;
+          if(String(remappedEdges[i].from) === String(plannedEdge.from)
+            && String(remappedEdges[i].to) === String(plannedEdge.to)){ match = i; break; }
+        }
+      }
+      if(match >= 0) usedRawEdges.add(match);
+      const raw = match >= 0 ? remappedEdges[match] : {};
+      return { ...raw, id: plannedEdge.id, from: plannedEdge.from, to: plannedEdge.to };
+    });
+    // Resolve the visual the source document drew, using the defaults THAT document
+    // was opened with. `data.settings` is only what the file spelled out; a payload
+    // that omits them entirely is still opened against the built-in defaults, so
+    // passing the raw object resolved against nothing and the elements arrived at
+    // the host's styling.
+    materializeDefaults(keptNodesSource, keptEdgesSource, effectiveDefaults(data?.settings));
+    const sane = sanitizeState({...data, nodes: keptNodesSource, edges: keptEdgesSource, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, hostIds);
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -1129,7 +1149,11 @@
     const capped = takeImportDropped();
     // Entries cut by the *document* ceiling, on top of whatever the payload itself
     // lost while it was sanitised.
-    capped.nodes += droppedBeforeResolve;
+    // What the payload itself could not express (invalid entries) plus what did not
+    // fit. Invalid entries are the payload's problem and stay silent; capacity is
+    // the destination's, and is reported.
+    capped.nodes += droppedByCap.nodes;
+    capped.edges += droppedByCap.edges;
     capped.edges += validEdges.length - keptEdges.length;
     const lost = capped.nodes + capped.edges;
     // Truncation first: it means the document itself did not fit, so the counts
