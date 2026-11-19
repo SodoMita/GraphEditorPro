@@ -2,24 +2,7 @@
   // exceeds the safe-integer range is unusable for arithmetic allocation; reset
   // to a fresh safe range instead of looping on a counter that cannot advance.
   function allocateLocalId(prefix: string, used: Set<string>, start: number): { id: string; next: number } {
-    let counter = safeGraphCounter(start, 1);
-    const tried = new Set<number>();
-    while(used.has(prefix + counter)){
-      if(counter >= Number.MAX_SAFE_INTEGER || tried.has(counter)){
-        let suffix = 0, candidate = '';
-        do {
-          candidate = prefix + Date.now().toString(36) + (suffix ? '-' + suffix : '');
-          suffix++;
-        } while(used.has(candidate));
-        used.add(candidate);
-        return { id: candidate, next: 1 };
-      }
-      tried.add(counter);
-      counter++;
-    }
-    const id = prefix + counter;
-    used.add(id);
-    return { id, next: counter < Number.MAX_SAFE_INTEGER ? counter + 1 : 1 };
+    return GraphPatchCore.allocateId(prefix, used, start);
   }
   function takeNextGraphId(prefix: 'n' | 'e'): string {
     const current = prefix === 'n' ? state.nextNode : state.nextEdge;
@@ -42,10 +25,7 @@
     return allocated.id;
   }
   function advanceCounterFromId(current: number, id: unknown): number {
-    const base = safeGraphCounter(current, 1);
-    const num = Number((String(id ?? '').match(/\d+$/)||[0])[0]);
-    if(!Number.isSafeInteger(num) || num < base) return base;
-    return num < Number.MAX_SAFE_INTEGER ? num + 1 : 1;
+    return GraphPatchCore.advanceCounter(current, id);
   }
   function setMode(mode, render=true){
     if(mode !== 'edge') pendingEdgeFrom = null;
@@ -1195,7 +1175,7 @@
     // the edge is dropped. Definition minting below is limited to the edges
     // that will actually materialize — a dropped edge must not leave a
     // phantom definition (and its values) behind.
-    const carriedNodeIds = new Set(data.nodes.map(n => String(n?.id)));
+    const carriedNodeIds = new Set<string>(data.nodes.map(n => String(n?.id)));
     const endpointFate = (id: unknown): 'pasted' | 'existing' | 'absent' => {
       const key = String(id ?? '');
       if(rejectedNodeIds.has(key)) return 'absent';
@@ -1462,102 +1442,23 @@
       if(resolved) entity.custom = resolved; else delete entity?.custom;
     }
     if(exactPaste){
-      // Exact paste is a *merge*, not a clone pass. Each carried id names one
-      // entity: if the document already has it, that object is updated and no
-      // second copy is made. Only keys present in the payload are written, so
-      // unrelated fields an existing node/edge acquired since the copy stay
-      // intact; the node order is left alone as well. Coordinates, however,
-      // are restored verbatim (no offset and no free-spot search).
-      const valuesEqual = (a: unknown, b: unknown): boolean => {
-        if(a === b) return true;
-        if(isRecord(a) && isRecord(b)){
-          const ak = Object.keys(a), bk = Object.keys(b);
-          return ak.length === bk.length && ak.every(k => valuesEqual(a[k], b[k]));
-        }
-        return false;
-      };
-      // Custom values are merged key by key, never as a whole map: a payload
-      // carrying only p1 must leave the document's unrelated p2 untouched.
-      const mergeCustom = (target: AnyRecord, carriedCustom: unknown) => {
-        const incoming = cloneCustomMap(carriedCustom);
-        if(!incoming) return false;
-        const out: AnyRecord = Object.create(null);
-        if(isRecord(target.custom)) for(const key of Object.keys(target.custom)) out[key] = target.custom[key];
-        let changed = false;
-        for(const key of Object.keys(incoming)){
-          if(!Object.prototype.hasOwnProperty.call(out, key) || !valuesEqual(out[key], incoming[key])){
-            out[key] = incoming[key]; changed = true;
-          }
-        }
-        if(changed) target.custom = out;
-        return changed;
-      };
-      const mergeCarried = (target: AnyRecord, carried: AnyRecord, keep: string[] = []) => {
-        let changed = false;
-        for(const key of Object.keys(carried)){
-          if(key === 'id' || key === 'custom' || keep.includes(key)) continue;
-          const incoming = carried[key];
-          if(!valuesEqual(target[key], incoming)){ target[key] = incoming; changed = true; }
-        }
-        if(mergeCustom(target, carried.custom)) changed = true;
-        return changed;
-      };
-      const nodeById = new Map(state.nodes.map(n => [n.id, n] as [string, GraphNode]));
-      const edgeById = new Map(state.edges.map(e => [e.id, e] as [string, GraphEdge]));
-      const pastedNodeIds: string[] = [];
-      const pastedEdgeIds: string[] = [];
-      let changed = false;
-      let nextFreeOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1) + 1;
-      for(const orig of [...data.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0))){
-        const node: AnyRecord = cloneNode(orig);
-        const existing = nodeById.get(node.id);
-        // Only coordinates actually carried by the clipboard are written. A
-        // partial payload that omits x/y must never reset a stored position.
-        for(const axis of ['x','y'] as const){
-          if(Object.prototype.hasOwnProperty.call(node, axis)){
-            const numeric = Number(node[axis]);
-            node[axis] = Number.isFinite(numeric) ? numeric : (existing ? finite(existing[axis], 0) : 0);
-          } else if(existing){
-            delete node[axis];
-          } else {
-            node[axis] = 0;
-          }
-        }
-        if(existing){
-          if(mergeCarried(existing, node, ['order'])) changed = true;
-          pastedNodeIds.push(existing.id);
-        } else {
-          if(state.nodes.length >= MAX_GRAPH_NODES){ droppedNodes++; continue; }
-          state.nextNode = advanceCounterFromId(state.nextNode, node.id);
-          const carriedOrder = Number(node.order);
-          node.order = Number.isFinite(carriedOrder) ? carriedOrder : nextFreeOrder++;
-          state.nodes.push(node as GraphNode); nodeById.set(node.id, node as GraphNode);
-          pastedNodeIds.push(node.id); changed = true;
-        }
-      }
-      const pastedNodeIdSet = new Set(pastedNodeIds);
-      for(const { entity: orig } of materializedEdges){
-        // Never create an edge whose carried endpoint was dropped by the cap:
-        // it would be dangling and the loader would discard it on reopen.
-        const from = String(orig.from ?? ''), to = String(orig.to ?? '');
-        if((carriedNodeIds.has(from) && !pastedNodeIdSet.has(from)) ||
-           (carriedNodeIds.has(to) && !pastedNodeIdSet.has(to))){ droppedEdges++; continue; }
-        const edge = cloneEdge(orig) as GraphEdge;
-        const existing = edgeById.get(edge.id);
-        if(existing){
-          if(mergeCarried(existing, edge)) changed = true;
-          pastedEdgeIds.push(existing.id);
-        } else {
-          if(state.edges.length >= MAX_GRAPH_EDGES){ droppedEdges++; continue; }
-          state.nextEdge = advanceCounterFromId(state.nextEdge, edge.id);
-          // Endpoints are carried verbatim: a pasted node reuses its own id,
-          // an external endpoint is a pre-existing node in this document.
-          state.edges.push(edge); edgeById.set(edge.id, edge);
-          pastedEdgeIds.push(edge.id); changed = true;
-        }
-      }
+      // The DOM-free core owns the exact merge semantics. This adapter owns
+      // only the clipboard/UI side effects: counters, selection, history,
+      // rendering, toasts and autosave stay here.
+      const result = GraphPatchCore.applyExactPatch(state, {
+        nodes: data.nodes,
+        edges: materializedEdges.map(m => m.entity),
+      }, {
+        maxNodes: MAX_GRAPH_NODES,
+        maxEdges: MAX_GRAPH_EDGES,
+        carriedNodeIds,
+      });
+      droppedNodes += result.droppedNodes;
+      droppedEdges += result.droppedEdges;
+      const changed = result.changed;
+      const pastedNodeIds = result.pastedNodeIds;
+      const pastedEdgeIds = result.pastedEdgeIds;
       if(changed || definitionsChanged){
-        if(data.nodes.length) state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
         invalidateGraphIndex();
         pushHistory('paste in place');
       }

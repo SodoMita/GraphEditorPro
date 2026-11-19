@@ -38,10 +38,13 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 | `src/app/80-ui.ts` | Event wiring and responsive view controls |
 | `src/app/90-bootstrap.ts` | Application initialization |
 | `src/app/types.d.ts` | Shared graph and UI type declarations |
+| `src/core/graph-patch.ts` | DOM-free graph change core used by clipboard paste and reusable by server updates |
 | `src/template.html` | Semantic page markup |
 | `src/styles.css` | All application styles |
 
 `index.html` is generated and should not be edited directly.
+
+`src/core/graph-patch.ts` is the reusable change-application layer. `GraphPatchCore.applyExactPatch(target, patch, options)` mutates a plain graph-shaped target (`nodes`, `edges`, `nextNode`, `nextEdge`) and reports what changed; it has no DOM, clipboard, history, or toast dependencies. `GraphPatchCore.applyServerChange(target, change, options)` wraps it with idempotency and monotonic-revision checks for server-delivered patches. Clipboard paste in `src/app/30-graph-editing.ts` is a thin adapter that validates clipboard data, calls the same core, then performs selection/history/render/save side effects.
 
 ## Paste in place
 

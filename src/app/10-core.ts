@@ -1819,8 +1819,7 @@
   // Counters derived from ids must stay exactly representable: an unsafe
   // integer cannot be incremented, which would make id allocation loop.
   function safeGraphCounter(value: unknown, fallback = 1): number {
-    const numeric = Number(value);
-    return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : fallback;
+    return GraphPatchCore.safeCounter(value, fallback);
   }
   function positiveInteger(value: unknown, fallback: number): number {
     const numeric = Math.trunc(finite(value, fallback));

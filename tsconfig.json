@@ -28,6 +28,7 @@
   },
   "files": [
     "src/app/types.d.ts",
+    "src/core/graph-patch.ts",
     "src/app/00-i18n.ts",
     "src/app/10-core.ts",
     "src/app/20-rendering.ts",

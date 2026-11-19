@@ -53,6 +53,11 @@ inv('import paths never re-decode an already-internal identity (originFromForeig
 inv('exact-pair merge requires recorded origin equality (no "no origin = free merge")', /pairOrigin === incOriginPair/.test(imp) && !imp.includes('!pairOrigin || pairOrigin === incOriginPair'));
 inv('exact-pair default identity is the existing definition\'s own id', /String\(\(pairHit as AnyRecord\)\?\.origin \?\? ''\)\.trim\(\) \|\| String\(pairHit\?\.id \?\? ''\)\.trim\(\)/.test(imp));
 
+// --- Reusable change core ---
+inv('exact paste applies through the DOM-free GraphPatchCore', /GraphPatchCore\.applyExactPatch\(state/.test(paste));
+inv('shared safe-counter/allocator helpers delegate to the core', /GraphPatchCore\.safeCounter/.test(core) && /GraphPatchCore\.allocateId/.test(paste) && /GraphPatchCore\.advanceCounter/.test(paste));
+inv('server changes reuse the same exact-patch core', /function applyServerChange/.test(readFileSync(join(root, 'src/core/graph-patch.ts'), 'utf8')));
+
 // --- Paste exact-pair branch: same rule (P3, ⑳) ---
 inv('paste exact-pair: an origin-less destination is evidence only by its own id', /String\(existing\?\.origin \?\? ''\)\.trim\(\) \|\| String\(existing\?\.id \?\? ''\)\.trim\(\)/.test(paste));
 inv('paste no longer free-merges an unproven foreign key onto an origin-less property', !paste.includes('if(!existingOrigin) return true;'));
