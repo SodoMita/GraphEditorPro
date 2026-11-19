@@ -607,8 +607,8 @@
         strokeSize:2.4, strokeStyle:'solid', arrowSize: DEFAULT_ARROW_SIZE
       },
       // Per-type style overrides: { 'typeName': { color, shape, width, height, ... }, ... }
-      nodeTypeStyles: {},
-      edgeTypeStyles: {},
+      nodeTypeStyles: Object.create(null),
+      edgeTypeStyles: Object.create(null),
       // Style presets: saved visual styles that can be applied to selection.
       // Each preset: { name, node?: {...style}, edge?: {...style} }
       stylePresets: []
@@ -1389,6 +1389,10 @@
   // Swap in the rebuilt element when their content key moved on; otherwise
   // this is a no-op.
   function refreshSelectionCustomSection(host: HTMLElement, cacheKey: string, scope: 'graph' | 'node' | 'edge', targets: CustomPropTarget[], multi: boolean): void {
+    if(customPropHostHidden(host)){
+      mountCustomProps(host, cacheKey, cacheKey, scope, targets, multi);
+      return;
+    }
     const element = customPropsSection(cacheKey, scope, targets, multi);
     if(element.parentNode === host) return; // still mounted and current
     const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
@@ -1413,6 +1417,8 @@
     if(placeholder){
       const marker = host.querySelector(`[data-cp-ph="${placeholder}"]`);
       if(marker){ marker.replaceWith(element); return; }
+      const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
+      if(current){ if(current !== element) current.replaceWith(element); return; }
       // The placeholder vanished since the request was made (e.g. the
       // selection was cleared): the request is stale and must not clobber
       // whatever the host shows now — least of all "Nothing selected.".
@@ -1527,7 +1533,7 @@
         x: finite(n.x, i*35), y: finite(n.y, i*35),
         shape: n.shape ? validShape(n.shape) : '',  // empty = unset
         color: validColor(n.color) || '',            // empty = unset
-        type: String(n.type || '').slice(0,40),
+        type: sanitizeEntityType(n.type),
         order: clamp(Math.trunc(finite(n.order, i)), 0, 2147483647)
       };
       // Optional per-node overrides — only set if present in input
@@ -1560,7 +1566,7 @@
         label: String(e.label ?? '').slice(0,80),
         directed: dir as any, // legacy boolean compat: keep truthy for directed/mutual
         direction: dir,
-        type: String(e.type || '').slice(0,40)
+        type: sanitizeEntityType(e.type)
       };
       // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
       (edge as any).directed = dir !== 'undirected';
@@ -1586,12 +1592,12 @@
     settings.nodeStrokeColor = validColor(settings.nodeStrokeColor) || '#e2e8f0';
     settings.nodeStrokeSize = clamp(finite(settings.nodeStrokeSize, 2.2), 0, 20);
     settings.nodeStrokeStyle = STROKE_STYLES.includes(settings.nodeStrokeStyle) ? settings.nodeStrokeStyle : 'solid';
-    settings.nodeType = String(settings.nodeType || '').slice(0, 40);
+    settings.nodeType = sanitizeEntityType(settings.nodeType);
     settings.nodeLabelColor = validColor(settings.nodeLabelColor) || '#f8fafc';
     settings.nodeLabelFont = String(settings.nodeLabelFont || 'Inter').slice(0, 60);
     settings.nodeLabelSize = clamp(finite(settings.nodeLabelSize, 13), 4, 72);
     settings.nodeLabelPosition = LABEL_POSITIONS.includes(settings.nodeLabelPosition) ? settings.nodeLabelPosition : 'center';
-    settings.edgeType = String(settings.edgeType || '').slice(0, 40);
+    settings.edgeType = sanitizeEntityType(settings.edgeType);
     settings.edgeColor = validColor(settings.edgeColor) || '#94a3b8';
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
@@ -1642,7 +1648,7 @@
     nd.strokeSize = clamp(finite(nd.strokeSize, 2.2), 0, 20);
     nd.labelSize = clamp(finite(nd.labelSize, 13), 4, 72);
     nd.labelFont = String(nd.labelFont || 'Inter').slice(0, 60);
-    nd.type = String(nd.type || '').slice(0, 40);
+    nd.type = sanitizeEntityType(nd.type);
     settings.edgeDefaults = {
       ...base.settings.edgeDefaults,
       ...(isRecord(inputSettings.edgeDefaults) ? inputSettings.edgeDefaults : {})
@@ -1655,7 +1661,7 @@
     ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
-    ed.type = String(ed.type || '').slice(0, 40);
+    ed.type = sanitizeEntityType(ed.type);
     settings.inheritDefaults = settings.inheritDefaults !== false; // default true
     settings.noLabel = Boolean(settings.noLabel);
     // Sanitize type style maps
@@ -1687,16 +1693,18 @@
     if(isRecord(settings.nodeTypeStyles)){
       const cleaned: AnyRecord = Object.create(null);
       for(const [key, value] of Object.entries(settings.nodeTypeStyles)){
-        const style = sanitizeTypeStyle(value, true);
-        if(style) cleaned[String(key).slice(0,40)] = style;
+        const name = String(key).slice(0,40);
+        const style = name.trim() ? sanitizeTypeStyle(value, true) : undefined;
+        if(style) cleaned[name] = style;
       }
       settings.nodeTypeStyles = cleaned;
     } else { settings.nodeTypeStyles = Object.create(null); }
     if(isRecord(settings.edgeTypeStyles)){
       const cleaned: AnyRecord = Object.create(null);
       for(const [key, value] of Object.entries(settings.edgeTypeStyles)){
-        const style = sanitizeTypeStyle(value, false);
-        if(style) cleaned[String(key).slice(0,40)] = style;
+        const name = String(key).slice(0,40);
+        const style = name.trim() ? sanitizeTypeStyle(value, false) : undefined;
+        if(style) cleaned[name] = style;
       }
       settings.edgeTypeStyles = cleaned;
     } else { settings.edgeTypeStyles = Object.create(null); }
@@ -1862,5 +1870,14 @@
   }
   function nodeById(id){ return indexFor(nodeIndex, state.nodes).get(id); }
   function edgeById(id){ return indexFor(edgeIndex, state.edges).get(id); }
+  function sanitizeEntityType(value: unknown): string {
+    if(!value || typeof value === 'symbol') return '';
+    if(typeof value === 'string') return value.slice(0, 40);
+    try { return String(value).slice(0, 40); } catch { return ''; }
+  }
+  function getTypeStyle(styles: AnyRecord | null | undefined, type: unknown): AnyRecord | undefined {
+    const key = sanitizeEntityType(type);
+    return key && styles && Object.prototype.hasOwnProperty.call(styles, key) ? styles[key] : undefined;
+  }
 
   // === Visual resolution: merge per-item overrides → type styles → defaults ===

@@ -243,6 +243,7 @@
       // A newly revealed panel may have deferred custom-property sections —
       // mount them now, synchronously, so the panel is complete on first paint.
       if(target === 'data') flushDeferredCustomAttributes();
+      if(target === 'edit' || target === 'style') syncEditTypeLists();
       flushPendingCustomPropHosts();
     };
     // The sheet is sized by content (up to 60dvh), so its height cannot be
@@ -461,7 +462,7 @@
         // (rebuilding would destroy the next input the user taps on mobile)
         if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-elabel')){ e.label = t.value.slice(0,80); pushHistory('edit edge label'); queueRender(false); saveSoon(); }
-        else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edit edge type'); queueRender(false); saveSoon(); }
+        else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); syncEditTypeLists(); pushHistory('edit edge type'); queueRender(false, true); saveSoon(); }
         else if(t.matches('.edge-directed')){ const v = (t as any).value || (t as any).checked; const dir = normalizeDirection(v); (e as any).direction = dir; (e as any).directed = dir !== 'undirected'; pushHistory('edit edge directed'); queueRender(true); saveSoon(); }
         else if(t.matches('.edge-color')){ e.color = t.value; pushHistory('edit edge color'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-stroke-style')){ e.strokeStyle = t.value || undefined; pushHistory('edit edge stroke style'); queueRender(false); saveSoon(); }
@@ -688,7 +689,7 @@
     $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveSoon(); });
     $('#gridMajorColor').addEventListener('change', () => pushHistory('grid major color'));
     $('#gridMajorAlpha').addEventListener('change', e => { state.settings.gridMajorAlpha = clamp(finite(e.target.value,0.16),0,1); e.target.value=state.settings.gridMajorAlpha; pushHistory('grid major alpha'); updateGridBackground(); saveSoon(); });
-    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0,40); pushHistory('default node type'); queueRender(false); saveSoon(); });
+    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0,40); invalidateTypeLists(); pushHistory('default node type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defNodeShape').addEventListener('change', e => { nd().shape = e.target.value; state.settings.nodeShape = e.target.value; const el=$('#nodeShape'); if(el) el.value = e.target.value; pushHistory('default node shape'); queueRender(false); });
     $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el=$('#nodeColor'); if(el) el.value = e.target.value; queueRender(false); saveSoon(); });
     $('#defNodeColor').addEventListener('change', () => pushHistory('default node color'));
@@ -703,7 +704,7 @@
     $('#defNodeLabelFont').addEventListener('change', e => { nd().labelFont = e.target.value; pushHistory('default label font'); queueRender(false); });
     $('#defNodeLabelSize').addEventListener('change', e => { nd().labelSize = clamp(finite(e.target.value,13),4,72); e.target.value = nd().labelSize; pushHistory('default label size'); queueRender(false); });
     $('#defNodeLabelPos').addEventListener('change', e => { nd().labelPosition = e.target.value; pushHistory('default label position'); queueRender(false); });
-    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0,40); pushHistory('default edge type'); queueRender(false); saveSoon(); });
+    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0,40); invalidateTypeLists(); pushHistory('default edge type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
