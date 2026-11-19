@@ -606,13 +606,13 @@
   function existingNodeTypes(){
     const arr = state.nodes;
     const styles = state.settings?.nodeTypeStyles || null;
-    const defType = String(state.settings?.nodeDefaults?.type || '');
+    const defType = sanitizeEntityType(state.settings?.nodeDefaults?.type);
     if(nodeTypesCache.arr === arr && nodeTypesCache.len === arr.length && nodeTypesCache.rev === graphRev
       && nodeTypesCache.styles === styles && nodeTypesCache.defType === defType && nodeTypesCache.sRev === settingsTypeRev){
       return nodeTypesCache.types;
     }
     const set = new Set<string>();
-    for(const n of arr) if(n.type && n.type.trim()) set.add(n.type);
+    for(const n of arr){ const t = sanitizeEntityType(n.type); if(t.trim()) set.add(t); }
     if(styles){ for(const t of Object.keys(styles)) if(t && t.trim()) set.add(t); }
     if(defType && defType.trim()) set.add(defType);
     const types = [...set].sort();
@@ -626,13 +626,13 @@
   function existingEdgeTypes(){
     const arr = state.edges;
     const styles = state.settings?.edgeTypeStyles || null;
-    const defType = String(state.settings?.edgeDefaults?.type || '');
+    const defType = sanitizeEntityType(state.settings?.edgeDefaults?.type);
     if(edgeTypesCache.arr === arr && edgeTypesCache.len === arr.length && edgeTypesCache.rev === graphRev
       && edgeTypesCache.styles === styles && edgeTypesCache.defType === defType && edgeTypesCache.sRev === settingsTypeRev){
       return edgeTypesCache.types;
     }
     const set = new Set<string>();
-    for(const e of arr) if(e.type && e.type.trim()) set.add(e.type);
+    for(const e of arr){ const t = sanitizeEntityType(e.type); if(t.trim()) set.add(t); }
     if(styles){ for(const t of Object.keys(styles)) if(t && t.trim()) set.add(t); }
     if(defType && defType.trim()) set.add(defType);
     const types = [...set].sort();

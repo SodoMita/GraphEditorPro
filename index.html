@@ -4247,7 +4247,7 @@ function sanitizeState(input) {
             x: finite(n.x, i * 35), y: finite(n.y, i * 35),
             shape: n.shape ? validShape(n.shape) : '', // empty = unset
             color: validColor(n.color) || '', // empty = unset
-            type: String(n.type || '').slice(0, 40),
+            type: sanitizeEntityType(n.type),
             order: clamp(Math.trunc(finite(n.order, i)), 0, 2147483647)
         };
         // Optional per-node overrides — only set if present in input
@@ -4290,7 +4290,7 @@ function sanitizeState(input) {
             label: String(e.label ?? '').slice(0, 80),
             directed: dir, // legacy boolean compat: keep truthy for directed/mutual
             direction: dir,
-            type: String(e.type || '').slice(0, 40)
+            type: sanitizeEntityType(e.type)
         };
         // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
         edge.directed = dir !== 'undirected';
@@ -4325,12 +4325,12 @@ function sanitizeState(input) {
     settings.nodeStrokeColor = validColor(settings.nodeStrokeColor) || '#e2e8f0';
     settings.nodeStrokeSize = clamp(finite(settings.nodeStrokeSize, 2.2), 0, 20);
     settings.nodeStrokeStyle = STROKE_STYLES.includes(settings.nodeStrokeStyle) ? settings.nodeStrokeStyle : 'solid';
-    settings.nodeType = String(settings.nodeType || '').slice(0, 40);
+    settings.nodeType = sanitizeEntityType(settings.nodeType);
     settings.nodeLabelColor = validColor(settings.nodeLabelColor) || '#f8fafc';
     settings.nodeLabelFont = String(settings.nodeLabelFont || 'Inter').slice(0, 60);
     settings.nodeLabelSize = clamp(finite(settings.nodeLabelSize, 13), 4, 72);
     settings.nodeLabelPosition = LABEL_POSITIONS.includes(settings.nodeLabelPosition) ? settings.nodeLabelPosition : 'center';
-    settings.edgeType = String(settings.edgeType || '').slice(0, 40);
+    settings.edgeType = sanitizeEntityType(settings.edgeType);
     settings.edgeColor = validColor(settings.edgeColor) || '#94a3b8';
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
@@ -4381,7 +4381,7 @@ function sanitizeState(input) {
     nd.strokeSize = clamp(finite(nd.strokeSize, 2.2), 0, 20);
     nd.labelSize = clamp(finite(nd.labelSize, 13), 4, 72);
     nd.labelFont = String(nd.labelFont || 'Inter').slice(0, 60);
-    nd.type = String(nd.type || '').slice(0, 40);
+    nd.type = sanitizeEntityType(nd.type);
     settings.edgeDefaults = {
         ...base.settings.edgeDefaults,
         ...(isRecord(inputSettings.edgeDefaults) ? inputSettings.edgeDefaults : {})
@@ -4394,7 +4394,7 @@ function sanitizeState(input) {
     ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
-    ed.type = String(ed.type || '').slice(0, 40);
+    ed.type = sanitizeEntityType(ed.type);
     settings.inheritDefaults = settings.inheritDefaults !== false; // default true
     settings.noLabel = Boolean(settings.noLabel);
     // Sanitize type style maps
@@ -4656,8 +4656,21 @@ function indexFor(index, arr) {
 }
 function nodeById(id) { return indexFor(nodeIndex, state.nodes).get(id); }
 function edgeById(id) { return indexFor(edgeIndex, state.edges).get(id); }
+function sanitizeEntityType(value) {
+    if (!value || typeof value === 'symbol')
+        return '';
+    if (typeof value === 'string')
+        return value.slice(0, 40);
+    try {
+        return String(value).slice(0, 40);
+    }
+    catch {
+        return '';
+    }
+}
 function getTypeStyle(styles, type) {
-    return type && styles && Object.prototype.hasOwnProperty.call(styles, type) ? styles[type] : undefined;
+    const key = sanitizeEntityType(type);
+    return key && styles && Object.prototype.hasOwnProperty.call(styles, key) ? styles[key] : undefined;
 }
 // === Visual resolution: merge per-item overrides → type styles → defaults ===
 function nodeVisual(n) {
@@ -5413,15 +5426,17 @@ let nodeTypesCache = { arr: null, len: -1, rev: -1, styles: null, defType: '', s
 function existingNodeTypes() {
     const arr = state.nodes;
     const styles = state.settings?.nodeTypeStyles || null;
-    const defType = String(state.settings?.nodeDefaults?.type || '');
+    const defType = sanitizeEntityType(state.settings?.nodeDefaults?.type);
     if (nodeTypesCache.arr === arr && nodeTypesCache.len === arr.length && nodeTypesCache.rev === graphRev
         && nodeTypesCache.styles === styles && nodeTypesCache.defType === defType && nodeTypesCache.sRev === settingsTypeRev) {
         return nodeTypesCache.types;
     }
     const set = new Set();
-    for (const n of arr)
-        if (n.type && n.type.trim())
-            set.add(n.type);
+    for (const n of arr) {
+        const t = sanitizeEntityType(n.type);
+        if (t.trim())
+            set.add(t);
+    }
     if (styles) {
         for (const t of Object.keys(styles))
             if (t && t.trim())
@@ -5444,15 +5459,17 @@ let edgeTypesCache = { arr: null, len: -1, rev: -1, styles: null, defType: '', s
 function existingEdgeTypes() {
     const arr = state.edges;
     const styles = state.settings?.edgeTypeStyles || null;
-    const defType = String(state.settings?.edgeDefaults?.type || '');
+    const defType = sanitizeEntityType(state.settings?.edgeDefaults?.type);
     if (edgeTypesCache.arr === arr && edgeTypesCache.len === arr.length && edgeTypesCache.rev === graphRev
         && edgeTypesCache.styles === styles && edgeTypesCache.defType === defType && edgeTypesCache.sRev === settingsTypeRev) {
         return edgeTypesCache.types;
     }
     const set = new Set();
-    for (const e of arr)
-        if (e.type && e.type.trim())
-            set.add(e.type);
+    for (const e of arr) {
+        const t = sanitizeEntityType(e.type);
+        if (t.trim())
+            set.add(t);
+    }
     if (styles) {
         for (const t of Object.keys(styles))
             if (t && t.trim())
@@ -9058,10 +9075,22 @@ function pasteClipboardInternal(fromSystemClipboard) {
     // Clone the clipboard entities — the definition resolution below may
     // remap or coerce their custom values, which must never leak back into
     // the clipboard (a second paste has to start from the copied originals).
+    const cloneClipboardNode = (raw) => {
+        const c = cloneNode(raw);
+        if ('type' in c)
+            c.type = sanitizeEntityType(c.type);
+        return c;
+    };
+    const cloneClipboardEdge = (raw) => {
+        const c = cloneEdge(raw);
+        if ('type' in c)
+            c.type = sanitizeEntityType(c.type);
+        return c;
+    };
     const cloneClipboardData = (src) => ({
-        nodes: (Array.isArray(src.nodes) ? src.nodes : []).map((n) => cloneNode(n)),
-        edges: (Array.isArray(src.edges) ? src.edges : []).map((e) => cloneEdge(e)),
-        externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).map((e) => cloneEdge(e)),
+        nodes: (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord).map(cloneClipboardNode),
+        edges: (Array.isArray(src.edges) ? src.edges : []).filter(isRecord).map(cloneClipboardEdge),
+        externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).filter(isRecord).map(cloneClipboardEdge),
         customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
             .filter(isRecord)
             .map((def) => ({ ...def })),
@@ -15989,16 +16018,37 @@ function applyEdgeDefaultsToSelected() {
     toast(I18N.t('edge_defaults_applied_sel', { count: edgeIds.length }));
 }
 // === Type style management ===
-function resolveTypeStyleKey(styles, items, input) {
-    const raw = String(input || '').slice(0, 40);
-    if (!raw.trim())
-        return '';
-    if (getTypeStyle(styles, raw) || items.some(item => item.type === raw))
+function isKnownExactType(kind, candidate) {
+    if (!candidate)
+        return false;
+    if (kind === 'node') {
+        const styles = state.settings?.nodeTypeStyles;
+        return Boolean(styles && Object.prototype.hasOwnProperty.call(styles, candidate))
+            || sanitizeEntityType(state.settings?.nodeDefaults?.type) === candidate
+            || sanitizeEntityType(state.settings?.nodeType) === candidate
+            || state.nodes.some(n => sanitizeEntityType(n.type) === candidate);
+    }
+    const styles = state.settings?.edgeTypeStyles;
+    return Boolean(styles && Object.prototype.hasOwnProperty.call(styles, candidate))
+        || sanitizeEntityType(state.settings?.edgeDefaults?.type) === candidate
+        || sanitizeEntityType(state.settings?.edgeType) === candidate
+        || state.edges.some(e => sanitizeEntityType(e.type) === candidate);
+}
+function resolveTypeStyleKey(kind, input) {
+    const raw = sanitizeEntityType(input);
+    if (raw.trim() && isKnownExactType(kind, raw))
         return raw;
-    return raw.trim().slice(0, 40);
+    if (!input || typeof input === 'symbol')
+        return '';
+    try {
+        return String(input).trim().slice(0, 40);
+    }
+    catch {
+        return '';
+    }
 }
 function loadNodeTypeStyleForm(type) {
-    const key = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, type);
+    const key = resolveTypeStyleKey('node', type);
     const ts = getTypeStyle(state.settings.nodeTypeStyles, key) || {};
     $('#ntsColor').value = ts.color || '#0ea5e9';
     $('#ntsShape').value = ts.shape || '';
@@ -16013,7 +16063,7 @@ function loadNodeTypeStyleForm(type) {
     $('#ntsLabelFont').value = ts.labelFont || '';
 }
 function loadEdgeTypeStyleForm(type) {
-    const key = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, type);
+    const key = resolveTypeStyleKey('edge', type);
     const ts = getTypeStyle(state.settings.edgeTypeStyles, key) || {};
     $('#etsColor').value = ts.color || '#94a3b8';
     $('#etsStrokeSize').value = ts.strokeSize != null ? ts.strokeSize : 2.4;
@@ -16024,7 +16074,7 @@ function loadEdgeTypeStyleForm(type) {
     $('#etsLabelFont').value = ts.labelFont || '';
 }
 function saveNodeTypeStyle() {
-    const type = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, $('#nodeTypeStyleInput').value);
+    const type = resolveTypeStyleKey('node', $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16064,7 +16114,7 @@ function saveNodeTypeStyle() {
     toast(I18N.t('saved_style_type', { type: type }));
 }
 function saveEdgeTypeStyle() {
-    const type = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, $('#edgeTypeStyleInput').value);
+    const type = resolveTypeStyleKey('edge', $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16100,7 +16150,7 @@ function saveEdgeTypeStyle() {
     toast(I18N.t('saved_style_type', { type: type }));
 }
 function delNodeTypeStyle() {
-    const type = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, $('#nodeTypeStyleInput').value);
+    const type = resolveTypeStyleKey('node', $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16118,7 +16168,7 @@ function delNodeTypeStyle() {
     }
 }
 function delEdgeTypeStyle() {
-    const type = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, $('#edgeTypeStyleInput').value);
+    const type = resolveTypeStyleKey('edge', $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16136,7 +16186,7 @@ function delEdgeTypeStyle() {
     }
 }
 function clearNodeOverridesForType() {
-    const type = resolveTypeStyleKey(state.settings.nodeTypeStyles, state.nodes, $('#nodeTypeStyleInput').value);
+    const type = resolveTypeStyleKey('node', $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16167,7 +16217,7 @@ function clearNodeOverridesForType() {
     toast(count > 0 ? I18N.t('cleared_overrides_n', { n: count }) : I18N.t('no_nodes_type'));
 }
 function clearEdgeOverridesForType() {
-    const type = resolveTypeStyleKey(state.settings.edgeTypeStyles, state.edges, $('#edgeTypeStyleInput').value);
+    const type = resolveTypeStyleKey('edge', $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;

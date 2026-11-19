@@ -1533,7 +1533,7 @@
         x: finite(n.x, i*35), y: finite(n.y, i*35),
         shape: n.shape ? validShape(n.shape) : '',  // empty = unset
         color: validColor(n.color) || '',            // empty = unset
-        type: String(n.type || '').slice(0,40),
+        type: sanitizeEntityType(n.type),
         order: clamp(Math.trunc(finite(n.order, i)), 0, 2147483647)
       };
       // Optional per-node overrides — only set if present in input
@@ -1566,7 +1566,7 @@
         label: String(e.label ?? '').slice(0,80),
         directed: dir as any, // legacy boolean compat: keep truthy for directed/mutual
         direction: dir,
-        type: String(e.type || '').slice(0,40)
+        type: sanitizeEntityType(e.type)
       };
       // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
       (edge as any).directed = dir !== 'undirected';
@@ -1592,12 +1592,12 @@
     settings.nodeStrokeColor = validColor(settings.nodeStrokeColor) || '#e2e8f0';
     settings.nodeStrokeSize = clamp(finite(settings.nodeStrokeSize, 2.2), 0, 20);
     settings.nodeStrokeStyle = STROKE_STYLES.includes(settings.nodeStrokeStyle) ? settings.nodeStrokeStyle : 'solid';
-    settings.nodeType = String(settings.nodeType || '').slice(0, 40);
+    settings.nodeType = sanitizeEntityType(settings.nodeType);
     settings.nodeLabelColor = validColor(settings.nodeLabelColor) || '#f8fafc';
     settings.nodeLabelFont = String(settings.nodeLabelFont || 'Inter').slice(0, 60);
     settings.nodeLabelSize = clamp(finite(settings.nodeLabelSize, 13), 4, 72);
     settings.nodeLabelPosition = LABEL_POSITIONS.includes(settings.nodeLabelPosition) ? settings.nodeLabelPosition : 'center';
-    settings.edgeType = String(settings.edgeType || '').slice(0, 40);
+    settings.edgeType = sanitizeEntityType(settings.edgeType);
     settings.edgeColor = validColor(settings.edgeColor) || '#94a3b8';
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
@@ -1648,7 +1648,7 @@
     nd.strokeSize = clamp(finite(nd.strokeSize, 2.2), 0, 20);
     nd.labelSize = clamp(finite(nd.labelSize, 13), 4, 72);
     nd.labelFont = String(nd.labelFont || 'Inter').slice(0, 60);
-    nd.type = String(nd.type || '').slice(0, 40);
+    nd.type = sanitizeEntityType(nd.type);
     settings.edgeDefaults = {
       ...base.settings.edgeDefaults,
       ...(isRecord(inputSettings.edgeDefaults) ? inputSettings.edgeDefaults : {})
@@ -1661,7 +1661,7 @@
     ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
-    ed.type = String(ed.type || '').slice(0, 40);
+    ed.type = sanitizeEntityType(ed.type);
     settings.inheritDefaults = settings.inheritDefaults !== false; // default true
     settings.noLabel = Boolean(settings.noLabel);
     // Sanitize type style maps
@@ -1870,8 +1870,14 @@
   }
   function nodeById(id){ return indexFor(nodeIndex, state.nodes).get(id); }
   function edgeById(id){ return indexFor(edgeIndex, state.edges).get(id); }
-  function getTypeStyle(styles: AnyRecord | null | undefined, type: string | null | undefined): AnyRecord | undefined {
-    return type && styles && Object.prototype.hasOwnProperty.call(styles, type) ? styles[type] : undefined;
+  function sanitizeEntityType(value: unknown): string {
+    if(!value || typeof value === 'symbol') return '';
+    if(typeof value === 'string') return value.slice(0, 40);
+    try { return String(value).slice(0, 40); } catch { return ''; }
+  }
+  function getTypeStyle(styles: AnyRecord | null | undefined, type: unknown): AnyRecord | undefined {
+    const key = sanitizeEntityType(type);
+    return key && styles && Object.prototype.hasOwnProperty.call(styles, key) ? styles[key] : undefined;
   }
 
   // === Visual resolution: merge per-item overrides → type styles → defaults ===

@@ -888,10 +888,20 @@
     // Clone the clipboard entities — the definition resolution below may
     // remap or coerce their custom values, which must never leak back into
     // the clipboard (a second paste has to start from the copied originals).
+    const cloneClipboardNode = (raw: AnyRecord): GraphNode => {
+      const c = cloneNode(raw);
+      if('type' in c) c.type = sanitizeEntityType(c.type);
+      return c;
+    };
+    const cloneClipboardEdge = (raw: AnyRecord): GraphEdge => {
+      const c = cloneEdge(raw);
+      if('type' in c) c.type = sanitizeEntityType(c.type);
+      return c;
+    };
     const cloneClipboardData = (src: AnyRecord) => ({
-      nodes: (Array.isArray(src.nodes) ? src.nodes : []).map((n: AnyRecord) => cloneNode(n)),
-      edges: (Array.isArray(src.edges) ? src.edges : []).map((e: AnyRecord) => cloneEdge(e)),
-      externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).map((e: AnyRecord) => cloneEdge(e)),
+      nodes: (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord).map(cloneClipboardNode),
+      edges: (Array.isArray(src.edges) ? src.edges : []).filter(isRecord).map(cloneClipboardEdge),
+      externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).filter(isRecord).map(cloneClipboardEdge),
       customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
         .filter(isRecord)
         .map((def: AnyRecord) => ({ ...def })),

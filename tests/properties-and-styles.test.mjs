@@ -664,3 +664,202 @@ test('saving, deleting, defaulting, and undoing style types live-updates selecte
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+test('pasting tagged clipboard entities with non-string types completes cleanly, renders, and records undo', async () => {
+  const datalistValues = (document, selector) =>
+    [...document.querySelectorAll(`${selector} option`)].map(o => o.getAttribute('value'));
+
+  const graph = {
+    mode: 'select',
+    settings: {
+      nodeTypeStyles: { '42': { color: '#ef4444', shape: 'square' } },
+      edgeTypeStyles: { '7': { color: '#22c55e', strokeSize: 5 } },
+    },
+    nodes: [{ id: 'base', label: 'Base', x: -200, y: 0, order: 0 }],
+    edges: [],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+  const payload = JSON.stringify({
+    type: 'graph-editor-clipboard',
+    nodes: [
+      { id: 'p1', label: 'Numeric', x: 0, y: 0, order: 0, type: 42 },
+      { id: 'p2', label: 'Zero', x: 160, y: 0, order: 1, type: 0 },
+      { id: 'p3', label: 'Bool', x: 160, y: 160, order: 2, type: true },
+    ],
+    edges: [
+      { id: 'pe1', from: 'p1', to: 'p2', directed: true, type: 7 },
+    ],
+    externalEdges: [
+      { id: 'pe2', from: 'base', to: 'p1', directed: true, type: 99 },
+    ],
+  });
+
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom;
+  const { document } = window;
+  await nextFrame(window);
+
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => payload },
+  });
+
+  document.querySelector('#btnPaste2').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 80));
+
+  // All pasted nodes and edges render on the canvas and match string style keys.
+  const p1Shape = document.querySelector('#node-p1 .node-shape');
+  assert.ok(p1Shape, 'pasted node with numeric type renders on canvas');
+  assert.equal(p1Shape.getAttribute('fill'), '#ef4444');
+  assert.equal(p1Shape.tagName.toLowerCase(), 'rect');
+  assert.ok(document.querySelector('#node-p2 .node-shape'), 'pasted node with falsy numeric type renders');
+  assert.ok(document.querySelector('#node-p3 .node-shape'), 'pasted node with boolean type renders');
+
+  const pe1Line = document.querySelector('#edge-pe1 .edge-line');
+  assert.ok(pe1Line, 'pasted edge with numeric type renders on canvas');
+  assert.equal(pe1Line.getAttribute('stroke'), '#22c55e');
+  assert.ok(document.querySelector('#edge-pe2 .edge-line'), 'pasted external edge with numeric type renders');
+
+  // Type datalists offer normalized string types (excluding falsy 0).
+  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['42', 'true']);
+  assert.deepEqual(datalistValues(document, '#edgeTypeListEdit'), ['7', '99']);
+  assert.doesNotMatch(document.querySelector('#toast')?.textContent || '', /trim is not a function|failed/i);
+
+  // Undo step was recorded and cleanly reverts the entire paste; redo restores it.
+  const btnUndo = document.querySelector('#btnUndo');
+  assert.equal(btnUndo.disabled, false, 'paste records an undo step');
+  btnUndo.click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 40));
+  assert.equal(document.querySelector('#node-p1'), null, 'undo removes pasted node');
+  assert.equal(document.querySelector('#edge-pe1'), null, 'undo removes pasted edge');
+  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['42']);
+  assert.deepEqual(datalistValues(document, '#edgeTypeListEdit'), ['7']);
+
+  document.querySelector('#btnRedo').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 40));
+  assert.equal(document.querySelector('#node-p1 .node-shape')?.getAttribute('fill'), '#ef4444');
+  assert.deepEqual(datalistValues(document, '#nodeTypeListEdit'), ['42', 'true']);
+  assert.deepEqual(datalistValues(document, '#edgeTypeListEdit'), ['7', '99']);
+
+  // Single-node tagged paste with numeric type also populates #selNodeType and #nodeTypeList.
+  const soloPayload = JSON.stringify({
+    type: 'graph-editor-clipboard',
+    nodes: [{ id: 'solo', label: 'Solo', x: -50, y: -150, order: 0, type: 108 }],
+    edges: [],
+    externalEdges: [],
+  });
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async () => {}, readText: async () => soloPayload },
+  });
+  document.querySelector('#btnPaste2').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 80));
+  assert.ok(document.querySelector('#node-solo .node-shape'), 'single pasted node with numeric type renders');
+  assert.equal(document.querySelector('#selNodeType')?.value, '108');
+  assert.deepEqual(datalistValues(document, '#nodeTypeList'), ['108', '42', 'true']);
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('default-only padded node and edge types can be styled, loaded, and deleted from their suggestions', async () => {
+  const datalistValues = (document, selector) =>
+    [...document.querySelectorAll(`${selector} option`)].map(o => o.getAttribute('value'));
+
+  const graph = {
+    mode: 'select',
+    settings: {
+      nodeTypeStyles: { padded: { color: '#00aa00', shape: 'square' } },
+    },
+    nodes: [
+      { id: 'inherit1', label: 'Inherit', x: -180, y: 0, order: 0 },
+      { id: 'exact1', label: 'Trimmed', x: 180, y: 0, order: 1, type: 'padded' },
+    ],
+    edges: [
+      { id: 'e1', from: 'inherit1', to: 'exact1', directed: true },
+    ],
+    viewBox: { x: -500, y: -330, w: 1000, h: 660 },
+  };
+
+  const { dom, errors } = createEditorDom(graph);
+  const { window } = dom;
+  const { document } = window;
+  await nextFrame(window);
+
+  // Set default node type to a padded name no node or style currently uses.
+  const defNodeType = document.querySelector('#defNodeType');
+  defNodeType.value = ' padded';
+  defNodeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), [' padded', 'padded']);
+
+  // Selecting ' padded' loads a clean form (not 'padded's green) and saves under ' padded'.
+  const ntsInput = document.querySelector('#nodeTypeStyleInput');
+  const ntsColor = document.querySelector('#ntsColor');
+  const ntsShape = document.querySelector('#ntsShape');
+  ntsInput.value = ' padded';
+  ntsInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(ntsColor.value, '#0ea5e9', 'does not bleed the trimmed type style into the padded default');
+
+  ntsColor.value = '#ff0000';
+  ntsShape.value = 'hexagon';
+  document.querySelector('#btnSaveNodeTypeStyle').click();
+  await nextFrame(window);
+
+  assert.equal(ntsInput.value, ' padded', 'style input retains exact padded default type key');
+  assert.equal(document.querySelector('#node-inherit1 .node-shape').getAttribute('fill'), '#ff0000',
+    'untyped node inheriting the padded default type receives the saved red style');
+  assert.equal(document.querySelector('#node-exact1 .node-shape').getAttribute('fill'), '#00aa00',
+    'separate unpadded type style is preserved untouched');
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), [' padded', 'padded']);
+
+  // Undo/redo round-trips the padded default style cleanly through sanitizeState.
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 40));
+  assert.equal(document.querySelector('#node-inherit1 .node-shape').getAttribute('fill'), '#0ea5e9');
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), [' padded', 'padded']);
+  document.querySelector('#btnRedo').click();
+  await nextFrame(window);
+  await new Promise(r => window.setTimeout(r, 40));
+  assert.equal(document.querySelector('#node-inherit1 .node-shape').getAttribute('fill'), '#ff0000');
+
+  // Same workflow for a default-only padded edge type (with leading and trailing spaces).
+  const defEdgeType = document.querySelector('#defEdgeType');
+  defEdgeType.value = ' padded ';
+  defEdgeType.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.deepEqual(datalistValues(document, '#edgeTypeStyleList'), [' padded ']);
+
+  const etsInput = document.querySelector('#edgeTypeStyleInput');
+  const etsColor = document.querySelector('#etsColor');
+  const etsStrokeSize = document.querySelector('#etsStrokeSize');
+  etsInput.value = ' padded ';
+  etsInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+  etsColor.value = '#ff0000';
+  etsStrokeSize.value = '6';
+  document.querySelector('#btnSaveEdgeTypeStyle').click();
+  await nextFrame(window);
+
+  assert.equal(etsInput.value, ' padded ');
+  assert.equal(document.querySelector('#edge-e1 .edge-line').getAttribute('stroke'), '#ff0000',
+    'untyped edge inheriting the padded default type receives the saved red style');
+  assert.equal(document.querySelector('#edge-e1 .edge-line').getAttribute('stroke-width'), '6');
+
+  // Deleting the padded edge style removes it cleanly and reverts the inheriting edge.
+  document.querySelector('#btnDelEdgeTypeStyle').click();
+  await nextFrame(window);
+  assert.equal(document.querySelector('#edge-e1 .edge-line').getAttribute('stroke'), '#94a3b8');
+
+  // Brand-new type names with accidental whitespace still trim normally.
+  ntsInput.value = '  fresh  ';
+  ntsColor.value = '#123456';
+  document.querySelector('#btnSaveNodeTypeStyle').click();
+  assert.equal(ntsInput.value, 'fresh');
+  assert.deepEqual(datalistValues(document, '#nodeTypeStyleList'), [' padded', 'fresh', 'padded']);
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
