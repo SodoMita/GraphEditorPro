@@ -1,39 +1,6 @@
-  function nodeVisual(n){
-    const d = state.settings.nodeDefaults || {};
-    const effectiveType = n.type || d.type || '';
-    const ts = (n.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[n.type]) || {};
-    const dts = (d.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[d.type]) || {};
-    return {
-      shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
-      color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-      type: effectiveType,
-      width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
-      height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
-      strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
-      strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-      strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-      labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-      labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-      labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
-      labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-  }
-  function edgeVisual(e){
-    const d = state.settings.edgeDefaults || {};
-    const effectiveType = e.type || d.type || '';
-    const ts = (e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type]) || {};
-    const dts = (d.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[d.type]) || {};
-    return {
-      color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-      type: effectiveType,
-      strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-      strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-      arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
-      labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-      labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-      labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-  }
+  // nodeVisual/edgeVisual live in 10-core: the renderer is their first consumer
+  // but not the only one — append materialises the same resolution onto imported
+  // elements, and two copies of the ladder is how they drifted apart.
   function edgeArrowSize(e){
     const v = edgeVisual(e);
     return clamp(finite(v.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);

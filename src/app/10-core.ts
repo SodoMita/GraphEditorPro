@@ -224,7 +224,80 @@
       if(n.y + hh > maxY) maxY = n.y + hh;
     }
     if(!(maxX >= minX) || !(maxY >= minY)) return { x: 0, y: 0, w: 0, h: 0 };
-    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    return boundedBox(minX, minY, maxX, maxY);
+  }
+  // A box that is safe to write into a file.
+  //
+  // `w` is `maxX - minX`, and two finite coordinates do not guarantee a finite
+  // difference: nodes at -1e308 and 1e308 differ by 2e308, which is Infinity, and an
+  // Infinity origin subtracted from a finite one is -Infinity. JSON writes those as
+  // `null`, so a viewBox that was documented as numbers became unreadable while
+  // every input was finite.
+  //
+  // The fix is confined to what is actually broken. A large-but-real extent is
+  // legitimate — a graph spanning 50,000,000 units is a graph the user made, and
+  // clamping it would repeat the original bug of describing something other than the
+  // document — so finite values are passed through untouched. Only a non-finite one
+  // is replaced: the box collapses to the part of the range that is representable,
+  // which keeps the result numeric and keeps it inside coordinates that exist.
+  function boundedBox(minX, minY, maxX, maxY){
+    const span = (lo, hi) => {
+      const w = hi - lo;
+      if(Number.isFinite(w) && w > 0) return w;
+      // A non-finite span means the endpoints are beyond double precision of each
+      // other. Report the largest extent a finite origin can still subtract from,
+      // which is the full representable range.
+      return Number.isFinite(lo) && Number.isFinite(hi) ? Number.MAX_VALUE - Math.abs(lo) : 0;
+    };
+    const origin = (value) => Number.isFinite(value) ? value : 0;
+    return { x: origin(minX), y: origin(minY), w: span(minX, maxX), h: span(minY, maxY) };
+  }
+  // The visual value of every property, resolved from the element, its own type
+  // style, the default type's style, and the plain default — in that order.
+  //
+  // This lives in the core rather than beside the renderer because it is the
+  // definition of "what this element looks like", and more than one consumer needs
+  // it: the renderer draws it, and append has to materialise it onto an imported
+  // element before its own document's defaults disappear. Append resolving this
+  // itself is how it came to copy raw defaults — and then only the *default*
+  // type's style — while the renderer was doing something else.
+  function nodeVisual(n, settings = state.settings){
+    const s = settings || {};
+    const d = s.nodeDefaults || {};
+    const effectiveType = n.type || d.type || '';
+    const ts = (n.type && s.nodeTypeStyles && s.nodeTypeStyles[n.type]) || {};
+    const dts = (d.type && s.nodeTypeStyles && s.nodeTypeStyles[d.type]) || {};
+    return {
+      shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
+      color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+      type: effectiveType,
+      width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
+      height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
+      strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
+      strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+      strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+      labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+      labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+      labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
+      labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
+    };
+  }
+  function edgeVisual(e, settings = state.settings){
+    const s = settings || {};
+    const d = s.edgeDefaults || {};
+    const effectiveType = e.type || d.type || '';
+    const ts = (e.type && s.edgeTypeStyles && s.edgeTypeStyles[e.type]) || {};
+    const dts = (d.type && s.edgeTypeStyles && s.edgeTypeStyles[d.type]) || {};
+    return {
+      color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+      type: effectiveType,
+      strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+      strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+      arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
+      labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+      labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+      labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
+    };
   }
   // One floating origin for every surface inside the scene. It changes only
   // when the camera centre moves past a 1e6 snap boundary, so ordinary

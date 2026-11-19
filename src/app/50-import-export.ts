@@ -822,53 +822,57 @@
   // decided by the fields the element left unset, so nothing is overwritten.
   function materializeDefaults(nodes, edges, settings){
     if(settings?.inheritDefaults === false) return; // not inheriting: nothing to resolve
-    const nd = settings?.nodeDefaults || {};
-    const ed = settings?.edgeDefaults || {};
+    // Resolve through the same function that draws the element, so what is
+    // materialised is what the user was looking at.
+    //
+    // This used to copy the raw defaults, and then (once that was wrong for the
+    // same reason) only the *default* type's style. Both missed the case where the
+    // element carries its own `type`: nodeVisual resolves that element through
+    // `nodeTypeStyles[n.type]`, so a node explicitly typed `server` and drawn red at
+    // width 99 in its own document arrived with the host's raw default colour and
+    // width. Reimplementing the ladder here was the mistake; there is one resolver
+    // and this calls it.
+    //
+    // Only properties the element left unset are written, so nothing it states
+    // itself is touched. The document's own settings are passed explicitly rather
+    // than read from state: at this point the *imported* document's defaults are
+    // still in scope, and they are what the element rendered against.
+    const source = {
+      nodeDefaults: settings?.nodeDefaults || {},
+      edgeDefaults: settings?.edgeDefaults || {},
+      nodeTypeStyles: settings?.nodeTypeStyles || {},
+      edgeTypeStyles: settings?.edgeTypeStyles || {}
+    };
     const unset = (value) => value == null || value === '';
-    // Every property a document's `nodeDefaults`/`edgeDefaults` can carry and an
-    // element can inherit. `type` belongs here: nodeVisual/edgeVisual resolve an
-    // element's style through the default's *type style* (`d.type`), and append
-    // discards the incoming defaults, so an element that relied on its document's
-    // default type would lose that style for good. It is in both default maps
-    // (10-core normalises nodeDefaults.type and edgeDefaults.type for exactly
-    // this reason) and sanitizeState preserves it on elements, so the only gap
-    // was this list — which is why the two lists are kept next to each other and
-    // checked by a test against the default maps rather than trusted.
-    const NODE_FIELDS = ['shape','color','width','height','strokeColor','strokeSize',
-      'strokeStyle','labelColor','labelSize','labelPosition','labelFont','type'];
-    const EDGE_FIELDS = ['color','strokeSize','strokeStyle','arrowSize',
-      'labelColor','labelSize','labelFont','type'];
+    // Every property a document's defaults can carry and an element can inherit,
+    // derived from the resolver's own output so the two cannot drift: the lists
+    // below are its keys, and a property the resolver returns is materialisable by
+    // construction.
+    const visualKeys = Object.keys(nodeVisual({}));
+    const edgeVisualKeys = Object.keys(edgeVisual({}));
     // The caller has not sanitised yet — that is exactly what it is about to do —
     // so an entry may be null or a non-object. Skip those here and let the
     // sanitizer decide their fate; throwing would reject the whole import,
     // including the entries that are perfectly good.
     const isRecord = value => value != null && typeof value === 'object';
-    // A default's own *type* carries a style too, and the renderer resolves an
-    // element through it: nodeVisual(n) reads states.nodeTypeStyles[d.type] and
-    // lets it override the plain default. Copying only the raw default therefore
-    // materialised the wrong visual — a source graph whose nodes rendered red at
-    // width 99 through its default type arrived with the raw default colour and
-    // width 50. The effective value is what the element was actually drawn with,
-    // so that is what has to be materialised. Type styles win over the plain
-    // default exactly as they do in nodeVisual/edgeVisual.
-    const nodeTypeStyle = (nd.type && settings?.nodeTypeStyles && settings.nodeTypeStyles[nd.type]) || {};
-    const edgeTypeStyle = (ed.type && settings?.edgeTypeStyles && settings.edgeTypeStyles[ed.type]) || {};
-    const effectiveDefault = (defaults, typeStyle, field) =>
-      typeStyle[field] != null ? typeStyle[field] : defaults[field];
+    // `type` is the one property that is not inherited *through* the ladder: it is
+    // the input the ladder selects with, so it resolves to the effective type
+    // itself. Copying it keeps the element's style findable after the source
+    // document's type styles are gone.
     for(const n of nodes){
       if(!isRecord(n)) continue;
-      for(const field of NODE_FIELDS){
-        if(!unset(n[field])) continue;
-        const value = effectiveDefault(nd, nodeTypeStyle, field);
-        if(value != null) n[field] = value;
+      const resolved = nodeVisual(n, source);
+      for(const key of visualKeys){
+        if(!unset(n[key])) continue;
+        if(resolved[key] != null) n[key] = resolved[key];
       }
     }
     for(const e of edges){
       if(!isRecord(e)) continue;
-      for(const field of EDGE_FIELDS){
-        if(!unset(e[field])) continue;
-        const value = effectiveDefault(ed, edgeTypeStyle, field);
-        if(value != null) e[field] = value;
+      const resolved = edgeVisual(e, source);
+      for(const key of edgeVisualKeys){
+        if(!unset(e[key])) continue;
+        if(resolved[key] != null) e[key] = resolved[key];
       }
     }
   }
@@ -886,7 +890,72 @@
     // shape is normalised here, where every caller's input is known to be foreign.
     const incomingNodes = Array.isArray(data?.nodes) ? data.nodes : [];
     const incomingEdges = Array.isArray(data?.edges) ? data.edges : [];
-    materializeDefaults(incomingNodes, incomingEdges, data?.settings || {});
+    // Which entries can fit is decided FIRST, before anything is resolved for
+    // them.
+    //
+    // The document ceilings used to be applied at the very end, to lists that had
+    // already been validated, de-duplicated and resolved against. Everything
+    // downstream then described entries that were about to be thrown away:
+    // endpoint validation accepted an edge because its node was in the payload,
+    // and the node was then cut by the cap, leaving a dangling edge in a document
+    // that had passed its own checks; definitions were capped in payload order, so
+    // a dropped node's definition could take the last slot and a retained node lost
+    // its custom value. Capacity is a property of the destination, so it is
+    // applied here and every later stage sees only survivors.
+    const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
+    const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
+    // Only nodes can be dropped here: an edge's endpoints are not yet resolved, so
+    // there is no way to tell a dangling one until the payload is sanitised. Edges
+    // are capped by the ceiling in the tail, where their endpoints are known.
+    const droppedBeforeResolve = Math.max(0, incomingNodes.length - nodeRoom);
+    const fittingNodes = incomingNodes.slice(0, nodeRoom);
+    const hostIdsForFit = new Set(state.nodes.map(n => n.id));
+    // An endpoint may be an incoming node that fits OR a node the host already has
+    // — an appended edge is allowed to attach to the existing document, which is
+    // what sanitizeState's hostIds argument is for as well.
+    const fitEdges = (nodes, edges) => {
+      const retained = new Set(nodes.map(node => node?.id));
+      const endpointFits = (id) => retained.has(id) || hostIdsForFit.has(id);
+      return edges.filter(edge => endpointFits(edge?.from) && endpointFits(edge?.to));
+    };
+    const fittingEdges = fitEdges(fittingNodes, incomingEdges);
+    // The definitions worth spending the document's remaining capacity on are the
+    // ones its surviving nodes and edges actually reference. A definition the
+    // payload carries only for an element that did not fit is dead weight: importing
+    // it consumes a slot and, with one slot left, can be the very reason a retained
+    // node's own property is the one that gets skipped.
+    //
+    // Ordered, never filtered. Unreferenced definitions move to the back and still
+    // go through the capper, so one that does not fit is still counted and reported
+    // as skipped, and a payload that only declares definitions keeps declaring them.
+    // Within each group the payload order is untouched: the capper mints a colliding
+    // id in declaration order, so reordering would change which of two incoming
+    // properties keeps the id and which has to dodge.
+    //
+    // Matching is by id, and by the recorded name as a fallback for a payload whose
+    // values are keyed by name. Keys are taken from this payload BEFORE the remap,
+    // because that is when they still spell the carried ids that `id` holds.
+    const referencedIds = new Set<string>(), referencedNames = new Set<string>();
+    const carryValueKeys = (custom) => {
+      if(!isRecord(custom)) return;
+      for(const key of Object.keys(custom)){
+        referencedIds.add(String(key).replace(/^[^|]*\|/, ''));
+        referencedNames.add(String(key).toLowerCase());
+      }
+    };
+    for(const el of [...fittingNodes, ...fittingEdges]) if(isRecord(el)) carryValueKeys(el.custom);
+    carryValueKeys(data?.graphCustom);
+    const isReferenced = (def) => {
+      if(!isRecord(def)) return false;
+      const id = String(def.id ?? '').trim();
+      const name = String(def.name ?? '').trim().toLowerCase();
+      return (!!id && referencedIds.has(id)) || (!!name && referencedNames.has(name));
+    };
+    const carriedDefs = Array.isArray(data?.customAttributes) ? data.customAttributes : [];
+    const orderedDefs = [
+      ...carriedDefs.filter(def => isReferenced(def)),
+      ...carriedDefs.filter(def => !isReferenced(def))
+    ];
     // Sanitise against the *merged* node set, not just the incoming one.
     //
     // sanitizeState drops edges whose endpoints it cannot resolve, which is right
@@ -913,15 +982,26 @@
     // reuses for free, a different property sharing the id gets a fresh id
     // here, and same id AND scope with matching provenance — the current
     // definition wins.
-    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(data.customAttributes, state.customAttributes);
+    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(orderedDefs, state.customAttributes);
     if(defsSkipped) toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
     if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
     // Definitions re-created under a fresh id (or reused across an earlier
     // mint) bind their payload's values to the RESOLVED id.
     data = remapImportedCustomValues(data, renameByPair);
+    // The remap returns NEW element objects with their value keys rewritten to the
+    // resolved definition ids, so the fitting entities have to be taken from its
+    // output. Keeping the pre-remap array here silently discarded the remapped
+    // values: definitions were renamed and the elements still pointed at the old
+    // keys, so every appended custom value dangled.
+    const finalNodes = (Array.isArray(data?.nodes) ? data.nodes : []).slice(0, nodeRoom);
+    const finalEdges = fitEdges(finalNodes, Array.isArray(data?.edges) ? data.edges : []);
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
     const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
-    const sane = sanitizeState({...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, hostIds);
+    // Sanitise only what can fit: the payload's own defaults are resolved onto its
+    // survivors, so the elements that are about to be discarded neither spend
+    // capacity nor get a say in what the survivors resolve to.
+    materializeDefaults(finalNodes, finalEdges, data?.settings || {});
+    const sane = sanitizeState({...data, nodes: finalNodes, edges: finalEdges, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, hostIds);
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -993,16 +1073,12 @@
     // next reload: the toast says "appended", the user keeps the node until they
     // reopen the app, and then it is gone. The ceiling is a property of the whole
     // document, so append has to account for what the host already holds.
-    const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
-    const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
-    const keptNodes = sane.nodes.slice(0, nodeRoom);
-    // An endpoint is valid if it is a node that was kept OR one the host already
-    // has — an appended edge is allowed to attach to the existing document.
-    const keptIds = new Set(keptNodes.map(node => node.id));
-    const endpointOk = (id) => keptIds.has(id) || existingIds.has(id);
-    // A node that did not fit takes its incident edges with it; keeping them would
-    // leave edges pointing at nodes that are not there.
-    const keptEdges = validEdges.filter(edge => endpointOk(edge.from) && endpointOk(edge.to)).slice(0, edgeRoom);
+    // The node ceiling was applied before anything was resolved, so `sane.nodes`
+    // is already what fits. Edges still have a ceiling of their own to meet; their
+    // endpoints are resolved now, and `sanitizeState` dropped any that referenced a
+    // node which did not survive — which is why no dangling edge can remain here.
+    const keptNodes = sane.nodes;
+    const keptEdges = validEdges.slice(0, edgeRoom);
     state.nodes.push(...keptNodes);
     state.edges.push(...keptEdges);
     // sanitizeState(merged) is the authoritative definition list: current
@@ -1023,7 +1099,7 @@
     const capped = takeImportDropped();
     // Entries cut by the *document* ceiling, on top of whatever the payload itself
     // lost while it was sanitised.
-    capped.nodes += sane.nodes.length - keptNodes.length;
+    capped.nodes += droppedBeforeResolve;
     capped.edges += validEdges.length - keptEdges.length;
     const lost = capped.nodes + capped.edges;
     // Truncation first: it means the document itself did not fit, so the counts

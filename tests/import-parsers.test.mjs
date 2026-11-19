@@ -5483,3 +5483,127 @@ test('DOT export aliases a non-ASCII node name and brings the real id back', asy
   assert.equal(graph.edges[0].from, 'ключ');
   assert.equal(graph.edges[0].to, 'узел');
 });
+
+test('a capped append leaves no edge pointing at a node it dropped', async () => {
+  // Endpoint validation ran against existingIds, which already contained every
+  // incoming node — including the ones the cap was about to reject. With one slot
+  // left, an edge between two incoming nodes survived because both nodes were
+  // "known", and its node was then cut: the document held an edge to nothing and
+  // the reload discarded it silently. Capacity is decided before anything is
+  // resolved for it, so an edge is validated against what will exist.
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'full', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'pair',
+    nodes: [{id:'p1', x:0, y:0}, {id:'p2', x:100, y:0}],
+    edges: [{id:'pe', from:'p1', to:'p2'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3000, 'one node fits');
+  const known = new Set(graph.nodes.map(node => node.id));
+  const dangling = graph.edges.filter(edge => !known.has(edge.from) || !known.has(edge.to));
+  assert.deepEqual(dangling, [], 'no edge outlives the node it pointed at');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a dropped node cannot spend the definition a retained node needs', async () => {
+  // Definitions were capped in payload order, before the append knew which nodes
+  // fit. With one node slot and one definition slot, a dropped node's definition
+  // took the slot and the retained node lost its custom value — the value survived
+  // in the file but its definition did not, so it was pruned on the next load.
+  const hostDefs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'host' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'full', nodes, edges: [], customAttributes: hostDefs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'props',
+    nodes: [
+      {id:'keep', label:'KEEP', x:0, y:0, custom:{keepDef:'keepval'}},
+      {id:'drop', label:'DROPPED', x:100, y:0, custom:{dropDef:'dropval'}},
+    ],
+    edges: [],
+    // The dropped node's definition is declared first, so declaration order alone
+    // would give it the last slot.
+    customAttributes: [
+      {id:'dropDef', name:'dropDef', scope:'node', type:'string', origin:'dropDef'},
+      {id:'keepDef', name:'keepDef', scope:'node', type:'string', origin:'keepDef'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the node that fits is there');
+  const ids = new Set((graph.customAttributes || []).map(def => def.id));
+  assert.ok(ids.has('keepDef'), 'the retained node\'s definition was imported');
+  const keptValues = kept.custom || {};
+  const value = keptValues.keepDef;
+  assert.equal(value, 'keepval', 'and its value survived with it');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append materialises the style of an explicitly typed element', async () => {
+  // The resolver reads an element's OWN type style before the default's, so a node
+  // explicitly typed `server` is drawn from nodeTypeStyles.server. Materialisation
+  // resolved only the default type's style, so that node arrived with the host's
+  // raw default colour and width.
+  const {dom, errors} = createEditorDom({
+    title: 'host', nodes: [{id:'h1', x:0, y:0}], edges: [],
+    settings: {nodeDefaults: {type:'', color:'#000000', width:50}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'src',
+    nodes: [{id:'s1', label:'S', type:'server', x:900, y:900}],
+    edges: [],
+    settings: {
+      nodeDefaults: {type:'', color:'#111111'},
+      nodeTypeStyles: {server: {color:'#ff0000', width:99}},
+    },
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.color, '#ff0000', 'the explicit type\'s colour is materialised');
+  assert.equal(node.width, 99, 'the explicit type\'s width is materialised');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('extreme but finite coordinates still export a numeric viewBox', async () => {
+  // `w` is maxX - minX. Nodes at -1e308 and 1e308 are both finite, but their
+  // difference overflows to Infinity, and an Infinity origin minus a finite one is
+  // -Infinity. JSON writes those as null, so the export produced a viewBox that was
+  // not numeric while every input was. A large-but-real extent is left alone.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'a', x:-1e308, y:0}, {id:'b', x:1e308, y:0}], edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  const viewBox = exportedGraph(document).viewBox;
+  for (const key of ['x', 'y', 'w', 'h']) {
+    assert.equal(typeof viewBox[key], 'number', `${key} is a number, not null`);
+    assert.ok(Number.isFinite(viewBox[key]), `${key} is finite`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
