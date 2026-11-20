@@ -200,7 +200,7 @@ function frameStats(frames) {
   };
 }
 function summary(samples) {
-  const sorted = [...samples].sort((a, b) => a - b);
+  const sorted = samples.toSorted((a, b) => a - b);
   return sorted.length
     ? { median: +sorted[Math.floor(sorted.length / 2)].toFixed(2), p95: +sorted[Math.min(sorted.length - 1, Math.floor(0.95 * sorted.length))].toFixed(2) }
     : null;

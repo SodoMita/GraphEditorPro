@@ -266,7 +266,7 @@ async function profileOnce(page, kind) {
 }
 
 function summary(values) {
-  const sorted = [...values].sort((a, b) => a - b);
+  const sorted = values.toSorted((a, b) => a - b);
   const at = q => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
   return { median: +at(0.5).toFixed(2), p95: +at(0.95).toFixed(2), max: +sorted.at(-1).toFixed(2) };
 }
