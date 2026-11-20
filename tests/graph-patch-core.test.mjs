@@ -173,3 +173,41 @@ test('partial and rejected server changes remain retryable', () => {
   assert.equal(rejected.status, 'rejected');
   assert.equal(appliedIds.has('full'), false);
 });
+
+test('a malformed patch is rejected before anything is mutated', () => {
+  const target = graph();
+  const appliedIds = new Set();
+  const before = JSON.parse(JSON.stringify(target));
+
+  const withNull = core.applyServerChange(target, {
+    id: 'null-entry', revision: 1,
+    patch: { nodes: [{ id: 'a', label: 'changed' }, null], edges: [] },
+  }, { appliedIds });
+  assert.equal(withNull.status, 'invalid');
+  assert.equal(appliedIds.has('null-entry'), false, 'an invalid change is never acknowledged');
+  assert.deepEqual(JSON.parse(JSON.stringify(target)), before, 'the target is untouched');
+
+  for(const patch of [{ nodes: 'not-an-array' }, { nodes: [], edges: 'nope' }, { nodes: [1, 'two'] }]){
+    const result = core.applyServerChange(target, { id: 'shape', revision: 1, patch }, { appliedIds });
+    assert.equal(result.status, 'invalid', JSON.stringify(patch));
+    assert.equal(appliedIds.has('shape'), false);
+    assert.deepEqual(JSON.parse(JSON.stringify(target)), before);
+  }
+  assert.equal(core.validatePatchShape({ nodes: [{ id: 'a' }], edges: [] }), null);
+  assert.match(String(core.validatePatchShape({ edges: {} })), /not an array/);
+});
+
+test('an invalid change does not consume its revision', () => {
+  const target = graph();
+  const appliedIds = new Set();
+  const bad = core.applyServerChange(target, { id: 'x', revision: 5, patch: { nodes: null } },
+    { appliedIds, lastRevision: 4 });
+  assert.equal(bad.status, 'invalid');
+  // The transport can resend the corrected change at the same revision.
+  const good = core.applyServerChange(target, {
+    id: 'x', revision: 5, patch: { nodes: [{ id: 'a', label: 'Retried' }], edges: [] },
+  }, { appliedIds, lastRevision: 4 });
+  assert.equal(good.status, 'applied');
+  assert.equal(appliedIds.has('x'), true);
+  assert.equal(target.nodes.find(n => n.id === 'a').label, 'Retried');
+});

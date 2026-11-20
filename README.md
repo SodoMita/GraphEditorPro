@@ -48,7 +48,7 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 
 `index.html` is generated and should not be edited directly.
 
-`src/core/graph-patch.ts` is the reusable change-application layer. `GraphPatchCore.applyExactPatch(target, patch, options)` mutates a plain graph-shaped target (`nodes`, `edges`, `nextNode`, `nextEdge`) and reports what changed; it has no DOM, clipboard, history, or toast dependencies. `GraphPatchCore.applyServerChange(target, change, options)` wraps it with idempotency and monotonic-revision checks for server-delivered patches. Its result distinguishes `applied`, `partial`, and `rejected`: work affected by the document caps is not acknowledged, so the caller can retry it when capacity returns. Clipboard paste in `src/app/30-graph-editing.ts` is a thin adapter that validates clipboard data, calls the same core, then performs selection/history/render/save side effects.
+`src/core/graph-patch.ts` is the reusable change-application layer. `GraphPatchCore.applyExactPatch(target, patch, options)` mutates a plain graph-shaped target (`nodes`, `edges`, `nextNode`, `nextEdge`) and reports what changed; it has no DOM, clipboard, history, or toast dependencies. `GraphPatchCore.applyServerChange(target, change, options)` wraps it with idempotency and monotonic-revision checks for server-delivered patches. Its patch shape is validated before anything is mutated: a malformed change returns `invalid`, leaves the target untouched and is not acknowledged, so the transport can resend it at the same revision. Its result distinguishes `applied`, `partial`, and `rejected`: work affected by the document caps is not acknowledged, so the caller can retry it when capacity returns. Clipboard paste in `src/app/30-graph-editing.ts` is a thin adapter that validates clipboard data, calls the same core, then performs selection/history/render/save side effects.
 
 ## Paste in place
 
@@ -168,3 +168,22 @@ The interactive-rendering model mirrors the mechanisms draw.io uses, verified ag
 | Drag feedback | `mxGraphHandler.updateLivePreview` repaints moved states and all connected edges live | connected edges follow drags live up to a 2000-edge budget, then freeze until release |
 | Undo history | `mxUndoManager` caps at 100 entries (delta edits) | 100 entries plus a total-size cap, since this editor stores full-state snapshots |
 | Off-screen culling | none — SVG clips at paint time | none by default, plus an optional order-based visible-range filter that removes non-visible nodes from the DOM entirely |
+
+## Clipboard publication
+
+Copying writes the selection to the system clipboard for cross-tab paste. Three
+rules keep that safe:
+
+- **One publication at a time, newest wins.** A copy issued while a write is
+  still being verified waits in a single slot; the slot is claimed across every
+  await, so a copy that is no longer the newest is dropped instead of being
+  written late.
+- **Bounded verification.** The clipboard read that guards publication is
+  time-boxed. An unreadable or stalled read counts as "unknown", not as "someone
+  else's content", so a copy is never stranded indefinitely.
+- **Cross-tab ordering.** Tabs serialize against a lease in `localStorage`, and
+  every publication is checked against the newest stamp any tab has issued. An
+  older payload can therefore not land after a newer copy from another tab, and
+  fresh tabs compare against the newest issued copy rather than whichever write
+  happened to finish last. A deliberately restored clipboard-history item is
+  still pasteable: only a write this tab has not yet seen settle can reject it.

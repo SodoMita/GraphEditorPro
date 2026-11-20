@@ -47,6 +47,41 @@ function setClipboardWrite(window, payload, writeText, readText = async () => JS
     value: { writeText, readText },
   });
 }
+// A system clipboard shared by several tabs, plus the localStorage they share.
+// Writes are held until the test releases them, so cross-tab ordering can be
+// exercised deterministically.
+function createClipboardHub(){
+  const store = new Map();
+  const storage = {
+    getItem: key => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)); },
+    removeItem: key => { store.delete(key); },
+    clear: () => store.clear(),
+  };
+  const hub = {
+    text: '',
+    storage,
+    attach(window, tag){
+      const writes = [];
+      const pending = [];
+      Object.defineProperty(window.navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          readText: async () => hub.text,
+          writeText: (text) => {
+            writes.push(JSON.parse(text).nodes.map(n => n.id).join(','));
+            return new Promise(resolve => pending.push(() => { hub.text = text; resolve(); }));
+          },
+        },
+      });
+      return {
+        tag, writes,
+        release(){ while(pending.length) pending.shift()(); },
+      };
+    },
+  };
+  return hub;
+}
 function hotkey(window, key, modifiers) {
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles:true, cancelable:true, ...modifiers }));
 }
@@ -612,6 +647,7 @@ test('a newer stamped system payload wins even while the local write is pending'
 
   await selectNode(window, 'a', 300, 330);
   document.querySelector('#btnCopy').click();
+  await settle(window, 20);   // the publication turn is claimed asynchronously
   systemText = JSON.stringify({
     type: 'graph-editor-clipboard',
     nodes: [{ id: 'a', label: 'Other tab while pending', x: -200, y: 0, order: 0 }],
@@ -1112,4 +1148,139 @@ test('a restored older clipboard item is pasted in the source tab', async () => 
   assert.equal(graph.nodes.find(n => n.id === 'b').label, 'B');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
+});
+
+// --- Publication ordering: audit findings 1-3 -------------------------------
+
+test('a waiting copy is never published after a newer copy', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let systemText = '';
+  const writes = [];
+  const pending = [];
+  const gates = [];
+  let reads = 0;
+  const finish = () => { while(pending.length) pending.shift()(); };
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      // Copy snapshots resolve; the publication check for B hangs until
+      // released, which is the window in which C gets copied.
+      readText: () => {
+        reads++;
+        if(reads <= 2) return Promise.resolve('');
+        return new Promise(resolve => gates.push(() => resolve(systemText)));
+      },
+      writeText: (text) => {
+        const payload = JSON.parse(text);
+        writes.push(payload.clipboardStamp.s);
+        return new Promise(resolve => pending.push(() => { systemText = text; resolve(); }));
+      },
+    },
+  });
+
+  await selectNode(window, 'a', 300, 330); document.querySelector('#btnCopy').click();
+  await settle(window, 20);
+  await selectNode(window, 'b', 700, 330); document.querySelector('#btnCopy').click();
+  await settle(window, 20);
+  pending[0]();                              // copy 1 lands; copy 2 verifies and hangs
+  await settle(window, 40);
+  await selectNode(window, 'a', 300, 330); document.querySelector('#btnCopy').click();
+  await settle(window, 20);                  // C is copied during B's verification
+
+  assert.deepEqual(writes, [1], 'nothing is written while the publication slot is owned');
+
+  gates.forEach(release => release());
+  await settle(window, 400);                 // let the newest copy's bounded read expire
+  for(let i = 0; i < 4 && pending.length; i++){ finish(); await settle(window, 60); }
+
+  assert.deepEqual(writes, [1, 3], 'the superseded copy 2 is dropped; copy 3 is published');
+  assert.equal(JSON.parse(systemText).clipboardStamp.s, 3);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a stalled verification read cannot strand a waiting copy', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let systemText = '';
+  const writes = [];
+  const pending = [];
+  const finish = () => { while(pending.length) pending.shift()(); };
+  let reads = 0;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      readText: () => {
+        reads++;
+        if(reads <= 2) return Promise.resolve('');
+        return new Promise(() => {});     // never settles
+      },
+      writeText: (text) => {
+        writes.push(JSON.parse(text).nodes.map(n => n.id).join(','));
+        return new Promise(resolve => pending.push(() => { systemText = text; resolve(); }));
+      },
+    },
+  });
+
+  await selectNode(window, 'a', 300, 330); document.querySelector('#btnCopy').click();
+  await settle(window, 20);
+  await selectNode(window, 'b', 700, 330); document.querySelector('#btnCopy').click();
+  await settle(window, 20);
+  pending[0]();                              // A lands; B's verification read hangs forever
+  await settle(window, 700);                 // beyond the bounded publication read
+
+  for(let i = 0; i < 4 && pending.length; i++){ finish(); await settle(window, 60); }
+
+  assert.deepEqual(writes, ['a', 'b'], 'the bounded read lets the waiting copy publish');
+  assert.equal(JSON.parse(systemText).nodes[0].id, 'b');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('one tab publishes at a time so the newest copy is the one left behind', async () => {
+  const hub = createClipboardHub();
+  const tabA = createEditorDom(baseGraph);
+  const tabB = createEditorDom(baseGraph);
+  await settle(tabA.dom.window, 80); await settle(tabB.dom.window, 80);
+  // Two tabs sharing one system clipboard and one localStorage.
+  const clipA = hub.attach(tabA.dom.window, 'A');
+  const clipB = hub.attach(tabB.dom.window, 'B');
+  Object.defineProperty(tabA.dom.window, 'localStorage', { configurable: true, value: hub.storage });
+  Object.defineProperty(tabB.dom.window, 'localStorage', { configurable: true, value: hub.storage });
+
+  await selectNode(tabA.dom.window, 'a', 300, 330);
+  await selectNode(tabB.dom.window, 'b', 700, 330);
+  tabA.dom.window.document.querySelector('#btnCopy').click();
+  await settle(tabA.dom.window, 20);
+  // A is publishing. B copies afterwards, so B is the newer intent.
+  tabB.dom.window.document.querySelector('#btnCopy').click();
+  await settle(tabB.dom.window, 80);
+  assert.deepEqual(clipB.writes, [], 'B does not publish while A owns the clipboard');
+
+  clipA.release();                       // A's delayed write lands first
+  await settle(tabB.dom.window, 300);
+  clipB.release();                       // then B publishes its newer copy
+  await settle(tabB.dom.window, 200);
+
+  assert.deepEqual(clipA.writes, ['a']);
+  assert.deepEqual(clipB.writes, ['b'], 'the newer copy follows the older one');
+  assert.equal(JSON.parse(hub.text).nodes[0].id, 'b', 'A never lands after B');
+
+  // A fresh tab (no local copies) must paste the newest payload.
+  const fresh = createEditorDom(baseGraph);
+  await settle(fresh.dom.window, 80);
+  Object.defineProperty(fresh.dom.window, 'localStorage', { configurable: true, value: hub.storage });
+  setClipboard(fresh.dom.window, JSON.parse(hub.text));
+  await selectNode(fresh.dom.window, 'a', 300, 330);
+  hotkey(fresh.dom.window, 'v', { ctrlKey: true, altKey: true });
+  await settle(fresh.dom.window, 150);
+  const pasted = exportGraph(fresh.dom.window.document);
+  assert.equal(pasted.nodes.find(n => n.id === 'b').label, 'B');
+  assert.deepEqual(tabA.errors.map(e => e.message), []);
+  assert.deepEqual(tabB.errors.map(e => e.message), []);
+  assert.deepEqual(fresh.errors.map(e => e.message), []);
+  tabA.dom.window.close(); tabB.dom.window.close(); fresh.dom.window.close();
 });

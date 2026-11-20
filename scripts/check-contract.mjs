@@ -57,8 +57,12 @@ inv('exact-pair default identity is the existing definition\'s own id', /String\
 const ui = read('80-ui.ts');
 inv('editable matrix fields keep native shortcuts (only read-only inputs route to the graph)', /if\(isInput && !readonlyInput\) return;/.test(ui));
 inv('plain paste respects the produced key; physical KeyV is an Alt-only fallback', /const isV = key === 'v' \|\| \(ev\.altKey && ev\.code === 'KeyV'\)/.test(ui));
-inv('clipboard publication is serialized instead of issuing overlapping writes', /if\(clipboardWriteInFlight == null\)[\s\S]{0,400}?queuedClipboardWrite = attempt;/.test(paste));
-inv('only one clipboard write is in flight at a time', /let clipboardWriteInFlight: number \| null = null;/.test(paste));
+inv('clipboard publication is serialized instead of issuing overlapping writes', /function publishClipboardCopy[\s\S]{0,400}?queuedClipboardWrite = attempt;/.test(paste));
+inv('only one clipboard publication turn is held at a time', /let clipboardBusy = false;/.test(paste));
+inv('the newest copy is rechecked after every publication await', /attempt\.seq !== localClipboardSeq/.test(paste));
+inv('the publication verification read is bounded', /CLIPBOARD_PUBLISH_TIMEOUT_MS/.test(paste));
+inv('cross-tab publication is serialized and ordered by stamp', /awaitPublishTurn/.test(paste) && /publishIssuedStamp/.test(paste));
+inv('an invalid patch is rejected before mutation', /validatePatchShape\(change\.patch\)/.test(readFileSync(join(root, 'src/core/graph-patch.ts'), 'utf8')));
 
 // --- Reusable change core ---
 inv('exact paste applies through the DOM-free GraphPatchCore', /GraphPatchCore\.applyExactPatch\(state/.test(paste));

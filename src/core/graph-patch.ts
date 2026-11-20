@@ -161,12 +161,32 @@ const GraphPatchCore = (() => {
     return { id, next: counter < Number.MAX_SAFE_INTEGER ? counter + 1 : 1 };
   }
 
+  // A patch is validated as a whole before anything is mutated. A malformed
+  // entry must never leave the graph half-updated: the caller could not retry
+  // deterministically, and a partially applied change would look like success.
+  function validatePatchShape(patch: unknown): string | null {
+    if(!isRecord(patch)) return 'patch is not an object';
+    for(const key of ['nodes', 'edges'] as const){
+      if(!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+      const list = (patch as AnyRecord)[key];
+      if(!Array.isArray(list)) return `patch.${key} is not an array`;
+      for(const entry of list){
+        if(!isRecord(entry)) return `patch.${key} contains a non-object entry`;
+      }
+    }
+    return null;
+  }
+
   // Apply an exact (in-place) patch to a graph-shaped target. The target's
   // nodes/edges arrays and next counters are mutated; everything else is
   // returned as a report so the caller owns history/UI/side effects.
   function applyExactPatch(target: GraphPatchTarget, patch: ExactPatch, options: ExactPatchOptions = {}): ExactPatchResult {
-    const patchNodes = Array.isArray(patch?.nodes) ? patch.nodes : [];
-    const patchEdges = Array.isArray(patch?.edges) ? patch.edges : [];
+    // Only well-formed entries are considered: a null/primitive entry is
+    // reported as dropped instead of throwing halfway through the mutation.
+    const patchNodes = (Array.isArray(patch?.nodes) ? patch.nodes : []).filter(isRecord);
+    const patchEdges = (Array.isArray(patch?.edges) ? patch.edges : []).filter(isRecord);
+    const malformedNodes = (Array.isArray(patch?.nodes) ? patch.nodes.length : 0) - patchNodes.length;
+    const malformedEdges = (Array.isArray(patch?.edges) ? patch.edges.length : 0) - patchEdges.length;
     const maxNodes = options.maxNodes == null ? Number.MAX_SAFE_INTEGER : options.maxNodes;
     const maxEdges = options.maxEdges == null ? Number.MAX_SAFE_INTEGER : options.maxEdges;
     const carriedNodeIds = options.carriedNodeIds
@@ -179,8 +199,8 @@ const GraphPatchCore = (() => {
     let nextEdge = safeCounter(target.nextEdge, 1);
     let nextFreeOrder = target.nodes.reduce((m, n) => Math.max(m, Number(n.order) || 0), -1) + 1;
     let changed = false;
-    let droppedNodes = 0;
-    let droppedEdges = 0;
+    let droppedNodes = malformedNodes;
+    let droppedEdges = malformedEdges;
     const seenNodeIds = new Set<string>();
     const seenEdgeIds = new Set<string>();
 
@@ -278,6 +298,12 @@ const GraphPatchCore = (() => {
     if(change.revision <= lastRevision){
       return { ...empty, status: 'stale', id: change.id, revision: change.revision };
     }
+    // Shape first: an unapplied change must leave the target untouched so the
+    // caller can reject it (or fix it) without having to repair the graph.
+    const shapeProblem = validatePatchShape(change.patch);
+    if(shapeProblem){
+      return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: shapeProblem };
+    }
     const result = applyExactPatch(target, change.patch, options);
     const requested = (Array.isArray(change.patch.nodes) ? change.patch.nodes.length : 0)
       + (Array.isArray(change.patch.edges) ? change.patch.edges.length : 0);
@@ -291,6 +317,6 @@ const GraphPatchCore = (() => {
 
   return {
     isRecord, cloneCustomMap, cloneEntity, valuesEqual, mergeCustom, mergeCarried,
-    safeCounter, advanceCounter, allocateId, applyExactPatch, applyServerChange,
+    safeCounter, advanceCounter, allocateId, validatePatchShape, applyExactPatch, applyServerChange,
   };
 })();
