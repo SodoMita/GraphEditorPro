@@ -321,10 +321,10 @@
       } else {
         dialogCleanup = trapFallbackDialog(dialog, () => dialogEl === dialog, primary, cancel);
       }
-      setTimeout(() => {
-        primary.focus();
-        input?.select();
-      }, 0);
+      // The dialog is already open. A deferred focus could undo the user's
+      // first Tab (showModal may have focused the input synchronously).
+      primary.focus();
+      input?.select();
     });
   }
   /** Replace window.confirm with an in-app, translated, focus-trapped dialog. */

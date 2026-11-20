@@ -1008,8 +1008,11 @@ for (const native of [true, false]) {
     trigger.focus(); trigger.click(); save.focus(); save.click();
     const prompt = document.querySelector('.app-dialog');
     assert.ok(prompt, 'Save from selection opened the name prompt');
-    await nextFrame(window);
     assert.equal(document.activeElement, prompt.querySelector('input'));
+    const cancel = prompt.querySelector('[data-dialog-cancel]');
+    cancel.focus(); // where a quick Tab from the text field takes the user
+    await nextFrame(window);
+    assert.equal(document.activeElement, cancel, 'opening the prompt must not steal focus back on a later task');
     escape(prompt);
     assert.equal(prompt.isConnected, false);
     assert.ok(presets.open || presets.classList.contains('open'), 'Escape closed only the prompt');
