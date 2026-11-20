@@ -828,138 +828,15 @@
   // Materialising here is the only correct moment — after this the imported
   // document's defaults no longer exist anywhere. Which properties to copy is
   // decided by the fields the element left unset, so nothing is overwritten.
-  function materializeDefaults(nodes, edges, settings){
-    // `inheritDefaults: false` is NOT "nothing to resolve".
-    //
-    // The setting means newly created elements get their visual properties written out
-    // instead of left unset. It does not change how an element with an unset property
-    // is DRAWN — nodeVisual resolves it through the defaults either way. Returning
-    // early therefore skipped materialisation for a source document whose elements
-    // relied on those defaults, and they arrived at whatever the host's defaults said:
-    // a node drawn green at width 77 in its own document came in red at width 99.
-    // The document's visual result is what append has to preserve, and it is the same
-    // resolution either way.
-    // Resolve through the same function that draws the element, so what is
-    // materialised is what the user was looking at.
-    //
-    // This used to copy the raw defaults, and then (once that was wrong for the
-    // same reason) only the *default* type's style. Both missed the case where the
-    // element carries its own `type`: nodeVisual resolves that element through
-    // `nodeTypeStyles[n.type]`, so a node explicitly typed `server` and drawn red at
-    // width 99 in its own document arrived with the host's raw default colour and
-    // width. Reimplementing the ladder here was the mistake; there is one resolver
-    // and this calls it.
-    //
-    // Only properties the element left unset are written, so nothing it states
-    // itself is touched. The document's own settings are passed explicitly rather
-    // than read from state: at this point the *imported* document's defaults are
-    // still in scope, and they are what the element rendered against.
-    // The caller has not sanitised yet — that is exactly what it is about to do — so
-    // an entry may be null or a non-object. Declared before anything below uses it:
-    // `typeStyleMap` is defined first and needs it, and a `const` read before its
-    // declaration is a ReferenceError, not undefined.
-    const isRecord = value => value != null && typeof value === 'object';
-    // Type-style keys are normalised the way the sanitizer normalises them: a type
-    // is stored capped at 40 characters, so a style declared under a 60-character
-    // name is found only under its 40-character prefix. Looking it up with the raw
-    // key found nothing and the element arrived without its type's look.
-    const typeStyleMap = (styles) => {
-      if(!isRecord(styles)) return {};
-      const out = Object.create(null);
-      for(const [key, value] of Object.entries(styles)){
-        const name = String(key).slice(0, 40);
-        if(name.trim() && isRecord(value) && !(name in out)) out[name] = value;
-      }
-      return out;
-    };
-    const source = {
-      nodeDefaults: settings?.nodeDefaults || {},
-      edgeDefaults: settings?.edgeDefaults || {},
-      nodeTypeStyles: typeStyleMap(settings?.nodeTypeStyles),
-      edgeTypeStyles: typeStyleMap(settings?.edgeTypeStyles)
-    };
-    const unset = (value) => value == null || value === '';
-    // Every property a document's defaults can carry and an element can inherit,
-    // derived from the resolver's own output so the two cannot drift: the lists
-    // below are its keys, and a property the resolver returns is materialisable by
-    // construction.
-    const visualKeys = Object.keys(nodeVisual({}));
-    const edgeVisualKeys = Object.keys(edgeVisual({}));
-    // The caller has not sanitised yet — that is exactly what it is about to do —
-    // so an entry may be null or a non-object. Skip those here and let the
-    // sanitizer decide their fate; throwing would reject the whole import,
-    // including the entries that are perfectly good.
-    // An explicit value the sanitizer will REJECT is not a value the element is
-    // drawn with, so it must not count as set here either.
-    //
-    // This resolves the visual the SOURCE DOCUMENT drew, and that document drew the
-    // element through nodeVisual against its already-sanitised state: an invalid
-    // explicit `color: 'not-a-color'` sanitised to unset and rendered from the
-    // defaults. Treating the raw rubbish as "the element states this itself" copied
-    // it through untouched, so the sanitizer then cleared it and the element arrived
-    // with the HOST's colour — the one case where append restyled an element whose
-    // source document never looked that way. The same reasoning applies to every
-    // field with a validity rule (a too-long type lost its type style, an
-    // out-of-range width lost its width).
-    //
-    // So: a field is "set" only if its raw value survives the sanitizer's own rules.
-    // The probes below are those rules, written against nodeVisual/edgeVisual's key
-    // list so they cannot drift from it.
-    const isHex = value => /^#[0-9a-f]{6}$/i.test(String(value || ''));
-    const colors = ['color', 'strokeColor', 'labelColor'];
-    const finiteField = (key, value) => {
-      const n = Number(value);
-      if(!Number.isFinite(n)) return false;
-      if(key === 'width' || key === 'height') return n >= 10 && n <= 300;
-      if(key === 'labelSize') return n >= 4 && n <= 72;
-      if(key === 'arrowSize') return n >= ARROW_SIZE_MIN && n <= ARROW_SIZE_MAX;
-      return n >= 0 && n <= 20;                        // strokeSize
-    };
-    const enumField = (key, value) => {
-      if(key === 'shape') return NODE_SHAPES.includes(String(value));
-      if(key === 'strokeStyle') return STROKE_STYLES.includes(String(value));
-      if(key === 'labelPosition') return LABEL_POSITIONS.includes(String(value));
-      return true;
-    };
-    const holdsValue = (key, value) => {
-      if(value == null) return false;
-      if(colors.includes(key)) return isHex(value);
-      if(key === 'width' || key === 'height' || key === 'strokeSize' || key === 'labelSize' || key === 'arrowSize') return finiteField(key, value);
-      // The caller truncates `type` before asking, so any non-empty value is one the
-      // element really carries and the ladder must not overwrite it.
-      if(key === 'type') return String(value ?? '').trim() !== '';
-      if(key === 'labelFont') return String(value ?? '').trim() !== '';
-      return enumField(key, value);
-    };
-    // `type` is the one property that is not inherited *through* the ladder: it is
-    // the input the ladder selects with, so it resolves to the effective type
-    // itself. Copying it keeps the element's style findable after the source
-    // document's type styles are gone.
-    for(const n of nodes){
-      if(!isRecord(n)) continue;
-      // Truncate the type FIRST, then resolve through it.
-      //
-      // `type` is not inherited — it is what the ladder selects with, and the
-      // sanitizer stores it capped at 40 characters, so a 60-character type is
-      // really its 40-character prefix and its style is keyed by that prefix.
-      // Resolving through the raw string found no style (so the element lost its
-      // type's look) AND left the raw value to be overwritten by the default type.
-      // Truncating here makes the fingerprint the one the sanitizer will agree with.
-      if(n.type != null && String(n.type).trim() !== '') n.type = String(n.type).slice(0, 40);
-      const resolved = nodeVisual(n, source);
-      for(const key of visualKeys){
-        if(!unset(n[key]) && holdsValue(key, n[key])) continue;
-        if(resolved[key] != null) n[key] = resolved[key];
-      }
+  // Resolve only sanitized source data, exactly as opening the source would.
+  // Targets retain traced/remapped custom values; visuals come from the plan's
+  // corresponding sanitized entities, never from a second set of validity rules.
+  function materializeDefaults(nodes, edges, sourceNodes, sourceEdges, settings){
+    for(let i = 0; i < nodes.length; i++){
+      Object.assign(nodes[i], nodeVisual(sourceNodes[i], settings));
     }
-    for(const e of edges){
-      if(!isRecord(e)) continue;
-      if(e.type != null && String(e.type).trim() !== '') e.type = String(e.type).slice(0, 40);
-      const resolved = edgeVisual(e, source);
-      for(const key of edgeVisualKeys){
-        if(!unset(e[key]) && holdsValue(key, e[key])) continue;
-        if(resolved[key] != null) e[key] = resolved[key];
-      }
+    for(let i = 0; i < edges.length; i++){
+      Object.assign(edges[i], edgeVisual(sourceEdges[i], settings));
     }
   }
   function appendImportedGraph(data, label='graph'){
@@ -969,11 +846,8 @@
     // resolved onto its elements first — otherwise those elements inherit the host
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
-    // `data` is untrusted: `nodes`/`edges` may be a non-array (an object, a string,
-    // a number). `|| []` does not guard that — an object is truthy and `for...of`
-    // then throws "is not iterable", which aborted the whole append and surfaced as
-    // "Paste failed". materializeDefaults takes the raw entries by design, so the
-    // shape is normalised here, where every caller's input is known to be foreign.
+    // Sanitize the source once for identity planning and visual resolution. Keep
+    // its own settings here; host settings are applied only by the final pass.
     const plannedTrace = { nodes: [] as number[], edges: [] as number[], complete: true };
     const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
     const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
@@ -988,7 +862,7 @@
     // of reading everything is addressed in the sanitizer instead: it processes entries
     // linearly, and malformed ones are no longer charged to the limit.
     const PLANNING_LIMIT = 200000;
-    const planned = sanitizeState({...data, settings: state.settings}, {
+    const planned = sanitizeState(data, {
       externalNodeIds: hostIds, recordDropped: false,
       limits: {nodes: PLANNING_LIMIT, edges: PLANNING_LIMIT},
       // The plan remembers which payload entry produced each survivor, so the
@@ -1143,8 +1017,8 @@
       const raw = remappedNodes[keptNodeSources[k]];
       return { ...(isRecord(raw) ? raw : {}), id: plannedNode.id };
     });
-    // Endpoints come from the plan (they are resolved); everything else from the traced
-    // payload entry.
+    // Endpoints come from the plan; traced payload entries retain remapped custom
+    // values. Sanitized source visuals are applied below.
     const keptEdgesSource = keptPlannedEdges.map((plannedEdge, k) => {
       const raw = remappedEdges[keptEdgeSources[k]];
       return { ...(isRecord(raw) ? raw : {}), id: plannedEdge.id, from: plannedEdge.from, to: plannedEdge.to };
@@ -1154,7 +1028,7 @@
     // that omits them entirely is still opened against the built-in defaults, so
     // passing the raw object resolved against nothing and the elements arrived at
     // the host's styling.
-    materializeDefaults(keptNodesSource, keptEdgesSource, effectiveDefaults(data?.settings));
+    materializeDefaults(keptNodesSource, keptEdgesSource, keptPlannedNodes, keptPlannedEdges, planned.settings);
     const sane = sanitizeState({...data, nodes: keptNodesSource, edges: keptEdgesSource, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, {externalNodeIds: hostIds});
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));

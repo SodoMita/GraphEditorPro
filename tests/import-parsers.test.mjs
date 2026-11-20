@@ -6379,3 +6379,82 @@ test('an edge-only payload appends against host endpoints', async () => {
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });
+
+// GraphML exports resolved visuals, unlike JSON's intentionally sparse fields.
+function exportedVisuals(document) {
+  const xml = exportVia(document, '#btnExportGraphml');
+  const parsed = new document.defaultView.DOMParser().parseFromString(xml, 'application/xml');
+  const fields = new Set(['type', 'shape', 'color', 'width', 'height', 'strokeColor',
+    'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize', 'labelPosition',
+    'edgeType', 'edgeColor', 'edgeStrokeSize', 'edgeStrokeStyle', 'edgeLabelColor',
+    'edgeLabelFont', 'edgeLabelSize', 'arrowSize']);
+  const read = tag => [...parsed.getElementsByTagName(tag)].map(element =>
+    Object.fromEntries([...element.children]
+      .filter(child => child.localName === 'data' && fields.has(child.getAttribute('key')))
+      .map(child => [child.getAttribute('key'), child.textContent])));
+  return {nodes: read('node'), edges: read('edge')};
+}
+
+for (const layer of ['element', 'defaults', 'type style']) {
+  test(`append matches opening the source with invalid ${layer} visuals`, async () => {
+    const badNode = {shape:'invalid', color:'invalid', strokeColor:'invalid',
+      strokeStyle:'invalid', labelColor:'invalid', labelPosition:'invalid',
+      width:-5, height:99999, labelSize:-20};
+    const badEdge = {color:'invalid', strokeStyle:'invalid', labelColor:'invalid',
+      strokeSize:-5, labelSize:-20, arrowSize:-1};
+    const source = {title:'source', nodes:[{id:'s', x:0, y:0}],
+      edges:[{id:'e', from:'s', to:'s'}], settings:{
+        nodeDefaults:{shape:'diamond', strokeColor:'#ff0000', labelPosition:'top'},
+        edgeDefaults:{color:'#ff0000', strokeStyle:'dash'},
+      }};
+    if(layer === 'element') {
+      Object.assign(source.nodes[0], badNode);
+      Object.assign(source.edges[0], badEdge);
+    } else if(layer === 'defaults') {
+      Object.assign(source.settings.nodeDefaults, badNode);
+      Object.assign(source.settings.edgeDefaults, badEdge);
+    } else {
+      source.nodes[0].type = 'T'; source.edges[0].type = 'T';
+      source.settings.nodeTypeStyles = {T:badNode};
+      source.settings.edgeTypeStyles = {T:badEdge};
+    }
+    const original = createEditorDom(source);
+    const host = createEditorDom({title:'host', nodes:[{id:'h', x:0, y:0}], edges:[],
+      settings:{nodeDefaults:{shape:'hexagon', color:'#abcdef', strokeColor:'#112233',
+        labelPosition:'right'}, edgeDefaults:{color:'#112233'}}});
+    try {
+      await settle(original.dom.window, 80); await settle(host.dom.window, 80);
+      const expected = exportedVisuals(original.dom.window.document);
+      const document = host.dom.window.document;
+      document.querySelector('#optImportAppend').checked = true;
+      await paste(document, host.dom.window, '#btnPasteJson', JSON.stringify(source));
+      const actual = exportedVisuals(document);
+      assert.deepEqual(actual.nodes.slice(1), expected.nodes);
+      assert.deepEqual(actual.edges, expected.edges);
+      assert.deepEqual([...original.errors, ...host.errors].map(e => e.message), []);
+    } finally { original.dom.window.close(); host.dom.window.close(); }
+  });
+}
+
+test('append uses source sanitizer collision rules for node and edge type styles', async () => {
+  const long = 'X'.repeat(41), short = 'X'.repeat(40);
+  const styles = {[long]:{color:'#ff0000'}, [short]:{color:'#0000ff'}};
+  const source = {title:'source', nodes:[{id:'s', x:0, y:0, type:long}],
+    edges:[{id:'e', from:'s', to:'s', type:long}],
+    settings:{nodeTypeStyles:styles, edgeTypeStyles:styles}};
+  const original = createEditorDom(source);
+  const host = createEditorDom({title:'host', nodes:[{id:'h', x:0, y:0}], edges:[]});
+  try {
+    await settle(original.dom.window, 80); await settle(host.dom.window, 80);
+    const expected = exportedVisuals(original.dom.window.document);
+    assert.equal(expected.nodes[0].color, '#0000ff');
+    assert.equal(expected.edges[0].edgeColor, '#0000ff');
+    const document = host.dom.window.document;
+    document.querySelector('#optImportAppend').checked = true;
+    await paste(document, host.dom.window, '#btnPasteJson', JSON.stringify(source));
+    const actual = exportedVisuals(document);
+    assert.deepEqual(actual.nodes.slice(1), expected.nodes);
+    assert.deepEqual(actual.edges, expected.edges);
+    assert.deepEqual([...original.errors, ...host.errors].map(e => e.message), []);
+  } finally { original.dom.window.close(); host.dom.window.close(); }
+});
