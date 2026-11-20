@@ -1025,14 +1025,21 @@ for (const native of [true, false]) {
   });
 }
 
-test('preset feedback is inside the modal, and the live region survives closing it', async t => {
-  const {byId, document} = await openGraph(t);
+test('preset feedback is reachable from the body in the fallback, and the live region survives closing it', async t => {
+  const {window, byId, document} = await openGraph(t);
   const stack = byId('toastStack');
-  byId('btnPresets').click(); byId('btnPresetSave').click(); // no selection
-  assert.ok(stack.querySelector('.toast-close'));
+  byId('btnPresets').click(); byId('btnPresetSave').click(); // no selection: adds a toast after opening
+  const dismiss = stack.querySelector('.toast-close');
+  assert.ok(dismiss);
   assert.ok(byId('presetsOverlay').contains(stack), 'an external region would be inert in a native modal');
+  document.activeElement.blur();
+  assert.equal(document.activeElement, document.body);
+  const backTab = new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+  assert.equal(document.body.dispatchEvent(backTab), false);
+  assert.equal(document.activeElement, dismiss, 'the newly added control is the last tab stop');
   byId('btnPresetClose').click();
   assert.equal(stack.parentElement, document.body);
+  assert.equal(document.activeElement, byId('btnPresets'), 'restore the opener even when its click did not focus it');
 });
 
 test('toast expiry waits for both keyboard focus and pointer hover to leave', async t => {

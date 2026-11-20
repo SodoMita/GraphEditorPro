@@ -219,6 +219,35 @@
   let dialogResolve: ((value: string | boolean | null) => void) | null = null;
   let dialogReturnFocus: HTMLElement | null = null;
   let dialogCleanup: (() => void) | null = null;
+  function cycleDialogTab(dialog: HTMLElement, ev: KeyboardEvent){
+    if(ev.key !== 'Tab') return;
+    // Read the current stops: preset cards and toast dismiss buttons can be
+    // added or removed while the dialog is open. The dialog itself isn't a stop.
+    const stops = $$('button,input,select,textarea,a[href],[tabindex]', dialog).filter(isKeyboardVisible);
+    const first = stops[0], last = stops[stops.length - 1];
+    const active = document.activeElement;
+    if(stops.includes(active) && active !== (ev.shiftKey ? first : last)) return;
+    ev.preventDefault();
+    (ev.shiftKey ? last : first)?.focus();
+  }
+  // A heading click can park focus on the dialog or body. Listen on the
+  // document until close, and yield to any modal stacked above this one.
+  function trapFallbackDialog(dialog: HTMLElement, isTop: () => boolean, primary: HTMLElement, cancel: () => void): () => void {
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if(!isTop()) return;
+      if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); cancel(); }
+      else cycleDialogTab(dialog, ev);
+    };
+    const onFocusIn = (ev: FocusEvent) => {
+      if(isTop() && !dialog.contains(ev.target as Node)) primary.focus({preventScroll:true});
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocusIn, true);
+    };
+  }
   // While a modal dialog is open it owns the keyboard: the global shortcut
   // handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
   // Ctrl+Z landing mid-confirm would revert history under the dialog and the
@@ -276,58 +305,25 @@
       if(nativeDialog) (dialog as HTMLDialogElement).showModal();
       const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
       const form = dialog.querySelector('form');
+      const primary: HTMLElement = input || $('[data-dialog-ok]', dialog);
       const finish = (result: string | boolean | null) => closeDialog(result);
+      const cancel = () => finish(wantsInput ? null : false);
       form?.addEventListener('submit', ev => {
         ev.preventDefault();
         finish(wantsInput ? (input?.value ?? '') : true);
       });
-      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
-      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) finish(wantsInput ? null : false); });
+      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', cancel);
+      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) cancel(); });
       if(nativeDialog){
         // Esc and the platform's back gesture fire `cancel`; let the shared
         // close path resolve the promise and restore focus exactly once.
-        dialog.addEventListener('cancel', ev => { ev.preventDefault(); finish(wantsInput ? null : false); });
+        dialog.addEventListener('cancel', ev => { ev.preventDefault(); cancel(); });
       } else {
-      // The handlers live on the document, not on the dialog element: clicking
-      // the dialog's own title or message moves focus to <body> in Chromium,
-      // and a dialog-scoped keydown never fires from there — Escape and the
-      // Tab trap went dead until focus wandered back inside.
-      const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
-      const focusInside = (target: EventTarget | null) => Boolean(target) && dialog.contains(target as Node);
-      const onKeyDown = (ev: KeyboardEvent) => {
-        if(!dialogEl) return;
-        if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); finish(wantsInput ? null : false); return; }
-        if(ev.key !== 'Tab') return;
-        const items = focusables();
-        if(!items.length) { ev.preventDefault(); return; }
-        const first = items[0], last = items[items.length - 1];
-        // Focus parked outside (title click, backdrop, or a stray programmatic
-        // focus) still gets trapped: the next Tab re-enters the dialog.
-        if(!focusInside(document.activeElement)){ ev.preventDefault(); (ev.shiftKey ? last : first).focus(); return; }
-        if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
-        else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
-      };
-      // A modal keeps focus: anything that pulls it out is redirected to the
-      // dialog's primary control. The trigger's own focus is restored on close.
-      const onFocusIn = (ev: FocusEvent) => {
-        if(!dialogEl || focusInside(ev.target)) return;
-        const items = focusables();
-        (items[items.length - 1] || items[0])?.focus();
-      };
-      document.addEventListener('keydown', onKeyDown, true);
-      document.addEventListener('focusin', onFocusIn, true);
-      dialogCleanup = () => {
-        document.removeEventListener('keydown', onKeyDown, true);
-        document.removeEventListener('focusin', onFocusIn, true);
-      };
+        dialogCleanup = trapFallbackDialog(dialog, () => dialogEl === dialog, primary, cancel);
       }
       setTimeout(() => {
-        if(input){
-          input.focus();
-          input.select();
-        } else {
-          dialog.querySelector<HTMLButtonElement>('[data-dialog-ok]')?.focus();
-        }
+        primary.focus();
+        input?.select();
       }, 0);
     });
   }

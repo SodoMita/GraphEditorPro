@@ -576,6 +576,7 @@
 
   // === Style presets ===
   let presetsReturnFocus: HTMLElement | null = null;
+  let presetsTrapCleanup: (() => void) | null = null;
   function renderPresetsGrid(){
     const grid = $('#presetsGrid'); if(!grid) return;
     const presets = state.settings.stylePresets || [];
@@ -724,6 +725,8 @@
   function presetsOpen(): boolean { return presetsDialog.open || presetsDialog.classList.contains('open'); }
   function finishPresetsClose(){
     if(presetsOpen()) return; // a queued native close event from a previous opening
+    presetsTrapCleanup?.(); // release containment before restoring the opener
+    presetsTrapCleanup = null;
     const stack = $('#toastStack');
     if(stack.parentElement === presetsDialog) document.body.appendChild(stack);
     if(presetsReturnFocus?.isConnected) presetsReturnFocus.focus({preventScroll:true});
@@ -732,13 +735,17 @@
   function togglePresetsOverlay(open = !presetsOpen()){
     if(open === presetsOpen()) return;
     if(open){
-      presetsReturnFocus = document.activeElement as HTMLElement;
+      // The toolbar button is the opener even on browsers where a pointer
+      // click doesn't focus a button first.
+      presetsReturnFocus = $('#btnPresets');
       if(typeof presetsDialog.showModal === 'function') presetsDialog.showModal();
       else {
         presetsDialog.classList.add('open');
         presetsDialog.setAttribute('role', 'dialog');
         presetsDialog.setAttribute('aria-modal', 'true');
         presetsDialog.setAttribute('aria-hidden', 'false');
+        presetsTrapCleanup = trapFallbackDialog(presetsDialog, () => !dialogEl, $('#btnPresetClose'),
+          () => togglePresetsOverlay(false));
       }
       // A body-level live region is inert and behind a native modal, no matter
       // its z-index. Keep preset feedback in the same accessible top layer.

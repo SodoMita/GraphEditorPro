@@ -311,12 +311,8 @@
       }
     });
     window.addEventListener('keydown', ev => {
-      // Leave native cancellation to the topmost dialog, and never close an
-      // underlying surface while a name prompt owns Escape.
-      if(ev.key !== 'Escape' || dialogEl || presetsDialog.open) return;
-      if(presetsOpen()){ // non-native presets fallback
-        ev.preventDefault(); ev.stopImmediatePropagation(); togglePresetsOverlay(false); return;
-      }
+      // Native dismissal or the top fallback's own handler owns Escape.
+      if(ev.key !== 'Escape' || uiDialogOpen()) return;
       if(sidebarEl.classList.contains('open')){
         ev.preventDefault(); ev.stopImmediatePropagation();
         closePanels(sidebarEl.contains(document.activeElement));
@@ -384,14 +380,10 @@
     $('#btnPresets').addEventListener('click', () => togglePresetsOverlay());
     $('#btnPresetClose').addEventListener('click', () => togglePresetsOverlay(false));
     $('#presetsOverlay').addEventListener('click', ev => { if(ev.target === ev.currentTarget) togglePresetsOverlay(false); });
-    $('#presetsOverlay').addEventListener('keydown', ev => {
-      if(ev.key !== 'Tab') return;
-      const focusable = $$('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])', ev.currentTarget)
-        .filter(isKeyboardVisible);
-      if(!focusable.length) return;
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
-      else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
+    presetsDialog.addEventListener('keydown', ev => {
+      // Keep native Tab cycling inside the page, but leave Escape to the UA.
+      // The fallback listens on document because focus may not be on a control.
+      if(presetsDialog.open) cycleDialogTab(presetsDialog, ev);
     });
     $('#btnPresetSave').addEventListener('click', savePresetFromSelection);
     $('#presetsGrid').addEventListener('click', ev => {

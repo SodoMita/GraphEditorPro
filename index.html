@@ -2828,6 +2828,44 @@ let dialogEl = null;
 let dialogResolve = null;
 let dialogReturnFocus = null;
 let dialogCleanup = null;
+function cycleDialogTab(dialog, ev) {
+    if (ev.key !== 'Tab')
+        return;
+    // Read the current stops: preset cards and toast dismiss buttons can be
+    // added or removed while the dialog is open. The dialog itself isn't a stop.
+    const stops = $$('button,input,select,textarea,a[href],[tabindex]', dialog).filter(isKeyboardVisible);
+    const first = stops[0], last = stops[stops.length - 1];
+    const active = document.activeElement;
+    if (stops.includes(active) && active !== (ev.shiftKey ? first : last))
+        return;
+    ev.preventDefault();
+    (ev.shiftKey ? last : first)?.focus();
+}
+// A heading click can park focus on the dialog or body. Listen on the
+// document until close, and yield to any modal stacked above this one.
+function trapFallbackDialog(dialog, isTop, primary, cancel) {
+    const onKeyDown = (ev) => {
+        if (!isTop())
+            return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            ev.stopPropagation();
+            cancel();
+        }
+        else
+            cycleDialogTab(dialog, ev);
+    };
+    const onFocusIn = (ev) => {
+        if (isTop() && !dialog.contains(ev.target))
+            primary.focus({ preventScroll: true });
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn, true);
+    return () => {
+        document.removeEventListener('keydown', onKeyDown, true);
+        document.removeEventListener('focusin', onFocusIn, true);
+    };
+}
 // While a modal dialog is open it owns the keyboard: the global shortcut
 // handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
 // Ctrl+Z landing mid-confirm would revert history under the dialog and the
@@ -2890,82 +2928,27 @@ function showDialog(options) {
             dialog.showModal();
         const input = dialog.querySelector('#' + inputId);
         const form = dialog.querySelector('form');
+        const primary = input || $('[data-dialog-ok]', dialog);
         const finish = (result) => closeDialog(result);
+        const cancel = () => finish(wantsInput ? null : false);
         form?.addEventListener('submit', ev => {
             ev.preventDefault();
             finish(wantsInput ? (input?.value ?? '') : true);
         });
-        dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
+        dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', cancel);
         dialog.addEventListener('pointerdown', ev => { if (ev.target === dialog)
-            finish(wantsInput ? null : false); });
+            cancel(); });
         if (nativeDialog) {
             // Esc and the platform's back gesture fire `cancel`; let the shared
             // close path resolve the promise and restore focus exactly once.
-            dialog.addEventListener('cancel', ev => { ev.preventDefault(); finish(wantsInput ? null : false); });
+            dialog.addEventListener('cancel', ev => { ev.preventDefault(); cancel(); });
         }
         else {
-            // The handlers live on the document, not on the dialog element: clicking
-            // the dialog's own title or message moves focus to <body> in Chromium,
-            // and a dialog-scoped keydown never fires from there — Escape and the
-            // Tab trap went dead until focus wandered back inside.
-            const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
-            const focusInside = (target) => Boolean(target) && dialog.contains(target);
-            const onKeyDown = (ev) => {
-                if (!dialogEl)
-                    return;
-                if (ev.key === 'Escape') {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    finish(wantsInput ? null : false);
-                    return;
-                }
-                if (ev.key !== 'Tab')
-                    return;
-                const items = focusables();
-                if (!items.length) {
-                    ev.preventDefault();
-                    return;
-                }
-                const first = items[0], last = items[items.length - 1];
-                // Focus parked outside (title click, backdrop, or a stray programmatic
-                // focus) still gets trapped: the next Tab re-enters the dialog.
-                if (!focusInside(document.activeElement)) {
-                    ev.preventDefault();
-                    (ev.shiftKey ? last : first).focus();
-                    return;
-                }
-                if (ev.shiftKey && document.activeElement === first) {
-                    ev.preventDefault();
-                    last.focus();
-                }
-                else if (!ev.shiftKey && document.activeElement === last) {
-                    ev.preventDefault();
-                    first.focus();
-                }
-            };
-            // A modal keeps focus: anything that pulls it out is redirected to the
-            // dialog's primary control. The trigger's own focus is restored on close.
-            const onFocusIn = (ev) => {
-                if (!dialogEl || focusInside(ev.target))
-                    return;
-                const items = focusables();
-                (items[items.length - 1] || items[0])?.focus();
-            };
-            document.addEventListener('keydown', onKeyDown, true);
-            document.addEventListener('focusin', onFocusIn, true);
-            dialogCleanup = () => {
-                document.removeEventListener('keydown', onKeyDown, true);
-                document.removeEventListener('focusin', onFocusIn, true);
-            };
+            dialogCleanup = trapFallbackDialog(dialog, () => dialogEl === dialog, primary, cancel);
         }
         setTimeout(() => {
-            if (input) {
-                input.focus();
-                input.select();
-            }
-            else {
-                dialog.querySelector('[data-dialog-ok]')?.focus();
-            }
+            primary.focus();
+            input?.select();
         }, 0);
     });
 }
@@ -16537,6 +16520,7 @@ function applyTypeStyleToEdge(e) {
 }
 // === Style presets ===
 let presetsReturnFocus = null;
+let presetsTrapCleanup = null;
 function renderPresetsGrid() {
     const grid = $('#presetsGrid');
     if (!grid)
@@ -16742,6 +16726,8 @@ function presetsOpen() { return presetsDialog.open || presetsDialog.classList.co
 function finishPresetsClose() {
     if (presetsOpen())
         return; // a queued native close event from a previous opening
+    presetsTrapCleanup?.(); // release containment before restoring the opener
+    presetsTrapCleanup = null;
     const stack = $('#toastStack');
     if (stack.parentElement === presetsDialog)
         document.body.appendChild(stack);
@@ -16753,7 +16739,9 @@ function togglePresetsOverlay(open = !presetsOpen()) {
     if (open === presetsOpen())
         return;
     if (open) {
-        presetsReturnFocus = document.activeElement;
+        // The toolbar button is the opener even on browsers where a pointer
+        // click doesn't focus a button first.
+        presetsReturnFocus = $('#btnPresets');
         if (typeof presetsDialog.showModal === 'function')
             presetsDialog.showModal();
         else {
@@ -16761,6 +16749,7 @@ function togglePresetsOverlay(open = !presetsOpen()) {
             presetsDialog.setAttribute('role', 'dialog');
             presetsDialog.setAttribute('aria-modal', 'true');
             presetsDialog.setAttribute('aria-hidden', 'false');
+            presetsTrapCleanup = trapFallbackDialog(presetsDialog, () => !dialogEl, $('#btnPresetClose'), () => togglePresetsOverlay(false));
         }
         // A body-level live region is inert and behind a native modal, no matter
         // its z-index. Keep preset feedback in the same accessible top layer.
@@ -17321,16 +17310,9 @@ function wireUi() {
         }
     });
     window.addEventListener('keydown', ev => {
-        // Leave native cancellation to the topmost dialog, and never close an
-        // underlying surface while a name prompt owns Escape.
-        if (ev.key !== 'Escape' || dialogEl || presetsDialog.open)
+        // Native dismissal or the top fallback's own handler owns Escape.
+        if (ev.key !== 'Escape' || uiDialogOpen())
             return;
-        if (presetsOpen()) { // non-native presets fallback
-            ev.preventDefault();
-            ev.stopImmediatePropagation();
-            togglePresetsOverlay(false);
-            return;
-        }
         if (sidebarEl.classList.contains('open')) {
             ev.preventDefault();
             ev.stopImmediatePropagation();
@@ -17403,22 +17385,11 @@ function wireUi() {
     $('#btnPresetClose').addEventListener('click', () => togglePresetsOverlay(false));
     $('#presetsOverlay').addEventListener('click', ev => { if (ev.target === ev.currentTarget)
         togglePresetsOverlay(false); });
-    $('#presetsOverlay').addEventListener('keydown', ev => {
-        if (ev.key !== 'Tab')
-            return;
-        const focusable = $$('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])', ev.currentTarget)
-            .filter(isKeyboardVisible);
-        if (!focusable.length)
-            return;
-        const first = focusable[0], last = focusable[focusable.length - 1];
-        if (ev.shiftKey && document.activeElement === first) {
-            ev.preventDefault();
-            last.focus();
-        }
-        else if (!ev.shiftKey && document.activeElement === last) {
-            ev.preventDefault();
-            first.focus();
-        }
+    presetsDialog.addEventListener('keydown', ev => {
+        // Keep native Tab cycling inside the page, but leave Escape to the UA.
+        // The fallback listens on document because focus may not be on a control.
+        if (presetsDialog.open)
+            cycleDialogTab(presetsDialog, ev);
     });
     $('#btnPresetSave').addEventListener('click', savePresetFromSelection);
     $('#presetsGrid').addEventListener('click', ev => {
