@@ -19,6 +19,10 @@ CI (`.github/workflows/ci.yml`) runs `npm run check` on Node 20 and 22 for every
 
 After a successful build, open `index.html` in any modern browser.
 
+## Resizing the workspace
+
+Drag the shared edge between the canvas and the data area, or between the adjacency matrix and edge list. The existing borders double as resize targets, with the same 32-pixel drag zone on mouse and touch by default. If a pane is hidden, use the view buttons to show it first (in the Data tab on mobile). In **Data → Pane sizes**, enter the canvas or matrix share as a percentage. The fields reflect the current layout after dragging or changing views. Change **Drag zone (px)** to adjust the target thickness, or turn off **Resize by dragging** to use only the numeric size controls. These two preferences are saved in your browser.
+
 ## Source layout
 
 The TypeScript files are deliberately ordered in `tsconfig.json`. They form one typed program and are wrapped in a private IIFE in the final HTML, preserving the original application's shared runtime state without exposing implementation globals.

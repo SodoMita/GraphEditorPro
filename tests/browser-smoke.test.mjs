@@ -719,6 +719,78 @@ test('the 100% button resets the scale to 1:1 instead of fitting the graph', asy
   assert.deepEqual(errors.map(error => error.message), []);
 });
 
+test('pane edge drags resize the correct axis, respect bounds, and clean up capture', async () => {
+  const { dom, errors } = createEditorDom();
+  const { document } = dom.window;
+  try {
+    const canvas = document.querySelector('#canvasSplit');
+    const main = canvas.parentElement;
+    const data = document.querySelector('#dataSplit');
+    const bottom = data.parentElement;
+    main.classList.add('v-matrix', 'v-edges');
+    Object.defineProperty(main, 'clientHeight', { value: 1000 });
+    Object.defineProperty(bottom, 'clientWidth', { value: 800 });
+    bottom.firstElementChild.getBoundingClientRect = () => ({ width: 400 });
+    let captured;
+    for (const split of [canvas, data]) {
+      split.setPointerCapture = id => { captured = id; };
+      split.getClientRects = () => [{ width: 32 }];
+    }
+    const pointer = (target, type, x, y, id = 1) => {
+      const event = new dom.window.MouseEvent(type, { clientX: x, clientY: y, cancelable: true });
+      Object.defineProperties(event, { pointerId: { value: id }, isPrimary: { value: id === 1 } });
+      target.dispatchEvent(event);
+    };
+    pointer(canvas, 'pointerdown', 400, 660);
+    pointer(canvas, 'pointerup', 400, 660);
+    assert.equal(main.style.getPropertyValue('--canvas-y'), '', 'tapping does not resize');
+    pointer(canvas, 'pointerdown', 400, 660);
+    assert.equal(captured, 1);
+    pointer(canvas, 'pointermove', 800, 500);
+    await nextFrame(dom.window);
+    assert.match(main.style.getPropertyValue('--canvas-y'), /minmax\(0,0\.5fr\)/);
+    pointer(canvas, 'pointerup', 800, 0);
+    assert.match(main.style.getPropertyValue('--canvas-y'), /minmax\(0,0\.12fr\)/);
+    data.style.setProperty('--split-axis', 'x');
+    pointer(data, 'pointerdown', 400, 750);
+    pointer(data, 'pointermove', 500, 750, 2);
+    pointer(data, 'pointercancel', 400, 750);
+    assert.equal(bottom.style.getPropertyValue('--data-x'), '');
+    pointer(data, 'pointerdown', 400, 750);
+    pointer(data, 'pointerup', 500, 700);
+    assert.match(bottom.style.getPropertyValue('--data-x'), /minmax\(0,0\.625fr\)/);
+    const canvasShare = document.querySelector('#canvasShare');
+    const matrixShare = document.querySelector('#matrixShare');
+    assert.equal(canvasShare.value, '66', 'shows the measured size, not the requested track value');
+    assert.equal(matrixShare.value, '50');
+    matrixShare.value = '75';
+    matrixShare.dispatchEvent(new dom.window.Event('change'));
+    assert.match(bottom.style.getPropertyValue('--data-x'), /minmax\(0,0\.75fr\)/);
+    const dragEnabled = document.querySelector('#paneDragEnabled');
+    const dragSize = document.querySelector('#paneDragSize');
+    assert.equal(main.style.getPropertyValue('--pane-drag-size'), '32px');
+    dragSize.value = '90';
+    dragSize.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(dragSize.value, '64');
+    assert.equal(main.style.getPropertyValue('--pane-drag-size'), '64px');
+    dragEnabled.checked = false;
+    dragEnabled.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(dragSize.disabled, true);
+    assert.equal(matrixShare.disabled, false, 'numeric resizing still works');
+    assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('graph-editor-pro-pane-drag')), { enabled: false, width: 64 });
+    pointer(data, 'pointerdown', 400, 750);
+    pointer(data, 'pointerup', 450, 750);
+    assert.match(bottom.style.getPropertyValue('--data-x'), /minmax\(0,0\.75fr\)/);
+    data.getClientRects = () => [];
+    dom.window.dispatchEvent(new dom.window.Event('resize'));
+    assert.equal(matrixShare.disabled, true);
+    assert.equal(matrixShare.value, '');
+    assert.deepEqual(errors, []);
+  } finally {
+    dom.window.close();
+  }
+});
+
 // === Interruptible layout, modal ownership and compatibility ===
 const layoutGraph = {
   title: 'test graph',
