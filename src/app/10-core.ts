@@ -265,6 +265,16 @@
   // element before its own document's defaults disappear. Append resolving this
   // itself is how it came to copy raw defaults — and then only the *default*
   // type's style — while the renderer was doing something else.
+  // A ladder step only counts when it is a value the editor can DRAW.
+  //
+  // The ladder used to test truthiness, so an element carrying `color:
+  // 'not-a-color'` supplied its own colour and the renderer received a string that
+  // is not a colour. Sanitisation usually removes those before they reach here,
+  // which hid the problem — but the same resolver is what append calls to learn
+  // what a foreign document drew, and that document's elements are raw. Both
+  // callers must get the same answer to "what does this element look like", and
+  // that answer has to be drawable, so validity is enforced here, once.
+  const drawableColor = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : '';
   function nodeVisual(n, settings = state.settings){
     const s = settings || {};
     const d = s.nodeDefaults || {};
@@ -273,7 +283,7 @@
     const dts = getTypeStyle(s.nodeTypeStyles, d.type) || {};
     return {
       shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
-      color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+      color: drawableColor(n.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
       type: effectiveType,
       width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
       height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
@@ -293,7 +303,7 @@
     const ts = getTypeStyle(s.edgeTypeStyles, e.type) || {};
     const dts = getTypeStyle(s.edgeTypeStyles, d.type) || {};
     return {
-      color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+      color: drawableColor(e.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
       type: effectiveType,
       strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
       strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
@@ -1626,7 +1636,16 @@
   // comparing ids and endpoints is guesswork: an id that was normalised, omitted or
   // collided compares wrong, and a parallel edge matches its twin. The sanitizer is
   // the only place that knows, so it records it. Off by default — it allocates.
-  type SanitizeTrace = { nodes: number[], edges: number[] };
+  // A plan must be able to see EVERY incoming identity, or it is not a plan.
+  //
+  // The sanitizer is told a ceiling so it can stop reading; that is right for the
+  // authoritative pass, which only needs what fits. For the planning pass it is
+  // wrong: an entry past the ceiling is an id the plan never learned, and an id the
+  // plan never learned is indistinguishable from a host node of the same name — so an
+  // edge naming it re-points at the host's node. Rather than let that happen
+  // silently, `complete` says whether the ceiling was reached at all, and append
+  // refuses a payload it could not read whole instead of guessing about the rest.
+  type SanitizeTrace = { nodes: number[], edges: number[], complete?: boolean };
   type SanitizeOptions = { externalNodeIds?: Set<string> | null, recordDropped?: boolean, limits?: {nodes: number, edges: number}, trace?: SanitizeTrace | null };
   function sanitizeState(input: unknown, options: SanitizeOptions = {}): GraphState {
     const externalNodeIds = options.externalNodeIds ?? null;
@@ -1684,8 +1703,22 @@
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'node')));
     const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'edge')));
 
-    const usedNodeIds = new Set<string>();
+    // Ids that belong to the HOST start out reserved.
+    //
+    // `uniqueSafeId` only avoids ids already handed out, so an incoming entry
+    // whose normalised id happened to equal a host node's id took that id from
+    // the host's side of the namespace: host `a-2`, incoming `a!` and `a`, and the
+    // edge from `a!` to `a-2` attached to the incoming `a-2` — a node it has no
+    // relation to. Reserving the host's ids first makes the collision visible at
+    // allocation time, so the incoming node is named around them and the edge's
+    // `a-2` can only mean the host's node.
+    const usedNodeIds: UsedIds = new Set<string>();
+    if(externalNodeIds) for(const id of externalNodeIds) usedNodeIds.add(id);
     const nodeReferences = new Map<string, string>();
+    // Which ids the PAYLOAD itself defines, as allocated — distinct from ids a
+    // host node happens to share. An endpoint naming a payload node maps through
+    // `nodeReferences`; an endpoint naming only an external id is the host's node.
+    const payloadNodeIds = new Set<string>();
     // How many entries the ceilings cut, so an importer can tell the user instead
     // of appearing to succeed. Counted against the raw list, before the record
     // filter, because that filter is a per-entry concern and already silent.
@@ -1694,6 +1727,8 @@
     // A dry run answers "what ids would these entries get", not "what did this
     // import lose" — the caller counts the loss itself.
     if(recordDropped) lastImportDropped = {nodes: nodeOverflow, edges: edgeOverflow};
+    // Did the ceiling cut anything at all? See SanitizeTrace['complete'].
+    if(trace) trace.complete = nodeOverflow === 0 && edgeOverflow === 0;
     // Valid entries first, THEN the ceiling. Slicing first let malformed entries spend
     // the budget: 200,000 invalid records ahead of a real node filled the planning
     // window, so the real node's id was unknown and an edge naming it resolved to a
@@ -1709,6 +1744,7 @@
       const rawId = String(n.id || ('n' + (i + 1)));
       if(trace) trace.nodes.push(rawNodeIndex[i] ?? i);
       const id = uniqueSafeId(rawId, 'n', usedNodeIds);
+      payloadNodeIds.add(id);
       // Ambiguous duplicate source IDs deliberately resolve to the first node.
       if(!nodeReferences.has(rawId)) nodeReferences.set(rawId, id);
       const node: GraphNode = {
@@ -1744,12 +1780,19 @@
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
       const resolveEndpoint = (raw: unknown): string => {
-        // The payload's own nodes decide the mapping, so a colliding id resolves
-        // to the node in *this* document, never to an external one.
-        const mapped = nodeReferences.get(String(raw));
+        // Three questions, asked in this order and no other:
+        //   1. does the payload name this id? then it is the payload's node, whose
+        //      allocated id the mapping holds;
+        //   2. does a node THIS pass allocated carry the id? (an endpoint written in
+        //      the *allocated* namespace rather than the payload's);
+        //   3. otherwise is it the host's? The host is the last resort on purpose:
+        //      an id the payload defines must never fall through to a host node
+        //      that shares the name.
+        const key = String(raw);
+        const mapped = nodeReferences.get(key);
         if(mapped) return mapped;
-        if(nodeIds.has(String(raw))) return String(raw);
-        if(externalNodeIds?.has(String(raw))) return String(raw);
+        if(nodeIds.has(key)) return key;
+        if(externalNodeIds?.has(key)) return key;
         return '';
       };
       const from = resolveEndpoint(e.from);

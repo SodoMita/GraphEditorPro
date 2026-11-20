@@ -2450,6 +2450,13 @@ const I18N = {
         'err_not_node_clipboard': { en: 'the clipboard does not contain nodes', ru: 'в буфере обмена нет узлов' },
         'err_invalid_graphml': { en: 'invalid XML/GraphML', ru: 'некорректный XML/GraphML' },
         'err_empty_graph': { en: 'the input contains no graph (zero nodes found)', ru: 'во вводе не найден граф (ноль узлов)' },
+        // An append has to read every incoming id to know which nodes its edges name. A
+        // document past that window cannot be appended safely, and guessing would attach
+        // edges to the wrong nodes — so it is refused with a reason instead.
+        'err_import_too_many_entries': {
+            en: 'the input has more than {limit} entries, which is too large to append safely',
+            ru: 'во вводе больше {limit} записей — это слишком много для безопасного добавления'
+        },
         'err_no_valid_nodes': { en: 'none of the nodes in the input are usable (all entries were empty or malformed)', ru: 'ни один узел во вводе не является корректным (все записи пустые или повреждены)' },
         'camera_readout': { en: 'center ({x}, {y}) · zoom {zoom}%', ru: 'центр ({x}, {y}) · масштаб {zoom}%' },
         'preset_what_nodes': { en: '{n:node}', ru: '{n:node}' },
@@ -2848,6 +2855,16 @@ function boundedBox(minX, minY, maxX, maxY) {
 // element before its own document's defaults disappear. Append resolving this
 // itself is how it came to copy raw defaults — and then only the *default*
 // type's style — while the renderer was doing something else.
+// A ladder step only counts when it is a value the editor can DRAW.
+//
+// The ladder used to test truthiness, so an element carrying `color:
+// 'not-a-color'` supplied its own colour and the renderer received a string that
+// is not a colour. Sanitisation usually removes those before they reach here,
+// which hid the problem — but the same resolver is what append calls to learn
+// what a foreign document drew, and that document's elements are raw. Both
+// callers must get the same answer to "what does this element look like", and
+// that answer has to be drawable, so validity is enforced here, once.
+const drawableColor = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : '';
 function nodeVisual(n, settings = state.settings) {
     const s = settings || {};
     const d = s.nodeDefaults || {};
@@ -2856,7 +2873,7 @@ function nodeVisual(n, settings = state.settings) {
     const dts = getTypeStyle(s.nodeTypeStyles, d.type) || {};
     return {
         shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
-        color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+        color: drawableColor(n.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
         type: effectiveType,
         width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
         height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
@@ -2876,7 +2893,7 @@ function edgeVisual(e, settings = state.settings) {
     const ts = getTypeStyle(s.edgeTypeStyles, e.type) || {};
     const dts = getTypeStyle(s.edgeTypeStyles, d.type) || {};
     return {
-        color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
+        color: drawableColor(e.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
         type: effectiveType,
         strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
         strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
@@ -4465,8 +4482,24 @@ function sanitizeState(input, options = {}) {
     const graphCustomTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'graph')));
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'node')));
     const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'edge')));
+    // Ids that belong to the HOST start out reserved.
+    //
+    // `uniqueSafeId` only avoids ids already handed out, so an incoming entry
+    // whose normalised id happened to equal a host node's id took that id from
+    // the host's side of the namespace: host `a-2`, incoming `a!` and `a`, and the
+    // edge from `a!` to `a-2` attached to the incoming `a-2` — a node it has no
+    // relation to. Reserving the host's ids first makes the collision visible at
+    // allocation time, so the incoming node is named around them and the edge's
+    // `a-2` can only mean the host's node.
     const usedNodeIds = new Set();
+    if (externalNodeIds)
+        for (const id of externalNodeIds)
+            usedNodeIds.add(id);
     const nodeReferences = new Map();
+    // Which ids the PAYLOAD itself defines, as allocated — distinct from ids a
+    // host node happens to share. An endpoint naming a payload node maps through
+    // `nodeReferences`; an endpoint naming only an external id is the host's node.
+    const payloadNodeIds = new Set();
     // How many entries the ceilings cut, so an importer can tell the user instead
     // of appearing to succeed. Counted against the raw list, before the record
     // filter, because that filter is a per-entry concern and already silent.
@@ -4476,6 +4509,9 @@ function sanitizeState(input, options = {}) {
     // import lose" — the caller counts the loss itself.
     if (recordDropped)
         lastImportDropped = { nodes: nodeOverflow, edges: edgeOverflow };
+    // Did the ceiling cut anything at all? See SanitizeTrace['complete'].
+    if (trace)
+        trace.complete = nodeOverflow === 0 && edgeOverflow === 0;
     // Valid entries first, THEN the ceiling. Slicing first let malformed entries spend
     // the budget: 200,000 invalid records ahead of a real node filled the planning
     // window, so the real node's id was unknown and an edge naming it resolved to a
@@ -4492,6 +4528,7 @@ function sanitizeState(input, options = {}) {
         if (trace)
             trace.nodes.push(rawNodeIndex[i] ?? i);
         const id = uniqueSafeId(rawId, 'n', usedNodeIds);
+        payloadNodeIds.add(id);
         // Ambiguous duplicate source IDs deliberately resolve to the first node.
         if (!nodeReferences.has(rawId))
             nodeReferences.set(rawId, id);
@@ -4537,15 +4574,22 @@ function sanitizeState(input, options = {}) {
     const edges = [];
     rawEdges.forEach((e, i) => {
         const resolveEndpoint = (raw) => {
-            // The payload's own nodes decide the mapping, so a colliding id resolves
-            // to the node in *this* document, never to an external one.
-            const mapped = nodeReferences.get(String(raw));
+            // Three questions, asked in this order and no other:
+            //   1. does the payload name this id? then it is the payload's node, whose
+            //      allocated id the mapping holds;
+            //   2. does a node THIS pass allocated carry the id? (an endpoint written in
+            //      the *allocated* namespace rather than the payload's);
+            //   3. otherwise is it the host's? The host is the last resort on purpose:
+            //      an id the payload defines must never fall through to a host node
+            //      that shares the name.
+            const key = String(raw);
+            const mapped = nodeReferences.get(key);
             if (mapped)
                 return mapped;
-            if (nodeIds.has(String(raw)))
-                return String(raw);
-            if (externalNodeIds?.has(String(raw)))
-                return String(raw);
+            if (nodeIds.has(key))
+                return key;
+            if (externalNodeIds?.has(key))
+                return key;
             return '';
         };
         const from = resolveEndpoint(e.from);
@@ -13483,8 +13527,12 @@ function exportDotText() {
         attrs.push(`order=${n.order ?? 0}`);
         // `labelloc`/`labeljust` are real GraphViz attributes but cannot express
         // this editor's five-way position, so it goes under a reserved name too.
-        if (n.labelPosition)
-            attrs.push(`_gep_labelPosition=${dotString(n.labelPosition)}`);
+        // The RESOLVED position: a node that inherits `top` from its type or the
+        // defaults is drawn at `top`, so writing the raw field dropped the property
+        // for exactly those nodes and a round-trip returned them to the centre.
+        // `v` is nodeVisual's output, the same source as every other attribute here.
+        if (v.labelPosition)
+            attrs.push(`_gep_labelPosition=${dotString(v.labelPosition)}`);
         // Only when the node name had to be aliased: the real id must survive, and
         // `id` is already the attribute the edge exporter uses for the same job.
         if (dotAlias(n.id) !== n.id)
@@ -13794,8 +13842,12 @@ function exportGraphmlText() {
         parts.push(`      <data key="order">${xmlEsc(n.order ?? 0)}</data>`);
         parts.push(`      <data key="x">${xmlEsc(fmtCoord(n.x))}</data>`);
         parts.push(`      <data key="y">${xmlEsc(fmtCoord(n.y))}</data>`);
-        if (n.type)
-            parts.push(`      <data key="type">${xmlEsc(n.type)}</data>`);
+        // The resolved type, like every other visual above: a node whose type is
+        // inherited from the document defaults is drawn with that type's style, and
+        // writing the raw field omitted it — the round-trip lost the inherited type
+        // and the node came back unstyled.
+        if (v.type)
+            parts.push(`      <data key="type">${xmlEsc(v.type)}</data>`);
         parts.push(`      <data key="shape">${xmlEsc(v.shape)}</data>`);
         parts.push(`      <data key="color">${xmlEsc(v.color)}</data>`);
         // Pixels, unconverted — see nodeSizeFromGraphml above. (DOT is the format
@@ -13961,11 +14013,31 @@ function materializeDefaults(nodes, edges, settings) {
     // itself is touched. The document's own settings are passed explicitly rather
     // than read from state: at this point the *imported* document's defaults are
     // still in scope, and they are what the element rendered against.
+    // The caller has not sanitised yet — that is exactly what it is about to do — so
+    // an entry may be null or a non-object. Declared before anything below uses it:
+    // `typeStyleMap` is defined first and needs it, and a `const` read before its
+    // declaration is a ReferenceError, not undefined.
+    const isRecord = value => value != null && typeof value === 'object';
+    // Type-style keys are normalised the way the sanitizer normalises them: a type
+    // is stored capped at 40 characters, so a style declared under a 60-character
+    // name is found only under its 40-character prefix. Looking it up with the raw
+    // key found nothing and the element arrived without its type's look.
+    const typeStyleMap = (styles) => {
+        if (!isRecord(styles))
+            return {};
+        const out = Object.create(null);
+        for (const [key, value] of Object.entries(styles)) {
+            const name = String(key).slice(0, 40);
+            if (name.trim() && isRecord(value) && !(name in out))
+                out[name] = value;
+        }
+        return out;
+    };
     const source = {
         nodeDefaults: settings?.nodeDefaults || {},
         edgeDefaults: settings?.edgeDefaults || {},
-        nodeTypeStyles: settings?.nodeTypeStyles || {},
-        edgeTypeStyles: settings?.edgeTypeStyles || {}
+        nodeTypeStyles: typeStyleMap(settings?.nodeTypeStyles),
+        edgeTypeStyles: typeStyleMap(settings?.edgeTypeStyles)
     };
     const unset = (value) => value == null || value === '';
     // Every property a document's defaults can carry and an element can inherit,
@@ -13978,7 +14050,60 @@ function materializeDefaults(nodes, edges, settings) {
     // so an entry may be null or a non-object. Skip those here and let the
     // sanitizer decide their fate; throwing would reject the whole import,
     // including the entries that are perfectly good.
-    const isRecord = value => value != null && typeof value === 'object';
+    // An explicit value the sanitizer will REJECT is not a value the element is
+    // drawn with, so it must not count as set here either.
+    //
+    // This resolves the visual the SOURCE DOCUMENT drew, and that document drew the
+    // element through nodeVisual against its already-sanitised state: an invalid
+    // explicit `color: 'not-a-color'` sanitised to unset and rendered from the
+    // defaults. Treating the raw rubbish as "the element states this itself" copied
+    // it through untouched, so the sanitizer then cleared it and the element arrived
+    // with the HOST's colour — the one case where append restyled an element whose
+    // source document never looked that way. The same reasoning applies to every
+    // field with a validity rule (a too-long type lost its type style, an
+    // out-of-range width lost its width).
+    //
+    // So: a field is "set" only if its raw value survives the sanitizer's own rules.
+    // The probes below are those rules, written against nodeVisual/edgeVisual's key
+    // list so they cannot drift from it.
+    const isHex = value => /^#[0-9a-f]{6}$/i.test(String(value || ''));
+    const colors = ['color', 'strokeColor', 'labelColor'];
+    const finiteField = (key, value) => {
+        const n = Number(value);
+        if (!Number.isFinite(n))
+            return false;
+        if (key === 'width' || key === 'height')
+            return n >= 10 && n <= 300;
+        if (key === 'labelSize')
+            return n >= 4 && n <= 72;
+        if (key === 'arrowSize')
+            return n >= ARROW_SIZE_MIN && n <= ARROW_SIZE_MAX;
+        return n >= 0 && n <= 20; // strokeSize
+    };
+    const enumField = (key, value) => {
+        if (key === 'shape')
+            return NODE_SHAPES.includes(String(value));
+        if (key === 'strokeStyle')
+            return STROKE_STYLES.includes(String(value));
+        if (key === 'labelPosition')
+            return LABEL_POSITIONS.includes(String(value));
+        return true;
+    };
+    const holdsValue = (key, value) => {
+        if (value == null)
+            return false;
+        if (colors.includes(key))
+            return isHex(value);
+        if (key === 'width' || key === 'height' || key === 'strokeSize' || key === 'labelSize' || key === 'arrowSize')
+            return finiteField(key, value);
+        // The caller truncates `type` before asking, so any non-empty value is one the
+        // element really carries and the ladder must not overwrite it.
+        if (key === 'type')
+            return String(value ?? '').trim() !== '';
+        if (key === 'labelFont')
+            return String(value ?? '').trim() !== '';
+        return enumField(key, value);
+    };
     // `type` is the one property that is not inherited *through* the ladder: it is
     // the input the ladder selects with, so it resolves to the effective type
     // itself. Copying it keeps the element's style findable after the source
@@ -13986,9 +14111,19 @@ function materializeDefaults(nodes, edges, settings) {
     for (const n of nodes) {
         if (!isRecord(n))
             continue;
+        // Truncate the type FIRST, then resolve through it.
+        //
+        // `type` is not inherited — it is what the ladder selects with, and the
+        // sanitizer stores it capped at 40 characters, so a 60-character type is
+        // really its 40-character prefix and its style is keyed by that prefix.
+        // Resolving through the raw string found no style (so the element lost its
+        // type's look) AND left the raw value to be overwritten by the default type.
+        // Truncating here makes the fingerprint the one the sanitizer will agree with.
+        if (n.type != null && String(n.type).trim() !== '')
+            n.type = String(n.type).slice(0, 40);
         const resolved = nodeVisual(n, source);
         for (const key of visualKeys) {
-            if (!unset(n[key]))
+            if (!unset(n[key]) && holdsValue(key, n[key]))
                 continue;
             if (resolved[key] != null)
                 n[key] = resolved[key];
@@ -13997,9 +14132,11 @@ function materializeDefaults(nodes, edges, settings) {
     for (const e of edges) {
         if (!isRecord(e))
             continue;
+        if (e.type != null && String(e.type).trim() !== '')
+            e.type = String(e.type).slice(0, 40);
         const resolved = edgeVisual(e, source);
         for (const key of edgeVisualKeys) {
-            if (!unset(e[key]))
+            if (!unset(e[key]) && holdsValue(key, e[key]))
                 continue;
             if (resolved[key] != null)
                 e[key] = resolved[key];
@@ -14018,7 +14155,7 @@ function appendImportedGraph(data, label = 'graph') {
     // then throws "is not iterable", which aborted the whole append and surfaced as
     // "Paste failed". materializeDefaults takes the raw entries by design, so the
     // shape is normalised here, where every caller's input is known to be foreign.
-    const plannedTrace = { nodes: [], edges: [] };
+    const plannedTrace = { nodes: [], edges: [], complete: true };
     const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
     const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
     const hostIds = new Set(state.nodes.map(n => n.id));
@@ -14039,6 +14176,20 @@ function appendImportedGraph(data, label = 'graph') {
         // authoritative pass can reuse those entries instead of matching text.
         trace: plannedTrace
     });
+    // A payload larger than the planning window is REFUSED, not partly planned.
+    //
+    // Past the window the plan has not seen every id, and an id it has not seen is
+    // indistinguishable from a host node of the same name: with 200,000 valid nodes
+    // ahead of one named `outside`, an edge meant for that node re-pointed at the
+    // host's `outside` and nothing reported it. There is no bound that makes a
+    // partial plan safe — the ambiguity is exactly what the plan exists to resolve —
+    // so the honest answer is to decline the document. The window is 200,000
+    // entries, far above the 3,000/8,000 an append can actually keep; reaching it
+    // means the file is unusable as an append regardless of how its edges resolve.
+    if (plannedTrace.complete === false) {
+        toast(I18N.t('import_failed', { msg: I18N.t('err_import_too_many_entries', { limit: PLANNING_LIMIT }) }));
+        return;
+    }
     // Entries the sanitizer rejected outright (an invalid record, or an edge to a
     // node that exists in neither document) never reach the capacity question, so
     // they do not spend a slot and are not counted as capacity losses — the payload
@@ -14595,12 +14746,18 @@ function importGraphData(data, label, append) {
         toast(I18N.t('import_failed', { msg: I18N.t('err_no_valid_nodes') }));
         return;
     }
-    // A document with zero nodes can never carry edges: dangling edges are
-    // dropped on every path in the app, so the editor's own exports won't
-    // have them either. An empty nodes array with a non-empty edge list is
-    // input whose edges are all meaningless — reject it instead of wiping
-    // the document with a success toast.
-    if (data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0) {
+    // A REPLACEMENT document with zero nodes can never carry edges: dangling edges
+    // are dropped on every path in the app, so the editor's own exports won't have
+    // them either. An empty nodes array with a non-empty edge list is input whose
+    // edges are all meaningless — reject it instead of wiping the document with a
+    // success toast.
+    //
+    // Append is a different question. Its endpoints may all be nodes the HOST
+    // already has, so `{nodes: [], edges: [{from:'h1', to:'h2'}]}` is a perfectly
+    // good request to connect two existing nodes — and the guard rejected it as an
+    // empty graph. The invariant it protects (no edge may dangle) belongs to the
+    // replacement path, which is the only one that can destroy a document.
+    if (!append && data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0) {
         toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
         return;
     }

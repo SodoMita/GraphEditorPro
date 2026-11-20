@@ -357,7 +357,11 @@
       attrs.push(`order=${n.order ?? 0}`);
       // `labelloc`/`labeljust` are real GraphViz attributes but cannot express
       // this editor's five-way position, so it goes under a reserved name too.
-      if(n.labelPosition) attrs.push(`_gep_labelPosition=${dotString(n.labelPosition)}`);
+      // The RESOLVED position: a node that inherits `top` from its type or the
+      // defaults is drawn at `top`, so writing the raw field dropped the property
+      // for exactly those nodes and a round-trip returned them to the centre.
+      // `v` is nodeVisual's output, the same source as every other attribute here.
+      if(v.labelPosition) attrs.push(`_gep_labelPosition=${dotString(v.labelPosition)}`);
       // Only when the node name had to be aliased: the real id must survive, and
       // `id` is already the attribute the edge exporter uses for the same job.
       if(dotAlias(n.id) !== n.id) attrs.push(`id=${dotString(n.id)}`);
@@ -693,7 +697,11 @@
       parts.push(`      <data key="order">${xmlEsc(n.order ?? 0)}</data>`);
       parts.push(`      <data key="x">${xmlEsc(fmtCoord(n.x))}</data>`);
       parts.push(`      <data key="y">${xmlEsc(fmtCoord(n.y))}</data>`);
-      if(n.type) parts.push(`      <data key="type">${xmlEsc(n.type)}</data>`);
+      // The resolved type, like every other visual above: a node whose type is
+      // inherited from the document defaults is drawn with that type's style, and
+      // writing the raw field omitted it — the round-trip lost the inherited type
+      // and the node came back unstyled.
+      if(v.type) parts.push(`      <data key="type">${xmlEsc(v.type)}</data>`);
       parts.push(`      <data key="shape">${xmlEsc(v.shape)}</data>`);
       parts.push(`      <data key="color">${xmlEsc(v.color)}</data>`);
       // Pixels, unconverted — see nodeSizeFromGraphml above. (DOT is the format
@@ -846,11 +854,29 @@
     // itself is touched. The document's own settings are passed explicitly rather
     // than read from state: at this point the *imported* document's defaults are
     // still in scope, and they are what the element rendered against.
+    // The caller has not sanitised yet — that is exactly what it is about to do — so
+    // an entry may be null or a non-object. Declared before anything below uses it:
+    // `typeStyleMap` is defined first and needs it, and a `const` read before its
+    // declaration is a ReferenceError, not undefined.
+    const isRecord = value => value != null && typeof value === 'object';
+    // Type-style keys are normalised the way the sanitizer normalises them: a type
+    // is stored capped at 40 characters, so a style declared under a 60-character
+    // name is found only under its 40-character prefix. Looking it up with the raw
+    // key found nothing and the element arrived without its type's look.
+    const typeStyleMap = (styles) => {
+      if(!isRecord(styles)) return {};
+      const out = Object.create(null);
+      for(const [key, value] of Object.entries(styles)){
+        const name = String(key).slice(0, 40);
+        if(name.trim() && isRecord(value) && !(name in out)) out[name] = value;
+      }
+      return out;
+    };
     const source = {
       nodeDefaults: settings?.nodeDefaults || {},
       edgeDefaults: settings?.edgeDefaults || {},
-      nodeTypeStyles: settings?.nodeTypeStyles || {},
-      edgeTypeStyles: settings?.edgeTypeStyles || {}
+      nodeTypeStyles: typeStyleMap(settings?.nodeTypeStyles),
+      edgeTypeStyles: typeStyleMap(settings?.edgeTypeStyles)
     };
     const unset = (value) => value == null || value === '';
     // Every property a document's defaults can carry and an element can inherit,
@@ -863,24 +889,75 @@
     // so an entry may be null or a non-object. Skip those here and let the
     // sanitizer decide their fate; throwing would reject the whole import,
     // including the entries that are perfectly good.
-    const isRecord = value => value != null && typeof value === 'object';
+    // An explicit value the sanitizer will REJECT is not a value the element is
+    // drawn with, so it must not count as set here either.
+    //
+    // This resolves the visual the SOURCE DOCUMENT drew, and that document drew the
+    // element through nodeVisual against its already-sanitised state: an invalid
+    // explicit `color: 'not-a-color'` sanitised to unset and rendered from the
+    // defaults. Treating the raw rubbish as "the element states this itself" copied
+    // it through untouched, so the sanitizer then cleared it and the element arrived
+    // with the HOST's colour — the one case where append restyled an element whose
+    // source document never looked that way. The same reasoning applies to every
+    // field with a validity rule (a too-long type lost its type style, an
+    // out-of-range width lost its width).
+    //
+    // So: a field is "set" only if its raw value survives the sanitizer's own rules.
+    // The probes below are those rules, written against nodeVisual/edgeVisual's key
+    // list so they cannot drift from it.
+    const isHex = value => /^#[0-9a-f]{6}$/i.test(String(value || ''));
+    const colors = ['color', 'strokeColor', 'labelColor'];
+    const finiteField = (key, value) => {
+      const n = Number(value);
+      if(!Number.isFinite(n)) return false;
+      if(key === 'width' || key === 'height') return n >= 10 && n <= 300;
+      if(key === 'labelSize') return n >= 4 && n <= 72;
+      if(key === 'arrowSize') return n >= ARROW_SIZE_MIN && n <= ARROW_SIZE_MAX;
+      return n >= 0 && n <= 20;                        // strokeSize
+    };
+    const enumField = (key, value) => {
+      if(key === 'shape') return NODE_SHAPES.includes(String(value));
+      if(key === 'strokeStyle') return STROKE_STYLES.includes(String(value));
+      if(key === 'labelPosition') return LABEL_POSITIONS.includes(String(value));
+      return true;
+    };
+    const holdsValue = (key, value) => {
+      if(value == null) return false;
+      if(colors.includes(key)) return isHex(value);
+      if(key === 'width' || key === 'height' || key === 'strokeSize' || key === 'labelSize' || key === 'arrowSize') return finiteField(key, value);
+      // The caller truncates `type` before asking, so any non-empty value is one the
+      // element really carries and the ladder must not overwrite it.
+      if(key === 'type') return String(value ?? '').trim() !== '';
+      if(key === 'labelFont') return String(value ?? '').trim() !== '';
+      return enumField(key, value);
+    };
     // `type` is the one property that is not inherited *through* the ladder: it is
     // the input the ladder selects with, so it resolves to the effective type
     // itself. Copying it keeps the element's style findable after the source
     // document's type styles are gone.
     for(const n of nodes){
       if(!isRecord(n)) continue;
+      // Truncate the type FIRST, then resolve through it.
+      //
+      // `type` is not inherited — it is what the ladder selects with, and the
+      // sanitizer stores it capped at 40 characters, so a 60-character type is
+      // really its 40-character prefix and its style is keyed by that prefix.
+      // Resolving through the raw string found no style (so the element lost its
+      // type's look) AND left the raw value to be overwritten by the default type.
+      // Truncating here makes the fingerprint the one the sanitizer will agree with.
+      if(n.type != null && String(n.type).trim() !== '') n.type = String(n.type).slice(0, 40);
       const resolved = nodeVisual(n, source);
       for(const key of visualKeys){
-        if(!unset(n[key])) continue;
+        if(!unset(n[key]) && holdsValue(key, n[key])) continue;
         if(resolved[key] != null) n[key] = resolved[key];
       }
     }
     for(const e of edges){
       if(!isRecord(e)) continue;
+      if(e.type != null && String(e.type).trim() !== '') e.type = String(e.type).slice(0, 40);
       const resolved = edgeVisual(e, source);
       for(const key of edgeVisualKeys){
-        if(!unset(e[key])) continue;
+        if(!unset(e[key]) && holdsValue(key, e[key])) continue;
         if(resolved[key] != null) e[key] = resolved[key];
       }
     }
@@ -897,7 +974,7 @@
     // then throws "is not iterable", which aborted the whole append and surfaced as
     // "Paste failed". materializeDefaults takes the raw entries by design, so the
     // shape is normalised here, where every caller's input is known to be foreign.
-    const plannedTrace = { nodes: [] as number[], edges: [] as number[] };
+    const plannedTrace = { nodes: [] as number[], edges: [] as number[], complete: true };
     const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
     const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
     const hostIds = new Set(state.nodes.map(n => n.id));
@@ -918,6 +995,20 @@
       // authoritative pass can reuse those entries instead of matching text.
       trace: plannedTrace
     });
+    // A payload larger than the planning window is REFUSED, not partly planned.
+    //
+    // Past the window the plan has not seen every id, and an id it has not seen is
+    // indistinguishable from a host node of the same name: with 200,000 valid nodes
+    // ahead of one named `outside`, an edge meant for that node re-pointed at the
+    // host's `outside` and nothing reported it. There is no bound that makes a
+    // partial plan safe — the ambiguity is exactly what the plan exists to resolve —
+    // so the honest answer is to decline the document. The window is 200,000
+    // entries, far above the 3,000/8,000 an append can actually keep; reaching it
+    // means the file is unusable as an append regardless of how its edges resolve.
+    if(plannedTrace.complete === false){
+      toast(I18N.t('import_failed', {msg: I18N.t('err_import_too_many_entries', {limit: PLANNING_LIMIT})}));
+      return;
+    }
     // Entries the sanitizer rejected outright (an invalid record, or an edge to a
     // node that exists in neither document) never reach the capacity question, so
     // they do not spend a slot and are not counted as capacity losses — the payload
@@ -1436,12 +1527,18 @@
       toast(I18N.t('import_failed', { msg: I18N.t('err_no_valid_nodes') }));
       return;
     }
-    // A document with zero nodes can never carry edges: dangling edges are
-    // dropped on every path in the app, so the editor's own exports won't
-    // have them either. An empty nodes array with a non-empty edge list is
-    // input whose edges are all meaningless — reject it instead of wiping
-    // the document with a success toast.
-    if(data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0){
+    // A REPLACEMENT document with zero nodes can never carry edges: dangling edges
+    // are dropped on every path in the app, so the editor's own exports won't have
+    // them either. An empty nodes array with a non-empty edge list is input whose
+    // edges are all meaningless — reject it instead of wiping the document with a
+    // success toast.
+    //
+    // Append is a different question. Its endpoints may all be nodes the HOST
+    // already has, so `{nodes: [], edges: [{from:'h1', to:'h2'}]}` is a perfectly
+    // good request to connect two existing nodes — and the guard rejected it as an
+    // empty graph. The invariant it protects (no edge may dangle) belongs to the
+    // replacement path, which is the only one that can destroy a document.
+    if(!append && data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0){
       toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
       return;
     }
