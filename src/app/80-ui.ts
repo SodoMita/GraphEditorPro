@@ -1,3 +1,131 @@
+  function wirePaneResize(split: HTMLElement, first: HTMLElement, group: HTMLElement, key: string, input: HTMLInputElement){
+    let drag: {
+      id: number; axis: string; start: number; size: number; total: number; next: number;
+      keepCanvas?: number; changed?: boolean;
+    } | null = null;
+    const main = key === 'canvas' ? group : group.parentElement!;
+    const tracks = (ratio: number) => `minmax(0,${ratio}fr) minmax(0,${1 - ratio}fr)`;
+    let frame = 0;
+    const axis = () => getComputedStyle(split).getPropertyValue('--split-axis').trim();
+    const position = (ev: PointerEvent, dir: string) => dir === 'x' ? ev.clientX : ev.clientY;
+    const measure = () => {
+      const dir = axis();
+      const dimension = dir === 'x' ? 'width' : 'height';
+      const style = getComputedStyle(group);
+      const gap = parseFloat(dir === 'x' ? style.columnGap : style.rowGap) || 0;
+      const total = (dir === 'x' ? group.clientWidth : group.clientHeight) - gap;
+      return { dir, total, size: first.getBoundingClientRect()[dimension] };
+    };
+    const boundedRatio = (ratio: number, size: number, total: number) => {
+      const min = Math.min(120 / total, 0.3);
+      const initial = clamp(size / total, 0, 1);
+      return clamp(ratio, Math.min(initial, min), Math.max(initial, 1 - min));
+    };
+    const outerShare = (dir: string) => {
+      if(key !== 'data' || dir !== 'y' || !main.classList.contains('v-canvas') || main.style.getPropertyValue('--canvas-y')) return undefined;
+      const height = canvasWrap.getBoundingClientRect().height;
+      return height / (height + group.getBoundingClientRect().height);
+    };
+    const setRatio = (dir: string, ratio: number, keepCanvas?: number) => {
+      // Keep the outer split in place when replacing content-sized rows.
+      if(keepCanvas !== undefined) main.style.setProperty('--canvas-y', tracks(keepCanvas));
+      group.style.setProperty(`--${key}-${dir}`, tracks(ratio));
+      main.classList.add('panes-resized');
+      if(main.style.getPropertyValue('--canvas-y')) main.classList.add('canvas-row-resized');
+      if(key === 'canvas' || keepCanvas !== undefined) applyCameraTransform(currentCamera());
+    };
+    let editing = false;
+    const sync = () => {
+      const visible = split.getClientRects().length > 0;
+      const { size, total } = visible ? measure() : { size: 0, total: 0 };
+      input.disabled = total < 2;
+      if(!input.disabled && editing) return;
+      editing = false;
+      const value = input.disabled ? '' : String(Math.round(clamp(size / total, 0, 1) * 1000) / 10);
+      if(input.value !== value) input.value = value;
+    };
+    input.addEventListener('input', () => { editing = true; });
+    input.addEventListener('blur', () => { editing = false; sync(); });
+    input.addEventListener('change', () => {
+      editing = false;
+      if(split.getClientRects().length && Number.isFinite(input.valueAsNumber)){
+        const { dir, size, total } = measure();
+        if(total >= 2){
+          setRatio(dir, boundedRatio(input.valueAsNumber / 100, size, total), outerShare(dir));
+          if(key === 'canvas') applyCamera();
+        }
+      }
+      sync();
+    });
+    if(typeof ResizeObserver !== 'undefined'){
+      const observer = new ResizeObserver(sync);
+      for(const el of [split, first, group]) observer.observe(el);
+    }
+    const paint = () => {
+      frame = 0;
+      if(!drag || main.classList.contains('no-pane-drag') || !split.getClientRects().length || axis() !== drag.axis) return;
+      setRatio(drag.axis, drag.next, drag.keepCanvas);
+      drag.keepCanvas = undefined;
+      drag.changed = true;
+    };
+    split.addEventListener('pointerdown', ev => {
+      if(drag || main.classList.contains('no-pane-drag') || !ev.isPrimary || ev.button !== 0) return;
+      const { dir, size, total } = measure();
+      if(total < 2) return;
+      split.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+      drag = { id: ev.pointerId, axis: dir, start: position(ev, dir), size, total, next: size / total };
+      drag.keepCanvas = outerShare(dir);
+    });
+    const move = (ev: PointerEvent) => {
+      if(!drag || ev.pointerId !== drag.id) return;
+      const delta = position(ev, drag.axis) - drag.start;
+      const next = boundedRatio((drag.size + delta) / drag.total, drag.size, drag.total);
+      if(next === drag.next || (!frame && !delta && !drag.changed)) return;
+      drag.next = next;
+      if(!frame) frame = requestAnimationFrame(paint);
+    };
+    const finish = (ev: PointerEvent) => {
+      if(!drag || ev.pointerId !== drag.id) return;
+      if(ev.type === 'pointerup') move(ev);
+      if(frame){ cancelAnimationFrame(frame); paint(); }
+      if(drag.changed && key === 'canvas') applyCamera();
+      drag = null;
+      sync();
+    };
+    split.addEventListener('pointermove', move);
+    split.addEventListener('pointerup', finish);
+    split.addEventListener('pointercancel', finish);
+    split.addEventListener('lostpointercapture', finish);
+    return sync;
+  }
+
+  function wirePaneDragSettings(main: HTMLElement){
+    const enabled: HTMLInputElement = $('#paneDragEnabled');
+    const size: HTMLInputElement = $('#paneDragSize');
+    const key = 'graph-editor-pro-pane-drag';
+    let width = size.valueAsNumber;
+    const apply = () => {
+      width = clamp(Math.round(Number.isFinite(size.valueAsNumber) ? size.valueAsNumber : width), 8, 64);
+      size.value = String(width);
+      size.disabled = !enabled.checked;
+      main.style.setProperty('--pane-drag-size', `${width}px`);
+      main.classList.toggle('no-pane-drag', !enabled.checked);
+    };
+    try{
+      const saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if(typeof saved?.enabled === 'boolean') enabled.checked = saved.enabled;
+      if(Number.isFinite(saved?.width)) size.value = String(saved.width);
+    }catch{}
+    apply();
+    const update = () => {
+      apply();
+      try{ localStorage.setItem(key, JSON.stringify({ enabled: enabled.checked, width })); }catch{}
+    };
+    enabled.addEventListener('change', update);
+    size.addEventListener('change', update);
+  }
+
   function wireUi(){
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
@@ -115,6 +243,7 @@
       // A newly revealed panel may have deferred custom-property sections —
       // mount them now, synchronously, so the panel is complete on first paint.
       if(target === 'data') flushDeferredCustomAttributes();
+      if(target === 'edit' || target === 'style') syncEditTypeLists();
       flushPendingCustomPropHosts();
     };
     // The sheet is sized by content (up to 60dvh), so its height cannot be
@@ -333,7 +462,7 @@
         // (rebuilding would destroy the next input the user taps on mobile)
         if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-elabel')){ e.label = t.value.slice(0,80); pushHistory('edit edge label'); queueRender(false); saveSoon(); }
-        else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edit edge type'); queueRender(false); saveSoon(); }
+        else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); syncEditTypeLists(); pushHistory('edit edge type'); queueRender(false, true); saveSoon(); }
         else if(t.matches('.edge-directed')){ const v = (t as any).value || (t as any).checked; const dir = normalizeDirection(v); (e as any).direction = dir; (e as any).directed = dir !== 'undirected'; pushHistory('edit edge directed'); queueRender(true); saveSoon(); }
         else if(t.matches('.edge-color')){ e.color = t.value; pushHistory('edit edge color'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-stroke-style')){ e.strokeStyle = t.value || undefined; pushHistory('edit edge stroke style'); queueRender(false); saveSoon(); }
@@ -569,7 +698,7 @@
     $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveSoon(); });
     $('#gridMajorColor').addEventListener('change', () => pushHistory('grid major color'));
     $('#gridMajorAlpha').addEventListener('change', e => { state.settings.gridMajorAlpha = clamp(finite(e.target.value,0.16),0,1); e.target.value=state.settings.gridMajorAlpha; pushHistory('grid major alpha'); updateGridBackground(); saveSoon(); });
-    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0,40); pushHistory('default node type'); queueRender(false); saveSoon(); });
+    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0,40); invalidateTypeLists(); pushHistory('default node type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defNodeShape').addEventListener('change', e => { nd().shape = e.target.value; state.settings.nodeShape = e.target.value; const el=$('#nodeShape'); if(el) el.value = e.target.value; pushHistory('default node shape'); queueRender(false); });
     $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el=$('#nodeColor'); if(el) el.value = e.target.value; queueRender(false); saveSoon(); });
     $('#defNodeColor').addEventListener('change', () => pushHistory('default node color'));
@@ -584,7 +713,7 @@
     $('#defNodeLabelFont').addEventListener('change', e => { nd().labelFont = e.target.value; pushHistory('default label font'); queueRender(false); });
     $('#defNodeLabelSize').addEventListener('change', e => { nd().labelSize = clamp(finite(e.target.value,13),4,72); e.target.value = nd().labelSize; pushHistory('default label size'); queueRender(false); });
     $('#defNodeLabelPos').addEventListener('change', e => { nd().labelPosition = e.target.value; pushHistory('default label position'); queueRender(false); });
-    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0,40); pushHistory('default edge type'); queueRender(false); saveSoon(); });
+    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0,40); invalidateTypeLists(); pushHistory('default edge type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
@@ -612,6 +741,12 @@
     // View toggle controls
     const mainEl = document.querySelector<HTMLElement>('.main');
     if(mainEl){
+      wirePaneDragSettings(mainEl);
+      const dataPane = mainEl.querySelector<HTMLElement>('.bottom')!;
+      const syncCanvasShare = wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas', $('#canvasShare'));
+      const syncMatrixShare = wirePaneResize($('#dataSplit'), dataPane.querySelector<HTMLElement>('.bottom-pane')!, dataPane, 'data', $('#matrixShare'));
+      const syncPaneShares = () => { syncCanvasShare(); syncMatrixShare(); };
+      window.addEventListener('resize', syncPaneShares);
       // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
       // classes on .main). At least one view must stay visible.
       const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
@@ -620,6 +755,7 @@
       if(isDesktop){ mainEl.classList.add('v-matrix', 'v-edges'); }
       const VIEW_CLASS: Record<string, string> = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
       const syncViewButtons = () => {
+        syncPaneShares();
         document.querySelectorAll<HTMLElement>('[data-view-btn]').forEach(b => {
           const active = mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || '');
           b.classList.toggle('active', active);
@@ -660,6 +796,7 @@
           const cur = mainEl.dataset.orient || 'v';
           mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
           if(syncOrientBtn) syncOrientBtn();
+          syncPaneShares();
           setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); }, 0);
         });
         if(mainEl.dataset.orient) syncOrientBtn();

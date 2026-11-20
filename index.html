@@ -376,12 +376,12 @@
     .bottom-pane{display:none}
     .main.v-matrix .bottom,.main.v-edges .bottom{display:grid}
     .main.v-matrix .bottom-pane:nth-child(1),.main.v-edges .bottom-pane:nth-child(2){display:block}
-    .main.v-matrix.v-edges .bottom{grid-template-rows:auto auto; grid-template-columns:1fr}
+    .main.v-matrix.v-edges .bottom{grid-template-rows:var(--data-y, auto auto); grid-template-columns:1fr}
     .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:0; border-top:1px solid var(--line-2)}
     /* Panels are sized by their content (row: auto) and capped at 50% of
        the screen via max-height — a short matrix/edge list never leaves
        blank half-screen space, and big ones scroll inside the panel. */
-    .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
+    .main.v-matrix,.main.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) auto); grid-template-areas:"canvas" "bottom"}
     .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
     .main:not(.v-canvas) .bottom{max-height:none;height:100%;min-height:0;grid-template-rows:minmax(0,1fr)}
     /* Vertical split with the canvas hidden: the two visible panes split the
@@ -390,7 +390,7 @@
        height pools below the edge list. The side-by-side arrangements are
        kept in the landscape/portrait(h)/desktop blocks, which load later
        with equal specificity. */
-    .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:repeat(2,minmax(0,1fr)); grid-template-columns:1fr}
+    .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:var(--data-y, repeat(2,minmax(0,1fr))); grid-template-columns:1fr}
     .main:not(.v-canvas) .bottom-pane{height:100%;min-height:0}
     .main:not(.v-canvas).v-matrix .bottom-pane:nth-child(1),
     .main:not(.v-canvas).v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; overflow:hidden}
@@ -690,8 +690,8 @@
       .canvas-wrap.sheet-open .sel-tools,
       .canvas-wrap.sheet-open .edge-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 68px); z-index:31}
       .canvas-wrap.sheet-open .gizmo-tools{position:fixed; bottom:calc(var(--sheet-h, 0px) + 122px); z-index:31}
-      .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:minmax(0,1fr) auto; grid-template-areas:"canvas" "bottom"}
-      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main[data-orient="h"].v-matrix.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) auto); grid-template-areas:"canvas" "bottom"}
+      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1fr) minmax(0,1fr))}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
@@ -740,13 +740,13 @@
          best use of a short wide screen. The pane is a flex column whose
          table area stretches to fill the column, so a short matrix/edge
          list never leaves a dead gap. */
-      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
+      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--canvas-x, minmax(0,1.15fr) minmax(0,1fr)); grid-template-areas:"canvas bottom"}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .bottom{grid-template-rows:minmax(0,1fr); max-height:none}
-      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main[data-orient="h"].v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1fr) minmax(0,1fr))}
       .main[data-orient="h"].v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
-      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr 1fr}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1fr) minmax(0,1fr))}
       .main:not(.v-canvas).v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
       .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
       .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
@@ -789,19 +789,19 @@
       .canvas-wrap.select-mode .empty-hint,
       .canvas-wrap.edge-mode .empty-hint{bottom:136px}
       /* Default: canvas + both panels visible (all three v-* classes) */
-      .main.v-matrix,.main.v-edges{grid-template-rows:minmax(0,1fr) minmax(0,26vh); grid-template-areas:"canvas" "bottom"}
+      .main.v-matrix,.main.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) minmax(0,26vh)); grid-template-areas:"canvas" "bottom"}
       .main:not(.v-matrix):not(.v-edges){grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas"}
       .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
-      .main.v-matrix.v-edges .bottom{grid-template-rows:none; grid-template-columns:1.05fr .95fr}
+      .main.v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1.05fr) minmax(0,.95fr))}
       .main.v-matrix.v-edges .bottom-pane + .bottom-pane{border-left:1px solid var(--line-2); border-top:0}
       .main.v-matrix .bottom-pane:nth-child(1),
       .main.v-edges .bottom-pane:nth-child(2){display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden}
       .main:not(.v-canvas) .bottom{max-height:none; height:100%; min-height:0; grid-template-rows:minmax(0,1fr)}
-      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1.05fr .95fr}
+      .main:not(.v-canvas).v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1.05fr) minmax(0,.95fr))}
       .main:not(.v-canvas):not(.v-edges).v-matrix .bottom,
       .main:not(.v-canvas):not(.v-matrix).v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:1fr}
       /* Horizontal split (↔): canvas left, panels right for every view */
-      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); grid-template-areas:"canvas bottom"}
+      .main[data-orient="h"]{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--canvas-x, minmax(0,1.1fr) minmax(0,1fr)); grid-template-areas:"canvas bottom"}
       .main[data-orient="h"]:not(.v-matrix):not(.v-edges){grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas"}
       .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .table-scroll{max-height:none}
@@ -838,6 +838,52 @@
 
     @media (prefers-reduced-motion:reduce){
       *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+    }
+
+    /* Invisible hit strips centred on the existing pane edges. The axes
+       mirror the responsive grid tracks above. */
+    .main,.bottom{position:relative}
+    .pane-split{
+      --split-axis:y;
+      --split-half:calc(var(--pane-drag-size, 32px) / 2);
+      display:none; position:absolute; z-index:5;
+      left:0; right:0; bottom:calc(-1 * var(--split-half));
+      height:calc(2 * var(--split-half)); cursor:row-resize;
+      touch-action:none; user-select:none;
+    }
+    .main.no-pane-drag .pane-split{pointer-events:none}
+    #canvasSplit{grid-area:canvas}
+    #dataSplit{grid-area:1 / 1 / 2 / 2}
+    .main.v-canvas:is(.v-matrix,.v-edges) #canvasSplit,
+    .main.v-matrix.v-edges #dataSplit{display:block}
+    .main.canvas-row-resized .bottom{max-height:none; min-height:0}
+    .main.panes-resized .bottom > .bottom-pane{overflow:auto}
+    .main.panes-resized .table-scroll{max-height:none; min-height:36px}
+    @media (min-width:951px), (orientation:landscape){
+      .main[data-orient="h"] #canvasSplit{
+        --split-axis:x;
+        top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+        width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+      }
+    }
+    .main[data-orient="h"] #dataSplit{
+      --split-axis:x;
+      top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+      width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+    }
+    @media (min-width:951px){
+      #dataSplit{
+        --split-axis:x;
+        top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+        width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+      }
+    }
+    @media (max-width:950px) and (orientation:landscape){
+      .main:not(.v-canvas) #dataSplit{
+        --split-axis:x;
+        top:0; bottom:0; left:auto; right:calc(-1 * var(--split-half));
+        width:calc(2 * var(--split-half)); height:auto; cursor:col-resize;
+      }
     }
   </style>
 </head>
@@ -1490,6 +1536,21 @@
             </details>
 
             <details class="section">
+              <summary class="section-title"><span data-i18n="pane_sizes">Pane sizes</span></summary>
+              <div class="sec-body">
+                <div class="grid2">
+                  <label class="field" for="canvasShare"><span data-i18n="canvas_share">Canvas (%)</span> <input id="canvasShare" type="number" min="0" max="100" step="any" inputmode="decimal" disabled></label>
+                  <label class="field" for="matrixShare"><span data-i18n="matrix_share">Matrix (%)</span> <input id="matrixShare" type="number" min="0" max="100" step="any" inputmode="decimal" disabled></label>
+                </div>
+                <div class="grid2">
+                  <label class="chk" for="paneDragEnabled"><input id="paneDragEnabled" type="checkbox" checked> <span data-i18n="pane_drag_enabled">Resize by dragging</span></label>
+                  <label class="field" for="paneDragSize"><span data-i18n="pane_drag_size">Drag zone (px)</span> <input id="paneDragSize" type="number" min="8" max="64" step="1" value="32" inputmode="numeric"></label>
+                </div>
+                <p class="tiny muted" data-i18n="pane_sizes_hint">The data area gets the rest of the canvas split. The edge list gets the rest of the matrix split. Show both sides of a split to edit its size.</p>
+              </div>
+            </details>
+
+            <details class="section">
               <summary class="section-title">
                 <span data-i18n="reliability_options">Reliability options</span>
               </summary>
@@ -1683,6 +1744,7 @@
           <div class="empty-hint" data-i18n="empty_hint">Choose Node, then click the canvas — or open Help to load the sample graph.</div>
         </section>
 
+        <div id="canvasSplit" class="pane-split" aria-hidden="true"></div>
         <section class="panel bottom">
           <div class="bottom-pane thin-scroll">
             <div class="section-title"><span data-i18n="adjacency_matrix">Adjacency matrix</span> <span id="matrixNote" class="tiny muted"></span></div>
@@ -1716,6 +1778,7 @@
             </div>
             <div id="edgeListHost" class="table-scroll thin-scroll"></div>
           </div>
+          <div id="dataSplit" class="pane-split" aria-hidden="true"></div>
         </section>
       </main>
     </div>
@@ -2375,6 +2438,12 @@ const I18N = {
         'fit_view': { en: 'Fit view', ru: 'Вписать' },
         'center_on_sel': { en: 'Center on sel.', ru: 'Центрировать' },
         'center_on_sel_title': { en: 'Center the view on the single selected node', ru: 'Центрировать вид на выбранном узле' },
+        'pane_sizes': { en: 'Pane sizes', ru: 'Размеры панелей' },
+        'canvas_share': { en: 'Canvas (%)', ru: 'Холст (%)' },
+        'matrix_share': { en: 'Matrix (%)', ru: 'Матрица (%)' },
+        'pane_drag_enabled': { en: 'Resize by dragging', ru: 'Изменять размер перетаскиванием' },
+        'pane_drag_size': { en: 'Drag zone (px)', ru: 'Зона перетаскивания (пкс)' },
+        'pane_sizes_hint': { en: 'The data area gets the rest of the canvas split. The edge list gets the rest of the matrix split. Show both sides of a split to edit its size.', ru: 'Оставшееся место в области холста занимают панели данных, а рядом с матрицей — список рёбер. Чтобы изменить размер, покажите обе стороны разделителя.' },
         'camera_position': { en: 'Camera position', ru: 'Позиция камеры' },
         'center_x': { en: 'Center X', ru: 'Центр X' },
         'center_y': { en: 'Center Y', ru: 'Центр Y' },
@@ -3434,8 +3503,8 @@ const defaultState = () => ({
             strokeSize: 2.4, strokeStyle: 'solid', arrowSize: DEFAULT_ARROW_SIZE
         },
         // Per-type style overrides: { 'typeName': { color, shape, width, height, ... }, ... }
-        nodeTypeStyles: {},
-        edgeTypeStyles: {},
+        nodeTypeStyles: Object.create(null),
+        edgeTypeStyles: Object.create(null),
         // Style presets: saved visual styles that can be applied to selection.
         // Each preset: { name, node?: {...style}, edge?: {...style} }
         stylePresets: []
@@ -4373,6 +4442,10 @@ function customPropsSection(cacheKey, scope, targets, multi) {
 // Swap in the rebuilt element when their content key moved on; otherwise
 // this is a no-op.
 function refreshSelectionCustomSection(host, cacheKey, scope, targets, multi) {
+    if (customPropHostHidden(host)) {
+        mountCustomProps(host, cacheKey, cacheKey, scope, targets, multi);
+        return;
+    }
     const element = customPropsSection(cacheKey, scope, targets, multi);
     if (element.parentNode === host)
         return; // still mounted and current
@@ -4402,6 +4475,12 @@ function mountCustomProps(host, placeholder, cacheKey, scope, targets, multi) {
         const marker = host.querySelector(`[data-cp-ph="${placeholder}"]`);
         if (marker) {
             marker.replaceWith(element);
+            return;
+        }
+        const current = host.querySelector(`.custom-props[data-scope="${scope}"]`);
+        if (current) {
+            if (current !== element)
+                current.replaceWith(element);
             return;
         }
         // The placeholder vanished since the request was made (e.g. the
@@ -4526,7 +4605,7 @@ function sanitizeState(input) {
             x: finite(n.x, i * 35), y: finite(n.y, i * 35),
             shape: n.shape ? validShape(n.shape) : '', // empty = unset
             color: validColor(n.color) || '', // empty = unset
-            type: String(n.type || '').slice(0, 40),
+            type: sanitizeEntityType(n.type),
             order: clamp(Math.trunc(finite(n.order, i)), 0, 2147483647)
         };
         // Optional per-node overrides — only set if present in input
@@ -4569,7 +4648,7 @@ function sanitizeState(input) {
             label: String(e.label ?? '').slice(0, 80),
             directed: dir, // legacy boolean compat: keep truthy for directed/mutual
             direction: dir,
-            type: String(e.type || '').slice(0, 40)
+            type: sanitizeEntityType(e.type)
         };
         // Keep legacy directed boolean in sync (true = directed/mutual, false = undirected) for old exports
         edge.directed = dir !== 'undirected';
@@ -4604,12 +4683,12 @@ function sanitizeState(input) {
     settings.nodeStrokeColor = validColor(settings.nodeStrokeColor) || '#e2e8f0';
     settings.nodeStrokeSize = clamp(finite(settings.nodeStrokeSize, 2.2), 0, 20);
     settings.nodeStrokeStyle = STROKE_STYLES.includes(settings.nodeStrokeStyle) ? settings.nodeStrokeStyle : 'solid';
-    settings.nodeType = String(settings.nodeType || '').slice(0, 40);
+    settings.nodeType = sanitizeEntityType(settings.nodeType);
     settings.nodeLabelColor = validColor(settings.nodeLabelColor) || '#f8fafc';
     settings.nodeLabelFont = String(settings.nodeLabelFont || 'Inter').slice(0, 60);
     settings.nodeLabelSize = clamp(finite(settings.nodeLabelSize, 13), 4, 72);
     settings.nodeLabelPosition = LABEL_POSITIONS.includes(settings.nodeLabelPosition) ? settings.nodeLabelPosition : 'center';
-    settings.edgeType = String(settings.edgeType || '').slice(0, 40);
+    settings.edgeType = sanitizeEntityType(settings.edgeType);
     settings.edgeColor = validColor(settings.edgeColor) || '#94a3b8';
     settings.edgeStrokeSize = clamp(finite(settings.edgeStrokeSize, 2.4), 0, 20);
     settings.edgeStrokeStyle = STROKE_STYLES.includes(settings.edgeStrokeStyle) ? settings.edgeStrokeStyle : 'solid';
@@ -4660,7 +4739,7 @@ function sanitizeState(input) {
     nd.strokeSize = clamp(finite(nd.strokeSize, 2.2), 0, 20);
     nd.labelSize = clamp(finite(nd.labelSize, 13), 4, 72);
     nd.labelFont = String(nd.labelFont || 'Inter').slice(0, 60);
-    nd.type = String(nd.type || '').slice(0, 40);
+    nd.type = sanitizeEntityType(nd.type);
     settings.edgeDefaults = {
         ...base.settings.edgeDefaults,
         ...(isRecord(inputSettings.edgeDefaults) ? inputSettings.edgeDefaults : {})
@@ -4673,7 +4752,7 @@ function sanitizeState(input) {
     ed.arrowSize = clamp(finite(ed.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
     ed.labelSize = clamp(finite(ed.labelSize, 12), 4, 72);
     ed.labelFont = String(ed.labelFont || 'Inter').slice(0, 60);
-    ed.type = String(ed.type || '').slice(0, 40);
+    ed.type = sanitizeEntityType(ed.type);
     settings.inheritDefaults = settings.inheritDefaults !== false; // default true
     settings.noLabel = Boolean(settings.noLabel);
     // Sanitize type style maps
@@ -4724,9 +4803,10 @@ function sanitizeState(input) {
     if (isRecord(settings.nodeTypeStyles)) {
         const cleaned = Object.create(null);
         for (const [key, value] of Object.entries(settings.nodeTypeStyles)) {
-            const style = sanitizeTypeStyle(value, true);
+            const name = String(key).slice(0, 40);
+            const style = name.trim() ? sanitizeTypeStyle(value, true) : undefined;
             if (style)
-                cleaned[String(key).slice(0, 40)] = style;
+                cleaned[name] = style;
         }
         settings.nodeTypeStyles = cleaned;
     }
@@ -4736,9 +4816,10 @@ function sanitizeState(input) {
     if (isRecord(settings.edgeTypeStyles)) {
         const cleaned = Object.create(null);
         for (const [key, value] of Object.entries(settings.edgeTypeStyles)) {
-            const style = sanitizeTypeStyle(value, false);
+            const name = String(key).slice(0, 40);
+            const style = name.trim() ? sanitizeTypeStyle(value, false) : undefined;
             if (style)
-                cleaned[String(key).slice(0, 40)] = style;
+                cleaned[name] = style;
         }
         settings.edgeTypeStyles = cleaned;
     }
@@ -4945,12 +5026,28 @@ function indexFor(index, arr) {
 }
 function nodeById(id) { return indexFor(nodeIndex, state.nodes).get(id); }
 function edgeById(id) { return indexFor(edgeIndex, state.edges).get(id); }
+function sanitizeEntityType(value) {
+    if (!value || typeof value === 'symbol')
+        return '';
+    if (typeof value === 'string')
+        return value.slice(0, 40);
+    try {
+        return String(value).slice(0, 40);
+    }
+    catch {
+        return '';
+    }
+}
+function getTypeStyle(styles, type) {
+    const key = sanitizeEntityType(type);
+    return key && styles && Object.prototype.hasOwnProperty.call(styles, key) ? styles[key] : undefined;
+}
 // === Visual resolution: merge per-item overrides → type styles → defaults ===
 function nodeVisual(n) {
     const d = state.settings.nodeDefaults || {};
     const effectiveType = n.type || d.type || '';
-    const ts = (n.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[n.type]) || {};
-    const dts = (d.type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[d.type]) || {};
+    const ts = getTypeStyle(state.settings.nodeTypeStyles, n.type) || {};
+    const dts = getTypeStyle(state.settings.nodeTypeStyles, d.type) || {};
     return {
         shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
         color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
@@ -4969,8 +5066,8 @@ function nodeVisual(n) {
 function edgeVisual(e) {
     const d = state.settings.edgeDefaults || {};
     const effectiveType = e.type || d.type || '';
-    const ts = (e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type]) || {};
-    const dts = (d.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[d.type]) || {};
+    const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type) || {};
+    const dts = getTypeStyle(state.settings.edgeTypeStyles, d.type) || {};
     return {
         color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
         type: effectiveType,
@@ -5689,41 +5786,80 @@ function shouldShowLabels() {
         vc.showLabels = res;
     return res;
 }
-// Type lists are cached by nodes/edges identity/len/rev — O(V) only when graph actually changes
-let nodeTypesCache = { arr: null, len: -1, rev: -1, types: [] };
+// Type lists include types used on graph items, per-type style definitions,
+// and Style-tab default types. Cached by array identity/len/graphRev plus
+// style-map identity, default type, and settingsTypeRev — O(V) only when
+// types can actually change (colour drags bump styleRev, never this).
+let settingsTypeRev = 0;
+function invalidateTypeLists() { settingsTypeRev++; }
+let nodeTypesCache = { arr: null, len: -1, rev: -1, styles: null, defType: '', sRev: -1, types: [], html: '' };
 function existingNodeTypes() {
     const arr = state.nodes;
-    if (nodeTypesCache.arr === arr && nodeTypesCache.len === arr.length && nodeTypesCache.rev === graphRev) {
+    const styles = state.settings?.nodeTypeStyles || null;
+    const defType = sanitizeEntityType(state.settings?.nodeDefaults?.type);
+    if (nodeTypesCache.arr === arr && nodeTypesCache.len === arr.length && nodeTypesCache.rev === graphRev
+        && nodeTypesCache.styles === styles && nodeTypesCache.defType === defType && nodeTypesCache.sRev === settingsTypeRev) {
         return nodeTypesCache.types;
     }
     const set = new Set();
-    for (const n of arr)
-        if (n.type)
-            set.add(n.type);
+    for (const n of arr) {
+        const t = sanitizeEntityType(n.type);
+        if (t.trim())
+            set.add(t);
+    }
+    if (styles) {
+        for (const t of Object.keys(styles))
+            if (t && t.trim())
+                set.add(t);
+    }
+    if (defType && defType.trim())
+        set.add(defType);
     const types = [...set].sort();
     nodeTypesCache.arr = arr;
     nodeTypesCache.len = arr.length;
     nodeTypesCache.rev = graphRev;
+    nodeTypesCache.styles = styles;
+    nodeTypesCache.defType = defType;
+    nodeTypesCache.sRev = settingsTypeRev;
     nodeTypesCache.types = types;
+    nodeTypesCache.html = types.map(t => `<option value="${esc(t)}">`).join('');
     return types;
 }
-let edgeTypesCache = { arr: null, len: -1, rev: -1, types: [] };
+let edgeTypesCache = { arr: null, len: -1, rev: -1, styles: null, defType: '', sRev: -1, types: [], html: '' };
 function existingEdgeTypes() {
     const arr = state.edges;
-    if (edgeTypesCache.arr === arr && edgeTypesCache.len === arr.length && edgeTypesCache.rev === graphRev) {
+    const styles = state.settings?.edgeTypeStyles || null;
+    const defType = sanitizeEntityType(state.settings?.edgeDefaults?.type);
+    if (edgeTypesCache.arr === arr && edgeTypesCache.len === arr.length && edgeTypesCache.rev === graphRev
+        && edgeTypesCache.styles === styles && edgeTypesCache.defType === defType && edgeTypesCache.sRev === settingsTypeRev) {
         return edgeTypesCache.types;
     }
     const set = new Set();
-    for (const e of arr)
-        if (e.type)
-            set.add(e.type);
+    for (const e of arr) {
+        const t = sanitizeEntityType(e.type);
+        if (t.trim())
+            set.add(t);
+    }
+    if (styles) {
+        for (const t of Object.keys(styles))
+            if (t && t.trim())
+                set.add(t);
+    }
+    if (defType && defType.trim())
+        set.add(defType);
     const types = [...set].sort();
     edgeTypesCache.arr = arr;
     edgeTypesCache.len = arr.length;
     edgeTypesCache.rev = graphRev;
+    edgeTypesCache.styles = styles;
+    edgeTypesCache.defType = defType;
+    edgeTypesCache.sRev = settingsTypeRev;
     edgeTypesCache.types = types;
+    edgeTypesCache.html = types.map(t => `<option value="${esc(t)}">`).join('');
     return types;
 }
+function nodeTypeOptionsHtml() { existingNodeTypes(); return nodeTypesCache.html; }
+function edgeTypeOptionsHtml() { existingEdgeTypes(); return edgeTypesCache.html; }
 function syncControls() {
     $('#docTitleInput').value = state.title;
     // Edit-tab node placement
@@ -5787,13 +5923,33 @@ function syncControls() {
     setSelectCombine(state.selectCombine || 'replace', false);
     setHitTestMode(state.settings.hitTestMode || 'any', false);
 }
+const NODE_TYPE_DATALIST_SELECTORS = ['#nodeTypeListEdit', '#defNodeTypeList', '#nodeTypeStyleList'];
+const EDGE_TYPE_DATALIST_SELECTORS = ['#edgeTypeListEdit', '#defEdgeTypeList', '#edgeTypeStyleList'];
+const datalistHtmlMemo = new WeakMap();
+function setDatalistOptions(el, html) {
+    if (!el || datalistHtmlMemo.get(el) === html)
+        return;
+    if (html !== '' || el.firstChild)
+        el.innerHTML = html;
+    datalistHtmlMemo.set(el, html);
+}
+let lastNodeTypeOptionsHtml = null;
+let lastEdgeTypeOptionsHtml = null;
 function syncEditTypeLists() {
-    const ntl = $('#nodeTypeListEdit');
-    if (ntl)
-        ntl.innerHTML = existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('');
-    const etl = $('#edgeTypeListEdit');
-    if (etl)
-        etl.innerHTML = existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('');
+    const nHtml = nodeTypeOptionsHtml();
+    if (nHtml !== lastNodeTypeOptionsHtml) {
+        lastNodeTypeOptionsHtml = nHtml;
+        for (const sel of NODE_TYPE_DATALIST_SELECTORS)
+            setDatalistOptions(document.querySelector(sel), nHtml);
+    }
+    const eHtml = edgeTypeOptionsHtml();
+    if (eHtml !== lastEdgeTypeOptionsHtml) {
+        lastEdgeTypeOptionsHtml = eHtml;
+        for (const sel of EDGE_TYPE_DATALIST_SELECTORS)
+            setDatalistOptions(document.querySelector(sel), eHtml);
+    }
+    setDatalistOptions(document.querySelector('#nodeTypeList'), nHtml);
+    setDatalistOptions(document.querySelector('#edgeTypeList'), eHtml);
 }
 // A caller of queueRender is a caller that changed something a pass renders
 // from. Document mutations are already visible through graphRev (every
@@ -5840,8 +5996,13 @@ function syncRenderOriginRepaint() {
     lastPaintedGen = renderGen;
     endRenderPass();
 }
+let pendingRenderSidebar = false;
 function queueRender(includeMatrix = false, includeSidebar = false) {
     invalidateStyleCache();
+    if (includeSidebar)
+        sidebarDirty = true;
+    if (includeSidebar || sidebarDirty)
+        pendingRenderSidebar = true;
     if (includeMatrix) {
         clearTimeout(matrixTimer);
         matrixTimer = setTimeout(renderMatrixAndList, 60);
@@ -5849,11 +6010,16 @@ function queueRender(includeMatrix = false, includeSidebar = false) {
     if (renderQueued)
         return;
     renderQueued = true;
-    const wantSidebar = includeSidebar || sidebarDirty;
-    requestAnimationFrame(() => { renderQueued = false; renderCanvas(); if (wantSidebar) {
-        renderSidebar();
-        sidebarDirty = false;
-    } });
+    requestAnimationFrame(() => {
+        renderQueued = false;
+        const wantSidebar = pendingRenderSidebar;
+        pendingRenderSidebar = false;
+        renderCanvas();
+        if (wantSidebar && sidebarDirty) {
+            sidebarDirty = false;
+            renderSidebar();
+        }
+    });
 }
 let sidebarDirty = false;
 function markSidebarDirty() { sidebarDirty = true; }
@@ -5902,7 +6068,7 @@ let paintedNodeStyle = '', paintedEdgeStyle = '';
 // they read them, and joins them into one comparable string. It is a few
 // microseconds per pass and it never misses a field that matters.
 const NODE_STYLE_DEFAULT_KEYS = ['shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize', 'strokeStyle', 'labelColor', 'labelPosition', 'labelSize', 'labelFont'];
-const EDGE_STYLE_DEFAULT_KEYS = ['color', 'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize'];
+const EDGE_STYLE_DEFAULT_KEYS = ['color', 'strokeSize', 'strokeStyle', 'arrowSize', 'labelColor', 'labelFont', 'labelSize'];
 function styleFingerprint(kind) {
     const settings = state.settings || {};
     const gd = settings.graphDefaults || {};
@@ -5920,9 +6086,9 @@ function styleFingerprint(kind) {
             + '|' + (gd.edgeWeightColorLow || '#22d3ee') + '|' + (gd.edgeWeightColorHigh || '#f59e0b');
     // Type styles are keyed by user-provided names: walk them in insertion
     // order and include every field a type can set.
-    for (const name in types) {
+    for (const name of Object.keys(types)) {
         const style = types[name] || {};
-        out += '|' + name + ':' + NODE_STYLE_DEFAULT_KEYS.concat(EDGE_STYLE_DEFAULT_KEYS).map(key => style[key] ?? '').join(',');
+        out += '|' + name + ':' + keys.map(key => style[key] ?? '').join(',');
     }
     return out;
 }
@@ -7331,6 +7497,7 @@ function renderNodes() {
 }
 function renderSidebar() {
     renderStartSelect();
+    syncEditTypeLists();
     renderSelectionPanel();
 }
 let startSelectSig = '';
@@ -7452,7 +7619,7 @@ function renderSelectionPanel() {
             html += `<div class="section-title">${I18N.t('nodes_n', { n: nodeCount })} <span class="tiny muted">${I18N.t('applies_to_all')}</span></div>
           <div class="grid2">
             <label class="field" for="mulNodeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulNodeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
-            <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList">${existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
+            <label class="field" for="mulNodeType">${I18N.t('type')} <input id="mulNodeType" list="nodeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="nodeTypeList"></datalist></label>
             <label class="field" for="mulNodeOrder">${I18N.t('order')} <input id="mulNodeOrder" type="number" min="0" step="1" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep" inputmode="numeric"></label>
             <label class="field" for="mulNodeColor">${I18N.t('color')} <input id="mulNodeColor" type="color" value="#0ea5e9"></label>
             <label class="field" for="mulNodeShape">${I18N.t('shape')} <select id="mulNodeShape">${shapeOptions}</select></label>
@@ -7478,7 +7645,7 @@ function renderSelectionPanel() {
           <div class="grid2">
             <label class="field" for="mulEdgeLabel"><span data-i18n="label">${I18N.t('label')}</span> <input id="mulEdgeLabel" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
             <label class="field" for="mulEdgeWeight"><span data-i18n="weight">${I18N.t('weight')}</span> <input id="mulEdgeWeight" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"></label>
-            <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList">${existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
+            <label class="field" for="mulEdgeType">${I18N.t('type')} <input id="mulEdgeType" list="edgeTypeList" placeholder="${I18N.t('keep')}" data-i18n-placeholder="keep"><datalist id="edgeTypeList"></datalist></label>
             <label class="field" for="mulEdgeDirected">${I18N.t('directed')} <select id="mulEdgeDirected"><option value="">${I18N.t('keep')}</option><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
             <label class="field" for="mulEdgeColor">${I18N.t('color')} <input id="mulEdgeColor" type="color" value="#94a3b8"></label>
             <label class="field" for="mulEdgeStrokeSize">${I18N.t('stroke_size')} <input id="mulEdgeStrokeSize" type="number" min="0" max="20" step="0.1" value="2.4" inputmode="decimal"></label>
@@ -7495,15 +7662,23 @@ function renderSelectionPanel() {
         }
         const multiNodeTargets = nodeCount > 0 ? state.selection.nodes.map(id => nodeById(id)).filter(Boolean) : [];
         const multiEdgeTargets = edgeCount > 0 ? state.selection.edges.map(id => edgeById(id)).filter(Boolean) : [];
+        const syncMultiTypeLists = () => {
+            if (nodeCount > 0)
+                setDatalistOptions(document.querySelector('#nodeTypeList'), nodeTypeOptionsHtml());
+            if (edgeCount > 0)
+                setDatalistOptions(document.querySelector('#edgeTypeList'), edgeTypeOptionsHtml());
+        };
         if (!applySelectionPanelHtml(host, html)) {
-            // Outer panel reused byte-identically; only the cached custom sections
-            // can have moved on (definition edits). Swap those, keep the rest.
+            // Outer panel reused byte-identically; only datalists and cached custom
+            // sections can have moved on (type or definition edits). Swap those, keep the rest.
+            syncMultiTypeLists();
             if (nodeCount > 0)
                 refreshSelectionCustomSection(host, 'sel-node', 'node', multiNodeTargets, true);
             if (edgeCount > 0)
                 refreshSelectionCustomSection(host, 'sel-edge', 'edge', multiEdgeTargets, true);
             return;
         }
+        syncMultiTypeLists();
         // Mount the custom sections: cached live elements — untouched
         // definitions/values keep their DOM, listeners and focus.
         if (nodeCount > 0)
@@ -7528,7 +7703,7 @@ function renderSelectionPanel() {
                     n.type = v;
                     applyTypeStyleToNode(n);
                 }
-            } invalidateGraphIndex(); pushHistory('multi node type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
+            } invalidateGraphIndex(); pushHistory('multi node type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
             $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if (v === '')
                 return; const ord = clamp(parseInt(v, 10) || 0, 0, 2147483647); for (const id of nodeIds) {
                 const n = nodeById(id);
@@ -7647,7 +7822,7 @@ function renderSelectionPanel() {
                     ed.type = v;
                     applyTypeStyleToEdge(ed);
                 }
-            } invalidateGraphIndex(); pushHistory('multi edge type'); queueRender(false); saveSoon(); renderSelectionPanel(); });
+            } invalidateGraphIndex(); pushHistory('multi edge type'); queueRender(true); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
             $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if (v === '')
                 return; for (const id of edgeIds) {
                 const ed = edgeById(id);
@@ -7728,12 +7903,11 @@ function renderSelectionPanel() {
         const bounds = coordinateBounds(n);
         const shapeOptions = NODE_SHAPES.map(s => `<option value="${s}">${I18N.t('shape_' + s)}</option>`).join('');
         const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
-        const typeList = existingNodeTypes().filter(t => t !== n.type);
         const v = nodeVisual(n);
         const singleNodeHtml = `
         <div class="grid2">
           <label class="field" for="selNodeLabel">${I18N.t('label')} <input id="selNodeLabel" value="${esc(n.label)}"></label>
-          <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="none" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList">${typeList.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
+          <label class="field" for="selNodeType">${I18N.t('type')} <input id="selNodeType" list="nodeTypeList" value="${esc(n.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="nodeTypeList"></datalist></label>
         </div>
         <div class="grid2" style="margin-top:8px">
           <label class="field" for="selNodeX">${I18N.t('x_coord')} <input id="selNodeX" type="number" value="${Math.round(n.x)}" inputmode="decimal"></label>
@@ -7778,6 +7952,7 @@ function renderSelectionPanel() {
             const pos = $('#selNodeLabelPos');
             if (pos && document.activeElement !== pos)
                 pos.value = n.labelPosition || '';
+            setDatalistOptions(document.querySelector('#nodeTypeList'), nodeTypeOptionsHtml());
         };
         if (!applySelectionPanelHtml(host, singleNodeHtml)) {
             syncSelects();
@@ -7803,7 +7978,7 @@ function renderSelectionPanel() {
                 pushHistory('move node coordinate');
         };
         $('#selNodeLabel').addEventListener('change', e => { n.label = e.target.value.slice(0, 80); pushHistory(); queueRender(true); markSidebarDirty(); });
-        $('#selNodeType').addEventListener('change', e => { n.type = e.target.value.slice(0, 40); applyTypeStyleToNode(n); invalidateGraphIndex(); pushHistory('node type'); queueRender(false); renderSelectionPanel(); });
+        $('#selNodeType').addEventListener('change', e => { n.type = e.target.value.slice(0, 40); applyTypeStyleToNode(n); invalidateGraphIndex(); pushHistory('node type'); queueRender(false); syncEditTypeLists(); renderSelectionPanel(); });
         $('#selNodeColor').addEventListener('input', e => { n.color = e.target.value; queueRender(false); saveSoon(); });
         $('#selNodeColor').addEventListener('change', () => pushHistory());
         $('#selNodeShape').addEventListener('change', e => { n.shape = e.target.value; pushHistory(); queueRender(false); });
@@ -7857,7 +8032,6 @@ function renderSelectionPanel() {
             return;
         }
         const a = nodeById(e.from), b = nodeById(e.to);
-        const typeList = existingEdgeTypes().filter(t => t !== e.type);
         const v = edgeVisual(e);
         const strokeOptions = STROKE_STYLES.map(s => `<option value="${s}">${I18N.t('stroke_' + s)}</option>`).join('');
         const singleEdgeHtml = `
@@ -7866,7 +8040,7 @@ function renderSelectionPanel() {
           <label class="field" for="selEdgeWeight">${I18N.t('weight')} <input id="selEdgeWeight" value="${esc(e.weight)}"></label>
           <label class="field" for="selEdgeLabel">${I18N.t('label')} <input id="selEdgeLabel" value="${esc(e.label)}"></label>
         </div>
-        <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList">${typeList.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
+        <label class="field" for="selEdgeType" style="margin-top:8px">${I18N.t('type')} <input id="selEdgeType" list="edgeTypeList" value="${esc(e.type)}" placeholder="${I18N.t('none_placeholder')}" data-i18n-placeholder="none_placeholder"><datalist id="edgeTypeList"></datalist></label>
         <label class="field" for="selEdgeDirected">${I18N.t('direction')} <select id="selEdgeDirected"><option value="directed">${I18N.t('directed_edge_short')}</option><option value="mutual">${I18N.t('mutual_edge_short') || 'Mutual'}</option><option value="undirected">${I18N.t('undirected_edge_short')}</option></select></label>
         <div class="section-title">${I18N.t('style_blank_inherit')} <span class="tiny muted">${I18N.t('blank_inherit')}</span></div>
         <div class="grid2">
@@ -7890,6 +8064,7 @@ function renderSelectionPanel() {
             const stroke = $('#selEdgeStrokeStyle');
             if (stroke && document.activeElement !== stroke)
                 stroke.value = e.strokeStyle || '';
+            setDatalistOptions(document.querySelector('#edgeTypeList'), edgeTypeOptionsHtml());
         };
         if (!applySelectionPanelHtml(host, singleEdgeHtml)) {
             syncEdgeSelects();
@@ -7903,7 +8078,7 @@ function renderSelectionPanel() {
         else
             e.weight = v; pushHistory(); queueRender(true); });
         $('#selEdgeLabel').addEventListener('change', ev => { e.label = ev.target.value.slice(0, 80); pushHistory(); queueRender(true); });
-        $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0, 40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edge type'); queueRender(false); renderSelectionPanel(); });
+        $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0, 40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edge type'); queueRender(true); syncEditTypeLists(); renderSelectionPanel(); });
         $('#selEdgeDirected').value = edgeDirection(e);
         $('#selEdgeDirected').addEventListener('change', ev => { e.direction = ev.target.value; e.directed = ev.target.value !== 'undirected'; pushHistory(); queueRender(true); });
         $('#selEdgeColor').addEventListener('input', ev => { e.color = ev.target.value; queueRender(false); saveSoon(); });
@@ -8136,7 +8311,7 @@ function edgeListHtml() {
         <td><input class="matrix-input edge-to" data-edge-id="${esc(e.id)}" value="${esc(b?.label || e.to)}" aria-label="${esc(I18N.t('col_to'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_to_hint', { node: e.to }))}" style="width:64px"></td>
         <td><input class="matrix-input edge-weight${sel}" data-edge-id="${esc(e.id)}" value="${esc(e.weight)}" aria-label="${esc(I18N.t('weight'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_weight'))}" style="width:52px"></td>
         <td><input class="matrix-input edge-elabel" data-edge-id="${esc(e.id)}" value="${esc(e.label)}" aria-label="${esc(I18N.t('label'))}: ${esc(e.id)}" title="${esc(I18N.t('edit_label'))}" style="width:72px"></td>
-        <td><input class="matrix-input edge-type" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="none" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
+        <td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="${esc(e.id)}" value="${esc(e.type)}" aria-label="${esc(I18N.t('type'))}: ${esc(e.id)}" placeholder="${esc(I18N.t('none_placeholder'))}" data-i18n-placeholder="none_placeholder" title="${esc(I18N.t('edit_type'))}" style="width:64px"></td>
         <td><select class="edge-directed" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('directed'))}: ${esc(e.id)}" title="${esc(I18N.t('directed'))}"><option value="directed" ${edgeDirection(e) === 'directed' ? 'selected' : ''}>→</option><option value="mutual" ${edgeDirection(e) === 'mutual' ? 'selected' : ''}>↔</option><option value="undirected" ${edgeDirection(e) === 'undirected' ? 'selected' : ''}>—</option></select></td>
         <td><input type="color" class="edge-color" data-edge-id="${esc(e.id)}" value="${esc(edgeVisual(e).color)}" aria-label="${esc(I18N.t('color'))}: ${esc(e.id)}" title="${esc(I18N.t('edge_color'))}" style="width:32px;height:26px;padding:2px"></td>
         <td><select class="matrix-input edge-stroke-style" data-edge-id="${esc(e.id)}" aria-label="${esc(I18N.t('stroke_style'))}: ${esc(e.id)}" title="${esc(I18N.t('stroke_style'))}" style="width:68px">${strokeOpts}</select></td>
@@ -8671,7 +8846,7 @@ function applyNewNodeDefaults(n) {
         return;
     const d = s.nodeDefaults;
     const defType = n.type || d?.type;
-    const dts = (defType && s.nodeTypeStyles && s.nodeTypeStyles[defType]) || {};
+    const dts = getTypeStyle(s.nodeTypeStyles, defType) || {};
     n.shape = (defType && dts.shape) ? dts.shape : s.nodeShape;
     n.color = (defType && dts.color) ? dts.color : s.nodeColor;
     n.width = (defType && dts.width != null) ? dts.width : s.nodeWidth;
@@ -8731,7 +8906,7 @@ function addEdge(from, to) {
     if (s.edgeWeight !== '')
         e.weight = String(s.edgeWeight).slice(0, 50);
     if (effectiveType) {
-        const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[effectiveType];
+        const ts = getTypeStyle(state.settings.edgeTypeStyles, effectiveType);
         if (ts) {
             if (!ts.color)
                 e.color = s.edgeColor;
@@ -8986,7 +9161,7 @@ function setMatrixCell(from, to, raw) {
                 e.custom = pendingCustom;
             if (s.edgeType)
                 e.type = s.edgeType;
-            const ts = e.type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
+            const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type);
             if (ts) {
                 if (!ts.color)
                     e.color = s.edgeColor;
@@ -9599,13 +9774,31 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
     // Clone the clipboard entities — the definition resolution below may
     // remap or coerce their custom values, which must never leak back into
     // the clipboard (a second paste has to start from the copied originals).
+    const cloneClipboardNode = (raw) => {
+        const c = cloneNode(raw);
+        if ('type' in c)
+            c.type = sanitizeEntityType(c.type);
+        return c;
+    };
+    const cloneClipboardEdge = (raw) => {
+        const c = cloneEdge(raw);
+        if ('type' in c)
+            c.type = sanitizeEntityType(c.type);
+        return c;
+    };
     const cloneClipboardData = (src) => ({
-        nodes: (Array.isArray(src.nodes) ? src.nodes : [])
-            .map((n) => sanitizeClipboardEntity(cloneNode(n), 'node')).filter((n) => n !== null),
-        edges: (Array.isArray(src.edges) ? src.edges : [])
-            .map((e) => sanitizeClipboardEntity(cloneEdge(e), 'edge')).filter((e) => e !== null),
-        externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : [])
-            .map((e) => sanitizeClipboardEntity(cloneEdge(e), 'edge')).filter((e) => e !== null),
+        // Node/edge cloning normalizes the carried type (non-string values
+        // included); the clipboard sanitizer then keeps only fields the app
+        // itself writes, so foreign payloads cannot corrupt a live entity.
+        nodes: (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord)
+            .map((n) => sanitizeClipboardEntity(cloneClipboardNode(n), 'node'))
+            .filter((n) => n !== null),
+        edges: (Array.isArray(src.edges) ? src.edges : []).filter(isRecord)
+            .map((e) => sanitizeClipboardEntity(cloneClipboardEdge(e), 'edge'))
+            .filter((e) => e !== null),
+        externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).filter(isRecord)
+            .map((e) => sanitizeClipboardEntity(cloneClipboardEdge(e), 'edge'))
+            .filter((e) => e !== null),
         customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
             .filter(isRecord)
             .map((def) => ({ ...def })),
@@ -14354,6 +14547,7 @@ function appendImportedGraph(data, label = 'graph') {
     // definitions — repaint every custom-property surface so the Data tab,
     // the pending-defaults editors and the selection panel show them.
     flushDeferredCustomAttributes();
+    syncEditTypeLists();
     renderSelectionPanel();
     pushHistory(`append ${label}`);
     queueRender(true, true);
@@ -16615,15 +16809,8 @@ function syncStyleControls() {
     set('defEdgeLabelColor', ed.labelColor);
     set('defEdgeLabelFont', ed.labelFont);
     set('defEdgeLabelSize', ed.labelSize);
-    // Update type datalists with existing types
-    const nodeTypeList = $('#defNodeTypeList');
-    const edgeTypeList = $('#defEdgeTypeList');
-    if (nodeTypeList)
-        nodeTypeList.innerHTML = existingNodeTypes().map(t => `<option value="${esc(t)}">`).join('');
-    if (edgeTypeList)
-        edgeTypeList.innerHTML = existingEdgeTypes().map(t => `<option value="${esc(t)}">`).join('');
-    // Update type style dropdowns
-    populateTypeStyleSelects();
+    // Update type datalists with existing and style-defined types
+    syncEditTypeLists();
 }
 function applyNodeDefaultsToAll() {
     const d = state.settings.nodeDefaults;
@@ -16651,6 +16838,8 @@ function applyNodeDefaultsToAll() {
     invalidateGraphIndex();
     pushHistory('apply node defaults');
     queueRender(true);
+    syncEditTypeLists();
+    renderSelectionPanel();
     toast(I18N.t('node_defaults_applied'));
 }
 function applyNodeDefaultsToSelected() {
@@ -16687,6 +16876,7 @@ function applyNodeDefaultsToSelected() {
     invalidateGraphIndex();
     pushHistory('apply node defaults to selected');
     queueRender(true);
+    syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('node_defaults_applied_sel', { count: nodeIds.length }));
 }
@@ -16708,6 +16898,8 @@ function applyEdgeDefaultsToAll() {
     invalidateGraphIndex();
     pushHistory('apply edge defaults');
     queueRender(true);
+    syncEditTypeLists();
+    renderSelectionPanel();
     toast(I18N.t('edge_defaults_applied'));
 }
 function applyEdgeDefaultsToSelected() {
@@ -16736,22 +16928,43 @@ function applyEdgeDefaultsToSelected() {
     invalidateGraphIndex();
     pushHistory('apply edge defaults to selected');
     queueRender(true);
+    syncEditTypeLists();
     renderSelectionPanel();
     toast(I18N.t('edge_defaults_applied_sel', { count: edgeIds.length }));
 }
 // === Type style management ===
-function populateTypeStyleSelects() {
-    const nList = $('#nodeTypeStyleList');
-    const eList = $('#edgeTypeStyleList');
-    const nodeTypes = [...new Set([...existingNodeTypes(), ...Object.keys(state.settings.nodeTypeStyles || {})])].sort();
-    const edgeTypes = [...new Set([...existingEdgeTypes(), ...Object.keys(state.settings.edgeTypeStyles || {})])].sort();
-    if (nList)
-        nList.innerHTML = nodeTypes.map(t => `<option value="${esc(t)}">`).join('');
-    if (eList)
-        eList.innerHTML = edgeTypes.map(t => `<option value="${esc(t)}">`).join('');
+function isKnownExactType(kind, candidate) {
+    if (!candidate)
+        return false;
+    if (kind === 'node') {
+        const styles = state.settings?.nodeTypeStyles;
+        return Boolean(styles && Object.prototype.hasOwnProperty.call(styles, candidate))
+            || sanitizeEntityType(state.settings?.nodeDefaults?.type) === candidate
+            || sanitizeEntityType(state.settings?.nodeType) === candidate
+            || state.nodes.some(n => sanitizeEntityType(n.type) === candidate);
+    }
+    const styles = state.settings?.edgeTypeStyles;
+    return Boolean(styles && Object.prototype.hasOwnProperty.call(styles, candidate))
+        || sanitizeEntityType(state.settings?.edgeDefaults?.type) === candidate
+        || sanitizeEntityType(state.settings?.edgeType) === candidate
+        || state.edges.some(e => sanitizeEntityType(e.type) === candidate);
+}
+function resolveTypeStyleKey(kind, input) {
+    const raw = sanitizeEntityType(input);
+    if (raw.trim() && isKnownExactType(kind, raw))
+        return raw;
+    if (!input || typeof input === 'symbol')
+        return '';
+    try {
+        return String(input).trim().slice(0, 40);
+    }
+    catch {
+        return '';
+    }
 }
 function loadNodeTypeStyleForm(type) {
-    const ts = (type && state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[type]) || {};
+    const key = resolveTypeStyleKey('node', type);
+    const ts = getTypeStyle(state.settings.nodeTypeStyles, key) || {};
     $('#ntsColor').value = ts.color || '#0ea5e9';
     $('#ntsShape').value = ts.shape || '';
     $('#ntsWidth').value = ts.width != null ? ts.width : 50;
@@ -16765,7 +16978,8 @@ function loadNodeTypeStyleForm(type) {
     $('#ntsLabelFont').value = ts.labelFont || '';
 }
 function loadEdgeTypeStyleForm(type) {
-    const ts = (type && state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[type]) || {};
+    const key = resolveTypeStyleKey('edge', type);
+    const ts = getTypeStyle(state.settings.edgeTypeStyles, key) || {};
     $('#etsColor').value = ts.color || '#94a3b8';
     $('#etsStrokeSize').value = ts.strokeSize != null ? ts.strokeSize : 2.4;
     $('#etsStrokeStyle').value = ts.strokeStyle || '';
@@ -16775,13 +16989,14 @@ function loadEdgeTypeStyleForm(type) {
     $('#etsLabelFont').value = ts.labelFont || '';
 }
 function saveNodeTypeStyle() {
-    const type = $('#nodeTypeStyleInput').value.trim();
+    const type = resolveTypeStyleKey('node', $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
     }
+    $('#nodeTypeStyleInput').value = type;
     if (!state.settings.nodeTypeStyles)
-        state.settings.nodeTypeStyles = {};
+        state.settings.nodeTypeStyles = Object.create(null);
     const o = {
         color: $('#ntsColor').value,
         width: clamp(finite($('#ntsWidth').value, 50), 10, 300),
@@ -16805,20 +17020,23 @@ function saveNodeTypeStyle() {
         if (n.type === type || (!n.type && state.settings.nodeDefaults?.type === type))
             applyTypeStyleToNode(n);
     }
+    invalidateTypeLists();
     pushHistory('save node type style');
     queueRender(true);
     saveSoon();
-    populateTypeStyleSelects();
+    syncEditTypeLists();
+    renderSelectionPanel();
     toast(I18N.t('saved_style_type', { type: type }));
 }
 function saveEdgeTypeStyle() {
-    const type = $('#edgeTypeStyleInput').value.trim();
+    const type = resolveTypeStyleKey('edge', $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
     }
+    $('#edgeTypeStyleInput').value = type;
     if (!state.settings.edgeTypeStyles)
-        state.settings.edgeTypeStyles = {};
+        state.settings.edgeTypeStyles = Object.create(null);
     const o = {
         color: $('#etsColor').value,
         strokeSize: clamp(finite($('#etsStrokeSize').value, 2.4), 0, 20),
@@ -16838,46 +17056,52 @@ function saveEdgeTypeStyle() {
         if (e.type === type || (!e.type && state.settings.edgeDefaults?.type === type))
             applyTypeStyleToEdge(e);
     }
+    invalidateTypeLists();
     pushHistory('save edge type style');
     queueRender(true);
     saveSoon();
-    populateTypeStyleSelects();
+    syncEditTypeLists();
+    renderSelectionPanel();
     toast(I18N.t('saved_style_type', { type: type }));
 }
 function delNodeTypeStyle() {
-    const type = $('#nodeTypeStyleInput').value.trim();
+    const type = resolveTypeStyleKey('node', $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
     }
-    if (state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[type]) {
+    if (getTypeStyle(state.settings.nodeTypeStyles, type)) {
         delete state.settings.nodeTypeStyles[type];
+        invalidateTypeLists();
         pushHistory('delete node type style');
         queueRender(true);
         saveSoon();
-        populateTypeStyleSelects();
+        syncEditTypeLists();
+        renderSelectionPanel();
         loadNodeTypeStyleForm('');
         toast(I18N.t('deleted_style_type', { type: type }));
     }
 }
 function delEdgeTypeStyle() {
-    const type = $('#edgeTypeStyleInput').value.trim();
+    const type = resolveTypeStyleKey('edge', $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
     }
-    if (state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[type]) {
+    if (getTypeStyle(state.settings.edgeTypeStyles, type)) {
         delete state.settings.edgeTypeStyles[type];
+        invalidateTypeLists();
         pushHistory('delete edge type style');
         queueRender(true);
         saveSoon();
-        populateTypeStyleSelects();
+        syncEditTypeLists();
+        renderSelectionPanel();
         loadEdgeTypeStyleForm('');
         toast(I18N.t('deleted_style_type', { type: type }));
     }
 }
 function clearNodeOverridesForType() {
-    const type = $('#nodeTypeStyleInput').value.trim();
+    const type = resolveTypeStyleKey('node', $('#nodeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16904,10 +17128,11 @@ function clearNodeOverridesForType() {
     pushHistory('clear per-node overrides');
     queueRender(true);
     saveSoon();
+    renderSelectionPanel();
     toast(count > 0 ? I18N.t('cleared_overrides_n', { n: count }) : I18N.t('no_nodes_type'));
 }
 function clearEdgeOverridesForType() {
-    const type = $('#edgeTypeStyleInput').value.trim();
+    const type = resolveTypeStyleKey('edge', $('#edgeTypeStyleInput').value);
     if (!type) {
         toast(I18N.t('enter_type_first'));
         return;
@@ -16929,6 +17154,7 @@ function clearEdgeOverridesForType() {
     pushHistory('clear per-edge overrides');
     queueRender(true);
     saveSoon();
+    renderSelectionPanel();
     toast(count > 0 ? I18N.t('cleared_overrides_e', { n: count }) : I18N.t('no_edges_type'));
 }
 // Clear per-item overrides for properties that the node's type style defines,
@@ -16936,7 +17162,7 @@ function clearEdgeOverridesForType() {
 function applyTypeStyleToNode(n) {
     if (!n.type)
         return;
-    const ts = state.settings.nodeTypeStyles && state.settings.nodeTypeStyles[n.type];
+    const ts = getTypeStyle(state.settings.nodeTypeStyles, n.type);
     if (!ts)
         return;
     if (ts.shape) {
@@ -16971,7 +17197,7 @@ function applyTypeStyleToNode(n) {
 function applyTypeStyleToEdge(e) {
     if (!e.type)
         return;
-    const ts = state.settings.edgeTypeStyles && state.settings.edgeTypeStyles[e.type];
+    const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type);
     if (!ts)
         return;
     if (ts.color) {
@@ -17365,6 +17591,155 @@ function renderCustomAttributes(options) {
         });
     }
 }
+function wirePaneResize(split, first, group, key, input) {
+    let drag = null;
+    const main = key === 'canvas' ? group : group.parentElement;
+    const tracks = (ratio) => `minmax(0,${ratio}fr) minmax(0,${1 - ratio}fr)`;
+    let frame = 0;
+    const axis = () => getComputedStyle(split).getPropertyValue('--split-axis').trim();
+    const position = (ev, dir) => dir === 'x' ? ev.clientX : ev.clientY;
+    const measure = () => {
+        const dir = axis();
+        const dimension = dir === 'x' ? 'width' : 'height';
+        const style = getComputedStyle(group);
+        const gap = parseFloat(dir === 'x' ? style.columnGap : style.rowGap) || 0;
+        const total = (dir === 'x' ? group.clientWidth : group.clientHeight) - gap;
+        return { dir, total, size: first.getBoundingClientRect()[dimension] };
+    };
+    const boundedRatio = (ratio, size, total) => {
+        const min = Math.min(120 / total, 0.3);
+        const initial = clamp(size / total, 0, 1);
+        return clamp(ratio, Math.min(initial, min), Math.max(initial, 1 - min));
+    };
+    const outerShare = (dir) => {
+        if (key !== 'data' || dir !== 'y' || !main.classList.contains('v-canvas') || main.style.getPropertyValue('--canvas-y'))
+            return undefined;
+        const height = canvasWrap.getBoundingClientRect().height;
+        return height / (height + group.getBoundingClientRect().height);
+    };
+    const setRatio = (dir, ratio, keepCanvas) => {
+        // Keep the outer split in place when replacing content-sized rows.
+        if (keepCanvas !== undefined)
+            main.style.setProperty('--canvas-y', tracks(keepCanvas));
+        group.style.setProperty(`--${key}-${dir}`, tracks(ratio));
+        main.classList.add('panes-resized');
+        if (main.style.getPropertyValue('--canvas-y'))
+            main.classList.add('canvas-row-resized');
+        if (key === 'canvas' || keepCanvas !== undefined)
+            applyCameraTransform(currentCamera());
+    };
+    let editing = false;
+    const sync = () => {
+        const visible = split.getClientRects().length > 0;
+        const { size, total } = visible ? measure() : { size: 0, total: 0 };
+        input.disabled = total < 2;
+        if (!input.disabled && editing)
+            return;
+        editing = false;
+        const value = input.disabled ? '' : String(Math.round(clamp(size / total, 0, 1) * 1000) / 10);
+        if (input.value !== value)
+            input.value = value;
+    };
+    input.addEventListener('input', () => { editing = true; });
+    input.addEventListener('blur', () => { editing = false; sync(); });
+    input.addEventListener('change', () => {
+        editing = false;
+        if (split.getClientRects().length && Number.isFinite(input.valueAsNumber)) {
+            const { dir, size, total } = measure();
+            if (total >= 2) {
+                setRatio(dir, boundedRatio(input.valueAsNumber / 100, size, total), outerShare(dir));
+                if (key === 'canvas')
+                    applyCamera();
+            }
+        }
+        sync();
+    });
+    if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(sync);
+        for (const el of [split, first, group])
+            observer.observe(el);
+    }
+    const paint = () => {
+        frame = 0;
+        if (!drag || main.classList.contains('no-pane-drag') || !split.getClientRects().length || axis() !== drag.axis)
+            return;
+        setRatio(drag.axis, drag.next, drag.keepCanvas);
+        drag.keepCanvas = undefined;
+        drag.changed = true;
+    };
+    split.addEventListener('pointerdown', ev => {
+        if (drag || main.classList.contains('no-pane-drag') || !ev.isPrimary || ev.button !== 0)
+            return;
+        const { dir, size, total } = measure();
+        if (total < 2)
+            return;
+        split.setPointerCapture(ev.pointerId);
+        ev.preventDefault();
+        drag = { id: ev.pointerId, axis: dir, start: position(ev, dir), size, total, next: size / total };
+        drag.keepCanvas = outerShare(dir);
+    });
+    const move = (ev) => {
+        if (!drag || ev.pointerId !== drag.id)
+            return;
+        const delta = position(ev, drag.axis) - drag.start;
+        const next = boundedRatio((drag.size + delta) / drag.total, drag.size, drag.total);
+        if (next === drag.next || (!frame && !delta && !drag.changed))
+            return;
+        drag.next = next;
+        if (!frame)
+            frame = requestAnimationFrame(paint);
+    };
+    const finish = (ev) => {
+        if (!drag || ev.pointerId !== drag.id)
+            return;
+        if (ev.type === 'pointerup')
+            move(ev);
+        if (frame) {
+            cancelAnimationFrame(frame);
+            paint();
+        }
+        if (drag.changed && key === 'canvas')
+            applyCamera();
+        drag = null;
+        sync();
+    };
+    split.addEventListener('pointermove', move);
+    split.addEventListener('pointerup', finish);
+    split.addEventListener('pointercancel', finish);
+    split.addEventListener('lostpointercapture', finish);
+    return sync;
+}
+function wirePaneDragSettings(main) {
+    const enabled = $('#paneDragEnabled');
+    const size = $('#paneDragSize');
+    const key = 'graph-editor-pro-pane-drag';
+    let width = size.valueAsNumber;
+    const apply = () => {
+        width = clamp(Math.round(Number.isFinite(size.valueAsNumber) ? size.valueAsNumber : width), 8, 64);
+        size.value = String(width);
+        size.disabled = !enabled.checked;
+        main.style.setProperty('--pane-drag-size', `${width}px`);
+        main.classList.toggle('no-pane-drag', !enabled.checked);
+    };
+    try {
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        if (typeof saved?.enabled === 'boolean')
+            enabled.checked = saved.enabled;
+        if (Number.isFinite(saved?.width))
+            size.value = String(saved.width);
+    }
+    catch { }
+    apply();
+    const update = () => {
+        apply();
+        try {
+            localStorage.setItem(key, JSON.stringify({ enabled: enabled.checked, width }));
+        }
+        catch { }
+    };
+    enabled.addEventListener('change', update);
+    size.addEventListener('change', update);
+}
 function wireUi() {
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
@@ -17525,6 +17900,8 @@ function wireUi() {
         // mount them now, synchronously, so the panel is complete on first paint.
         if (target === 'data')
             flushDeferredCustomAttributes();
+        if (target === 'edit' || target === 'style')
+            syncEditTypeLists();
         flushPendingCustomPropHosts();
     };
     // The sheet is sized by content (up to 60dvh), so its height cannot be
@@ -17839,8 +18216,9 @@ function wireUi() {
                 e.type = t.value.slice(0, 40);
                 applyTypeStyleToEdge(e);
                 invalidateGraphIndex();
+                syncEditTypeLists();
                 pushHistory('edit edge type');
-                queueRender(false);
+                queueRender(false, true);
                 saveSoon();
             }
             else if (t.matches('.edge-directed')) {
@@ -18144,7 +18522,7 @@ function wireUi() {
     $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveSoon(); });
     $('#gridMajorColor').addEventListener('change', () => pushHistory('grid major color'));
     $('#gridMajorAlpha').addEventListener('change', e => { state.settings.gridMajorAlpha = clamp(finite(e.target.value, 0.16), 0, 1); e.target.value = state.settings.gridMajorAlpha; pushHistory('grid major alpha'); updateGridBackground(); saveSoon(); });
-    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0, 40); pushHistory('default node type'); queueRender(false); saveSoon(); });
+    $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0, 40); invalidateTypeLists(); pushHistory('default node type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defNodeShape').addEventListener('change', e => { nd().shape = e.target.value; state.settings.nodeShape = e.target.value; const el = $('#nodeShape'); if (el)
         el.value = e.target.value; pushHistory('default node shape'); queueRender(false); });
     $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el = $('#nodeColor'); if (el)
@@ -18161,7 +18539,7 @@ function wireUi() {
     $('#defNodeLabelFont').addEventListener('change', e => { nd().labelFont = e.target.value; pushHistory('default label font'); queueRender(false); });
     $('#defNodeLabelSize').addEventListener('change', e => { nd().labelSize = clamp(finite(e.target.value, 13), 4, 72); e.target.value = nd().labelSize; pushHistory('default label size'); queueRender(false); });
     $('#defNodeLabelPos').addEventListener('change', e => { nd().labelPosition = e.target.value; pushHistory('default label position'); queueRender(false); });
-    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0, 40); pushHistory('default edge type'); queueRender(false); saveSoon(); });
+    $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0, 40); invalidateTypeLists(); pushHistory('default edge type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveSoon(); });
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value, 2.4), 0, 20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
@@ -18192,6 +18570,12 @@ function wireUi() {
     // View toggle controls
     const mainEl = document.querySelector('.main');
     if (mainEl) {
+        wirePaneDragSettings(mainEl);
+        const dataPane = mainEl.querySelector('.bottom');
+        const syncCanvasShare = wirePaneResize($('#canvasSplit'), canvasWrap, mainEl, 'canvas', $('#canvasShare'));
+        const syncMatrixShare = wirePaneResize($('#dataSplit'), dataPane.querySelector('.bottom-pane'), dataPane, 'data', $('#matrixShare'));
+        const syncPaneShares = () => { syncCanvasShare(); syncMatrixShare(); };
+        window.addEventListener('resize', syncPaneShares);
         // Each view button toggles its own panel (v-canvas / v-matrix / v-edges
         // classes on .main). At least one view must stay visible.
         const isLandscape = window.matchMedia('(max-width:950px) and (orientation:landscape)').matches;
@@ -18204,6 +18588,7 @@ function wireUi() {
         }
         const VIEW_CLASS = { graph: 'v-canvas', matrix: 'v-matrix', edges: 'v-edges' };
         const syncViewButtons = () => {
+            syncPaneShares();
             document.querySelectorAll('[data-view-btn]').forEach(b => {
                 const active = mainEl.classList.contains(VIEW_CLASS[b.dataset.viewBtn] || '');
                 b.classList.toggle('active', active);
@@ -18247,6 +18632,7 @@ function wireUi() {
                 mainEl.dataset.orient = cur === 'v' ? 'h' : 'v';
                 if (syncOrientBtn)
                     syncOrientBtn();
+                syncPaneShares();
                 setTimeout(() => { flushZoomPreview(); invalidateGridCache(); applyCamera(); }, 0);
             });
             if (mainEl.dataset.orient)
