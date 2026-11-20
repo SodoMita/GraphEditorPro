@@ -928,16 +928,20 @@
     const stale = await boundedRead<string | undefined>(queued.staleSystemText, undefined);
     const stillOurs = current === queued.payload || current === lastIssuedClipboardText;
     const unchanged = stale !== undefined && current === stale;
-    if(current === undefined || (!stillOurs && !unchanged)){
+    // A newer copy arrived while the clipboard was being checked: this one is
+    // already obsolete, so it must never be published.
+    if(queuedClipboardWrite && queuedClipboardWrite.seq > queued.seq){
+      outstandingClipboardWrites.delete(queued.seq);
+      if(localClipboardWrite?.seq === queued.seq) localClipboardWrite.state = 'failed';
+      void maybePublishQueuedClipboard();
+      return;
+    }
+    // An unverifiable clipboard (no read permission) is not evidence that
+    // someone else changed it, and this is still the newest user copy.
+    if(current !== undefined && !stillOurs && !unchanged){
       outstandingClipboardWrites.delete(queued.seq);
       if(localClipboardWrite?.seq === queued.seq) localClipboardWrite.state = 'failed';
       if(queuedClipboardWrite) void maybePublishQueuedClipboard();
-      return;
-    }
-    // A newer copy arrived while the clipboard was being checked.
-    if(queuedClipboardWrite && queuedClipboardWrite.seq > queued.seq){
-      outstandingClipboardWrites.delete(queued.seq);
-      void maybePublishQueuedClipboard();
       return;
     }
     issueClipboardWrite(queued);
@@ -1138,8 +1142,14 @@
       if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
         // Serialize publication: at most one graph write is ever in flight, so
         // a slower older copy cannot land after a newer one.
-        if(clipboardWriteInFlight == null) issueClipboardWrite(attempt);
-        else queuedClipboardWrite = attempt;
+        if(clipboardWriteInFlight == null){
+          issueClipboardWrite(attempt);
+        } else {
+          // A superseded queued copy will never be published; stop treating
+          // its stamp as outstanding clipboard evidence.
+          if(queuedClipboardWrite) outstandingClipboardWrites.delete(queuedClipboardWrite.seq);
+          queuedClipboardWrite = attempt;
+        }
       } else {
         outstandingClipboardWrites.delete(writeSeq);
         localClipboardWrite.state = 'failed';

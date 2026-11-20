@@ -716,6 +716,41 @@ test('a queued copy never overwrites unrelated clipboard content', async () => {
   dom.window.close();
 });
 
+test('a queued copy still publishes when the clipboard cannot be read back', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  const writes = [];
+  const pendingWrites = [];
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      readText: async () => { throw new Error('no read permission'); },
+      writeText: (text) => {
+        writes.push(text);
+        return new Promise(resolve => { pendingWrites.push(resolve); });
+      },
+    },
+  });
+
+  await selectNode(window, 'a', 300, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 15);
+  await selectNode(window, 'b', 700, 330);
+  document.querySelector('#btnCopy').click();
+  await settle(window, 15);
+  assert.equal(writes.length, 1);
+  pendingWrites[0]();               // A publishes, B becomes eligible
+  await settle(window, 80);
+
+  assert.equal(writes.length, 2, 'an unreadable clipboard is not evidence of newer content');
+  pendingWrites[1]();
+  await settle(window, 20);
+  assert.equal(JSON.parse(writes[1]).nodes[0].id, 'b');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
 test('a cancelled pending paste cannot apply its delayed system payload', async () => {
   const { dom, errors } = createEditorDom(baseGraph);
   const { window } = dom; const { document } = window;
