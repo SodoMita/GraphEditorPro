@@ -211,3 +211,45 @@ test('an invalid change does not consume its revision', () => {
   assert.equal(appliedIds.has('x'), true);
   assert.equal(target.nodes.find(n => n.id === 'a').label, 'Retried');
 });
+
+test('server patch rejects non-scalar coercion fields before mutation', () => {
+  const bad = { toString: null, valueOf: null };
+  for(const [kind, field] of [['nodes','id'], ['nodes','x'], ['nodes','y'], ['nodes','order'], ['edges','id'], ['edges','from'], ['edges','to']]) {
+    const target = graph();
+    const before = structuredClone(target);
+    const appliedIds = new Set();
+    const entry = { id: 'b', [field]: bad };
+    const patch = { nodes: [{ id: 'a', label: 'new' }], edges: [] };
+    patch[kind].push(entry);
+    const result = core.applyServerChange(target, { id:'c1', revision:1, patch }, { appliedIds });
+    assert.equal(result.status, 'invalid', `${kind}.${field}`);
+    assert.deepEqual(target, before);
+    assert.equal(appliedIds.size, 0);
+  }
+});
+
+test('server changes are staged if comparison throws after an earlier update', () => {
+  const target = graph();
+  let left = {}, right = {};
+  for(let i = 0; i < 20000; i++) { left = { nested: left }; right = { nested: right }; }
+  target.nodes.push({ id: 'b', order: 1, value: left });
+  const originalA = target.nodes[0];
+  const appliedIds = new Set();
+  const result = core.applyServerChange(target, { id:'deep', revision:1, patch:{ nodes:[
+    { id:'a', label:'new' }, { id:'b', value:right },
+  ] } }, { appliedIds });
+  assert.equal(result.status, 'invalid');
+  assert.equal(target.nodes[0], originalA);
+  assert.equal(originalA.label, 'Old');
+  assert.equal(target.nodes[1].value, left);
+  assert.equal(appliedIds.size, 0);
+});
+
+test('successful staged server changes preserve entity and array identities', () => {
+  const target = graph(), nodes = target.nodes, edges = target.edges, node = nodes[0], edge = edges[0];
+  const result = core.applyServerChange(target, { id:'ok', revision:1, patch:{ nodes:[{id:'a',label:'new'}], edges:[{id:'e1',label:'new edge'}] } });
+  assert.equal(result.status, 'applied');
+  assert.equal(target.nodes, nodes); assert.equal(target.edges, edges);
+  assert.equal(target.nodes[0], node); assert.equal(target.edges[0], edge);
+  assert.equal(node.label, 'new'); assert.equal(edge.label, 'new edge');
+});

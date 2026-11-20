@@ -586,6 +586,7 @@ const I18N: I18nService = {
     'pasted_exact_noop': { en: 'Paste in place: nothing changed', ru: 'Вставка на месте: изменений нет' },
     'paste_cap_nodes': { en: 'Skipped {n:node}: the document limit is {limit}', ru: 'Пропущено: {n:node} — предел документа {limit}' },
     'paste_cap_edges': { en: 'Skipped {n:edge}: the document limit is {limit}', ru: 'Пропущено: {n:edge} — предел документа {limit}' },
+    'copy_local_only': { en: 'System copy could not be safely published; the copy is available locally. Try copying again.', ru: 'Не удалось безопасно скопировать в системный буфер; копия доступна локально. Попробуйте скопировать снова.' },
     'paste_local_fallback': { en: 'System clipboard unavailable — pasted the local copy', ru: 'Системный буфер недоступен — вставлена локальная копия' },
     'nodes_reversed': { en: 'Node order reversed', ru: 'Порядок узлов обращён' },
     'nodes_shuffled': { en: 'Node order shuffled', ru: 'Порядок узлов перемешан' },

@@ -172,6 +172,15 @@ const GraphPatchCore = (() => {
       if(!Array.isArray(list)) return `patch.${key} is not an array`;
       for(const entry of list){
         if(!isRecord(entry)) return `patch.${key} contains a non-object entry`;
+        // These fields are coerced with Number/String while applying a patch.
+        // JSON objects can have non-callable toString/valueOf properties, so
+        // coercing them may throw after an earlier entity was already changed.
+        for(const field of (key === 'nodes' ? ['id', 'x', 'y', 'order'] : ['id', 'from', 'to'])){
+          const value = entry[field];
+          if(value != null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean'){
+            return `patch.${key} has a non-scalar ${field}`;
+          }
+        }
       }
     }
     return null;
@@ -304,7 +313,37 @@ const GraphPatchCore = (() => {
     if(shapeProblem){
       return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: shapeProblem };
     }
-    const result = applyExactPatch(target, change.patch, options);
+    // Stage against detached entity records. If an unexpected conversion or
+    // comparison throws, no earlier entity in the caller's graph is changed.
+    // Preserve existing entity and array identities when committing so UI
+    // adapters holding references continue to observe the applied change.
+    let result: ExactPatchResult;
+    const originals = new Map<AnyRecord, AnyRecord>();
+    let staged: GraphPatchTarget;
+    try {
+      const clone = (entity: AnyRecord) => {
+        const copy = { ...entity };
+        originals.set(copy, entity);
+        return copy;
+      };
+      staged = { ...target, nodes: target.nodes.map(clone), edges: target.edges.map(clone) };
+      result = applyExactPatch(staged, change.patch, options);
+    } catch {
+      return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: 'patch could not be applied' };
+    }
+    const commit = (destination: AnyRecord[], source: AnyRecord[]) => {
+      const entities = source.map(entity => {
+        const original = originals.get(entity);
+        if(original){ Object.assign(original, entity); return original; }
+        return entity;
+      });
+      destination.length = 0;
+      for(const entity of entities) destination.push(entity);
+    };
+    commit(target.nodes, staged.nodes);
+    commit(target.edges, staged.edges);
+    target.nextNode = staged.nextNode;
+    target.nextEdge = staged.nextEdge;
     const requested = (Array.isArray(change.patch.nodes) ? change.patch.nodes.length : 0)
       + (Array.isArray(change.patch.edges) ? change.patch.edges.length : 0);
     const dropped = result.droppedNodes + result.droppedEdges;

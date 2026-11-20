@@ -887,6 +887,9 @@
     seq: number;
     payload: string;
     stamp: ClipboardStamp;
+    staleSystemText: Promise<string | undefined>;
+    issuedAtCopy: string;
+    deferred: boolean;
   };
   let localClipboardWrite: {
     seq: number;
@@ -906,26 +909,17 @@
   let clipboardBusy = false;
   let lastIssuedClipboardText: string | null = null;
 
-  // === Cross-tab publication arbiter ===
-  // Two tabs share the system clipboard but not a JavaScript timeline: a write
-  // from tab A can land after a later copy in tab B. Tabs therefore serialize
-  // against a lock in localStorage, and every publication is judged against a
-  // shared registry of issued stamps:
-  //   - a write is only issued after the newest issued stamp was re-read (so an
-  //     older payload cannot land after a newer copy from another tab);
-  //   - the published stamp is the newest issued stamp, not the writer's own,
-  //     so a fresh tab compares against the authoritative copy instead of an
-  //     older one that happened to land last.
+
+  // Web Locks provide an atomic cross-tab mutex held for the entire write.
+  // A durable in-flight marker also prevents automatic recovery if the owner
+  // disappears: releasing a Web Lock on document teardown is not proof that
+  // the browser's clipboard operation can no longer complete.
   const CLIPBOARD_PUBLISH_KEY = 'graph-editor-pro-clipboard-publish';
-  const PUBLISH_LEASE_MS = 700;
-  const PUBLISH_LOCK_WAIT_MS = 600;
-  const PUBLISH_LOCK_RETRY_MS = 40;
+  const CLIPBOARD_INFLIGHT_KEY = 'graph-editor-pro-clipboard-inflight';
+  const CLIPBOARD_LOCK_WAIT_MS = 30000;
   const readPublishRegistry = (): any => {
     try { return JSON.parse(localStorage.getItem(CLIPBOARD_PUBLISH_KEY) || 'null'); }
     catch { return null; }
-  };
-  const writePublishRegistry = (payload: AnyRecord) => {
-    try { localStorage.setItem(CLIPBOARD_PUBLISH_KEY, JSON.stringify(payload)); } catch {}
   };
   // Only a write this tab has issued and not yet seen settle can prove the
   // system clipboard still holds an obsolete payload of ours. Persistent
@@ -937,64 +931,29 @@
     }
     return best;
   };
-  // The freshest context any tab has issued — used to publish the
-  // authoritative stamp, never to reject a paste.
-  // The freshest context this tab has: an issued-but-unsettled write, its own
-  // latest copy, or another tab's issued write.
-  const newestKnownClipboardStamp = (): ClipboardStamp | null => {
-    let best: ClipboardStamp | null = localClipboardWrite ? localClipboardWrite.stamp : null;
-    for(const attempt of outstandingClipboardWrites.values()){
-      if(!best || compareClipboardStamps(attempt.stamp, best) === true) best = attempt.stamp;
-    }
-    const registry = readPublishRegistry();
-    const issued = isRecord(registry) ? registry.issued : null;
-    if(isRecord(issued) && (!best || compareClipboardStamps(issued, best) === true)) best = issued as ClipboardStamp;
-    return best;
+  const publishIssuedStamp = (stamp: ClipboardStamp): boolean => {
+    try {
+      const record = JSON.stringify({ issued: stamp });
+      localStorage.setItem(CLIPBOARD_PUBLISH_KEY, record);
+      return localStorage.getItem(CLIPBOARD_PUBLISH_KEY) === record;
+    } catch { return false; }
   };
-  const publishIssuedStamp = (stamp: ClipboardStamp) => {
-    const registry = readPublishRegistry();
-    const current = isRecord(registry) ? registry : {};
-    const issued = current.issued ?? null;
-    if(issued && compareClipboardStamps(stamp, issued) !== true) return;
-    writePublishRegistry({ ...current, issued: stamp, holder: current.holder ?? null, until: current.until ?? 0 });
+  // Fail closed when durable storage is unavailable, or an abandoned owner
+  // left an unresolved operation. No timeout is evidence a write is finished.
+  const beginClipboardWrite = (attempt: ClipboardWriteAttempt): boolean => {
+    try {
+      if(localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) !== null) return false;
+      const marker = JSON.stringify(attempt.stamp);
+      localStorage.setItem(CLIPBOARD_INFLIGHT_KEY, marker);
+      return localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === marker;
+    } catch { return false; }
   };
-  const claimPublishLock = (owner: string): boolean => {
-    const registry = readPublishRegistry();
-    const current = isRecord(registry) ? registry : {} as AnyRecord;
-    const now = Date.now();
-    const holder = typeof current.holder === 'string' ? current.holder : null;
-    if(holder && holder !== owner && Number(current.until) > now) return false;
-    writePublishRegistry({ ...current, holder: owner, until: now + PUBLISH_LEASE_MS });
-    return true;
-  };
-  const releasePublishLock = (owner: string) => {
-    const registry = readPublishRegistry();
-    const current = isRecord(registry) ? registry : {} as AnyRecord;
-    if(current.holder !== owner) return;
-    writePublishRegistry({ ...current, holder: null, until: 0 });
-  };
-  // Wait (bounded) for the other tab's publication to finish, then confirm the
-  // issued stamp did not advance meanwhile. Failure means "do not publish":
-  // another tab owns the clipboard, so this copy stays local.
-  const awaitPublishTurn = async (stamp: ClipboardStamp): Promise<boolean> => {
-    const owner = `${clipboardTabId}:${stamp.s}`;
-    const deadline = Date.now() + PUBLISH_LOCK_WAIT_MS;
-    for(;;){
-      if(claimPublishLock(owner)){
-        // Checked only after the lock is held: another tab's newer copy may
-        // have been issued while we waited. Ours was copied earlier, so it
-        // must not replace it — the newer copy is the user's real intent.
-        const registry = readPublishRegistry();
-        const issued = isRecord(registry) ? registry.issued : null;
-        if(issued && compareClipboardStamps(issued, stamp) === true){
-          releasePublishLock(owner);
-          return false;
-        }
-        return true;
+  const endClipboardWrite = (attempt: ClipboardWriteAttempt) => {
+    try {
+      if(localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === JSON.stringify(attempt.stamp)){
+        localStorage.removeItem(CLIPBOARD_INFLIGHT_KEY);
       }
-      if(Date.now() >= deadline) return false;
-      await new Promise<void>(resolve => { try { setTimeout(resolve, PUBLISH_LOCK_RETRY_MS); } catch { resolve(); } });
-    }
+    } catch { /* Keeping a marker is safer than assuming recovery. */ }
   };
   const dropQueuedClipboardWrite = () => {
     if(!queuedClipboardWrite) return;
@@ -1015,35 +974,76 @@
         : undefined))
       .then(text => (text == null ? undefined : String(text || '')), () => undefined),
     undefined, CLIPBOARD_PUBLISH_TIMEOUT_MS);
-  // Issues one write and resolves once it settles, so verification and
-  // publication of one copy form a single critical section.
-  function issueClipboardWrite(attempt: ClipboardWriteAttempt): Promise<boolean> {
+  // Called only while the Web Lock is held. The marker is removed only after
+  // the actual browser promise settles, never on a timeout.
+  async function issueClipboardWrite(attempt: ClipboardWriteAttempt): Promise<boolean> {
+    if(!beginClipboardWrite(attempt)) return false;
+    if(!publishIssuedStamp(attempt.stamp)){
+      endClipboardWrite(attempt);
+      return false;
+    }
     lastIssuedClipboardText = attempt.payload;
-    // Register the intent before the write: every tab compares against issued
-    // stamps, so a payload that lands late can be recognised as obsolete.
-    publishIssuedStamp(attempt.stamp);
-    const settle = (published: boolean) => {
-      outstandingClipboardWrites.delete(attempt.seq);
-      if(localClipboardWrite?.seq === attempt.seq){
-        localClipboardWrite.state = published ? 'published' : 'failed';
+    let published = false;
+    try {
+      if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
+        await navigator.clipboard.writeText(attempt.payload);
+        published = true;
       }
-      if(published) publishClipboardStamp(newestKnownClipboardStamp() ?? attempt.stamp);
-      return published;
+    } catch { /* keep this copy local */ }
+    finally { endClipboardWrite(attempt); }
+    if(published) publishClipboardStamp(attempt.stamp);
+    return published;
+  }
+  const stampFromClipboardText = (text: string): string => {
+    try {
+      const value = JSON.parse(text);
+      return JSON.stringify(isRecord(value) && value.type === 'graph-editor-clipboard' ? value.clipboardStamp ?? null : null);
+    } catch { return 'null'; }
+  };
+  // A deferred publication is safe only if the clipboard still matches the
+  // snapshot or a known in-flight predecessor. Unreadable is not evidence of
+  // safety. Verify *inside* the lock, not before waiting for another tab.
+  async function verifyDeferredCopy(attempt: ClipboardWriteAttempt): Promise<boolean> {
+    const snapshot = await boundedRead(attempt.staleSystemText, undefined);
+    if(attempt.seq !== localClipboardSeq) return false;
+    const current = await boundedClipboardRead();
+    if(attempt.seq !== localClipboardSeq || current === undefined) return false;
+    const registry = readPublishRegistry();
+    const issued = JSON.stringify(isRecord(registry) ? registry.issued ?? null : null);
+    const unchanged = snapshot !== undefined && current === snapshot && issued === attempt.issuedAtCopy;
+    const predecessor = attempt.issuedAtCopy !== 'null' &&
+      issued === attempt.issuedAtCopy && stampFromClipboardText(current) === attempt.issuedAtCopy;
+    return unchanged || predecessor || (issued === attempt.issuedAtCopy && current === lastIssuedClipboardText);
+  }
+  // Obtain a real cross-context lock. The callback owns it until the write
+  // settles. Waiting has a bounded cancellation, never a lock-stealing timeout.
+  async function awaitPublishTurn(attempt: ClipboardWriteAttempt): Promise<boolean> {
+    const locks = navigator.locks;
+    if(!locks || typeof locks.request !== 'function') return false;
+    const run = async (deferred: boolean): Promise<boolean> => {
+      if(attempt.seq !== localClipboardSeq) return false;
+      const registry = readPublishRegistry();
+      const issued = isRecord(registry) ? registry.issued : null;
+      if(issued && compareClipboardStamps(issued, attempt.stamp) === true) return false;
+      if(deferred && !(await verifyDeferredCopy(attempt))) return false;
+      if(attempt.seq !== localClipboardSeq) return false;
+      return issueClipboardWrite(attempt);
     };
     try {
-      if(!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') return Promise.resolve(settle(false));
-      const outcome: any = navigator.clipboard.writeText(attempt.payload);
-      if(outcome && typeof outcome.then === 'function') return outcome.then(() => settle(true), () => settle(false));
-      return Promise.resolve(settle(true));
-    } catch {
-      return Promise.resolve(settle(false));
-    }
+      const immediate = await locks.request(CLIPBOARD_PUBLISH_KEY, { ifAvailable: true },
+        async lock => lock ? { acquired: true, published: await run(attempt.deferred) } : { acquired: false, published: false });
+      if(immediate.acquired) return immediate.published;
+      if(attempt.seq !== localClipboardSeq) return false;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), CLIPBOARD_LOCK_WAIT_MS);
+      try {
+        return await locks.request(CLIPBOARD_PUBLISH_KEY, { signal: controller.signal }, async () => {
+          clearTimeout(timer);
+          return run(true);
+        });
+      } finally { clearTimeout(timer); }
+    } catch { return false; }
   }
-  // The single publication pump. At most one write is in flight, and the busy
-  // flag stays set across every await (including the verification read), so a
-  // later copy becomes the queued one instead of writing concurrently. After
-  // each await the attempt's sequence is compared with the newest copy: an
-  // attempt that is no longer the newest must never be published.
   async function pumpClipboardWrites(): Promise<void> {
     if(clipboardBusy) return;
     clipboardBusy = true;
@@ -1051,74 +1051,21 @@
       while(queuedClipboardWrite){
         const attempt = queuedClipboardWrite;
         queuedClipboardWrite = null;
-        if(attempt.seq !== localClipboardSeq){ markClipboardAttemptFailed(attempt.seq); continue; }
-        const current = await boundedClipboardRead();
-        if(attempt.seq !== localClipboardSeq){ markClipboardAttemptFailed(attempt.seq); continue; }
-        // Ordering inside this tab is settled by the sequence checks above.
-        // This check only guards against another owner (another app or tab)
-        // taking the clipboard after this copy was made. An unreadable or
-        // stalled read is "unknown", not "someone else's": refusing then would
-        // strand the user's copy forever, so it publishes.
-        const stillOurs = current === attempt.payload || current === lastIssuedClipboardText;
-        if(current !== undefined && !stillOurs){
-          markClipboardAttemptFailed(attempt.seq);
-          continue;
-        }
-        // Cross-tab turn: another tab may be publishing right now. If it is,
-        // its copy wins; this one was copied earlier and stays local.
-        const owner = `${clipboardTabId}:${attempt.seq}`;
-        if(!(await awaitPublishTurn(attempt.stamp))){
-          markClipboardAttemptFailed(attempt.seq);
-          continue;
-        }
-        if(attempt.seq !== localClipboardSeq){
-          releasePublishLock(owner);
-          markClipboardAttemptFailed(attempt.seq);
-          continue;
-        }
-        try {
-          await issueClipboardWrite(attempt);
-        } finally {
-          releasePublishLock(owner);
+        const published = attempt.seq === localClipboardSeq && await awaitPublishTurn(attempt);
+        outstandingClipboardWrites.delete(attempt.seq);
+        if(localClipboardWrite?.seq === attempt.seq){
+          localClipboardWrite.state = published ? 'published' : 'failed';
+          if(!published) toast(I18N.t('copy_local_only'));
         }
       }
-    } finally {
-      clipboardBusy = false;
-    }
-    // A copy that arrived as the busy flag was clearing.
-    if(queuedClipboardWrite) void pumpClipboardWrites();
+    } finally { clipboardBusy = false; }
   }
-  // Copy entry point. The first copy is written immediately (no verification
-  // round trip); later copies wait for the in-flight write and are verified
-  // before they replace it. Waiting copies are always superseded, never
-  // stacked, so only the newest one can ever be published.
   function publishClipboardCopy(attempt: ClipboardWriteAttempt): void {
     outstandingClipboardWrites.set(attempt.seq, attempt);
     dropQueuedClipboardWrite();
+    attempt.deferred = clipboardBusy;
     queuedClipboardWrite = attempt;
-    if(clipboardBusy) return;
-    if(attempt.seq !== localClipboardSeq) return;
-    // Immediate first write: claim the slot synchronously.
-    queuedClipboardWrite = null;
-    clipboardBusy = true;
-    const owner = `${clipboardTabId}:${attempt.seq}`;
-    void (async () => {
-      const hasTurn = await awaitPublishTurn(attempt.stamp);
-      if(!hasTurn || attempt.seq !== localClipboardSeq){
-        markClipboardAttemptFailed(attempt.seq);
-        return;
-      }
-      try { await issueClipboardWrite(attempt); }
-      finally { releasePublishLock(owner); }
-    })().catch(() => {
-      // A failed step must never leave the slot claimed: queued copies would
-      // wait forever for a write that will not happen.
-      markClipboardAttemptFailed(attempt.seq);
-      releasePublishLock(owner);
-    }).then(() => {
-      clipboardBusy = false;
-      if(queuedClipboardWrite) void pumpClipboardWrites();
-    });
+    void pumpClipboardWrites();
   }
   // A paste read still in flight. Its generation token is invalidated by the
   // next paste command, so a hanging read can never paste a second time.
@@ -1290,7 +1237,11 @@
     localClipboardWrite = { seq: writeSeq, state: 'pending', stamp, staleSystemText };
     try {
       const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
-      const attempt: ClipboardWriteAttempt = { seq: writeSeq, payload, stamp };
+      const registry = readPublishRegistry();
+      const attempt: ClipboardWriteAttempt = {
+        seq: writeSeq, payload, stamp, staleSystemText, deferred: false,
+        issuedAtCopy: JSON.stringify(isRecord(registry) ? registry.issued ?? null : null),
+      };
       outstandingClipboardWrites.set(writeSeq, attempt);
       if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
         publishClipboardCopy(attempt);

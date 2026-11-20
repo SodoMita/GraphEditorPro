@@ -61,7 +61,7 @@ inv('clipboard publication is serialized instead of issuing overlapping writes',
 inv('only one clipboard publication turn is held at a time', /let clipboardBusy = false;/.test(paste));
 inv('the newest copy is rechecked after every publication await', /attempt\.seq !== localClipboardSeq/.test(paste));
 inv('the publication verification read is bounded', /CLIPBOARD_PUBLISH_TIMEOUT_MS/.test(paste));
-inv('cross-tab publication is serialized and ordered by stamp', /awaitPublishTurn/.test(paste) && /publishIssuedStamp/.test(paste));
+inv('cross-tab publication is serialized and ordered by stamp', /navigator\.locks/.test(paste) && /CLIPBOARD_INFLIGHT_KEY/.test(paste) && /awaitPublishTurn/.test(paste));
 inv('an invalid patch is rejected before mutation', /validatePatchShape\(change\.patch\)/.test(readFileSync(join(root, 'src/core/graph-patch.ts'), 'utf8')));
 
 // --- Reusable change core ---

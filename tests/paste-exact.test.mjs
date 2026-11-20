@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM, VirtualConsole } from 'jsdom';
+import { createWebLocks } from './helpers/web-locks.mjs';
 
 const html = await readFile('index.html', 'utf8');
 
@@ -17,6 +18,7 @@ function createEditorDom(savedGraph) {
   const dom = new JSDOM(source, {
     runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://offline.test/', virtualConsole,
     beforeParse(window) {
+      Object.defineProperty(window.navigator, 'locks', { configurable:true, value:createWebLocks() });
       window.matchMedia = () => ({ matches:false, addListener(){}, removeListener(){}, addEventListener(){}, removeEventListener(){} });
       window.alert = () => {}; window.confirm = () => true; window.prompt = () => null;
       window.URL.createObjectURL = () => 'blob:offline-test';
@@ -58,10 +60,12 @@ function createClipboardHub(){
     removeItem: key => { store.delete(key); },
     clear: () => store.clear(),
   };
+  const locks = createWebLocks();
   const hub = {
     text: '',
     storage,
     attach(window, tag){
+      Object.defineProperty(window.navigator, 'locks', { configurable:true, value:locks });
       const writes = [];
       const pending = [];
       Object.defineProperty(window.navigator, 'clipboard', {
@@ -232,6 +236,7 @@ test('a newer system clipboard beats a stale in-memory copy', async () => {
   // Create an in-memory copy of the local node first.
   await selectNode(window, 'a', 300, 330);
   document.querySelector('#btnCopy').click();
+  await settle(window, 30); // wait for the lock-held publication to settle
   // Another tab then copies a different version of the same node.
   setClipboard(window, {
     type: 'graph-editor-clipboard',
@@ -752,7 +757,7 @@ test('a queued copy never overwrites unrelated clipboard content', async () => {
   dom.window.close();
 });
 
-test('a queued copy still publishes when the clipboard cannot be read back', async () => {
+test('a queued copy stays local when the clipboard cannot be verified', async () => {
   const { dom, errors } = createEditorDom(baseGraph);
   const { window } = dom; const { document } = window;
   await settle(window, 80);
@@ -779,10 +784,8 @@ test('a queued copy still publishes when the clipboard cannot be read back', asy
   pendingWrites[0]();               // A publishes, B becomes eligible
   await settle(window, 80);
 
-  assert.equal(writes.length, 2, 'an unreadable clipboard is not evidence of newer content');
-  pendingWrites[1]();
-  await settle(window, 20);
-  assert.equal(JSON.parse(writes[1]).nodes[0].id, 'b');
+  assert.equal(writes.length, 1, 'unreadable clipboard must not be overwritten by a delayed copy');
+  assert.match(document.body.textContent, /safely published/);
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
@@ -1170,7 +1173,8 @@ test('a waiting copy is never published after a newer copy', async () => {
       readText: () => {
         reads++;
         if(reads <= 2) return Promise.resolve('');
-        return new Promise(resolve => gates.push(() => resolve(systemText)));
+        if(reads === 3) return new Promise(resolve => gates.push(() => resolve(systemText)));
+        return Promise.resolve(systemText);
       },
       writeText: (text) => {
         const payload = JSON.parse(text);
@@ -1201,7 +1205,7 @@ test('a waiting copy is never published after a newer copy', async () => {
   dom.window.close();
 });
 
-test('a stalled verification read cannot strand a waiting copy', async () => {
+test('a stalled verification read fails closed and does not strand the pump', async () => {
   const { dom, errors } = createEditorDom(baseGraph);
   const { window } = dom; const { document } = window;
   await settle(window, 80);
@@ -1234,7 +1238,14 @@ test('a stalled verification read cannot strand a waiting copy', async () => {
 
   for(let i = 0; i < 4 && pending.length; i++){ finish(); await settle(window, 60); }
 
-  assert.deepEqual(writes, ['a', 'b'], 'the bounded read lets the waiting copy publish');
+  assert.deepEqual(writes, ['a'], 'unknown clipboard contents must not be overwritten');
+  assert.equal(JSON.parse(systemText).nodes[0].id, 'a');
+  assert.match(document.body.textContent, /safely published/);
+  // An explicit new copy is not blocked by the failed verification.
+  document.querySelector('#btnCopy').click();
+  await settle(window, 80);
+  assert.deepEqual(writes, ['a', 'b']);
+  finish(); await settle(window, 80);
   assert.equal(JSON.parse(systemText).nodes[0].id, 'b');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
@@ -1257,7 +1268,7 @@ test('one tab publishes at a time so the newest copy is the one left behind', as
   await settle(tabA.dom.window, 20);
   // A is publishing. B copies afterwards, so B is the newer intent.
   tabB.dom.window.document.querySelector('#btnCopy').click();
-  await settle(tabB.dom.window, 80);
+  await settle(tabB.dom.window, 1100); // exceeds both old 700ms lease and 600ms wait
   assert.deepEqual(clipB.writes, [], 'B does not publish while A owns the clipboard');
 
   clipA.release();                       // A's delayed write lands first
@@ -1283,4 +1294,99 @@ test('one tab publishes at a time so the newest copy is the one left behind', as
   assert.deepEqual(tabB.errors.map(e => e.message), []);
   assert.deepEqual(fresh.errors.map(e => e.message), []);
   tabA.dom.window.close(); tabB.dom.window.close(); fresh.dom.window.close();
+});
+
+test('a queued copy publishes over unchanged content after its predecessor fails', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  let text = 'external text'; let rejectFirst;
+  const writes = [];
+  Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: {
+    readText: async () => text,
+    writeText: payload => {
+      writes.push(JSON.parse(payload).nodes[0].id);
+      if(writes.length === 1) return new Promise((_, reject) => { rejectFirst = reject; });
+      text = payload; return Promise.resolve();
+    },
+  }});
+  await selectNode(window, 'a', 300, 330); document.querySelector('#btnCopy').click();
+  await settle(window, 30);
+  await selectNode(window, 'b', 700, 330); document.querySelector('#btnCopy').click();
+  rejectFirst(new Error('denied'));
+  await settle(window, 300);
+  assert.deepEqual(writes, ['a', 'b']);
+  assert.equal(JSON.parse(text).nodes[0].id, 'b');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a superseded copy releases the turn it acquired while waiting', async () => {
+  const { dom, errors } = createEditorDom(baseGraph);
+  const { window } = dom; const { document } = window;
+  await settle(window, 80);
+  const locks = window.navigator.locks;
+  let release;
+  const held = locks.request('graph-editor-pro-clipboard-publish', () => new Promise(resolve => { release = resolve; }));
+  await settle(window, 20);
+  const writes = [];
+  Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: {
+    readText: async () => '',
+    writeText: async payload => { writes.push(JSON.parse(payload).nodes[0].id); },
+  }});
+  await selectNode(window, 'a', 300, 330); document.querySelector('#btnCopy').click();
+  await selectNode(window, 'b', 700, 330); document.querySelector('#btnCopy').click();
+  release(); await held;
+  await settle(window, 300);
+  assert.deepEqual(writes, ['b']);
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a waiting lock verifies the clipboard after acquiring it', async () => {
+  const { dom } = createEditorDom(baseGraph), { window } = dom;
+  await settle(window, 80);
+  let release, text = 'before'; const writes = [];
+  const held = window.navigator.locks.request('graph-editor-pro-clipboard-publish', () => new Promise(resolve => { release = resolve; }));
+  await settle(window, 20);
+  Object.defineProperty(window.navigator, 'clipboard', { configurable:true, value:{
+    readText: async () => text,
+    writeText: async payload => { writes.push(payload); text = payload; },
+  }});
+  await selectNode(window, 'a', 300, 330);
+  window.document.querySelector('#btnCopy').click(); await settle(window, 80);
+  text = 'new external text';
+  release(); await held; await settle(window, 300);
+  assert.equal(text, 'new external text'); assert.equal(writes.length, 0);
+  assert.match(window.document.body.textContent, /safely published/);
+  dom.window.close();
+});
+
+test('an abandoned write marker and missing Web Locks fail closed', async () => {
+  for(const mode of ['abandoned', 'no-locks', 'no-storage', 'registry-denied']) {
+    const { dom } = createEditorDom(baseGraph), { window } = dom;
+    await settle(window, 80);
+    let writes = 0;
+    Object.defineProperty(window.navigator, 'clipboard', { configurable:true, value:{
+      readText: async () => '', writeText: async () => { writes++; },
+    }});
+    if(mode === 'abandoned') window.localStorage.setItem('graph-editor-pro-clipboard-inflight', '{"tab":"lost"}');
+    if(mode === 'no-locks') Object.defineProperty(window.navigator, 'locks', { configurable:true, value:undefined });
+    if(mode === 'no-storage') Object.defineProperty(window, 'localStorage', { configurable:true, value:{
+      getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); },
+    }});
+    if(mode === 'registry-denied') {
+      const storage = window.localStorage;
+      Object.defineProperty(window, 'localStorage', { configurable:true, value:{
+        getItem: key => storage.getItem(key),
+        setItem: (key, value) => { if(key === 'graph-editor-pro-clipboard-publish') throw new Error('denied'); storage.setItem(key, value); },
+        removeItem: key => storage.removeItem(key),
+      }});
+    }
+    await selectNode(window, 'a', 300, 330);
+    window.document.querySelector('#btnCopy').click(); await settle(window, 150);
+    assert.equal(writes, 0, mode);
+    assert.match(window.document.body.textContent, /safely published/);
+    dom.window.close();
+  }
 });
