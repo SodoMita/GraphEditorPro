@@ -59,28 +59,78 @@
     state.nodes.forEach((node,i)=>{ node.x=(i%cols-(cols-1)/2)*gap; node.y=(Math.floor(i/cols)-Math.floor((n-1)/cols)/2)*gap; });
     pushHistory('grid layout'); fitView(); queueRender(true);
   }
-  function layoutForce(requestedIter=180){
-    const n=state.nodes.length; if(n < 2) return;
-    // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
-    // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
-    // work instead so one click always finishes in roughly a second; large
-    // graphs get fewer refinement passes rather than an unresponsive page.
-    const pairs = n * (n - 1) / 2;
-    const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
-    const reduced = iter < requestedIter;
-    const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
-    for(let step=0; step<iter; step++){
-      const disp = new Map(state.nodes.map(v=>[v.id,{x:0,y:0}]));
-      for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
-        const v=state.nodes[i], u=state.nodes[j]; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(k*k)/d; dx/=d; dy/=d; disp.get(v.id).x += dx*f; disp.get(v.id).y += dy*f; disp.get(u.id).x -= dx*f; disp.get(u.id).y -= dy*f;
+  // Yielding an already-running task keeps pending input ahead of the next
+  // batch of force-layout passes. Safari has no scheduler.yield() yet, so a
+  // setTimeout fallback is part of the contract, not an optional extra.
+  const yieldToBrowser = (): Promise<void> => {
+    const scheduler = (window as any).scheduler;
+    if(scheduler && typeof scheduler.yield === 'function') return scheduler.yield();
+    return new Promise(resolve => setTimeout(resolve, 0));
+  };
+  let forceLayoutRunning = false;
+  async function layoutForce(requestedIter=180){
+    const nodes = state.nodes, n = nodes.length;
+    if(forceLayoutRunning || n < 2 || hasActiveCanvasGesture()) return;
+    flushPendingHistory();
+    const startRev = documentRev;
+    const interrupted = () => documentRev !== startRev || hasActiveCanvasGesture();
+    forceLayoutRunning = true;
+    try {
+      // A yield must expose neither partial geometry nor a history entry. Keep
+      // all solve inputs private (including endpoints) until the commit.
+      const points = nodes.map(node => ({node, id:node.id, x:node.x, y:node.y,
+        startX:node.x, startY:node.y, dx:0, dy:0}));
+      const byId = new Map(points.map(p => [p.id, p]));
+      const links = state.edges.map(e => ({id:e.id, from:e.from, to:e.to, v:byId.get(e.from), u:byId.get(e.to)}));
+      const pairs = n * (n - 1) / 2;
+      const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
+      const reduced = iter < requestedIter;
+      const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
+      let deadline = performance.now() + 50;
+      for(let step=0; step<iter; step++){
+        for(let i=0; i<n; i++){
+          const v = points[i];
+          for(let j=i+1; j<n; j++){
+            const u=points[j], dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01;
+            const f=(k*k)/d, fx=(dx/d)*f, fy=(dy/d)*f;
+            v.dx += fx; v.dy += fy; u.dx -= fx; u.dy -= fy;
+          }
+          // One all-pairs pass at the import cap can itself take hundreds of
+          // milliseconds. Check once per row, not once per pair or per pass.
+          if(performance.now() >= deadline){
+            await yieldToBrowser();
+            if(interrupted()) return;
+            deadline = performance.now() + 50;
+          }
+        }
+        for(const {v,u} of links){
+          if(!v || !u) continue;
+          const dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01;
+          const f=(d*d)/k, fx=(dx/d)*f, fy=(dy/d)*f;
+          v.dx -= fx; v.dy -= fy; u.dx += fx; u.dy += fy;
+        }
+        const temp = 80 * (1 - step/iter);
+        for(const v of points){
+          const len=Math.hypot(v.dx,v.dy)||.01;
+          v.x += (v.dx/len)*Math.min(len,temp); v.y += (v.dy/len)*Math.min(len,temp);
+          v.dx = v.dy = 0;
+        }
       }
-      for(const e of state.edges){ const v=nodeById(e.from), u=nodeById(e.to); if(!v||!u) continue; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(d*d)/k; dx/=d; dy/=d; disp.get(v.id).x -= dx*f; disp.get(v.id).y -= dy*f; disp.get(u.id).x += dx*f; disp.get(u.id).y += dy*f; }
-      const temp = 80 * (1 - step/iter);
-      for(const v of state.nodes){ const d=disp.get(v.id); const len=Math.hypot(d.x,d.y)||.01; v.x += (d.x/len)*Math.min(len,temp); v.y += (d.y/len)*Math.min(len,temp); }
+      // Validate *all* targets before the first write, including live geometry
+      // that might not have reached an undo snapshot yet.
+      if(interrupted() || state.nodes !== nodes || nodes.length !== n || state.edges.length !== links.length
+        || points.some((p,i) => nodes[i] !== p.node || p.node.id !== p.id || p.node.x !== p.startX || p.node.y !== p.startY)
+        || links.some((l,i) => { const e=state.edges[i]; return e.id !== l.id || e.from !== l.from || e.to !== l.to; })) return;
+      for(const p of points){ p.node.x = p.x; p.node.y = p.y; }
+      // Only geometry changed. Replacing the matrix/edge-list inputs here
+      // would discard any draft the user started while the solve was yielding.
+      pushHistory('relax layout'); fitView(); queueRender(false);
+      if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
+    } finally {
+      forceLayoutRunning = false;
     }
-    pushHistory('relax layout'); fitView(); queueRender(true);
-    if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
   }
+
   async function addSample(){
     if(state.nodes.length && !await uiConfirm(I18N.t('replace_with_sample'), {danger: true})) return;
     state.nodes = [
@@ -149,16 +199,59 @@
       if(preference === 'true') state.settings.autosave = true;
     }catch{}
   }
+  const TOAST_LIMIT = 4;
+  const toastActivity = new WeakMap<Element, {hovered:boolean; timer:number}>();
   function toast(message){
-    const stack = $('#toastStack');
-    while(stack.children.length >= 4) stack.firstElementChild?.remove();
+    const stack: HTMLElement = $('#toastStack');
+    const removeToast = (node: Element) => {
+      window.clearTimeout(toastActivity.get(node)?.timer);
+      node.remove();
+    };
+    // Oldest idle message first. If all are in use, deliver the new message
+    // anyway; releasing a held toast below will bring the stack back to four.
+    for(const node of Array.from(stack.children)){
+      if(stack.childElementCount < TOAST_LIMIT) break;
+      if(!toastActivity.get(node)?.hovered && !node.contains(document.activeElement)) removeToast(node);
+    }
     const el = document.createElement('div');
-    el.className = 'toast'; el.textContent = message;
-    stack.appendChild(el);
-    setTimeout(() => {
+    el.className = 'toast';
+    const text = document.createElement('span');
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button'; close.className = 'toast-close';
+    close.setAttribute('aria-label', I18N.t('toast_close'));
+    close.textContent = '\u00d7';
+    el.append(text, close);
+    const activity = {hovered:false, timer:0};
+    toastActivity.set(el, activity);
+    let dismissedByUser = false;
+    const pause = () => {
+      if(dismissedByUser) return;
+      window.clearTimeout(activity.timer);
+      // Interaction can also begin during the short auto-dismiss transition.
+      el.style.opacity = ''; el.style.transform = '';
+    };
+    const dismiss = () => {
+      window.clearTimeout(activity.timer);
       el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
-      setTimeout(() => el.remove(), 180);
-    }, 2300);
+      activity.timer = window.setTimeout(() => el.remove(), 180);
+    };
+    const arm = () => {
+      window.clearTimeout(activity.timer);
+      activity.timer = window.setTimeout(dismiss, 2300);
+    };
+    const resumeIfIdle = (focus: EventTarget | null) => {
+      if(dismissedByUser || activity.hovered || (focus instanceof Node && el.contains(focus))) return;
+      if(stack.childElementCount > TOAST_LIMIT) removeToast(el);
+      else arm();
+    };
+    el.addEventListener('pointerenter', () => { activity.hovered = true; pause(); });
+    el.addEventListener('focusin', pause);
+    el.addEventListener('pointerleave', () => { activity.hovered = false; resumeIfIdle(document.activeElement); });
+    el.addEventListener('focusout', ev => resumeIfIdle(ev.relatedTarget));
+    close.addEventListener('click', () => { dismissedByUser = true; dismiss(); });
+    stack.appendChild(el);
+    arm();
   }
   async function copyText(text){
     try{ await navigator.clipboard.writeText(text); toast(I18N.t('copied')); return; }

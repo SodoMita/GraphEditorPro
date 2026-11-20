@@ -355,12 +355,40 @@
   let dialogResolve: ((value: string | boolean | null) => void) | null = null;
   let dialogReturnFocus: HTMLElement | null = null;
   let dialogCleanup: (() => void) | null = null;
+  function cycleDialogTab(dialog: HTMLElement, ev: KeyboardEvent){
+    if(ev.key !== 'Tab') return;
+    // Read the current stops: preset cards and toast dismiss buttons can be
+    // added or removed while the dialog is open. The dialog itself isn't a stop.
+    const stops = $$('button,input,select,textarea,a[href],[tabindex]', dialog).filter(isKeyboardVisible);
+    const first = stops[0], last = stops[stops.length - 1];
+    const active = document.activeElement;
+    if(stops.includes(active) && active !== (ev.shiftKey ? first : last)) return;
+    ev.preventDefault();
+    (ev.shiftKey ? last : first)?.focus();
+  }
+  // A heading click can park focus on the dialog or body. Listen on the
+  // document until close, and yield to any modal stacked above this one.
+  function trapFallbackDialog(dialog: HTMLElement, isTop: () => boolean, primary: HTMLElement, cancel: () => void): () => void {
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if(!isTop()) return;
+      if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); cancel(); }
+      else cycleDialogTab(dialog, ev);
+    };
+    const onFocusIn = (ev: FocusEvent) => {
+      if(isTop() && !dialog.contains(ev.target as Node)) primary.focus({preventScroll:true});
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocusIn, true);
+    };
+  }
   // While a modal dialog is open it owns the keyboard: the global shortcut
   // handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
   // Ctrl+Z landing mid-confirm would revert history under the dialog and the
   // pending confirm would then apply itself to the reverted document.
-  let dialogOpenCount = 0;
-  function uiDialogOpen(): boolean { return dialogOpenCount > 0; }
+  function uiDialogOpen(): boolean { return dialogEl !== null || presetsOpen(); }
   function closeDialog(result: string | boolean | null = null){
     if(!dialogEl) return;
     // Detach the document-level listeners *before* restoring focus: they pull
@@ -368,10 +396,12 @@
     dialogCleanup?.();
     dialogCleanup = null;
     const resolve = dialogResolve;
+    // A native modal must leave the top layer before its element is removed.
+    const active = dialogEl as HTMLDialogElement;
+    if(active.open && typeof active.close === 'function') active.close();
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
-    dialogOpenCount = Math.max(0, dialogOpenCount - 1);
     if(dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
     dialogReturnFocus = null;
     resolve?.(result);
@@ -382,10 +412,17 @@
       dialogResolve = resolve;
       dialogReturnFocus = document.activeElement as HTMLElement;
       const wantsInput = Boolean(options.input);
-      const dialog = document.createElement('div');
+      // Native <dialog> provides inert background, focus containment, top-layer
+      // rendering and platform dismissal. The div path is only a fallback for
+      // environments without showModal() (notably jsdom in our tests).
+      const nativeDialog = typeof (window as any).HTMLDialogElement === 'function'
+        && typeof (window as any).HTMLDialogElement.prototype.showModal === 'function';
+      const dialog = document.createElement(nativeDialog ? 'dialog' : 'div') as HTMLElement;
       dialog.className = 'app-dialog';
-      dialog.setAttribute('role', 'dialog');
-      dialog.setAttribute('aria-modal', 'true');
+      if(!nativeDialog){
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+      }
       dialog.setAttribute('aria-labelledby', 'appDialogTitle');
       if(options.message) dialog.setAttribute('aria-describedby', 'appDialogMessage');
       const inputId = 'appDialogInput';
@@ -401,56 +438,29 @@
         </form>`;
       document.body.appendChild(dialog);
       dialogEl = dialog;
-      dialogOpenCount++;
+      if(nativeDialog) (dialog as HTMLDialogElement).showModal();
       const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
       const form = dialog.querySelector('form');
+      const primary: HTMLElement = input || $('[data-dialog-ok]', dialog);
       const finish = (result: string | boolean | null) => closeDialog(result);
+      const cancel = () => finish(wantsInput ? null : false);
       form?.addEventListener('submit', ev => {
         ev.preventDefault();
         finish(wantsInput ? (input?.value ?? '') : true);
       });
-      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
-      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) finish(wantsInput ? null : false); });
-      // The handlers live on the document, not on the dialog element: clicking
-      // the dialog's own title or message moves focus to <body> in Chromium,
-      // and a dialog-scoped keydown never fires from there — Escape and the
-      // Tab trap went dead until focus wandered back inside.
-      const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
-      const focusInside = (target: EventTarget | null) => Boolean(target) && dialog.contains(target as Node);
-      const onKeyDown = (ev: KeyboardEvent) => {
-        if(!dialogEl) return;
-        if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); finish(wantsInput ? null : false); return; }
-        if(ev.key !== 'Tab') return;
-        const items = focusables();
-        if(!items.length) { ev.preventDefault(); return; }
-        const first = items[0], last = items[items.length - 1];
-        // Focus parked outside (title click, backdrop, or a stray programmatic
-        // focus) still gets trapped: the next Tab re-enters the dialog.
-        if(!focusInside(document.activeElement)){ ev.preventDefault(); (ev.shiftKey ? last : first).focus(); return; }
-        if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
-        else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
-      };
-      // A modal keeps focus: anything that pulls it out is redirected to the
-      // dialog's primary control. The trigger's own focus is restored on close.
-      const onFocusIn = (ev: FocusEvent) => {
-        if(!dialogEl || focusInside(ev.target)) return;
-        const items = focusables();
-        (items[items.length - 1] || items[0])?.focus();
-      };
-      document.addEventListener('keydown', onKeyDown, true);
-      document.addEventListener('focusin', onFocusIn, true);
-      dialogCleanup = () => {
-        document.removeEventListener('keydown', onKeyDown, true);
-        document.removeEventListener('focusin', onFocusIn, true);
-      };
-      setTimeout(() => {
-        if(input){
-          input.focus();
-          input.select();
-        } else {
-          dialog.querySelector<HTMLButtonElement>('[data-dialog-ok]')?.focus();
-        }
-      }, 0);
+      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', cancel);
+      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) cancel(); });
+      if(nativeDialog){
+        // Esc and the platform's back gesture fire `cancel`; let the shared
+        // close path resolve the promise and restore focus exactly once.
+        dialog.addEventListener('cancel', ev => { ev.preventDefault(); cancel(); });
+      } else {
+        dialogCleanup = trapFallbackDialog(dialog, () => dialogEl === dialog, primary, cancel);
+      }
+      // The dialog is already open. A deferred focus could undo the user's
+      // first Tab (showModal may have focused the input synchronously).
+      primary.focus();
+      input?.select();
     });
   }
   /** Replace window.confirm with an in-app, translated, focus-trapped dialog. */
@@ -753,6 +763,9 @@
   });
   let state: GraphState = defaultState();
   let appHistory: string[] = [], appHistoryIndex = -1;
+  // Edit generation, not a history index: in-progress form/gesture edits and
+  // snapshot restores invalidate async work without creating an undo entry.
+  let documentRev = 0;
   let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
   const activePointers = new Map();
@@ -776,10 +789,18 @@
       selected:state.selected, selection:state.selection
     });
   }
+  // Invalidate at the document write, even if history waits for blur (e.g. a
+  // title or colour edit). DOM input and autosave also serve camera drafts and
+  // other UI state, so neither is itself evidence of an edit.
+  function saveLiveDocumentEdit(){
+    documentRev++;
+    saveSoon();
+  }
   function applySnapshot(raw){
     cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
+    documentRev++;
     const sane = sanitizeState(data);
     // Restore selection if it survives sanitization (nodes/edges still exist)
     const savedSel = data.selected, savedSelection = data.selection;
@@ -828,6 +849,7 @@
   function pushHistorySoon(label: string){
     // The newest label wins: only the state at flush time is captured, and the
     // label is documentation of what moved.
+    documentRev++; // the gesture is complete even if its snapshot is deferred
     pendingHistoryLabel = label;
     if(pendingHistoryIdle != null || pendingHistoryTimer != null) return;
     const flush = () => flushPendingHistory();
@@ -857,6 +879,7 @@
     // Never reorder history: a deferred entry from a gesture release belongs
     // before whatever the current caller is about to record.
     flushPendingHistory();
+    documentRev++; // an explicit edit supersedes a running layout even if it is a no-op
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
@@ -873,6 +896,7 @@
   }
   function resetHistory(){
     pendingHistoryLabel = null; // a fresh history invalidates any pending entry
+    documentRev++;
     appHistory = [snapshot()];
     appHistoryIndex = 0;
     historyBytes = snapshotBytes(appHistory[0]);

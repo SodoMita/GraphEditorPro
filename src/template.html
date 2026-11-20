@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="text-scale" content="scale" />
   <title>Graph Editor Pro</title>
   <!-- INLINE_STYLES -->
 </head>
@@ -900,7 +901,7 @@
     </div>
 
     <!-- Style presets overlay — covers the whole app -->
-    <div id="presetsOverlay" class="presets-overlay" role="dialog" aria-modal="true" aria-labelledby="presetsTitle" aria-hidden="true" tabindex="-1">
+    <dialog id="presetsOverlay" class="presets-overlay" aria-labelledby="presetsTitle">
       <div class="presets-header">
         <h3 id="presetsTitle" data-i18n="style_presets">Style presets</h3>
         <div style="display:flex; gap:6px; flex-wrap:wrap">
@@ -910,10 +911,10 @@
       </div>
       <p class="tiny muted" style="margin:0 0 8px"><span data-i18n="presets_desc">Click a preset to apply its style to the current selection. Use "Save from selection" with a node or edge selected to create a new preset.</span></p>
       <div id="presetsGrid" class="presets-grid"></div>
-    </div>
+    </dialog>
   </div>
 
-  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+  <div id="toastStack" class="toast-stack" role="region" aria-label="Notifications" data-i18n-aria-label="toast_region" aria-live="polite"></div>
 
   <!-- INLINE_SCRIPT -->
 
