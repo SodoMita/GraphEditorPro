@@ -2763,8 +2763,7 @@ let dialogCleanup = null;
 // handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
 // Ctrl+Z landing mid-confirm would revert history under the dialog and the
 // pending confirm would then apply itself to the reverted document.
-let dialogOpenCount = 0;
-function uiDialogOpen() { return dialogOpenCount > 0; }
+function uiDialogOpen() { return dialogEl !== null || presetsOpen(); }
 function closeDialog(result = null) {
     if (!dialogEl)
         return;
@@ -2780,7 +2779,6 @@ function closeDialog(result = null) {
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
-    dialogOpenCount = Math.max(0, dialogOpenCount - 1);
     if (dialogReturnFocus?.isConnected)
         dialogReturnFocus.focus({ preventScroll: true });
     dialogReturnFocus = null;
@@ -2819,7 +2817,6 @@ function showDialog(options) {
         </form>`;
         document.body.appendChild(dialog);
         dialogEl = dialog;
-        dialogOpenCount++;
         if (nativeDialog)
             dialog.showModal();
         const input = dialog.querySelector('#' + inputId);
@@ -3224,6 +3221,9 @@ const defaultState = () => ({
 });
 let state = defaultState();
 let appHistory = [], appHistoryIndex = -1;
+// Edit generation, not a history index: in-progress form/gesture edits and
+// snapshot restores invalidate async work without creating an undo entry.
+let documentRev = 0;
 let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
 let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
 const activePointers = new Map();
@@ -3311,6 +3311,7 @@ let pendingHistoryTimer = null;
 function pushHistorySoon(label) {
     // The newest label wins: only the state at flush time is captured, and the
     // label is documentation of what moved.
+    documentRev++; // the gesture is complete even if its snapshot is deferred
     pendingHistoryLabel = label;
     if (pendingHistoryIdle != null || pendingHistoryTimer != null)
         return;
@@ -3349,10 +3350,10 @@ function pushHistory(_label = 'change') {
     // Never reorder history: a deferred entry from a gesture release belongs
     // before whatever the current caller is about to record.
     flushPendingHistory();
+    documentRev++; // an explicit edit supersedes a running layout even if it is a no-op
     const snap = snapshot();
     if (appHistory[appHistoryIndex] === snap)
         return;
-    documentRev++;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
     historyBytes += snapshotBytes(snap);
@@ -4697,10 +4698,6 @@ function labelFromNumber(num) {
 // array identity, its length, or an explicit invalidation (in-place id
 // rewrite or edge reordering) says the mapping changed.
 let graphRev = 0;
-// Incremented on committed document changes (history pushes, snapshot restores
-// and history resets). Unlike graphRev this is not an index cache token, so
-// async work can use it to notice undo, layouts, imports and other edits.
-let documentRev = 0;
 function invalidateGraphIndex() { graphRev++; }
 let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
 let edgeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
@@ -15300,93 +15297,72 @@ const yieldToBrowser = () => {
 };
 let forceLayoutRunning = false;
 async function layoutForce(requestedIter = 180) {
-    if (forceLayoutRunning)
+    const nodes = state.nodes, n = nodes.length;
+    if (forceLayoutRunning || n < 2 || hasActiveCanvasGesture())
         return;
-    const nodes = state.nodes;
-    const n = nodes.length;
-    if (n < 2)
-        return;
-    forceLayoutRunning = true;
+    flushPendingHistory();
     const startRev = documentRev;
-    // Work on copied positions: a yield must never leave the live document
-    // half-relaxed, and an edit during the yield cannot pull the ground (or a
-    // deleted node id) out from under the remaining passes.
-    const initial = nodes.map(v => ({ id: String(v.id), x: v.x, y: v.y }));
-    const edgeSignature = () => state.edges.map(e => `${e.id}\u0000${e.from}\u0000${e.to}`).join('\u0001');
-    const initialEdges = edgeSignature();
+    const interrupted = () => documentRev !== startRev || hasActiveCanvasGesture();
+    forceLayoutRunning = true;
     try {
-        // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
-        // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
-        // work so one click finishes in roughly a second, and yield every ~50 ms
-        // so the tab can still paint and answer input while it runs.
+        // A yield must expose neither partial geometry nor a history entry. Keep
+        // all solve inputs private (including endpoints) until the commit.
+        const points = nodes.map(node => ({ node, id: node.id, x: node.x, y: node.y,
+            startX: node.x, startY: node.y, dx: 0, dy: 0 }));
+        const byId = new Map(points.map(p => [p.id, p]));
+        const links = state.edges.map(e => ({ id: e.id, from: e.from, to: e.to, v: byId.get(e.from), u: byId.get(e.to) }));
         const pairs = n * (n - 1) / 2;
         const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
         const reduced = iter < requestedIter;
         const area = Math.max(700 * 500, n * 22000), k = Math.sqrt(area / n);
-        const work = initial.map(v => ({ ...v }));
-        const workById = new Map(work.map(v => [v.id, v]));
         let deadline = performance.now() + 50;
         for (let step = 0; step < iter; step++) {
-            const disp = new Map(work.map(v => [v.id, { x: 0, y: 0 }]));
-            for (let i = 0; i < n; i++)
+            for (let i = 0; i < n; i++) {
+                const v = points[i];
                 for (let j = i + 1; j < n; j++) {
-                    const v = work[i], u = work[j];
-                    let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
-                    const f = (k * k) / d;
-                    dx /= d;
-                    dy /= d;
-                    disp.get(v.id).x += dx * f;
-                    disp.get(v.id).y += dy * f;
-                    disp.get(u.id).x -= dx * f;
-                    disp.get(u.id).y -= dy * f;
+                    const u = points[j], dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
+                    const f = (k * k) / d, fx = (dx / d) * f, fy = (dy / d) * f;
+                    v.dx += fx;
+                    v.dy += fy;
+                    u.dx -= fx;
+                    u.dy -= fy;
                 }
-            for (const e of state.edges) {
-                const v = workById.get(String(e.from)), u = workById.get(String(e.to));
+                // One all-pairs pass at the import cap can itself take hundreds of
+                // milliseconds. Check once per row, not once per pair or per pass.
+                if (performance.now() >= deadline) {
+                    await yieldToBrowser();
+                    if (interrupted())
+                        return;
+                    deadline = performance.now() + 50;
+                }
+            }
+            for (const { v, u } of links) {
                 if (!v || !u)
                     continue;
-                let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
-                const f = (d * d) / k;
-                dx /= d;
-                dy /= d;
-                disp.get(v.id).x -= dx * f;
-                disp.get(v.id).y -= dy * f;
-                disp.get(u.id).x += dx * f;
-                disp.get(u.id).y += dy * f;
+                const dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || .01;
+                const f = (d * d) / k, fx = (dx / d) * f, fy = (dy / d) * f;
+                v.dx -= fx;
+                v.dy -= fy;
+                u.dx += fx;
+                u.dy += fy;
             }
             const temp = 80 * (1 - step / iter);
-            for (const v of work) {
-                const d = disp.get(v.id);
-                const len = Math.hypot(d.x, d.y) || .01;
-                v.x += (d.x / len) * Math.min(len, temp);
-                v.y += (d.y / len) * Math.min(len, temp);
-            }
-            if (performance.now() >= deadline && step < iter - 1) {
-                await yieldToBrowser();
-                deadline = performance.now() + 50;
-                if (documentRev !== startRev)
-                    return;
+            for (const v of points) {
+                const len = Math.hypot(v.dx, v.dy) || .01;
+                v.x += (v.dx / len) * Math.min(len, temp);
+                v.y += (v.dy / len) * Math.min(len, temp);
+                v.dx = v.dy = 0;
             }
         }
-        // Commit once, and only when nothing else has moved the document: undo,
-        // another layout, a drag or an import during a yield all abort the run,
-        // leaving the user's result untouched and without a phantom history step.
-        if (documentRev !== startRev || state.nodes !== nodes || state.nodes.length !== initial.length
-            || edgeSignature() !== initialEdges)
+        // Validate *all* targets before the first write, including live geometry
+        // that might not have reached an undo snapshot yet.
+        if (interrupted() || state.nodes !== nodes || nodes.length !== n || state.edges.length !== links.length
+            || points.some((p, i) => nodes[i] !== p.node || p.node.id !== p.id || p.node.x !== p.startX || p.node.y !== p.startY)
+            || links.some((l, i) => { const e = state.edges[i]; return e.id !== l.id || e.from !== l.from || e.to !== l.to; }))
             return;
-        const byId = new Map(state.nodes.map(v => [String(v.id), v]));
-        const targets = [];
-        for (let i = 0; i < initial.length; i++) {
-            const current = state.nodes[i], before = initial[i];
-            if (!current || String(current.id) !== before.id || current.x !== before.x || current.y !== before.y)
-                return;
-            const target = byId.get(before.id);
-            if (!target)
-                return;
-            targets.push(target);
-        }
-        for (let i = 0; i < work.length; i++) {
-            targets[i].x = work[i].x;
-            targets[i].y = work[i].y;
+        for (const p of points) {
+            p.node.x = p.x;
+            p.node.y = p.y;
         }
         pushHistory('relax layout');
         fitView();
@@ -15523,10 +15499,12 @@ function toast(message) {
         timer = window.setTimeout(dismiss, 2300);
         el._toastTimer = timer;
     };
-    el.addEventListener('pointerenter', disarm);
+    let hovered = false;
+    el.addEventListener('pointerenter', () => { hovered = true; disarm(); });
     el.addEventListener('focusin', disarm);
-    el.addEventListener('pointerleave', arm);
-    el.addEventListener('focusout', () => { if (!el.contains(document.activeElement))
+    el.addEventListener('pointerleave', () => { hovered = false; if (!el.contains(document.activeElement))
+        arm(); });
+    el.addEventListener('focusout', () => { if (!hovered)
         arm(); });
     close.addEventListener('click', dismiss);
     stack.appendChild(el);
@@ -16519,48 +16497,48 @@ function deletePreset(idx) {
     saveSoon();
     renderPresetsGrid();
 }
-function togglePresetsOverlay(force) {
-    const overlay = $('#presetsOverlay');
-    if (!overlay)
+const presetsDialog = $('#presetsOverlay');
+function presetsOpen() { return presetsDialog.open || presetsDialog.classList.contains('open'); }
+function finishPresetsClose() {
+    if (presetsOpen())
+        return; // a queued native close event from a previous opening
+    const stack = $('#toastStack');
+    if (stack.parentElement === presetsDialog)
+        document.body.appendChild(stack);
+    if (presetsReturnFocus?.isConnected)
+        presetsReturnFocus.focus({ preventScroll: true });
+    presetsReturnFocus = null;
+}
+function togglePresetsOverlay(open = !presetsOpen()) {
+    if (open === presetsOpen())
         return;
-    const supportsModal = typeof window.HTMLDialogElement === 'function'
-        && typeof window.HTMLDialogElement.prototype.showModal === 'function';
-    const isOpen = force == null ? !(overlay.open || overlay.classList.contains('open')) : force;
-    if (isOpen) {
+    if (open) {
         presetsReturnFocus = document.activeElement;
-        if (supportsModal)
-            overlay.showModal();
+        if (typeof presetsDialog.showModal === 'function')
+            presetsDialog.showModal();
         else {
-            overlay.classList.add('open');
-            overlay.setAttribute('role', 'dialog');
-            overlay.setAttribute('aria-modal', 'true');
-            overlay.setAttribute('aria-hidden', 'false');
+            presetsDialog.classList.add('open');
+            presetsDialog.setAttribute('role', 'dialog');
+            presetsDialog.setAttribute('aria-modal', 'true');
+            presetsDialog.setAttribute('aria-hidden', 'false');
         }
+        // A body-level live region is inert and behind a native modal, no matter
+        // its z-index. Keep preset feedback in the same accessible top layer.
+        presetsDialog.appendChild($('#toastStack'));
         renderPresetsGrid();
-        setTimeout(() => $('#btnPresetClose').focus({ preventScroll: true }), 0);
+        $('#btnPresetClose').focus({ preventScroll: true });
     }
     else {
-        const returnFocus = presetsReturnFocus;
-        presetsReturnFocus = null;
-        if (supportsModal && overlay.open)
-            overlay.close();
-        overlay.classList.remove('open');
-        if (!supportsModal)
-            overlay.setAttribute('aria-hidden', 'true');
-        if (returnFocus?.isConnected)
-            returnFocus.focus({ preventScroll: true });
+        if (presetsDialog.open)
+            presetsDialog.close();
+        else {
+            presetsDialog.classList.remove('open');
+            presetsDialog.setAttribute('aria-hidden', 'true');
+        }
+        finishPresetsClose();
     }
 }
-// Native dismissal (Esc/back gesture) can close the dialog without going
-// through our toggle; restore focus in that case too.
-const presetsDialog = $('#presetsOverlay');
-if (typeof presetsDialog.close === 'function') {
-    presetsDialog.addEventListener('close', () => {
-        if (presetsReturnFocus?.isConnected)
-            presetsReturnFocus.focus({ preventScroll: true });
-        presetsReturnFocus = null;
-    });
-}
+presetsDialog.addEventListener('close', finishPresetsClose);
 const CUSTOM_ATTRIBUTE_TYPES = ['boolean', 'int', 'long', 'float', 'double', 'string'];
 // Graph-scope custom property values (document-wide). Node/edge values live in
 // the selection panel; graph values have no "selection", so they are edited
@@ -16717,6 +16695,9 @@ function renderCustomAttributes(options) {
 // value; keyCode 229 is the fallback signal in engines without isComposing.
 const isCommittedEnter = (ev) => ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229;
 function wireUi() {
+    // Some fields write document data on input but push history only on change
+    // (blur). Don't let a layout capture that unfinished edit in its undo step.
+    document.addEventListener('input', () => { documentRev++; }, true);
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
         const idInput = $('#customAttributeId');
@@ -16952,15 +16933,11 @@ function wireUi() {
         }
     });
     window.addEventListener('keydown', ev => {
-        if (ev.key !== 'Escape')
+        // Leave native cancellation to the topmost dialog, and never close an
+        // underlying surface while a name prompt owns Escape.
+        if (ev.key !== 'Escape' || dialogEl || presetsDialog.open)
             return;
-        // A native <dialog> receives Escape as its own `cancel` action. Our
-        // window listener runs first, so it must stand down whenever a modal is
-        // active — otherwise it closes the presets/sidebar under a name prompt.
-        if (uiDialogOpen())
-            return;
-        const presets = $('#presetsOverlay');
-        if (presets.open || presets.classList.contains('open')) {
+        if (presetsOpen()) { // non-native presets fallback
             ev.preventDefault();
             ev.stopImmediatePropagation();
             togglePresetsOverlay(false);

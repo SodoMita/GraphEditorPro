@@ -5,6 +5,9 @@
     ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229;
 
   function wireUi(){
+    // Some fields write document data on input but push history only on change
+    // (blur). Don't let a layout capture that unfinished edit in its undo step.
+    document.addEventListener('input', () => { documentRev++; }, true);
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
       const idInput = $('#customAttributeId');
@@ -182,13 +185,10 @@
       }
     });
     window.addEventListener('keydown', ev => {
-      if(ev.key !== 'Escape') return;
-      // A native <dialog> receives Escape as its own `cancel` action. Our
-      // window listener runs first, so it must stand down whenever a modal is
-      // active — otherwise it closes the presets/sidebar under a name prompt.
-      if(uiDialogOpen()) return;
-      const presets = $('#presetsOverlay');
-      if(presets.open || presets.classList.contains('open')){
+      // Leave native cancellation to the topmost dialog, and never close an
+      // underlying surface while a name prompt owns Escape.
+      if(ev.key !== 'Escape' || dialogEl || presetsDialog.open) return;
+      if(presetsOpen()){ // non-native presets fallback
         ev.preventDefault(); ev.stopImmediatePropagation(); togglePresetsOverlay(false); return;
       }
       if(sidebarEl.classList.contains('open')){

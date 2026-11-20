@@ -69,58 +69,59 @@
   };
   let forceLayoutRunning = false;
   async function layoutForce(requestedIter=180){
-    if(forceLayoutRunning) return;
-    const nodes = state.nodes;
-    const n=nodes.length; if(n < 2) return;
-    forceLayoutRunning = true;
+    const nodes = state.nodes, n = nodes.length;
+    if(forceLayoutRunning || n < 2 || hasActiveCanvasGesture()) return;
+    flushPendingHistory();
     const startRev = documentRev;
-    // Work on copied positions: a yield must never leave the live document
-    // half-relaxed, and an edit during the yield cannot pull the ground (or a
-    // deleted node id) out from under the remaining passes.
-    const initial = nodes.map(v => ({id:String(v.id), x:v.x, y:v.y}));
-    const edgeSignature = () => state.edges.map(e => `${e.id}\u0000${e.from}\u0000${e.to}`).join('\u0001');
-    const initialEdges = edgeSignature();
+    const interrupted = () => documentRev !== startRev || hasActiveCanvasGesture();
+    forceLayoutRunning = true;
     try {
-      // Repulsion is all-pairs, so cost is O(iter · n²): 600 nodes took ~1.9 s and
-      // the 3000-node import cap would freeze the tab for ~45 s. Budget the pair
-      // work so one click finishes in roughly a second, and yield every ~50 ms
-      // so the tab can still paint and answer input while it runs.
+      // A yield must expose neither partial geometry nor a history entry. Keep
+      // all solve inputs private (including endpoints) until the commit.
+      const points = nodes.map(node => ({node, id:node.id, x:node.x, y:node.y,
+        startX:node.x, startY:node.y, dx:0, dy:0}));
+      const byId = new Map(points.map(p => [p.id, p]));
+      const links = state.edges.map(e => ({id:e.id, from:e.from, to:e.to, v:byId.get(e.from), u:byId.get(e.to)}));
       const pairs = n * (n - 1) / 2;
       const iter = Math.max(5, Math.min(requestedIter, Math.floor(FORCE_LAYOUT_PAIR_BUDGET / Math.max(1, pairs))));
       const reduced = iter < requestedIter;
       const area=Math.max(700*500, n*22000), k=Math.sqrt(area/n);
-      const work = initial.map(v => ({...v}));
-      const workById = new Map(work.map(v => [v.id, v]));
       let deadline = performance.now() + 50;
       for(let step=0; step<iter; step++){
-        const disp = new Map(work.map(v => [v.id, {x:0,y:0}]));
-        for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
-          const v=work[i], u=work[j]; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(k*k)/d; dx/=d; dy/=d; disp.get(v.id).x += dx*f; disp.get(v.id).y += dy*f; disp.get(u.id).x -= dx*f; disp.get(u.id).y -= dy*f;
+        for(let i=0; i<n; i++){
+          const v = points[i];
+          for(let j=i+1; j<n; j++){
+            const u=points[j], dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01;
+            const f=(k*k)/d, fx=(dx/d)*f, fy=(dy/d)*f;
+            v.dx += fx; v.dy += fy; u.dx -= fx; u.dy -= fy;
+          }
+          // One all-pairs pass at the import cap can itself take hundreds of
+          // milliseconds. Check once per row, not once per pair or per pass.
+          if(performance.now() >= deadline){
+            await yieldToBrowser();
+            if(interrupted()) return;
+            deadline = performance.now() + 50;
+          }
         }
-        for(const e of state.edges){ const v=workById.get(String(e.from)), u=workById.get(String(e.to)); if(!v||!u) continue; let dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01; const f=(d*d)/k; dx/=d; dy/=d; disp.get(v.id).x -= dx*f; disp.get(v.id).y -= dy*f; disp.get(u.id).x += dx*f; disp.get(u.id).y += dy*f; }
+        for(const {v,u} of links){
+          if(!v || !u) continue;
+          const dx=v.x-u.x, dy=v.y-u.y, d=Math.hypot(dx,dy)||.01;
+          const f=(d*d)/k, fx=(dx/d)*f, fy=(dy/d)*f;
+          v.dx -= fx; v.dy -= fy; u.dx += fx; u.dy += fy;
+        }
         const temp = 80 * (1 - step/iter);
-        for(const v of work){ const d=disp.get(v.id); const len=Math.hypot(d.x,d.y)||.01; v.x += (d.x/len)*Math.min(len,temp); v.y += (d.y/len)*Math.min(len,temp); }
-        if(performance.now() >= deadline && step < iter - 1){
-          await yieldToBrowser();
-          deadline = performance.now() + 50;
-          if(documentRev !== startRev) return;
+        for(const v of points){
+          const len=Math.hypot(v.dx,v.dy)||.01;
+          v.x += (v.dx/len)*Math.min(len,temp); v.y += (v.dy/len)*Math.min(len,temp);
+          v.dx = v.dy = 0;
         }
       }
-      // Commit once, and only when nothing else has moved the document: undo,
-      // another layout, a drag or an import during a yield all abort the run,
-      // leaving the user's result untouched and without a phantom history step.
-      if(documentRev !== startRev || state.nodes !== nodes || state.nodes.length !== initial.length
-         || edgeSignature() !== initialEdges) return;
-      const byId = new Map(state.nodes.map(v => [String(v.id), v]));
-      const targets: any[] = [];
-      for(let i=0;i<initial.length;i++){
-        const current = state.nodes[i], before = initial[i];
-        if(!current || String(current.id) !== before.id || current.x !== before.x || current.y !== before.y) return;
-        const target = byId.get(before.id);
-        if(!target) return;
-        targets.push(target);
-      }
-      for(let i=0;i<work.length;i++){ targets[i].x = work[i].x; targets[i].y = work[i].y; }
+      // Validate *all* targets before the first write, including live geometry
+      // that might not have reached an undo snapshot yet.
+      if(interrupted() || state.nodes !== nodes || nodes.length !== n || state.edges.length !== links.length
+        || points.some((p,i) => nodes[i] !== p.node || p.node.id !== p.id || p.node.x !== p.startX || p.node.y !== p.startY)
+        || links.some((l,i) => { const e=state.edges[i]; return e.id !== l.id || e.from !== l.from || e.to !== l.to; })) return;
+      for(const p of points){ p.node.x = p.x; p.node.y = p.y; }
       pushHistory('relax layout'); fitView(); queueRender(true);
       if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
     } finally {
@@ -231,10 +232,11 @@
       timer = window.setTimeout(dismiss, 2300);
       (el as any)._toastTimer = timer;
     };
-    el.addEventListener('pointerenter', disarm);
+    let hovered = false;
+    el.addEventListener('pointerenter', () => { hovered = true; disarm(); });
     el.addEventListener('focusin', disarm);
-    el.addEventListener('pointerleave', arm);
-    el.addEventListener('focusout', () => { if(!el.contains(document.activeElement)) arm(); });
+    el.addEventListener('pointerleave', () => { hovered = false; if(!el.contains(document.activeElement)) arm(); });
+    el.addEventListener('focusout', () => { if(!hovered) arm(); });
     close.addEventListener('click', dismiss);
     stack.appendChild(el);
     arm();

@@ -223,8 +223,7 @@
   // handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
   // Ctrl+Z landing mid-confirm would revert history under the dialog and the
   // pending confirm would then apply itself to the reverted document.
-  let dialogOpenCount = 0;
-  function uiDialogOpen(): boolean { return dialogOpenCount > 0; }
+  function uiDialogOpen(): boolean { return dialogEl !== null || presetsOpen(); }
   function closeDialog(result: string | boolean | null = null){
     if(!dialogEl) return;
     // Detach the document-level listeners *before* restoring focus: they pull
@@ -238,7 +237,6 @@
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
-    dialogOpenCount = Math.max(0, dialogOpenCount - 1);
     if(dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
     dialogReturnFocus = null;
     resolve?.(result);
@@ -275,7 +273,6 @@
         </form>`;
       document.body.appendChild(dialog);
       dialogEl = dialog;
-      dialogOpenCount++;
       if(nativeDialog) (dialog as HTMLDialogElement).showModal();
       const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
       const form = dialog.querySelector('form');
@@ -634,6 +631,9 @@
   });
   let state: GraphState = defaultState();
   let appHistory: string[] = [], appHistoryIndex = -1;
+  // Edit generation, not a history index: in-progress form/gesture edits and
+  // snapshot restores invalidate async work without creating an undo entry.
+  let documentRev = 0;
   let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
   const activePointers = new Map();
@@ -710,6 +710,7 @@
   function pushHistorySoon(label: string){
     // The newest label wins: only the state at flush time is captured, and the
     // label is documentation of what moved.
+    documentRev++; // the gesture is complete even if its snapshot is deferred
     pendingHistoryLabel = label;
     if(pendingHistoryIdle != null || pendingHistoryTimer != null) return;
     const flush = () => flushPendingHistory();
@@ -739,9 +740,9 @@
     // Never reorder history: a deferred entry from a gesture release belongs
     // before whatever the current caller is about to record.
     flushPendingHistory();
+    documentRev++; // an explicit edit supersedes a running layout even if it is a no-op
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
-    documentRev++;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
     appHistory.push(snap);
     historyBytes += snapshotBytes(snap);
@@ -1869,10 +1870,6 @@
   // array identity, its length, or an explicit invalidation (in-place id
   // rewrite or edge reordering) says the mapping changed.
   let graphRev = 0;
-  // Incremented on committed document changes (history pushes, snapshot restores
-  // and history resets). Unlike graphRev this is not an index cache token, so
-  // async work can use it to notice undo, layouts, imports and other edits.
-  let documentRev = 0;
   function invalidateGraphIndex(){ graphRev++; }
   let nodeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
   let edgeIndex = { arr: null, len: -1, rev: -1, map: new Map() };
