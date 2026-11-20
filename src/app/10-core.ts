@@ -1694,10 +1694,16 @@
     // A dry run answers "what ids would these entries get", not "what did this
     // import lose" — the caller counts the loss itself.
     if(recordDropped) lastImportDropped = {nodes: nodeOverflow, edges: edgeOverflow};
-    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, limits.nodes).filter(isRecord) : [];
+    // Valid entries first, THEN the ceiling. Slicing first let malformed entries spend
+    // the budget: 200,000 invalid records ahead of a real node filled the planning
+    // window, so the real node's id was unknown and an edge naming it resolved to a
+    // host node of the same name. A record that is not an object is not an entry, at
+    // any layer.
+    const validSourceNodes = (Array.isArray(source.nodes) ? source.nodes : []).filter(isRecord);
+    const rawNodes = validSourceNodes.slice(0, limits.nodes);
     // The source position of each valid entry, so a trace can name the payload entry a
     // survivor came from rather than its position among the survivors.
-    const rawNodeIndex = (Array.isArray(source.nodes) ? source.nodes.slice(0, limits.nodes) : [])
+    const rawNodeIndex = (Array.isArray(source.nodes) ? source.nodes : [])
       .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const nodes: GraphNode[] = rawNodes.map((n, i) => {
       const rawId = String(n.id || ('n' + (i + 1)));
@@ -1731,8 +1737,9 @@
 
     const nodeIds = new Set(nodes.map(node => node.id));
     const usedEdgeIds = new Set<string>();
-    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, limits.edges).filter(isRecord) : [];
-    const rawEdgeIndex = (Array.isArray(source.edges) ? source.edges.slice(0, limits.edges) : [])
+    const validSourceEdges = (Array.isArray(source.edges) ? source.edges : []).filter(isRecord);
+    const rawEdges = validSourceEdges.slice(0, limits.edges);
+    const rawEdgeIndex = (Array.isArray(source.edges) ? source.edges : [])
       .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
@@ -1970,16 +1977,20 @@
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
-    const maxN = Math.max(
-      ...nodes.map(n => Number((n.id.match(/\d+$/)||[0])[0])),
-      finite(source.nextNode,1)-1,
-      nodes.length
-    );
-    const maxE = Math.max(
-      ...edges.map(e => Number((e.id.match(/\d+$/)||[0])[0])),
-      finite(source.nextEdge,1)-1,
-      edges.length
-    );
+    // Reduced, not spread. `Math.max(...array)` passes one argument per element and a
+    // payload large enough to matter overflows the call stack — "Maximum call stack
+    // size exceeded" from a document that is merely big, before the capacity limit
+    // gets a chance to drop the excess.
+    const maxIdSuffix = (items: {id: string}[]) => {
+      let max = 0;
+      for(const item of items){
+        const digits = item.id.match(/\d+$/);
+        if(digits) max = Math.max(max, Number(digits[0]));
+      }
+      return max;
+    };
+    const maxN = Math.max(maxIdSuffix(nodes), finite(source.nextNode,1)-1, nodes.length);
+    const maxE = Math.max(maxIdSuffix(edges), finite(source.nextEdge,1)-1, edges.length);
     return {
       ...base,
       title: String(source.title || 'untitled').slice(0,80),
@@ -2020,12 +2031,27 @@
     // name must survive, including one written in a non-Latin script.
     return id || (prefix + Math.random().toString(36).slice(2,8));
   }
-  function uniqueSafeId(value: unknown, prefix: string, used: Set<string>): string {
+  // `used` carries a resume hint per base name, so a run of duplicates costs one step
+  // each instead of rescanning from 2 every time.
+  //
+  // The suffix scan restarted at 2 for every entry, which is O(k) for the k-th
+  // duplicate and O(n²) for a payload where n entries share a name: 12,000 identically
+  // named nodes blocked the page for 35 seconds. Remembering where the last search
+  // stopped makes the whole run linear. The hint is stored on the set itself so the
+  // function stays a pure "give me an id not in here" and every caller benefits — the
+  // `Set` is only ever used for membership, so the extra property is invisible to it.
+  type UsedIds = Set<string> & { resume?: Map<string, number> };
+  function uniqueSafeId(value: unknown, prefix: string, used: UsedIds): string {
     const base = String(value ?? '').replace(/[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/g,'').slice(0,40) || prefix;
     let id = base;
-    for(let suffix = 2; used.has(id); suffix++){
-      const ending = `-${suffix}`;
-      id = base.slice(0, Math.max(1, 40 - ending.length)) + ending;
+    if(used.has(id)){
+      const resume = used.resume ?? (used.resume = new Map());
+      let suffix = Math.max(2, resume.get(base) ?? 2);
+      for(;; suffix++){
+        const ending = `-${suffix}`;
+        const candidate = base.slice(0, Math.max(1, 40 - ending.length)) + ending;
+        if(!used.has(candidate)){ id = candidate; resume.set(base, suffix); break; }
+      }
     }
     used.add(id);
     return id;

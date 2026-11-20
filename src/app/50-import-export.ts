@@ -821,7 +821,16 @@
   // document's defaults no longer exist anywhere. Which properties to copy is
   // decided by the fields the element left unset, so nothing is overwritten.
   function materializeDefaults(nodes, edges, settings){
-    if(settings?.inheritDefaults === false) return; // not inheriting: nothing to resolve
+    // `inheritDefaults: false` is NOT "nothing to resolve".
+    //
+    // The setting means newly created elements get their visual properties written out
+    // instead of left unset. It does not change how an element with an unset property
+    // is DRAWN — nodeVisual resolves it through the defaults either way. Returning
+    // early therefore skipped materialisation for a source document whose elements
+    // relied on those defaults, and they arrived at whatever the host's defaults said:
+    // a node drawn green at width 77 in its own document came in red at width 99.
+    // The document's visual result is what append has to preserve, and it is the same
+    // resolution either way.
     // Resolve through the same function that draws the element, so what is
     // materialised is what the user was looking at.
     //
@@ -888,37 +897,20 @@
     // then throws "is not iterable", which aborted the whole append and surfaced as
     // "Paste failed". materializeDefaults takes the raw entries by design, so the
     // shape is normalised here, where every caller's input is known to be foreign.
-    // A planning pass reads the payload with no meaningful ceiling: it answers "what
-    // does this payload say", and every incoming id has to be in the answer so a
-    // dropped node is never mistaken for a host node of the same name. The bound is
-    // only a guard against a pathological payload; past it the ids are not knowable
-    // and the real cap has already rejected those entries.
-    const PLANNING_LIMIT = 200000;
     const plannedTrace = { nodes: [] as number[], edges: [] as number[] };
     const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
     const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
     const hostIds = new Set(state.nodes.map(n => n.id));
-    // Phase 1 — ask the sanitizer what the payload MEANS.
+    // The plan reads the whole payload, with a limit that is a guard against a
+    // pathological document rather than a capacity decision.
     //
-    // Every question append has to answer before it can spend capacity is a question
-    // sanitizeState already answers: which id a node really gets, which edge points
-    // at which node, which entries are simply invalid. Re-deriving those answers was
-    // wrong four review rounds running, each time in a new way:
-    //   * normalising ids without resolving collisions collapsed `a!` and `a` onto
-    //     one name, so an edge meant for the node the cap dropped was attached to the
-    //     one that stayed;
-    //   * skipping invalid entries happened after the cap, so `[null, valid]` spent
-    //     the last slot on the null and imported nothing;
-    //   * edges were validated and then capped, so an edge that could not be kept
-    //     still counted as "referenced" when definitions were prioritised.
-    // So the payload is read once, in full, with no capacity applied. Its output is
-    // the identity map — nothing here is kept; it is the answer to "what does the
-    // payload say", not a decision about what to keep.
-    // The planning pass reads the payload with NO node ceiling, so every incoming id
-    // is in the plan and `dropped` can never be mistaken for a host node of the same
-    // name. `MAX_IMPORT_NODES` is far above the node ceiling for memory, so a
-    // payload longer than it is truncated for the plan too — beyond that the ids are
-    // not knowable and the cap has already rejected the entries.
+    // Bounding it by the remaining room looks attractive and is wrong: an id the plan
+    // never read is an id nobody can tell apart from a host node of the same name, so
+    // an edge naming it silently re-points at the host's node. That is a correctness
+    // property, not a performance one, and it must not be traded for speed. The cost
+    // of reading everything is addressed in the sanitizer instead: it processes entries
+    // linearly, and malformed ones are no longer charged to the limit.
+    const PLANNING_LIMIT = 200000;
     const planned = sanitizeState({...data, settings: state.settings}, {
       externalNodeIds: hostIds, recordDropped: false,
       limits: {nodes: PLANNING_LIMIT, edges: PLANNING_LIMIT},
@@ -971,8 +963,15 @@
     // Phase 3 — definitions the kept elements need get first claim on the remaining
     // budget. A definition is needed when a KEPT element's values name it; an edge
     // that the capacity dropped cannot spend a slot a kept edge needs.
-    const neededDefIds = new Set<string>(), neededDefNames = new Set<string>();
-    const noteValueKeys = (custom) => {
+    // A value key names a definition of a specific SCOPE. The same id may be declared
+    // for nodes and for edges, and those are different properties — so the priority
+    // set is keyed by scope and id together. Without the scope, an unused edge
+    // definition called `score` outranked the node definition a retained node's value
+    // actually needed: the edge definition took the last slot, and the node's value
+    // survived only as an orphan bound to a definition that does not apply to it.
+    const neededDefs = new Set<string>();
+    const defKey = (scope, id) => scope + '\u0000' + id;
+    const noteValueKeys = (custom, scope) => {
       if(!isRecord(custom)) return;
       for(const key of Object.keys(custom)){
         // A value key is a definition id verbatim. Splitting on `|` looked
@@ -980,7 +979,7 @@
         // an ordinary character in a property id: a definition called `region|A` was
         // read as `A`, so the value looked unreferenced and its definition lost the
         // slot to an unused one.
-        neededDefIds.add(String(key));
+        neededDefs.add(defKey(scope, String(key)));
       }
     };
     // Read from the PAYLOAD entries, not the plan's. The sanitizer truncates a custom
@@ -990,17 +989,24 @@
     // both keys at full length, which is the form the definitions are declared under.
     const payloadNodes = Array.isArray(data?.nodes) ? data.nodes : [];
     const payloadEdges = Array.isArray(data?.edges) ? data.edges : [];
-    for(const index of keptNodeSources) if(isRecord(payloadNodes[index])) noteValueKeys(payloadNodes[index].custom);
-    for(const index of keptEdgeSources) if(isRecord(payloadEdges[index])) noteValueKeys(payloadEdges[index].custom);
-    noteValueKeys(data?.graphCustom);
+    for(const index of keptNodeSources) if(isRecord(payloadNodes[index])) noteValueKeys(payloadNodes[index].custom, 'node');
+    for(const index of keptEdgeSources) if(isRecord(payloadEdges[index])) noteValueKeys(payloadEdges[index].custom, 'edge');
+    noteValueKeys(data?.graphCustom, 'graph');
     const isNeeded = (def) => {
       if(!isRecord(def)) return false;
       const id = String(def.id ?? '').trim();
-      if(id && neededDefIds.has(id)) return true;
-      // The recorded name is a fallback for a payload whose values are keyed by the
-      // property name rather than the definition id.
-      const name = String(def.name ?? '').trim().toLowerCase();
-      return !!name && [...neededDefNames].length > 0 && neededDefNames.has(name);
+      if(!id) return false;
+      // Scope decides. A definition is needed by a value of its own scope, and an
+      // 'all' definition is needed by a value of any scope.
+      //
+      // The fallback is one-directional on purpose. Adding `all|id` for every value
+      // made every definition of that id match — which is how an unused edge
+      // definition still won the last slot — because `all|id` was true for a node
+      // value as well. Only the definition's own scope decides, plus 'all' covering
+      // the narrower ones.
+      const scope = ['graph','node','edge','all'].includes(String(def.scope)) ? String(def.scope) : 'node';
+      if(scope === 'all') return [...neededDefs].some(key => key.endsWith('\u0000' + id));
+      return neededDefs.has(defKey(scope, id));
     };
     const carriedDefs = Array.isArray(data?.customAttributes) ? data.customAttributes : [];
     // Ordered, never filtered: unneeded definitions move to the back but still go

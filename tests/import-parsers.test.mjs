@@ -6063,3 +6063,154 @@ test('appending many dangling edges stays linear in the payload size', async () 
   assert.ok(large < Math.max(1500, small * 40),
     `6,000 dangling edges took ${large}ms against ${small}ms with none`);
 });
+
+test('definition priority respects scope', async () => {
+  // A value key names a definition of a specific scope. Priority ignored that, so an
+  // unused EDGE definition called `score` outranked the NODE definition a retained
+  // node's value needed: the edge definition took the last slot and the value was left
+  // bound to a definition that does not apply to a node — an orphan, not a property.
+  const hostDefs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: [], customAttributes: hostDefs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'keep', label:'KEEP', x:0, y:0, custom:{score:'42'}}],
+    edges: [],
+    // The unused edge definition is declared first, so declaration order alone would
+    // give it the last slot.
+    customAttributes: [
+      {id:'score', name:'score', scope:'edge', type:'string', origin:'edgeScore'},
+      {id:'score', name:'score', scope:'node', type:'string', origin:'nodeScore'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const imported = graph.customAttributes.filter(def => !def.id.startsWith('hd'));
+  assert.equal(imported.length, 1, 'exactly one definition took the last slot');
+  assert.equal(imported[0].scope, 'node', 'and it is the node definition the value needs');
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  const bound = Object.keys(kept.custom || {});
+  assert.equal(bound.length, 1, 'the value is bound');
+  assert.equal(bound[0], imported[0].id, 'to that definition — a usable node property, not an orphan');
+  assert.equal(kept.custom[bound[0]], '42');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append preserves the source visual when the source disables inheritance', async () => {
+  // `inheritDefaults: false` means new elements get their properties written out; it
+  // does not change how an element with an unset property is DRAWN — nodeVisual still
+  // resolves it through the defaults. Materialisation returned early on the flag, so a
+  // node drawn green at width 77 in a document that disabled inheritance arrived at
+  // the host's red and 99.
+  const {dom, errors} = createEditorDom({
+    title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: [],
+    settings: {nodeDefaults: {width: 99, color: '#ff0000'}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 100);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'s1', label:'S', x:900, y:900}],
+    edges: [],
+    settings: {inheritDefaults: false, nodeDefaults: {width: 77, color: '#00ff00'}},
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.width, 77, 'it kept the width its own document drew');
+  assert.equal(node.color, '#00ff00', 'and its own colour');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a payload of duplicate ids appends in linear time', async () => {
+  // Duplicate-id allocation rescanned suffixes from 2 for every entry, which is
+  // quadratic: 12,000 identically named nodes blocked the page for ~35 seconds even
+  // though only ~3,000 could fit. The scan now resumes where it stopped.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  const nodes = Array.from({length: 12000}, () => ({id:'same', x:0, y:0}));
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{
+    writeText:async()=>{}, readText:async()=>JSON.stringify({title:'p', nodes, edges:[]}),
+  }});
+  const started = Date.now();
+  document.querySelector('#btnPasteJson').click();
+  await settle(window, 40);
+  const elapsed = Date.now() - started;
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3000, 'the document filled to its ceiling');
+  const ids = graph.nodes.map(node => node.id);
+  assert.equal(new Set(ids).size, ids.length, 'and every id is distinct');
+  // 35 seconds was the quadratic behaviour; a generous bound catches a return to it
+  // without failing on a slow machine.
+  assert.ok(elapsed < 8000, `12,000 duplicates took ${elapsed}ms`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a payload larger than the argument limit imports what fits instead of throwing', async () => {
+  // `Math.max(...nodes.map(...))` passes one argument per node, so a payload of 200,001
+  // nodes overflowed the call stack — "Maximum call stack size exceeded" from a
+  // document that is merely big, before the capacity limit could drop the excess.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  const nodes = Array.from({length: 200001}, (_, i) => ({id:'n' + i, x:0, y:0}));
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{
+    writeText:async()=>{}, readText:async()=>JSON.stringify({title:'p', nodes, edges:[]}),
+  }});
+  document.querySelector('#btnPasteJson').click();
+  await settle(window, 120);
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3000, 'the document filled to its ceiling instead of throwing');
+  assert.deepEqual(errors.map(error => error.message), [], 'and nothing overflowed the stack');
+  dom.window.close();
+});
+
+test('invalid entries ahead of a real node do not hide it from the plan', async () => {
+  // The planning window was filled before malformed entries were filtered, so a real
+  // node behind enough junk was never read. Its id was then unknown, and an edge
+  // naming it resolved to a HOST node of the same name — attached to the wrong node,
+  // with a success toast and no loss reported.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'a', x:0, y:0}, {id:'h', label:'HOST-H', x:100, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  // Junk ahead of the node whose id collides with a host node, plus an edge to it.
+  const nodes = [...Array.from({length: 200000}, () => null), {id:'h', label:'INCOMING-H', x:0, y:100}];
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{
+    writeText:async()=>{},
+    readText:async()=>JSON.stringify({title:'p', nodes, edges:[{id:'e', from:'h', to:'a'}]}),
+  }});
+  document.querySelector('#btnPasteJson').click();
+  await settle(window, 150);
+
+  const graph = exportedGraph(document);
+  const hostH = graph.nodes.find(node => node.label === 'HOST-H');
+  const attached = graph.edges.filter(edge => edge.from === hostH.id || edge.to === hostH.id);
+  assert.deepEqual(attached, [], 'the edge did not attach to the host node of the same id');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
