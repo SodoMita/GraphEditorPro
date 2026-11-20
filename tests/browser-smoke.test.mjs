@@ -888,6 +888,56 @@ test('force layout does not capture an uncommitted title edit', async t => {
   assert.equal(byId('btnUndo').disabled, true);
 });
 
+test('typing a camera draft during a force-layout yield still allows the layout to commit', async t => {
+  const {window, document, byId} = await openGraph(t);
+  const initial = positions(document), cameraX = byId('cameraX');
+  byId('tab-data').click();
+  cameraX.closest('details').open = true;
+  const resume = pauseForceLayout(window);
+  cameraX.focus(); cameraX.value = '123';
+  cameraX.dispatchEvent(new window.Event('input', { bubbles: true })); // no Enter or change
+  await resume();
+  assert.equal(document.activeElement, cameraX);
+  assert.equal(cameraX.value, '123', 'the focused draft survives the layout repaint');
+  assert.notDeepEqual(positions(document), initial, 'a UI-only input did not cancel relaxation');
+  byId('btnUndo').click();
+  await nextFrame(window);
+  assert.deepEqual(positions(document), initial);
+  assert.equal(byId('btnUndo').disabled, true, 'only the layout added an undo entry');
+});
+
+test('a force-layout commit leaves an unsubmitted edge-list draft in place', async t => {
+  const {window, document} = await openGraph(t);
+  document.querySelector('[data-view-btn="edges"]').click();
+  // The table is installed on a 60ms debounce. Edit the settled table, then
+  // check again after the same window so a delayed rebuild cannot hide a loss.
+  const settleTable = () => new Promise(resolve => window.setTimeout(resolve, 80));
+  await settleTable();
+  const initial = positions(document), weight = document.querySelector('#edgeListHost input.edge-weight');
+  const resume = pauseForceLayout(window);
+  weight.focus(); weight.value = '37';
+  weight.dispatchEvent(new window.Event('input', { bubbles: true })); // no document write until change
+  await resume();
+  await settleTable();
+  assert.equal(document.activeElement, weight, 'a geometry-only commit did not replace the edited cell');
+  assert.equal(weight.value, '37');
+  assert.notDeepEqual(positions(document), initial);
+});
+
+test('a live edge colour edit during a yield still invalidates the layout before change', async t => {
+  const {window, document, byId} = await openGraph(t);
+  document.querySelector('[data-view-btn="edges"]').click();
+  await nextFrame(window); // opening the view schedules its list render
+  const initial = positions(document), color = document.querySelector('#edgeListHost .edge-color');
+  const resume = pauseForceLayout(window);
+  color.value = '#123456';
+  color.dispatchEvent(new window.Event('input', { bubbles: true })); // delegated edit, not yet in history
+  await resume();
+  assert.equal(byId('edge-e1').querySelector('.edge-line').getAttribute('stroke'), color.value);
+  assert.deepEqual(positions(document), initial);
+  assert.equal(byId('btnUndo').disabled, true);
+});
+
 test('a layout cannot move a node already held for a drag', async t => {
   const {window, document, byId} = await openGraph(t);
   const initial = positions(document);
@@ -1003,4 +1053,54 @@ test('toast expiry waits for both keyboard focus and pointer hover to leave', as
   assert.ok(toast.isConnected, 'blurring does not restart expiry while hovered');
   hover(false); expire();
   assert.equal(toast.isConnected, false, 'expiry resumes when neither interaction is active');
+
+  byId('btnPresetSave').click();
+  const nextClose = byId('toastStack').lastElementChild.querySelector('button');
+  nextClose.focus(); nextClose.click(); expire();
+  assert.equal(nextClose.isConnected, false, 'focus protection does not block an explicit dismissal');
+});
+
+function assertToastOrder(stack, expected) {
+  assert.equal(stack.childElementCount, expected.length);
+  expected.forEach((toast, i) => assert.equal(stack.children[i], toast, `toast at index ${i}`));
+}
+
+for (const oldest of ['focused', 'hovered']) {
+  test(`a fifth toast skips the ${oldest} oldest notification and evicts the oldest idle one`, async t => {
+    const {window, document, byId} = await openGraph(t);
+    byId('btnPresets').click();
+    const stack = byId('toastStack');
+    const notify = () => { byId('btnPresetSave').click(); return stack.lastElementChild; };
+    const first = notify(), second = notify();
+    const [focused, hovered] = oldest === 'focused' ? [first, second] : [second, first];
+    const close = focused.querySelector('button');
+    close.focus();
+    hovered.dispatchEvent(new window.Event('pointerenter'));
+    const oldestIdle = notify(), nextIdle = notify(), latest = notify();
+    assert.equal(document.activeElement, close, 'overflow must not send keyboard focus to the body');
+    assert.equal(oldestIdle.isConnected, false);
+    assertToastOrder(stack, [first, second, nextIdle, latest]);
+
+    hovered.dispatchEvent(new window.Event('pointerleave'));
+    close.blur();
+    const another = notify();
+    assertToastOrder(stack, [second, nextIdle, latest, another]);
+  });
+}
+
+test('toast eviction waits for interaction to end if all four notifications are in use', async t => {
+  const {window, byId} = await openGraph(t);
+  byId('btnPresets').click();
+  const stack = byId('toastStack'), held = [];
+  for(let i = 0; i < 4; i++) {
+    byId('btnPresetSave').click();
+    const toast = stack.lastElementChild;
+    toast.dispatchEvent(new window.Event('pointerenter'));
+    held.push(toast);
+  }
+  byId('btnPresetSave').click();
+  const latest = stack.lastElementChild;
+  assertToastOrder(stack, [...held, latest]);
+  held[0].dispatchEvent(new window.Event('pointerleave'));
+  assertToastOrder(stack, [...held.slice(1), latest]);
 });

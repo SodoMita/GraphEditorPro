@@ -657,6 +657,13 @@
       selected:state.selected, selection:state.selection
     });
   }
+  // Invalidate at the document write, even if history waits for blur (e.g. a
+  // title or colour edit). DOM input and autosave also serve camera drafts and
+  // other UI state, so neither is itself evidence of an edit.
+  function saveLiveDocumentEdit(){
+    documentRev++;
+    saveSoon();
+  }
   function applySnapshot(raw){
     cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;

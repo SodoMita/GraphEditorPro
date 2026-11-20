@@ -122,7 +122,9 @@
         || points.some((p,i) => nodes[i] !== p.node || p.node.id !== p.id || p.node.x !== p.startX || p.node.y !== p.startY)
         || links.some((l,i) => { const e=state.edges[i]; return e.id !== l.id || e.from !== l.from || e.to !== l.to; })) return;
       for(const p of points){ p.node.x = p.x; p.node.y = p.y; }
-      pushHistory('relax layout'); fitView(); queueRender(true);
+      // Only geometry changed. Replacing the matrix/edge-list inputs here
+      // would discard any draft the user started while the solve was yielding.
+      pushHistory('relax layout'); fitView(); queueRender(false);
       if(reduced) toast(I18N.t('layout_force_reduced', {iter, n}));
     } finally {
       forceLayoutRunning = false;
@@ -197,14 +199,20 @@
       if(preference === 'true') state.settings.autosave = true;
     }catch{}
   }
+  const TOAST_LIMIT = 4;
+  const toastActivity = new WeakMap<Element, {hovered:boolean; timer:number}>();
   function toast(message){
-    const stack = $('#toastStack');
-    const removeToast = (node: HTMLElement) => {
-      const pending = (node as any)._toastTimer;
-      if(pending) clearTimeout(pending);
+    const stack: HTMLElement = $('#toastStack');
+    const removeToast = (node: Element) => {
+      window.clearTimeout(toastActivity.get(node)?.timer);
       node.remove();
     };
-    while(stack.children.length >= 4) removeToast(stack.firstElementChild as HTMLElement);
+    // Oldest idle message first. If all are in use, deliver the new message
+    // anyway; releasing a held toast below will bring the stack back to four.
+    for(const node of Array.from(stack.children)){
+      if(stack.childElementCount < TOAST_LIMIT) break;
+      if(!toastActivity.get(node)?.hovered && !node.contains(document.activeElement)) removeToast(node);
+    }
     const el = document.createElement('div');
     el.className = 'toast';
     const text = document.createElement('span');
@@ -214,30 +222,34 @@
     close.setAttribute('aria-label', I18N.t('toast_close'));
     close.textContent = '\u00d7';
     el.append(text, close);
-    // A toast the pointer or keyboard is using must not vanish underneath it.
-    let timer = 0;
-    const disarm = () => {
-      if(timer) clearTimeout(timer);
-      timer = 0;
-      (el as any)._toastTimer = 0;
+    const activity = {hovered:false, timer:0};
+    toastActivity.set(el, activity);
+    let dismissedByUser = false;
+    const pause = () => {
+      if(dismissedByUser) return;
+      window.clearTimeout(activity.timer);
+      // Interaction can also begin during the short auto-dismiss transition.
+      el.style.opacity = ''; el.style.transform = '';
     };
     const dismiss = () => {
-      if(!el.isConnected) return;
-      disarm();
+      window.clearTimeout(activity.timer);
       el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
-      window.setTimeout(() => el.remove(), 180);
+      activity.timer = window.setTimeout(() => el.remove(), 180);
     };
     const arm = () => {
-      disarm();
-      timer = window.setTimeout(dismiss, 2300);
-      (el as any)._toastTimer = timer;
+      window.clearTimeout(activity.timer);
+      activity.timer = window.setTimeout(dismiss, 2300);
     };
-    let hovered = false;
-    el.addEventListener('pointerenter', () => { hovered = true; disarm(); });
-    el.addEventListener('focusin', disarm);
-    el.addEventListener('pointerleave', () => { hovered = false; if(!el.contains(document.activeElement)) arm(); });
-    el.addEventListener('focusout', () => { if(!hovered) arm(); });
-    close.addEventListener('click', dismiss);
+    const resumeIfIdle = (focus: EventTarget | null) => {
+      if(dismissedByUser || activity.hovered || (focus instanceof Node && el.contains(focus))) return;
+      if(stack.childElementCount > TOAST_LIMIT) removeToast(el);
+      else arm();
+    };
+    el.addEventListener('pointerenter', () => { activity.hovered = true; pause(); });
+    el.addEventListener('focusin', pause);
+    el.addEventListener('pointerleave', () => { activity.hovered = false; resumeIfIdle(document.activeElement); });
+    el.addEventListener('focusout', ev => resumeIfIdle(ev.relatedTarget));
+    close.addEventListener('click', () => { dismissedByUser = true; dismiss(); });
     stack.appendChild(el);
     arm();
   }

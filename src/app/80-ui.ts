@@ -133,9 +133,6 @@
     ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229;
 
   function wireUi(){
-    // Some fields write document data on input but push history only on change
-    // (blur). Don't let a layout capture that unfinished edit in its undo step.
-    document.addEventListener('input', () => { documentRev++; }, true);
     renderCustomAttributes();
     $('#btnAddCustomAttribute').addEventListener('click', () => {
       const idInput = $('#customAttributeId');
@@ -333,38 +330,38 @@
     $$('[data-selectcombine]').forEach(btn => btn.addEventListener('click', () => setSelectCombine(btn.dataset.selectcombine)));
     $$('[data-hittest]').forEach(btn => btn.addEventListener('click', () => setHitTestMode(btn.dataset.hittest)));
     $('#optBrushDiameter').addEventListener('change', e => { state.settings.brushDiameter = clamp(parseInt(e.target.value,10)||80,10,400); e.target.value = state.settings.brushDiameter; pushHistory('brush diameter'); });
-    $('#docTitleInput').addEventListener('input', e => { state.title = e.target.value.slice(0,80) || 'untitled'; document.title = state.title + ' · Graph Editor Pro'; saveSoon(); });
+    $('#docTitleInput').addEventListener('input', e => { state.title = e.target.value.slice(0,80) || 'untitled'; document.title = state.title + ' · Graph Editor Pro'; saveLiveDocumentEdit(); });
     $('#docTitleInput').addEventListener('change', () => pushHistory('title'));
     // Edit-tab node placement — primary values for newly added nodes
     $('#nodeShape').addEventListener('change', e => { state.settings.nodeShape = e.target.value; pushHistory('node shape'); queueRender(false); });
-    $('#nodeColor').addEventListener('input', e => { state.settings.nodeColor = e.target.value; saveSoon(); });
+    $('#nodeColor').addEventListener('input', e => { state.settings.nodeColor = e.target.value; saveLiveDocumentEdit(); });
     $('#nodeColor').addEventListener('change', () => pushHistory('node color'));
     $('#nodeWidth').addEventListener('change', e => { state.settings.nodeWidth = clamp(finite(e.target.value,50),10,300); e.target.value = state.settings.nodeWidth; pushHistory('node width'); queueRender(false); });
     $('#nodeHeight').addEventListener('change', e => { state.settings.nodeHeight = clamp(finite(e.target.value,50),10,300); e.target.value = state.settings.nodeHeight; pushHistory('node height'); queueRender(false); });
-    $('#nodeStrokeColor').addEventListener('input', e => { state.settings.nodeStrokeColor = e.target.value; saveSoon(); });
+    $('#nodeStrokeColor').addEventListener('input', e => { state.settings.nodeStrokeColor = e.target.value; saveLiveDocumentEdit(); });
     $('#nodeStrokeColor').addEventListener('change', () => pushHistory('node stroke color'));
     $('#nodeStrokeSize').addEventListener('change', e => { state.settings.nodeStrokeSize = clamp(finite(e.target.value,2.2),0,20); e.target.value = state.settings.nodeStrokeSize; pushHistory('node stroke size'); queueRender(false); });
     $('#nodeStrokeStyle').addEventListener('change', e => { state.settings.nodeStrokeStyle = e.target.value; pushHistory('node stroke style'); queueRender(false); });
     $('#nodeType').addEventListener('change', e => { state.settings.nodeType = e.target.value.slice(0,40); pushHistory('node type'); saveSoon(); });
-    $('#nodeLabelColor').addEventListener('input', e => { state.settings.nodeLabelColor = e.target.value; saveSoon(); });
+    $('#nodeLabelColor').addEventListener('input', e => { state.settings.nodeLabelColor = e.target.value; saveLiveDocumentEdit(); });
     $('#nodeLabelColor').addEventListener('change', () => pushHistory('node label color'));
     $('#nodeLabelFont').addEventListener('change', e => { state.settings.nodeLabelFont = e.target.value.slice(0,60); pushHistory('node label font'); queueRender(false); });
     $('#nodeLabelSize').addEventListener('change', e => { state.settings.nodeLabelSize = clamp(finite(e.target.value,13),4,72); e.target.value = state.settings.nodeLabelSize; pushHistory('node label size'); queueRender(false); });
     $('#nodeLabelPos').addEventListener('change', e => { state.settings.nodeLabelPosition = e.target.value; pushHistory('node label position'); queueRender(false); });
     // Edit-tab edge defaults — primary values for newly added edges
-    $('#edgeWeight').addEventListener('input', e => { state.settings.edgeWeight = e.target.value; saveSoon(); });
-    $('#edgeLabel').addEventListener('input', e => { state.settings.edgeLabel = e.target.value; saveSoon(); });
+    $('#edgeWeight').addEventListener('input', e => { state.settings.edgeWeight = e.target.value; saveLiveDocumentEdit(); });
+    $('#edgeLabel').addEventListener('input', e => { state.settings.edgeLabel = e.target.value; saveLiveDocumentEdit(); });
     $('#edgeType').addEventListener('change', e => { state.settings.edgeType = e.target.value.slice(0,40); pushHistory('edge type'); saveSoon(); });
-    $('#edgeColor').addEventListener('input', e => { state.settings.edgeColor = e.target.value; saveSoon(); });
+    $('#edgeColor').addEventListener('input', e => { state.settings.edgeColor = e.target.value; saveLiveDocumentEdit(); });
     $('#edgeColor').addEventListener('change', () => pushHistory('edge color'));
     $('#edgeStrokeSize').addEventListener('change', e => { state.settings.edgeStrokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = state.settings.edgeStrokeSize; pushHistory('edge stroke size'); queueRender(false); });
     $('#edgeStrokeStyle').addEventListener('change', e => { state.settings.edgeStrokeStyle = e.target.value; pushHistory('edge stroke style'); queueRender(false); });
-    $('#edgeLabelColor').addEventListener('input', e => { state.settings.edgeLabelColor = e.target.value; saveSoon(); });
+    $('#edgeLabelColor').addEventListener('input', e => { state.settings.edgeLabelColor = e.target.value; saveLiveDocumentEdit(); });
     $('#edgeLabelColor').addEventListener('change', () => pushHistory('edge label color'));
     $('#edgeLabelFont').addEventListener('change', e => { state.settings.edgeLabelFont = e.target.value.slice(0,60); pushHistory('edge label font'); queueRender(false); });
     $('#edgeLabelSize').addEventListener('change', e => { state.settings.edgeLabelSize = clamp(finite(e.target.value,12),4,72); e.target.value = state.settings.edgeLabelSize; pushHistory('edge label size'); queueRender(false); });
     if($('#edgeArrowSize')) $('#edgeArrowSize').addEventListener('change', e => { state.settings.edgeArrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = state.settings.edgeArrowSize; pushHistory('edge arrow size'); queueRender(true); });
-    $('#edgeDirected').addEventListener('change', e => { const v = (e.target as any).value || (e.target as any).checked; const dir = normalizeDirection(v); (state.settings as any).direction = dir; state.settings.directed = dir !== 'undirected'; saveSoon(); });
+    $('#edgeDirected').addEventListener('change', e => { const v = (e.target as any).value || (e.target as any).checked; const dir = normalizeDirection(v); (state.settings as any).direction = dir; state.settings.directed = dir !== 'undirected'; saveLiveDocumentEdit(); });
     $('#optAutosave').addEventListener('change', e => {
       state.settings.autosave = e.target.checked;
       persistAutosavePreference(e.target.checked);
@@ -496,7 +493,7 @@
         const t = ev.target;
         if(!t.dataset || !t.dataset.edgeId) return;
         const e = edgeById(t.dataset.edgeId); if(!e) return;
-        if(t.matches('.edge-color')){ e.color = t.value; queueRender(false); saveSoon(); }
+        if(t.matches('.edge-color')){ e.color = t.value; queueRender(false); saveLiveDocumentEdit(); }
       });
     }
     $('#matrixHost').addEventListener('pointerdown', ev => {
@@ -570,7 +567,7 @@
     const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null;
     if(chkPreserve){
       chkPreserve.checked = state.settings.copyPreserveExternal !== false;
-      chkPreserve.addEventListener('change', e => { state.settings.copyPreserveExternal = (e.target as HTMLInputElement).checked; saveSoon(); });
+      chkPreserve.addEventListener('change', e => { state.settings.copyPreserveExternal = (e.target as HTMLInputElement).checked; saveLiveDocumentEdit(); });
       // keep checkbox synced when state changes externally (undo/redo, load)
       const syncPreserve = () => { const c=document.getElementById('chkCopyPreserve') as HTMLInputElement | null; if(c) c.checked = state.settings.copyPreserveExternal !== false; };
       // Renderers that rebuild controls call this hook (10-core defines it) so
@@ -678,7 +675,7 @@
     const nd = () => state.settings.nodeDefaults, ed = () => state.settings.edgeDefaults, gd = () => state.settings.graphDefaults;
     $('#defLabelsPolicy').addEventListener('change', e => { gd().labelsPolicy = e.target.value; pushHistory('labels policy'); queueRender(false); });
     $('#defLabelOutline').addEventListener('change', e => { gd().labelOutline = e.target.value; pushHistory('label outline mode'); queueRender(false); saveSoon(); });
-    $('#defLabelOutlineColor').addEventListener('input', e => { gd().labelOutlineColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#defLabelOutlineColor').addEventListener('input', e => { gd().labelOutlineColor = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defLabelOutlineColor').addEventListener('change', () => pushHistory('label outline color'));
     $('#defLabelOutlineWidth').addEventListener('change', e => { gd().labelOutlineWidth = clamp(finite(e.target.value,4),0,10); e.target.value = gd().labelOutlineWidth; pushHistory('label outline width'); queueRender(false); saveSoon(); });
     $('#defEdgeWeightMode').addEventListener('change', e => { gd().edgeWeightMode = e.target.value; pushHistory('edge weight mode'); updateEdgeWeightModeVisibility(); queueRender(false); saveSoon(); });
@@ -687,40 +684,40 @@
     $('#defEdgeWeightCorr').addEventListener('change', e => { gd().edgeWeightCorr = e.target.value; pushHistory('edge weight corr'); queueRender(false); saveSoon(); });
     $('#defEdgeWidthMin').addEventListener('change', e => { gd().edgeWidthMin = clamp(finite(e.target.value,1),0.1,50); e.target.value = gd().edgeWidthMin; pushHistory('edge width min'); queueRender(false); saveSoon(); });
     $('#defEdgeWidthMax').addEventListener('change', e => { gd().edgeWidthMax = clamp(finite(e.target.value,8),0.1,50); e.target.value = gd().edgeWidthMax; pushHistory('edge width max'); queueRender(false); saveSoon(); });
-    $('#defEdgeWeightColorLow').addEventListener('input', e => { gd().edgeWeightColorLow = e.target.value; queueRender(false); saveSoon(); });
+    $('#defEdgeWeightColorLow').addEventListener('input', e => { gd().edgeWeightColorLow = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defEdgeWeightColorLow').addEventListener('change', () => pushHistory('edge weight color low'));
-    $('#defEdgeWeightColorHigh').addEventListener('input', e => { gd().edgeWeightColorHigh = e.target.value; queueRender(false); saveSoon(); });
+    $('#defEdgeWeightColorHigh').addEventListener('input', e => { gd().edgeWeightColorHigh = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defEdgeWeightColorHigh').addEventListener('change', () => pushHistory('edge weight color high'));
-    $('#canvasBgColor').addEventListener('input', e => { state.settings.canvasBgColor = e.target.value; updateGridBackground(); saveSoon(); });
+    $('#canvasBgColor').addEventListener('input', e => { state.settings.canvasBgColor = e.target.value; updateGridBackground(); saveLiveDocumentEdit(); });
     $('#canvasBgColor').addEventListener('change', () => pushHistory('canvas bg color'));
-    $('#gridMinorColor').addEventListener('input', e => { state.settings.gridMinorColor = e.target.value; updateGridBackground(); saveSoon(); });
+    $('#gridMinorColor').addEventListener('input', e => { state.settings.gridMinorColor = e.target.value; updateGridBackground(); saveLiveDocumentEdit(); });
     $('#gridMinorColor').addEventListener('change', () => pushHistory('grid minor color'));
     $('#gridMinorAlpha').addEventListener('change', e => { state.settings.gridMinorAlpha = clamp(finite(e.target.value,0.105),0,1); e.target.value=state.settings.gridMinorAlpha; pushHistory('grid minor alpha'); updateGridBackground(); saveSoon(); });
-    $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveSoon(); });
+    $('#gridMajorColor').addEventListener('input', e => { state.settings.gridMajorColor = e.target.value; updateGridBackground(); saveLiveDocumentEdit(); });
     $('#gridMajorColor').addEventListener('change', () => pushHistory('grid major color'));
     $('#gridMajorAlpha').addEventListener('change', e => { state.settings.gridMajorAlpha = clamp(finite(e.target.value,0.16),0,1); e.target.value=state.settings.gridMajorAlpha; pushHistory('grid major alpha'); updateGridBackground(); saveSoon(); });
     $('#defNodeType').addEventListener('change', e => { nd().type = e.target.value.slice(0,40); invalidateTypeLists(); pushHistory('default node type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
     $('#defNodeShape').addEventListener('change', e => { nd().shape = e.target.value; state.settings.nodeShape = e.target.value; const el=$('#nodeShape'); if(el) el.value = e.target.value; pushHistory('default node shape'); queueRender(false); });
-    $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el=$('#nodeColor'); if(el) el.value = e.target.value; queueRender(false); saveSoon(); });
+    $('#defNodeColor').addEventListener('input', e => { nd().color = e.target.value; state.settings.nodeColor = e.target.value; const el=$('#nodeColor'); if(el) el.value = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defNodeColor').addEventListener('change', () => pushHistory('default node color'));
-    $('#defNodeStrokeColor').addEventListener('input', e => { nd().strokeColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#defNodeStrokeColor').addEventListener('input', e => { nd().strokeColor = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defNodeStrokeColor').addEventListener('change', () => pushHistory('default stroke color'));
     $('#defNodeWidth').addEventListener('change', e => { nd().width = clamp(finite(e.target.value,50),10,300); e.target.value = nd().width; pushHistory('default node width'); queueRender(false); });
     $('#defNodeHeight').addEventListener('change', e => { nd().height = clamp(finite(e.target.value,50),10,300); e.target.value = nd().height; pushHistory('default node height'); queueRender(false); });
     $('#defNodeStrokeSize').addEventListener('change', e => { nd().strokeSize = clamp(finite(e.target.value,2.2),0,20); e.target.value = nd().strokeSize; pushHistory('default stroke size'); queueRender(false); });
     $('#defNodeStrokeStyle').addEventListener('change', e => { nd().strokeStyle = e.target.value; pushHistory('default stroke style'); queueRender(false); });
-    $('#defNodeLabelColor').addEventListener('input', e => { nd().labelColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#defNodeLabelColor').addEventListener('input', e => { nd().labelColor = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defNodeLabelColor').addEventListener('change', () => pushHistory('default label color'));
     $('#defNodeLabelFont').addEventListener('change', e => { nd().labelFont = e.target.value; pushHistory('default label font'); queueRender(false); });
     $('#defNodeLabelSize').addEventListener('change', e => { nd().labelSize = clamp(finite(e.target.value,13),4,72); e.target.value = nd().labelSize; pushHistory('default label size'); queueRender(false); });
     $('#defNodeLabelPos').addEventListener('change', e => { nd().labelPosition = e.target.value; pushHistory('default label position'); queueRender(false); });
     $('#defEdgeType').addEventListener('change', e => { ed().type = e.target.value.slice(0,40); invalidateTypeLists(); pushHistory('default edge type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
-    $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveSoon(); });
+    $('#defEdgeColor').addEventListener('input', e => { ed().color = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defEdgeColor').addEventListener('change', () => pushHistory('default edge color'));
     $('#defEdgeStrokeSize').addEventListener('change', e => { ed().strokeSize = clamp(finite(e.target.value,2.4),0,20); e.target.value = ed().strokeSize; pushHistory('default edge stroke size'); queueRender(false); });
     $('#defEdgeStrokeStyle').addEventListener('change', e => { ed().strokeStyle = e.target.value; pushHistory('default edge stroke style'); queueRender(false); });
     if($('#defEdgeArrowSize')) $('#defEdgeArrowSize').addEventListener('change', e => { ed().arrowSize = clamp(finite(e.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value = ed().arrowSize; pushHistory('default edge arrow size'); queueRender(true); });
-    $('#defEdgeLabelColor').addEventListener('input', e => { ed().labelColor = e.target.value; queueRender(false); saveSoon(); });
+    $('#defEdgeLabelColor').addEventListener('input', e => { ed().labelColor = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
     $('#defEdgeLabelColor').addEventListener('change', () => pushHistory('default edge label color'));
     $('#defEdgeLabelFont').addEventListener('change', e => { ed().labelFont = e.target.value; pushHistory('default edge label font'); queueRender(false); });
     $('#defEdgeLabelSize').addEventListener('change', e => { ed().labelSize = clamp(finite(e.target.value,12),4,72); e.target.value = ed().labelSize; pushHistory('default edge label size'); queueRender(false); });
