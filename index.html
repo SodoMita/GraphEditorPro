@@ -951,6 +951,7 @@
     <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></symbol>
     <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2"/></symbol>
     <symbol id="icon-paste" viewBox="0 0 24 24"><path d="M9 5h6m-5-2h4a2 2 0 0 1 2 2v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2Z"/></symbol>
+    <symbol id="icon-paste-exact" viewBox="0 0 24 24"><path d="M9 5h6m-5-2h4a2 2 0 0 1 2 2v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5a2 2 0 0 1 2-2Z"/><path d="M9 12h6m-6 4h6"/></symbol>
     <symbol id="icon-export" viewBox="0 0 24 24"><path d="M12 4v11m-4-4 4 4 4-4M5 17v3h14v-3"/></symbol>
     <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 20V9m-4 4 4-4 4 4M5 7V4h14v3"/></symbol>
     <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
@@ -994,6 +995,7 @@
         <button id="btnCut" class="btn symbol-only" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title" aria-label="Cut" data-i18n-aria-label="cut_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg></button>
         <button id="btnDuplicate" class="btn symbol-only" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title" aria-label="Duplicate" data-i18n-aria-label="duplicate_selected" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg></button>
         <button id="btnPaste" class="btn symbol-only" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title" aria-label="Paste" data-i18n-aria-label="paste" disabled><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg></button>
+        <button id="btnPasteExact" class="btn symbol-only" title="Paste in place (Ctrl+Alt+V)" data-i18n-title="paste_exact_title" aria-label="Paste in place" data-i18n-aria-label="paste_exact"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste-exact"></use></svg></button>
         <button id="btnClear" class="btn symbol-only danger" title="Clear graph" data-i18n-title="clear_graph" aria-label="Clear graph" data-i18n-aria-label="clear_graph"><svg class="ui-icon" aria-hidden="true"><use href="#icon-clear"></use></svg></button>
         <button id="btnPresets" class="btn icon" title="Open style presets overlay" data-i18n-title="presets_open" aria-label="Open style presets" data-i18n-aria-label="presets_open">
           <svg class="ui-icon" aria-hidden="true"><use href="#icon-star"></use></svg>
@@ -1036,7 +1038,10 @@
                 <button id="btnCut2" class="btn small" title="Cut selected (Ctrl+X)" data-i18n-title="cut_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cut"></use></svg> <span data-i18n="cut_selected">Cut</span></button>
                 <button id="btnDuplicate2" class="btn small" title="Duplicate selected (Ctrl+D)" data-i18n-title="duplicate_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-duplicate"></use></svg> <span data-i18n="duplicate_selected">Duplicate</span></button>
                 <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
+                <button id="btnPasteExact2" class="btn small" title="Paste in place (Ctrl+Alt+V)" data-i18n-title="paste_exact_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste-exact"></use></svg> <span data-i18n="paste_exact">Paste in place</span></button>
               </div>
+              <button id="btnClipboardRecovery" class="btn small" type="button" data-i18n="clipboard_recovery_button">Clipboard recovery</button>
+              <div class="tiny muted" data-i18n="clipboard_order_warning">Clipboard order between different sites or downloaded copies cannot be verified; this graph may be older than another copy.</div>
               <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
             </div>
 
@@ -1613,7 +1618,7 @@
                 <p class="tiny muted"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
-                <p class="tiny muted"><span data-i18n-html="help_copy_paste"><b>Copy / paste selection:</b> Ctrl+C copies the selected nodes with the edges between them, Ctrl+X cuts, Ctrl+D duplicates in place, Ctrl+V pastes with an offset (also across tabs, via the system clipboard). Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.</span></p>
+                <p class="tiny muted"><span data-i18n-html="help_copy_paste"><b>Copy / paste selection:</b> Ctrl+C copies the selected nodes with the edges between them, Ctrl+X cuts, Ctrl+D duplicates in place, Ctrl+V pastes with an offset (also across tabs, via the system clipboard). Ctrl+Alt+V (or Ctrl+Shift+V) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.</span></p>
               </div>
             </details>
 
@@ -1827,6 +1832,592 @@
   <script>
 (() => {
   'use strict';
+// DOM-free graph change application.
+//
+// This is the reusable part of the "paste in place" feature. It knows nothing
+// about the clipboard, localStorage, the DOM, history, selection or toasts:
+// callers supply a graph-shaped target and a patch, and receive a change
+// report. Clipboard paste, file import and future server updates can all use
+// the same semantics: carry only supplied fields, reuse carried ids, keep
+// unrelated data, respect document caps and leave counters safe.
+const GraphPatchCore = (() => {
+    const MAX_GRAPH_NODES = 3000;
+    const MAX_GRAPH_EDGES = 8000;
+    const CUSTOM_VALUE_MAX = 1000;
+    const NODE_SHAPES = ['circle', 'square', 'diamond', 'triangleUp', 'triangleDown', 'hexagon'];
+    const STROKE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot', 'dashdotdot', 'none'];
+    const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
+    function isRecord(value) {
+        return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
+    function finiteNumber(value, fallback) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : fallback;
+    }
+    // Own keys only: "__proto__" must survive as an ordinary custom-value key.
+    function cloneCustomMap(source) {
+        if (!isRecord(source))
+            return undefined;
+        const out = Object.create(null);
+        for (const key of Object.keys(source)) {
+            const value = source[key];
+            if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+                out[key] = value;
+        }
+        return Object.keys(out).length ? out : undefined;
+    }
+    function cloneEntity(entity) {
+        const out = { ...entity };
+        const custom = cloneCustomMap(entity.custom);
+        if (custom)
+            out.custom = custom;
+        else
+            delete out.custom;
+        return out;
+    }
+    function valuesEqual(a, b) {
+        if (a === b)
+            return true;
+        if (isRecord(a) && isRecord(b)) {
+            const ak = Object.keys(a), bk = Object.keys(b);
+            return ak.length === bk.length && ak.every(k => valuesEqual(a[k], b[k]));
+        }
+        return false;
+    }
+    // Custom values merge per key. A patch carrying only p1 cannot wipe p2.
+    function mergeCustom(target, carriedCustom) {
+        const incoming = cloneCustomMap(carriedCustom);
+        if (!incoming)
+            return false;
+        const out = Object.create(null);
+        if (isRecord(target.custom))
+            for (const key of Object.keys(target.custom))
+                out[key] = target.custom[key];
+        let changed = false;
+        for (const key of Object.keys(incoming)) {
+            if (!Object.prototype.hasOwnProperty.call(out, key) || !valuesEqual(out[key], incoming[key])) {
+                out[key] = incoming[key];
+                changed = true;
+            }
+        }
+        if (changed)
+            target.custom = out;
+        return changed;
+    }
+    // The central "change only what changed" rule for every carried entity.
+    function mergeCarried(target, carried, keep = []) {
+        let changed = false;
+        for (const key of Object.keys(carried)) {
+            if (key === 'id' || key === 'custom' || keep.includes(key))
+                continue;
+            if (!valuesEqual(target[key], carried[key])) {
+                target[key] = carried[key];
+                changed = true;
+            }
+        }
+        if (mergeCustom(target, carried.custom))
+            changed = true;
+        return changed;
+    }
+    function safeCounter(value, fallback = 1) {
+        const numeric = Number(value);
+        return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : fallback;
+    }
+    function advanceCounter(current, id) {
+        const base = safeCounter(current, 1);
+        const num = Number((String(id ?? '').match(/\d+$/) || [0])[0]);
+        if (!Number.isSafeInteger(num) || num < base)
+            return base;
+        return num < Number.MAX_SAFE_INTEGER ? num + 1 : 1;
+    }
+    // Bounded allocation: an unsafe or exhausted counter cannot be incremented
+    // in a loop, so fall back to a fresh timestamp-based safe id instead.
+    function allocateId(prefix, used, start) {
+        let counter = safeCounter(start, 1);
+        const tried = new Set();
+        while (used.has(prefix + counter)) {
+            if (counter >= Number.MAX_SAFE_INTEGER || tried.has(counter)) {
+                let suffix = 0, candidate = '';
+                do {
+                    candidate = prefix + Date.now().toString(36) + (suffix ? '-' + suffix : '');
+                    suffix++;
+                } while (used.has(candidate));
+                used.add(candidate);
+                return { id: candidate, next: 1 };
+            }
+            tried.add(counter);
+            counter++;
+        }
+        const id = prefix + counter;
+        used.add(id);
+        return { id, next: counter < Number.MAX_SAFE_INTEGER ? counter + 1 : 1 };
+    }
+    // A patch is validated as a whole before anything is mutated. A malformed
+    // entry must never leave the graph half-updated: the caller could not retry
+    // deterministically, and a partially applied change would look like success.
+    function validatePatchShape(patch) {
+        if (!isRecord(patch))
+            return 'patch is not an object';
+        for (const key of ['nodes', 'edges']) {
+            const seenIds = new Set();
+            if (!Object.prototype.hasOwnProperty.call(patch, key))
+                continue;
+            const list = patch[key];
+            if (!Array.isArray(list))
+                return `patch.${key} is not an array`;
+            for (const entry of list) {
+                if (!isRecord(entry))
+                    return `patch.${key} contains a non-object entry`;
+                if (entry.id == null || !['string', 'number', 'boolean'].includes(typeof entry.id) || String(entry.id) === '')
+                    return `patch.${key} has a missing id`;
+                const normalizedId = String(entry.id);
+                if (seenIds.has(normalizedId))
+                    return `patch.${key} has a duplicate id`;
+                seenIds.add(normalizedId);
+                // Built-in fields must already have the shape the editor consumes.
+                // The custom value map must contain only editor-supported scalar values.
+                const strings = key === 'nodes'
+                    ? ['label', 'shape', 'color', 'type', 'strokeColor', 'strokeStyle', 'labelColor', 'labelPosition', 'labelFont']
+                    : ['label', 'type', 'weight', 'color', 'strokeStyle', 'labelColor', 'labelFont', 'direction'];
+                for (const field of strings) {
+                    if (Object.prototype.hasOwnProperty.call(entry, field) && typeof entry[field] !== 'string')
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                const enums = key === 'nodes'
+                    ? { shape: NODE_SHAPES, strokeStyle: STROKE_STYLES, labelPosition: LABEL_POSITIONS }
+                    : { strokeStyle: STROKE_STYLES, direction: ['directed', 'mutual', 'undirected'] };
+                for (const [field, allowed] of Object.entries(enums)) {
+                    if (entry[field] !== undefined && entry[field] !== '' && !allowed.includes(entry[field]))
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                for (const field of ['color', 'strokeColor', 'labelColor']) {
+                    if (entry[field] !== undefined && (typeof entry[field] !== 'string' || (entry[field] !== '' && !/^#[0-9a-f]{6}$/i.test(entry[field]))))
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                if (entry.type !== undefined && entry.type.length > 40)
+                    return `patch.${key} has an invalid type`;
+                if (entry.label !== undefined && entry.label.length > 80)
+                    return `patch.${key} has an invalid label`;
+                if (entry.labelFont !== undefined && entry.labelFont.length > 60)
+                    return `patch.${key} has an invalid labelFont`;
+                if (key === 'edges' && entry.weight !== undefined && entry.weight.length > 50)
+                    return 'patch.edges has an invalid weight';
+                if (key === 'edges' && entry.directed !== undefined && typeof entry.directed !== 'boolean' && typeof entry.directed !== 'string')
+                    return 'patch.edges has an invalid directed';
+                const ranges = key === 'nodes'
+                    ? { x: [-Infinity, Infinity], y: [-Infinity, Infinity], order: [0, 2147483647], width: [10, 300], height: [10, 300], strokeSize: [0, 20], labelSize: [4, 72] }
+                    : { strokeSize: [0, 20], arrowSize: [4, 40], labelSize: [4, 72] };
+                for (const [field, [min, max]] of Object.entries(ranges)) {
+                    if (!Object.prototype.hasOwnProperty.call(entry, field))
+                        continue;
+                    const value = entry[field];
+                    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max || (field === 'order' && !Number.isInteger(value)))
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                if (Object.prototype.hasOwnProperty.call(entry, 'custom')) {
+                    if (!isRecord(entry.custom))
+                        return `patch.${key} has an invalid custom`;
+                    if (Object.keys(entry.custom).length > 2000)
+                        return `patch.${key} has too many custom values`;
+                    for (const value of Object.values(entry.custom)) {
+                        if ((typeof value !== 'string' && typeof value !== 'boolean' && typeof value !== 'number') ||
+                            (typeof value === 'number' && !Number.isFinite(value)) || (typeof value === 'string' && value.length > 1000))
+                            return `patch.${key} has an invalid custom value`;
+                    }
+                }
+                // These fields are coerced with Number/String while applying a patch.
+                // JSON objects can have non-callable toString/valueOf properties, so
+                // coercing them may throw after an earlier entity was already changed.
+                for (const field of (key === 'nodes' ? ['id', 'x', 'y', 'order'] : ['id', 'from', 'to'])) {
+                    const value = entry[field];
+                    if (value != null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+                        return `patch.${key} has a non-scalar ${field}`;
+                    }
+                }
+                // The editor's loader removes these characters and caps identities at
+                // 40 characters. Reject rather than silently rename a server identity,
+                // which could make two distinct records collide on a later load.
+                for (const field of (key === 'nodes' ? ['id'] : ['id', 'from', 'to'])) {
+                    const value = entry[field];
+                    if (value == null) {
+                        if (Object.prototype.hasOwnProperty.call(entry, field))
+                            return `patch.${key} has an invalid ${field}`;
+                        continue;
+                    }
+                    const identity = String(value);
+                    if (!identity || identity.length > 40 || /[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/.test(identity)) {
+                        return `patch.${key} has a noncanonical ${field}`;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    const INTEGER_TEXT_RE = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:[eE]([+-]?\d+))?$/;
+    const ABS_INT_MAX = '2147483647'; // 2^31 - 1
+    const ABS_INT_MIN = '2147483648'; // |−2^31| — one past the positive bound
+    const ABS_LONG_MAX = '9007199254740991'; // 2^53 - 1 (Number.MAX_SAFE_INTEGER)
+    // Magnitude comparison for decimal digit strings without leading zeros.
+    const cmpMagnitude = (a, b) => a.length !== b.length ? a.length - b.length : (a < b ? -1 : a > b ? 1 : 0);
+    // Exact integer handling for int/long custom values.
+    //
+    // `Number(text)` rounds to the nearest double BEFORE any integer check can
+    // run — '1.0000000000000001' becomes 1 and the stated value is silently
+    // destroyed. The text is therefore validated as a decimal integer literal
+    // first; the exact integer (when there is one) is assembled digit-by-digit
+    // and only then converted — never through a rounding conversion.
+    //   'number'   — exact integer text within the type's range → convert
+    //   'verbatim' — stated, but fraction-bearing or out of range → keep the exact text
+    //   'empty'    — whitespace-only (a stated empty)
+    //   'invalid'  — not a number at all
+    // This is the one policy every int/long path shares: editing, import,
+    // sanitization and type migration all convert exactly this set and preserve
+    // exactly this other set.
+    function parseIntegerText(text, type) {
+        const trimmed = text.trim();
+        if (trimmed === '')
+            return { kind: 'empty' };
+        const m = INTEGER_TEXT_RE.exec(trimmed);
+        if (!m)
+            return { kind: 'invalid' };
+        const [, sign, mantissa, expText] = m;
+        const dot = mantissa.indexOf('.');
+        const intPart = dot === -1 ? mantissa : mantissa.slice(0, dot);
+        const fracPart = dot === -1 ? '' : mantissa.slice(dot + 1);
+        let exp = 0;
+        if (expText) {
+            exp = parseInt(expText, 10);
+            // Beyond this the magnitude is unusable in either direction anyway.
+            if (!Number.isFinite(exp) || Math.abs(exp) > 400)
+                return { kind: 'verbatim', text: trimmed };
+        }
+        const digits = intPart + fracPart;
+        // Effective position of the decimal point within `digits`.
+        const point = intPart.length + exp;
+        // Integer iff everything at or after the point is '0'.
+        if ([...digits.slice(Math.max(point, 0))].some(d => d !== '0'))
+            return { kind: 'verbatim', text: trimmed };
+        const integerDigits = (point <= digits.length
+            ? digits.slice(0, Math.max(point, 0))
+            : digits + '0'.repeat(point - digits.length)).replace(/^0+(?=\d)/, '') || '0';
+        // int is asymmetric: −2147483648 is valid but 2147483648 is not.
+        const bound = type === 'int' ? (sign === '-' ? ABS_INT_MIN : ABS_INT_MAX) : ABS_LONG_MAX;
+        if (cmpMagnitude(integerDigits, bound) > 0)
+            return { kind: 'verbatim', text: trimmed };
+        // In range: the conversion is exact (|value| <= 2^53 - 1). -0 normalises to 0.
+        const value = Number((sign === '-' ? '-' : '') + integerDigits);
+        return { kind: 'number', value: value === 0 ? 0 : value };
+    }
+    function coerceCustomValue(value, type) {
+        const raw = typeof value === 'number' || typeof value === 'boolean' ? String(value) : String(value ?? '');
+        const text = raw.trim();
+        if (type === 'boolean') {
+            if (value === true || /^(true|1|yes|on)$/i.test(text))
+                return true;
+            if (value === false || /^(false|0|no|off)$/i.test(text))
+                return false;
+            return raw.slice(0, CUSTOM_VALUE_MAX); // unparseable: the exact text as written
+        }
+        if (type === 'int' || type === 'long') {
+            // Validate the TEXT as an integer literal before any numeric conversion
+            // — see parseIntegerText: '1.0000000000000001' must not collapse to 1.
+            const parsed = parseIntegerText(text, type);
+            if (parsed.kind === 'empty')
+                return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
+            if (parsed.kind === 'number')
+                return parsed.value;
+            return raw.slice(0, CUSTOM_VALUE_MAX); // fractions, out-of-range, non-numeric: the exact text as written
+        }
+        if (type === 'float' || type === 'double') {
+            if (text === '')
+                return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
+            const numeric = Number(text);
+            if (Number.isFinite(numeric))
+                return numeric;
+            return raw.slice(0, CUSTOM_VALUE_MAX);
+        }
+        return raw.slice(0, CUSTOM_VALUE_MAX);
+    }
+    // The loader truncates custom keys and discards keys lacking a surviving
+    // definition. Validate against the same first-wins definition namespace and
+    // reject values whose type would be coerced on reload.
+    function validateServerCustomValues(target, patch) {
+        const definitions = new Map();
+        const source = Array.isArray(target.customAttributes) ? target.customAttributes.slice(0, 2000) : [];
+        for (const def of source) {
+            if (!isRecord(def))
+                continue;
+            const rawId = String(def.id ?? '');
+            const id = rawId.trim().slice(0, 128);
+            if (!id || !['node', 'edge', 'graph', 'all'].includes(def.scope) || definitions.has(id))
+                continue;
+            definitions.set(id, { scope: def.scope, canonical: typeof def.id === 'string' && rawId === id,
+                type: ['string', 'boolean', 'int', 'long', 'float', 'double'].includes(def.type) ? def.type : 'string' });
+        }
+        for (const [scope, entities] of [['node', patch.nodes], ['edge', patch.edges]]) {
+            for (const entity of entities || []) {
+                if (!entity.custom)
+                    continue;
+                for (const [key, value] of Object.entries(entity.custom)) {
+                    if (!key || key !== key.trim() || key.length > 128)
+                        return `patch.${scope}s has a noncanonical custom key`;
+                    const def = definitions.get(key);
+                    if (!def || !def.canonical)
+                        return `patch.${scope}s has an undefined or noncanonical custom definition`;
+                    // Other-scope values survive as orphans verbatim. Applicable values
+                    // must already be canonical so coerceCustomValue does not change them.
+                    if (def.scope !== scope && def.scope !== 'all')
+                        continue;
+                    if (coerceCustomValue(value, def.type) !== value)
+                        return `patch.${scope}s has a noncanonical custom value`;
+                }
+            }
+        }
+        return null;
+    }
+    // Apply an exact (in-place) patch to a graph-shaped target. The target's
+    // nodes/edges arrays and next counters are mutated; everything else is
+    // returned as a report so the caller owns history/UI/side effects.
+    function applyExactPatch(target, patch, options = {}) {
+        // Only well-formed entries are considered: a null/primitive entry is
+        // reported as dropped instead of throwing halfway through the mutation.
+        const patchNodes = (Array.isArray(patch?.nodes) ? patch.nodes : []).filter(isRecord);
+        const patchEdges = (Array.isArray(patch?.edges) ? patch.edges : []).filter(isRecord);
+        const malformedNodes = (Array.isArray(patch?.nodes) ? patch.nodes.length : 0) - patchNodes.length;
+        const malformedEdges = (Array.isArray(patch?.edges) ? patch.edges.length : 0) - patchEdges.length;
+        const maxNodes = options.maxNodes == null ? Number.MAX_SAFE_INTEGER : options.maxNodes;
+        const maxEdges = options.maxEdges == null ? Number.MAX_SAFE_INTEGER : options.maxEdges;
+        const carriedNodeIds = options.carriedNodeIds
+            || new Set(patchNodes.map(n => String(n?.id ?? '')));
+        const nodeById = new Map(target.nodes.map(n => [String(n.id), n]));
+        const edgeById = new Map(target.edges.map(e => [String(e.id), e]));
+        const pastedNodeIds = [];
+        const pastedEdgeIds = [];
+        let nextNode = safeCounter(target.nextNode, 1);
+        let nextEdge = safeCounter(target.nextEdge, 1);
+        let nextFreeOrder = target.nodes.reduce((m, n) => Math.max(m, Number(n.order) || 0), -1) + 1;
+        let changed = false;
+        let droppedNodes = malformedNodes;
+        let droppedEdges = malformedEdges;
+        const seenNodeIds = new Set();
+        const seenEdgeIds = new Set();
+        for (const orig of [...patchNodes].sort((a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0))) {
+            const node = cloneEntity(orig);
+            const id = String(node.id ?? '');
+            if (!id || seenNodeIds.has(id)) {
+                droppedNodes++;
+                continue;
+            }
+            node.id = id;
+            seenNodeIds.add(id);
+            // Coordinates are restored only when carried; a partial patch must not
+            // reset a stored position. Non-finite supplied values are treated as
+            // omitted for an existing entity and as zero for a new one.
+            for (const axis of ['x', 'y']) {
+                if (Object.prototype.hasOwnProperty.call(node, axis)) {
+                    node[axis] = finiteNumber(node[axis], nodeById.has(id) ? finiteNumber(nodeById.get(id)[axis], 0) : 0);
+                }
+                else if (nodeById.has(id)) {
+                    delete node[axis];
+                }
+                else {
+                    node[axis] = 0;
+                }
+            }
+            const existing = nodeById.get(id);
+            if (existing) {
+                if (mergeCarried(existing, node, options.applyExistingNodeOrder ? [] : ['order']))
+                    changed = true;
+                pastedNodeIds.push(existing.id);
+            }
+            else {
+                if (target.nodes.length >= maxNodes) {
+                    droppedNodes++;
+                    continue;
+                }
+                nextNode = advanceCounter(nextNode, node.id);
+                const carriedOrder = Number(node.order);
+                node.order = Number.isFinite(carriedOrder) ? carriedOrder : nextFreeOrder++;
+                if (!Object.prototype.hasOwnProperty.call(node, 'label'))
+                    node.label = '';
+                target.nodes.push(node);
+                nodeById.set(id, node);
+                pastedNodeIds.push(id);
+                changed = true;
+            }
+        }
+        const pastedNodeIdSet = new Set(pastedNodeIds);
+        for (const orig of patchEdges) {
+            const edgeId = String(orig?.id ?? '');
+            if (!edgeId || seenEdgeIds.has(edgeId)) {
+                droppedEdges++;
+                continue;
+            }
+            seenEdgeIds.add(edgeId);
+            const from = String(orig?.from ?? ''), to = String(orig?.to ?? '');
+            // An edge through a cap-dropped carried node would be dangling after
+            // the next load, so it is dropped here too.
+            if ((carriedNodeIds.has(from) && !pastedNodeIdSet.has(from)) ||
+                (carriedNodeIds.has(to) && !pastedNodeIdSet.has(to))) {
+                droppedEdges++;
+                continue;
+            }
+            const existingById = edgeById.get(edgeId);
+            // A server patch may change an endpoint to a node that does not exist in
+            // the resulting graph. That edge would be silently discarded on the next
+            // load, so reject the edge here instead of reporting a false success.
+            const suppliedFrom = Object.prototype.hasOwnProperty.call(orig, 'from');
+            const suppliedTo = Object.prototype.hasOwnProperty.call(orig, 'to');
+            if ((suppliedFrom && !nodeById.has(from)) || (suppliedTo && !nodeById.has(to)) ||
+                (!existingById && (!suppliedFrom || !suppliedTo))) {
+                droppedEdges++;
+                continue;
+            }
+            const edge = cloneEntity(orig);
+            const id = String(edge.id ?? '');
+            if (!id) {
+                droppedEdges++;
+                continue;
+            }
+            edge.id = id;
+            if (suppliedFrom)
+                edge.from = from;
+            if (suppliedTo)
+                edge.to = to;
+            // direction is authoritative in the renderer. A legacy directed-only
+            // patch must update it as well, and both fields must agree on reload.
+            if (Object.prototype.hasOwnProperty.call(edge, 'direction') || Object.prototype.hasOwnProperty.call(edge, 'directed')) {
+                const raw = Object.prototype.hasOwnProperty.call(edge, 'direction') ? edge.direction : edge.directed;
+                const text = String(raw ?? '').trim().toLowerCase();
+                const direction = raw === false || text === 'false' || text === '0' || text === 'none' || text === 'undirected' || text === 'undirected (no ends)'
+                    ? 'undirected' : text === 'mutual' || text === 'both' || text === 'bidirected' || text === 'bidirectional' || text === 'mutual (both ends)' || text.startsWith('bi')
+                    ? 'mutual' : 'directed';
+                edge.direction = direction;
+                edge.directed = direction !== 'undirected';
+            }
+            const existing = edgeById.get(id);
+            if (existing) {
+                if (mergeCarried(existing, edge))
+                    changed = true;
+                pastedEdgeIds.push(existing.id);
+            }
+            else {
+                if (target.edges.length >= maxEdges) {
+                    droppedEdges++;
+                    continue;
+                }
+                nextEdge = advanceCounter(nextEdge, edge.id);
+                if (!Object.prototype.hasOwnProperty.call(edge, 'label'))
+                    edge.label = '';
+                target.edges.push(edge);
+                edgeById.set(id, edge);
+                pastedEdgeIds.push(id);
+                changed = true;
+            }
+        }
+        target.nextNode = nextNode;
+        target.nextEdge = nextEdge;
+        if (changed && patchNodes.length)
+            target.nodes.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+        return { changed, droppedNodes, droppedEdges, pastedNodeIds, pastedEdgeIds, nextNode, nextEdge };
+    }
+    // Server-originated changes use the exact same merge core as clipboard
+    // paste. Transport concerns (auth, ordering source, persistence) stay in
+    // the caller; this adapter only enforces idempotency and monotonic revision.
+    function applyServerChange(target, change, options = {}) {
+        const empty = {
+            changed: false, droppedNodes: 0, droppedEdges: 0,
+            pastedNodeIds: [], pastedEdgeIds: [],
+            nextNode: safeCounter(target.nextNode, 1), nextEdge: safeCounter(target.nextEdge, 1),
+        };
+        if (!isRecord(change) || typeof change.id !== 'string' || !change.id ||
+            !Number.isSafeInteger(change.revision) || !isRecord(change.patch)) {
+            return { ...empty, status: 'invalid', reason: 'malformed server change' };
+        }
+        if (options.appliedIds?.has(change.id)) {
+            return { ...empty, status: 'duplicate', id: change.id, revision: change.revision };
+        }
+        const lastRevision = Number.isSafeInteger(options.lastRevision) ? Number(options.lastRevision) : -Infinity;
+        if (change.revision <= lastRevision) {
+            return { ...empty, status: 'stale', id: change.id, revision: change.revision };
+        }
+        // Shape first: an unapplied change must leave the target untouched so the
+        // caller can reject it (or fix it) without having to repair the graph.
+        const shapeProblem = validatePatchShape(change.patch);
+        if (shapeProblem) {
+            return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: shapeProblem };
+        }
+        const customProblem = validateServerCustomValues(target, change.patch);
+        if (customProblem) {
+            return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: customProblem };
+        }
+        const existingEdgeIds = new Set(target.edges.map(edge => String(edge.id)));
+        for (const edge of change.patch.edges || []) {
+            if (!existingEdgeIds.has(String(edge.id)) &&
+                (!Object.prototype.hasOwnProperty.call(edge, 'from') || !Object.prototype.hasOwnProperty.call(edge, 'to'))) {
+                return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: 'new edge is missing an endpoint' };
+            }
+        }
+        // Stage against detached entity records. If an unexpected conversion or
+        // comparison throws, no earlier entity in the caller's graph is changed.
+        // Preserve existing entity and array identities when committing so UI
+        // adapters holding references continue to observe the applied change.
+        let result;
+        const originals = new Map();
+        let staged;
+        try {
+            const clone = (entity) => {
+                const copy = { ...entity };
+                originals.set(copy, entity);
+                return copy;
+            };
+            staged = { ...target, nodes: target.nodes.map(clone), edges: target.edges.map(clone) };
+            const boundedLimit = (value, ceiling) => Number.isSafeInteger(value) && value >= 0 ? Math.min(value, ceiling) : ceiling;
+            result = applyExactPatch(staged, change.patch, { ...options,
+                // Clipboard paste preserves the target order; server patches represent
+                // document edits and must apply any supplied order before acknowledging.
+                applyExistingNodeOrder: true,
+                maxNodes: boundedLimit(options.maxNodes, MAX_GRAPH_NODES),
+                maxEdges: boundedLimit(options.maxEdges, MAX_GRAPH_EDGES),
+            });
+        }
+        catch {
+            return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: 'patch could not be applied' };
+        }
+        const commit = (destination, source) => {
+            const entities = source.map(entity => {
+                const original = originals.get(entity);
+                if (original) {
+                    Object.assign(original, entity);
+                    return original;
+                }
+                return entity;
+            });
+            destination.length = 0;
+            for (const entity of entities)
+                destination.push(entity);
+        };
+        commit(target.nodes, staged.nodes);
+        commit(target.edges, staged.edges);
+        target.nextNode = staged.nextNode;
+        target.nextEdge = staged.nextEdge;
+        const requested = (Array.isArray(change.patch.nodes) ? change.patch.nodes.length : 0)
+            + (Array.isArray(change.patch.edges) ? change.patch.edges.length : 0);
+        const dropped = result.droppedNodes + result.droppedEdges;
+        // Do not acknowledge work that still has to be retried. Exact patches are
+        // idempotent, so replaying a partial change is safe once capacity exists.
+        const status = dropped === 0 ? 'applied' : dropped === requested ? 'rejected' : 'partial';
+        if (status === 'applied')
+            options.appliedIds?.add(change.id);
+        return { ...result, status, id: change.id, revision: change.revision };
+    }
+    return {
+        MAX_GRAPH_NODES, MAX_GRAPH_EDGES, CUSTOM_VALUE_MAX, NODE_SHAPES, STROKE_STYLES, LABEL_POSITIONS,
+        parseIntegerText, coerceCustomValue,
+        isRecord, cloneCustomMap, cloneEntity, valuesEqual, mergeCustom, mergeCarried,
+        safeCounter, advanceCounter, allocateId, validatePatchShape, applyExactPatch, applyServerChange,
+    };
+})();
 // The generated file must boot in ES2020-capable browsers that predate
 // Array.prototype.toSorted/toReversed. TypeScript's lib setting only types
 // these calls; it does not provide the methods at runtime.
@@ -2241,7 +2832,7 @@ const I18N = {
         'help_matrix_editing': { en: '<b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.', ru: '<b>Редактирование матрицы:</b> кликните по ячейке один раз для выбора без вызова клавиатуры; кликните снова для редактирования. Это позволяет выбирать на мобильных без всплывающей клавиатуры.' },
         'help_zoom': { en: '<b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.', ru: '<b>Масштаб:</b> колесо мыши или трекпад над холстом, щипок на мобильных и планшетах. Положение камеры можно задать числами во вкладке «Данные».' },
         'help_exports': { en: '<b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.', ru: '<b>Экспорт:</b> каждый формат (JSON, DOT, GraphML, Рёбра/Матрица/Узлы CSV) поддерживает скачивание файла и копирование в буфер.' },
-        'help_copy_paste': { en: '<b>Copy / paste selection:</b> <span class="kbd">Ctrl+C</span> copies the selected nodes with the edges between them, <span class="kbd">Ctrl+X</span> cuts, <span class="kbd">Ctrl+D</span> duplicates in place, <span class="kbd">Ctrl+V</span> pastes with an offset (also across tabs, via the system clipboard). Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.', ru: '<b>Копирование / вставка выделения:</b> <span class="kbd">Ctrl+C</span> копирует выбранные узлы с рёбрами между ними, <span class="kbd">Ctrl+X</span> вырезает, <span class="kbd">Ctrl+D</span> дублирует на месте, <span class="kbd">Ctrl+V</span> вставляет со смещением (также между вкладками, через системный буфер). Рёбра только с одним концом в выделении восстанавливаются при вставке, если второй конец существует — см. «Сохранять висящие рёбра» во вкладке Правка.' },
+        'help_copy_paste': { en: '<b>Copy / paste selection:</b> <span class="kbd">Ctrl+C</span> copies the selected nodes with the edges between them, <span class="kbd">Ctrl+X</span> cuts, <span class="kbd">Ctrl+D</span> duplicates in place, <span class="kbd">Ctrl+V</span> pastes with an offset (also across tabs, via the system clipboard). <span class="kbd">Ctrl+Alt+V</span> (or <span class="kbd">Ctrl+Shift+V</span>) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.', ru: '<b>Копирование / вставка выделения:</b> <span class="kbd">Ctrl+C</span> копирует выбранные узлы с рёбрами между ними, <span class="kbd">Ctrl+X</span> вырезает, <span class="kbd">Ctrl+D</span> дублирует на месте, <span class="kbd">Ctrl+V</span> вставляет со смещением (также между вкладками, через системный буфер). <span class="kbd">Ctrl+Alt+V (или Ctrl+Shift+V)</span> вставляет <b>на месте</b>: по исходным координатам, используя существующие узлы и рёбра с теми же id и изменяя только перенесённые значения. Рёбра только с одним концом в выделении восстанавливаются при вставке, если второй конец существует — см. «Сохранять висящие рёбра» во вкладке Правка.' },
         'hotkeys': { en: 'Hotkeys', ru: 'Горячие клавиши' },
         'reset_defaults': { en: 'Reset to defaults', ru: 'Сбросить по умолчанию' },
         'hotkeys_desc': { en: 'Click a key field, then press any key. Backspace/Delete clears. Escape cancels. Undo/Redo are prefixed with Ctrl/⌘ automatically.', ru: 'Нажмите на поле клавиши и введите новую комбинацию. Backspace/Delete очищает поле, Escape отменяет ввод. К «Отменить» и «Повторить» сочетание Ctrl/⌘ добавляется автоматически.' },
@@ -2361,6 +2952,8 @@ const I18N = {
         'duplicate_selected': { en: 'Duplicate', ru: 'Дублировать' },
         'paste': { en: 'Paste', ru: 'Вставить' },
         'paste_title': { en: 'Paste copied nodes and edges (offset)', ru: 'Вставить скопированные узлы и рёбра (со смещением)' },
+        'paste_exact': { en: 'Paste in place', ru: 'Вставить на месте' },
+        'paste_exact_title': { en: 'Paste at the copied coordinates, reusing existing nodes and edges by id (Ctrl+Alt+V or Ctrl+Shift+V)', ru: 'Вставить по исходным координатам, обновляя существующие узлы и рёбра с тем же id (Ctrl+Alt+V или Ctrl+Shift+V)' },
         'copy_title': { en: 'Copy selected nodes and internal edges (Ctrl+C)', ru: 'Копировать выбранные узлы и внутренние рёбра (Ctrl+C)' },
         'cut_title': { en: 'Cut selected (Ctrl+X)', ru: 'Вырезать выбранное (Ctrl+X)' },
         'duplicate_title': { en: 'Duplicate selected (Ctrl+D)', ru: 'Дублировать выбранное (Ctrl+D)' },
@@ -2400,6 +2993,21 @@ const I18N = {
         'copied_edges': { en: 'Copied {n:edge}', ru: 'Скопировано: {n:edge}' },
         'pasted_n_m': { en: 'Pasted {n:node}, {m:edge}', ru: 'Вставлено: {n:node}, {m:edge}' },
         'pasted_edges': { en: 'Pasted {n:edge}', ru: 'Вставлено: {n:edge}' },
+        'pasted_exact_n_m': { en: 'Pasted in place: {n:node}, {m:edge}', ru: 'Вставлено на месте: {n:node}, {m:edge}' },
+        'pasted_exact_edges': { en: 'Pasted in place: {n:edge}', ru: 'Вставлено на месте: {n:edge}' },
+        'pasted_exact_noop': { en: 'Paste in place: nothing changed', ru: 'Вставка на месте: изменений нет' },
+        'paste_cap_nodes': { en: 'Skipped {n:node}: the document limit is {limit}', ru: 'Пропущено: {n:node} — предел документа {limit}' },
+        'paste_cap_edges': { en: 'Skipped {n:edge}: the document limit is {limit}', ru: 'Пропущено: {n:edge} — предел документа {limit}' },
+        'copy_local_only': { en: 'System copy could not be safely published; the copy is available locally. Try copying again.', ru: 'Не удалось безопасно скопировать в системный буфер; копия доступна локально. Попробуйте скопировать снова.' },
+        'copy_compatibility': { en: 'System copy needs Web Locks and site storage. Enable storage or use a supported browser. After Cut, use Undo; alternatively export JSON and import it in the other document.', ru: 'Для системного буфера нужны Web Locks и хранилище сайта. Включите хранилище или используйте поддерживаемый браузер. После вырезания отмените действие; либо экспортируйте JSON и импортируйте в другом документе.' },
+        'copy_recovery_needed': { en: 'A previous system copy may still be unresolved. Open Edit → Clipboard recovery for safe recovery instructions.', ru: 'Предыдущее копирование может быть не завершено. Откройте Правка → Восстановление буфера для безопасного восстановления.' },
+        'clipboard_recovery_button': { en: 'Clipboard recovery', ru: 'Восстановление буфера' },
+        'clipboard_recovery_confirm': { en: 'Only continue after closing ALL Graph Editor tabs and completely restarting the browser. An old clipboard write might otherwise finish later and overwrite newer clipboard contents. Have you completed these steps?', ru: 'Продолжайте только после закрытия ВСЕХ вкладок Graph Editor и полного перезапуска браузера. Иначе старое копирование может завершиться позже и перезаписать новый буфер. Вы выполнили эти действия?' },
+        'clipboard_recovery_busy': { en: 'A clipboard write is still active. Close all editor tabs and restart the browser before recovery.', ru: 'Копирование ещё выполняется. Закройте все вкладки редактора и перезапустите браузер перед восстановлением.' },
+        'clipboard_recovery_done': { en: 'Clipboard recovery complete. Copy again.', ru: 'Буфер восстановлен. Скопируйте снова.' },
+        'clipboard_recovery_none': { en: 'No abandoned clipboard write was found.', ru: 'Незавершённое копирование не найдено.' },
+        'clipboard_order_warning': { en: 'Clipboard order between different sites or downloaded copies cannot be verified; this graph may be older than another copy.', ru: 'Порядок копирования между разными сайтами или скачанными копиями нельзя проверить; этот граф может быть старее другой копии.' },
+        'paste_local_fallback': { en: 'System clipboard unavailable — pasted the local copy', ru: 'Системный буфер недоступен — вставлена локальная копия' },
         'nodes_reversed': { en: 'Node order reversed', ru: 'Порядок узлов обращён' },
         'nodes_shuffled': { en: 'Node order shuffled', ru: 'Порядок узлов перемешан' },
         'no_edge_data': { en: 'No edge data', ru: 'Нет данных рёбер' },
@@ -2410,6 +3018,7 @@ const I18N = {
         'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
         'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
         'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
+        'paste_invalid_fields': { en: 'Ignored {n} invalid clipboard field(s)', ru: 'Некорректные поля буфера обмена пропущены: {n}' },
         'nothing_to_import': { en: 'Nothing to import: {label} contains no nodes or edges', ru: 'Нечего импортировать: {label} не содержит узлов или рёбер' },
         'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
         'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
@@ -2620,6 +3229,11 @@ const R = 25;
 // bounds per-frame work at a few milliseconds.
 const DRAG_LIVE_EDGE_LIMIT = 2000;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+// sanitizeState keeps at most this many entities on load. Every path that
+// can append to the document (import, paste) must respect the same caps, or
+// the autosaved graph silently shrinks on the next reopen.
+const MAX_GRAPH_NODES = GraphPatchCore.MAX_GRAPH_NODES;
+const MAX_GRAPH_EDGES = GraphPatchCore.MAX_GRAPH_EDGES;
 // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
 // size is capped independently of the user-facing row limit. Every cell is a
 // form control: measured in Chromium on a 350-node document, a full render
@@ -3147,11 +3761,11 @@ const nodesLayer = $('#nodesLayer');
 const dragLine = $('#dragLine');
 const selectionOverlayLayer = $('#selectionOverlayLayer');
 const gizmoLayer = $('#gizmoLayer');
-const NODE_SHAPES = ['circle', 'square', 'diamond', 'triangleUp', 'triangleDown', 'hexagon'];
+const NODE_SHAPES = GraphPatchCore.NODE_SHAPES;
 // QVGE-compatible stroke styles: must match CUtils::textToPenStyle mapping
 // none=NoPen, solid=SolidLine, dashed=DashLine, dotted=DotLine, dashdot=DashDotLine, dashdotdot=DashDotDotLine
-const STROKE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot', 'dashdotdot', 'none'];
-const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
+const STROKE_STYLES = GraphPatchCore.STROKE_STYLES;
+const LABEL_POSITIONS = GraphPatchCore.LABEL_POSITIONS;
 const LABEL_POLICIES = ['auto', 'on', 'off'];
 // Maximum number of custom attribute definitions the editor will hold.
 const CUSTOM_DEFINITIONS_MAX = 2000;
@@ -3602,6 +4216,8 @@ function updateCommandStates() {
     const pasteExtBtn = document.getElementById('btnPasteWithExternal');
     if (pasteBtn)
         pasteBtn.disabled = !hasClipboard;
+    // Paste in place stays clickable: a fresh tab may have a valid system
+    // clipboard and no in-memory payload to enable the button from.
     if (pasteExtBtn)
         pasteExtBtn.disabled = !hasClipboard;
     const copyBtn = document.getElementById('btnCopy');
@@ -3638,7 +4254,7 @@ function isPendingDefaultsTarget(target) {
 // always stored as plain string|number|boolean scalars with capped sizes, so a
 // hand-edited file cannot smuggle objects, prototype pollution or huge blobs
 // into the document.
-const CUSTOM_VALUE_MAX = 1000;
+const CUSTOM_VALUE_MAX = GraphPatchCore.CUSTOM_VALUE_MAX;
 const CUSTOM_VALUE_KEYS_MAX = CUSTOM_DEFINITIONS_MAX; // one value per definition, never more
 // Rendering every row of a 2000-definition section costs hundreds of
 // milliseconds and several hundred kilobytes of innerHTML parsing, every
@@ -3652,91 +4268,8 @@ function customAttributeTypeMap(definitions) {
         map.set(attribute.id, attribute.type);
     return map;
 }
-const INTEGER_TEXT_RE = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:[eE]([+-]?\d+))?$/;
-const ABS_INT_MAX = '2147483647'; // 2^31 - 1
-const ABS_INT_MIN = '2147483648'; // |−2^31| — one past the positive bound
-const ABS_LONG_MAX = '9007199254740991'; // 2^53 - 1 (Number.MAX_SAFE_INTEGER)
-// Magnitude comparison for decimal digit strings without leading zeros.
-const cmpMagnitude = (a, b) => a.length !== b.length ? a.length - b.length : (a < b ? -1 : a > b ? 1 : 0);
-// Exact integer handling for int/long custom values.
-//
-// `Number(text)` rounds to the nearest double BEFORE any integer check can
-// run — '1.0000000000000001' becomes 1 and the stated value is silently
-// destroyed. The text is therefore validated as a decimal integer literal
-// first; the exact integer (when there is one) is assembled digit-by-digit
-// and only then converted — never through a rounding conversion.
-//   'number'   — exact integer text within the type's range → convert
-//   'verbatim' — stated, but fraction-bearing or out of range → keep the exact text
-//   'empty'    — whitespace-only (a stated empty)
-//   'invalid'  — not a number at all
-// This is the one policy every int/long path shares: editing, import,
-// sanitization and type migration all convert exactly this set and preserve
-// exactly this other set.
-function parseIntegerText(text, type) {
-    const trimmed = text.trim();
-    if (trimmed === '')
-        return { kind: 'empty' };
-    const m = INTEGER_TEXT_RE.exec(trimmed);
-    if (!m)
-        return { kind: 'invalid' };
-    const [, sign, mantissa, expText] = m;
-    const dot = mantissa.indexOf('.');
-    const intPart = dot === -1 ? mantissa : mantissa.slice(0, dot);
-    const fracPart = dot === -1 ? '' : mantissa.slice(dot + 1);
-    let exp = 0;
-    if (expText) {
-        exp = parseInt(expText, 10);
-        // Beyond this the magnitude is unusable in either direction anyway.
-        if (!Number.isFinite(exp) || Math.abs(exp) > 400)
-            return { kind: 'verbatim', text: trimmed };
-    }
-    const digits = intPart + fracPart;
-    // Effective position of the decimal point within `digits`.
-    const point = intPart.length + exp;
-    // Integer iff everything at or after the point is '0'.
-    if ([...digits.slice(Math.max(point, 0))].some(d => d !== '0'))
-        return { kind: 'verbatim', text: trimmed };
-    const integerDigits = (point <= digits.length
-        ? digits.slice(0, Math.max(point, 0))
-        : digits + '0'.repeat(point - digits.length)).replace(/^0+(?=\d)/, '') || '0';
-    // int is asymmetric: −2147483648 is valid but 2147483648 is not.
-    const bound = type === 'int' ? (sign === '-' ? ABS_INT_MIN : ABS_INT_MAX) : ABS_LONG_MAX;
-    if (cmpMagnitude(integerDigits, bound) > 0)
-        return { kind: 'verbatim', text: trimmed };
-    // In range: the conversion is exact (|value| <= 2^53 - 1). -0 normalises to 0.
-    const value = Number((sign === '-' ? '-' : '') + integerDigits);
-    return { kind: 'number', value: value === 0 ? 0 : value };
-}
-function coerceCustomValue(value, type) {
-    const raw = typeof value === 'number' || typeof value === 'boolean' ? String(value) : String(value ?? '');
-    const text = raw.trim();
-    if (type === 'boolean') {
-        if (value === true || /^(true|1|yes|on)$/i.test(text))
-            return true;
-        if (value === false || /^(false|0|no|off)$/i.test(text))
-            return false;
-        return raw.slice(0, CUSTOM_VALUE_MAX); // unparseable: the exact text as written
-    }
-    if (type === 'int' || type === 'long') {
-        // Validate the TEXT as an integer literal before any numeric conversion
-        // — see parseIntegerText: '1.0000000000000001' must not collapse to 1.
-        const parsed = parseIntegerText(text, type);
-        if (parsed.kind === 'empty')
-            return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
-        if (parsed.kind === 'number')
-            return parsed.value;
-        return raw.slice(0, CUSTOM_VALUE_MAX); // fractions, out-of-range, non-numeric: the exact text as written
-    }
-    if (type === 'float' || type === 'double') {
-        if (text === '')
-            return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
-        const numeric = Number(text);
-        if (Number.isFinite(numeric))
-            return numeric;
-        return raw.slice(0, CUSTOM_VALUE_MAX);
-    }
-    return raw.slice(0, CUSTOM_VALUE_MAX);
-}
+// Shared with server patch validation so reload and patch semantics agree.
+const { parseIntegerText, coerceCustomValue } = GraphPatchCore;
 // Migrates stored values of one attribute to a new type. A stated empty is
 // a stated value for every target type and survives migration verbatim
 // (never becomes 0). Unlike coerceCustomValue (the import path, which keeps
@@ -4941,21 +5474,20 @@ function sanitizeState(input, options = {}) {
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
-    // Reduced, not spread. `Math.max(...array)` passes one argument per element and a
-    // payload large enough to matter overflows the call stack — "Maximum call stack
-    // size exceeded" from a document that is merely big, before the capacity limit
-    // gets a chance to drop the excess.
+    // Reduce instead of spreading potentially large import plans, while
+    // keeping every counter safe even for maximum-suffix identities.
     const maxIdSuffix = (items) => {
         let max = 0;
         for (const item of items) {
-            const digits = item.id.match(/\d+$/);
-            if (digits)
-                max = Math.max(max, Number(digits[0]));
+            const num = Number((item.id.match(/\d+$/) || [0])[0]);
+            if (Number.isSafeInteger(num))
+                max = Math.max(max, num);
         }
         return max;
     };
-    const maxN = Math.max(maxIdSuffix(nodes), finite(source.nextNode, 1) - 1, nodes.length);
-    const maxE = Math.max(maxIdSuffix(edges), finite(source.nextEdge, 1) - 1, edges.length);
+    const maxN = Math.max(maxIdSuffix(nodes), safeGraphCounter(source.nextNode, 1) - 1, nodes.length);
+    const maxE = Math.max(maxIdSuffix(edges), safeGraphCounter(source.nextEdge, 1) - 1, edges.length);
+    const nextCounter = (max) => max >= Number.MAX_SAFE_INTEGER ? 1 : max + 1;
     return {
         ...base,
         title: String(source.title || 'untitled').slice(0, 80),
@@ -4963,8 +5495,8 @@ function sanitizeState(input, options = {}) {
         selectTool: ['single', 'rect', 'brush', 'lasso', 'line', 'polygon'].includes(source.selectTool) ? source.selectTool : 'single',
         selectCombine: ['replace', 'add', 'subtract'].includes(source.selectCombine) ? source.selectCombine : 'replace',
         selection: { nodes: [], edges: [] },
-        nextNode: maxN + 1,
-        nextEdge: maxE + 1,
+        nextNode: nextCounter(maxN),
+        nextEdge: nextCounter(maxE),
         nodes, edges, customAttributes, graphCustom, settings,
         viewBox: boundedCamera({ x: finite(vb.x, -500), y: finite(vb.y, -330), w: finite(vb.w, 1000), h: finite(vb.h, 660) })
     };
@@ -4975,6 +5507,11 @@ function isRecord(value) {
 function finite(value, fallback) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
+}
+// Counters derived from ids must stay exactly representable: an unsafe
+// integer cannot be incremented, which would make id allocation loop.
+function safeGraphCounter(value, fallback = 1) {
+    return GraphPatchCore.safeCounter(value, fallback);
 }
 function positiveInteger(value, fallback) {
     const numeric = Math.trunc(finite(value, fallback));
@@ -8391,6 +8928,41 @@ function showMoreEdgeRows() {
     edgeListRenderLimit += configuredEdgeListPageSize();
     $('#edgeListHost').innerHTML = edgeListHtml();
 }
+// Numeric ids are a convenience, not an unbounded counter. Any suffix that
+// exceeds the safe-integer range is unusable for arithmetic allocation; reset
+// to a fresh safe range instead of looping on a counter that cannot advance.
+function allocateLocalId(prefix, used, start) {
+    return GraphPatchCore.allocateId(prefix, used, start);
+}
+function takeNextGraphId(prefix) {
+    const current = prefix === 'n' ? state.nextNode : state.nextEdge;
+    // Read the arrays directly: a bulk edit can append entities before the
+    // cached id index is rebuilt, and that cache must not hide a collision.
+    const exists = (id) => prefix === 'n'
+        ? state.nodes.some(n => n.id === id)
+        : state.edges.some(e => e.id === id);
+    if (Number.isSafeInteger(current) && current >= 0) {
+        const id = prefix + current;
+        if (!exists(id)) {
+            const next = current < Number.MAX_SAFE_INTEGER ? current + 1 : 1;
+            if (prefix === 'n')
+                state.nextNode = next;
+            else
+                state.nextEdge = next;
+            return id;
+        }
+    }
+    const used = new Set(prefix === 'n' ? state.nodes.map(n => n.id) : state.edges.map(e => e.id));
+    const allocated = allocateLocalId(prefix, used, current);
+    if (prefix === 'n')
+        state.nextNode = allocated.next;
+    else
+        state.nextEdge = allocated.next;
+    return allocated.id;
+}
+function advanceCounterFromId(current, id) {
+    return GraphPatchCore.advanceCounter(current, id);
+}
 function setMode(mode, render = true) {
     if (mode !== 'edge')
         pendingEdgeFrom = null;
@@ -8894,8 +9466,11 @@ function createCanvasNode(x, y) {
         ({ x, y } = findFreeNodePosition(x, y));
     const custom = $('#nodeLabel').value.trim();
     const s = state.settings;
-    const label = s.noLabel ? '' : (custom ? (custom.length <= 3 ? custom : custom.slice(0, 80)) : labelFromNumber(state.nextNode));
-    const n = { id: 'n' + state.nextNode++, label, x, y, type: '', order: state.nodes.length };
+    const id = takeNextGraphId('n');
+    const suffix = Number((id.match(/\d+$/) || [0])[0]);
+    const autoNumber = Number.isSafeInteger(suffix) ? suffix : state.nodes.length + 1;
+    const label = s.noLabel ? '' : (custom ? (custom.length <= 3 ? custom : custom.slice(0, 80)) : labelFromNumber(autoNumber));
+    const n = { id, label, x, y, type: '', order: state.nodes.length };
     applyNewNodeDefaults(n);
     return n;
 }
@@ -8921,7 +9496,7 @@ function addEdge(from, to) {
     const defEdgeType = s.edgeDefaults?.type || '';
     const effectiveType = s.edgeType || defEdgeType;
     const dir = normalizeDirection(s.direction ?? s.directed);
-    const e = { id: 'e' + state.nextEdge++, from, to, label: String(s.edgeLabel || '').slice(0, 80), directed: dir !== 'undirected', direction: dir, type: effectiveType };
+    const e = { id: takeNextGraphId('e'), from, to, label: String(s.edgeLabel || '').slice(0, 80), directed: dir !== 'undirected', direction: dir, type: effectiveType };
     // Pending custom property values from "New edge defaults".
     const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
     if (pendingCustom)
@@ -9028,7 +9603,9 @@ function circlePositionsForNewNodes(count, aroundNodes = state.nodes) {
     });
 }
 function createNode(label = null, x = null, y = null) {
-    const idx = state.nextNode++;
+    const id = takeNextGraphId('n');
+    const suffix = Number((id.match(/\d+$/) || [0])[0]);
+    const idx = Number.isSafeInteger(suffix) ? suffix : state.nodes.length + 1;
     if (x == null || y == null) {
         const pos = circlePositionsForNewNodes(1)[0];
         x = pos.x;
@@ -9037,7 +9614,7 @@ function createNode(label = null, x = null, y = null) {
     ({ x, y } = findFreeNodePosition(x, y));
     const s = state.settings;
     const autoLabel = s.noLabel ? '' : (label || labelFromNumber(idx));
-    const n = { id: 'n' + idx, label: autoLabel, x, y, type: '', order: state.nodes.length };
+    const n = { id, label: autoLabel, x, y, type: '', order: state.nodes.length };
     applyNewNodeDefaults(n);
     return n;
 }
@@ -9155,7 +9732,7 @@ function setMatrixCell(from, to, raw) {
         for (let i = 1; i < values.length; i++) {
             const inherited = cloneCustomMap(tpl.custom);
             const fresh = {
-                id: 'e' + state.nextEdge++, from, to,
+                id: takeNextGraphId('e'), from, to,
                 weight: values[i].slice(0, 50),
                 label: tpl.label || '',
                 // Carry the canonical tristate: copying only the legacy boolean turned
@@ -9175,7 +9752,7 @@ function setMatrixCell(from, to, raw) {
         // No existing edges — create new ones with default settings
         for (const weight of values) {
             const dir = normalizeDirection(s.direction ?? s.directed);
-            const e = { id: 'e' + state.nextEdge++, from, to, weight: weight.slice(0, 50), label: '', directed: dir !== 'undirected', direction: dir, type: '' };
+            const e = { id: takeNextGraphId('e'), from, to, weight: weight.slice(0, 50), label: '', directed: dir !== 'undirected', direction: dir, type: '' };
             // Pending custom property values from "New edge defaults", as on the canvas path.
             const pendingCustom = s.edgeCustom && typeof s.edgeCustom === 'object' ? cloneCustomMap(s.edgeCustom) : undefined;
             if (pendingCustom)
@@ -9404,6 +9981,501 @@ function cloneEdge(e) { const c = { ...e }; const custom = cloneCustomMap(e?.cus
     c.custom = custom;
 else
     delete c.custom; return c; }
+// Bounds the optional pre-copy snapshot and the publish-time verification
+// read, never the paste read itself.
+const CLIPBOARD_SNAPSHOT_TIMEOUT_MS = 80;
+const CLIPBOARD_PUBLISH_TIMEOUT_MS = 250;
+const CLIPBOARD_STAMP_KEY = 'graph-editor-pro-clipboard-stamp';
+const clipboardTabId = Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+const compareClipboardStamps = (left, right) => {
+    if (!isRecord(left) || !isRecord(right))
+        return null;
+    if (!Number.isFinite(Number(left.t)) || !Number.isFinite(Number(right.t)))
+        return null;
+    if (Number(left.t) !== Number(right.t))
+        return Number(left.t) > Number(right.t);
+    // Sequence numbers are only comparable within one tab. Across tabs they
+    // are independent counters, so an equal timestamp stays ambiguous.
+    if (left.tab === right.tab && typeof left.tab === 'string') {
+        const leftSeq = Number(left.s), rightSeq = Number(right.s);
+        if (Number.isFinite(leftSeq) && Number.isFinite(rightSeq) && leftSeq !== rightSeq) {
+            return leftSeq > rightSeq;
+        }
+    }
+    return null;
+};
+const readGlobalClipboardStamp = () => {
+    try {
+        return JSON.parse(localStorage.getItem(CLIPBOARD_STAMP_KEY) || 'null');
+    }
+    catch {
+        return null;
+    }
+};
+// A stamp is evidence that the matching payload was actually published.
+// Writing it early would let a failed copy invalidate an older, still valid
+// system payload for every fresh tab.
+const publishClipboardStamp = (stamp) => {
+    const current = readGlobalClipboardStamp();
+    if (current && compareClipboardStamps(stamp, current) !== true)
+        return;
+    try {
+        localStorage.setItem(CLIPBOARD_STAMP_KEY, JSON.stringify(stamp));
+    }
+    catch { }
+};
+const boundedRead = async (promise, fallback, timeoutMs = CLIPBOARD_SNAPSHOT_TIMEOUT_MS) => {
+    let timer = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise(resolve => { timer = setTimeout(() => resolve(fallback), timeoutMs); }),
+        ]);
+    }
+    finally {
+        if (timer != null)
+            clearTimeout(timer);
+    }
+};
+let localClipboardWrite = null;
+let localClipboardSeq = 0;
+// Publication is a single slot. Exactly one attempt can be in flight, and a
+// newer copy while that write/verification is running replaces the waiting
+// one. Nothing else emits a write, so an older payload can never land after
+// a newer one in this tab.
+const outstandingClipboardWrites = new Map();
+let queuedClipboardWrite = null;
+// True while an attempt is being issued OR verified. It stays set across
+// every await so a third copy cannot slip in during the verify phase.
+let clipboardBusy = false;
+let lastIssuedClipboardText = null;
+// Web Locks provide an atomic cross-tab mutex held for the entire write.
+// A durable in-flight marker also prevents automatic recovery if the owner
+// disappears: releasing a Web Lock on document teardown is not proof that
+// the browser's clipboard operation can no longer complete.
+const CLIPBOARD_PUBLISH_KEY = 'graph-editor-pro-clipboard-publish';
+const CLIPBOARD_INFLIGHT_KEY = 'graph-editor-pro-clipboard-inflight';
+const CLIPBOARD_INTENT_PREFIX = 'graph-editor-pro-clipboard-intent-';
+const CLIPBOARD_LOCK_WAIT_MS = 30000;
+const readPublishRegistry = () => {
+    try {
+        return JSON.parse(localStorage.getItem(CLIPBOARD_PUBLISH_KEY) || 'null');
+    }
+    catch {
+        return null;
+    }
+};
+// Each copy announces its intent before entering the lock queue. Individual
+// storage keys avoid lost read/modify/write updates between tabs. A later
+// copy records the intents already present, not an inferred timestamp order.
+function registerClipboardIntent(stamp) {
+    try {
+        const pending = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith(CLIPBOARD_INTENT_PREFIX))
+                continue;
+            const value = localStorage.getItem(key);
+            if (!value)
+                continue;
+            let previous;
+            try {
+                previous = JSON.parse(value);
+            }
+            catch {
+                continue;
+            }
+            // Abandoned entries cannot be trusted indefinitely as proof of a live
+            // predecessor. Equal timestamps across tabs are ambiguous, not ordered.
+            if (isRecord(previous) && typeof previous.t === 'number' &&
+                Date.now() - previous.t >= 0 && Date.now() - previous.t <= CLIPBOARD_LOCK_WAIT_MS &&
+                compareClipboardStamps(stamp, previous) === true) {
+                pending.push(JSON.stringify(previous));
+            }
+        }
+        const key = CLIPBOARD_INTENT_PREFIX + clipboardTabId + ':' + stamp.s;
+        const value = JSON.stringify(stamp);
+        localStorage.setItem(key, value);
+        if (localStorage.getItem(key) !== value)
+            return null;
+        return { key, pending };
+    }
+    catch {
+        return null;
+    }
+}
+function removeClipboardIntent(attempt) {
+    try {
+        if (attempt.intentKey)
+            localStorage.removeItem(attempt.intentKey);
+    }
+    catch { }
+}
+// Only a write this tab has issued and not yet seen settle can prove the
+// system clipboard still holds an obsolete payload of ours. Persistent
+// history (published stamps) says nothing about current user intent.
+const newestOutstandingClipboardStamp = () => {
+    let best = null;
+    for (const attempt of outstandingClipboardWrites.values()) {
+        if (!best || compareClipboardStamps(attempt.stamp, best) === true)
+            best = attempt.stamp;
+    }
+    return best;
+};
+const publishIssuedStamp = (stamp) => {
+    try {
+        const record = JSON.stringify({ issued: stamp });
+        localStorage.setItem(CLIPBOARD_PUBLISH_KEY, record);
+        return localStorage.getItem(CLIPBOARD_PUBLISH_KEY) === record;
+    }
+    catch {
+        return false;
+    }
+};
+// Fail closed when durable storage is unavailable, or an abandoned owner
+// left an unresolved operation. No timeout is evidence a write is finished.
+const beginClipboardWrite = (attempt) => {
+    try {
+        if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) !== null) {
+            attempt.failure = 'recovery';
+            return false;
+        }
+        const marker = JSON.stringify(attempt.stamp);
+        localStorage.setItem(CLIPBOARD_INFLIGHT_KEY, marker);
+        const ok = localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === marker;
+        if (!ok)
+            attempt.failure = 'compatibility';
+        return ok;
+    }
+    catch {
+        attempt.failure = 'compatibility';
+        return false;
+    }
+};
+const endClipboardWrite = (attempt) => {
+    try {
+        if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === JSON.stringify(attempt.stamp)) {
+            localStorage.removeItem(CLIPBOARD_INFLIGHT_KEY);
+        }
+    }
+    catch { /* Keeping a marker is safer than assuming recovery. */ }
+};
+// Recovery is deliberately explicit: a lock may be released on tab close
+// while its browser write can still complete. Never clear the marker merely
+// because a timeout elapsed or another tab disappeared.
+async function recoverClipboardPublication() {
+    const locks = navigator.locks;
+    if (!locks || typeof locks.request !== 'function') {
+        toast(I18N.t('copy_compatibility'));
+        return;
+    }
+    try {
+        if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null) {
+            toast(I18N.t('clipboard_recovery_none'));
+            return;
+        }
+    }
+    catch {
+        toast(I18N.t('copy_compatibility'));
+        return;
+    }
+    const confirmed = await uiConfirm(I18N.t('clipboard_recovery_confirm'), {
+        title: I18N.t('clipboard_recovery_button'), confirmLabel: I18N.t('clipboard_recovery_button'), danger: true,
+    });
+    if (!confirmed)
+        return;
+    try {
+        const result = await locks.request(CLIPBOARD_PUBLISH_KEY, { ifAvailable: true }, async (lock) => {
+            if (!lock)
+                return 'busy';
+            if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null)
+                return 'none';
+            localStorage.removeItem(CLIPBOARD_INFLIGHT_KEY);
+            return localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null ? 'done' : 'unavailable';
+        });
+        toast(I18N.t(result === 'busy' ? 'clipboard_recovery_busy' : result === 'done' ? 'clipboard_recovery_done' :
+            result === 'none' ? 'clipboard_recovery_none' : 'copy_compatibility'));
+    }
+    catch {
+        toast(I18N.t('copy_compatibility'));
+    }
+}
+const dropQueuedClipboardWrite = () => {
+    if (!queuedClipboardWrite)
+        return;
+    const queued = queuedClipboardWrite;
+    queuedClipboardWrite = null;
+    removeClipboardIntent(queued);
+    markClipboardAttemptFailed(queued.seq);
+};
+function markClipboardAttemptFailed(seq) {
+    outstandingClipboardWrites.delete(seq);
+    if (localClipboardWrite?.seq === seq)
+        localClipboardWrite.state = 'failed';
+}
+// Verification reads are bounded too: a stalled clipboard read must not
+// strand a waiting copy forever. "Unknown" (undefined) is never "empty".
+const boundedClipboardRead = () => boundedRead(Promise.resolve()
+    .then(() => (navigator.clipboard && typeof navigator.clipboard.readText === 'function'
+    ? navigator.clipboard.readText()
+    : undefined))
+    .then(text => (text == null ? undefined : String(text || '')), () => undefined), undefined, CLIPBOARD_PUBLISH_TIMEOUT_MS);
+// Called only while the Web Lock is held. The marker is removed only after
+// the actual browser promise settles, never on a timeout.
+async function issueClipboardWrite(attempt) {
+    if (!beginClipboardWrite(attempt))
+        return false;
+    if (!publishIssuedStamp(attempt.stamp)) {
+        attempt.failure = 'compatibility';
+        endClipboardWrite(attempt);
+        return false;
+    }
+    lastIssuedClipboardText = attempt.payload;
+    let published = false;
+    try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(attempt.payload);
+            published = true;
+        }
+    }
+    catch { /* keep this copy local */ }
+    finally {
+        endClipboardWrite(attempt);
+    }
+    if (published)
+        publishClipboardStamp(attempt.stamp);
+    return published;
+}
+const stampFromClipboardText = (text) => {
+    try {
+        const value = JSON.parse(text);
+        return JSON.stringify(isRecord(value) && value.type === 'graph-editor-clipboard' ? value.clipboardStamp ?? null : null);
+    }
+    catch {
+        return 'null';
+    }
+};
+// A deferred publication is safe only if the clipboard still matches the
+// snapshot or a known in-flight predecessor. Unreadable is not evidence of
+// safety. Verify *inside* the lock, not before waiting for another tab.
+async function verifyDeferredCopy(attempt) {
+    const snapshot = await boundedRead(attempt.staleSystemText, undefined);
+    if (attempt.seq !== localClipboardSeq)
+        return false;
+    const current = await boundedClipboardRead();
+    if (attempt.seq !== localClipboardSeq || current === undefined)
+        return false;
+    const registry = readPublishRegistry();
+    const issued = JSON.stringify(isRecord(registry) ? registry.issued ?? null : null);
+    const unchanged = snapshot !== undefined && current === snapshot && issued === attempt.issuedAtCopy;
+    const predecessor = issued !== 'null' && stampFromClipboardText(current) === issued &&
+        (issued === attempt.issuedAtCopy || attempt.pendingBefore.includes(issued));
+    return unchanged || predecessor || (issued === attempt.issuedAtCopy && current === lastIssuedClipboardText);
+}
+// Obtain a real cross-context lock. The callback owns it until the write
+// settles. Waiting has a bounded cancellation, never a lock-stealing timeout.
+async function awaitPublishTurn(attempt) {
+    if (!attempt.intentKey)
+        return false;
+    const locks = navigator.locks;
+    if (!locks || typeof locks.request !== 'function') {
+        attempt.failure = 'compatibility';
+        return false;
+    }
+    const run = async (deferred) => {
+        if (attempt.seq !== localClipboardSeq)
+            return false;
+        const registry = readPublishRegistry();
+        const issued = isRecord(registry) ? registry.issued : null;
+        if (issued && compareClipboardStamps(issued, attempt.stamp) === true)
+            return false;
+        if (deferred && !(await verifyDeferredCopy(attempt)))
+            return false;
+        if (attempt.seq !== localClipboardSeq)
+            return false;
+        return issueClipboardWrite(attempt);
+    };
+    try {
+        const immediate = await locks.request(CLIPBOARD_PUBLISH_KEY, { ifAvailable: true }, async (lock) => lock ? { acquired: true, published: await run(attempt.deferred) } : { acquired: false, published: false });
+        if (immediate.acquired)
+            return immediate.published;
+        if (attempt.seq !== localClipboardSeq)
+            return false;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), CLIPBOARD_LOCK_WAIT_MS);
+        try {
+            return await locks.request(CLIPBOARD_PUBLISH_KEY, { signal: controller.signal }, async () => {
+                clearTimeout(timer);
+                return run(true);
+            });
+        }
+        finally {
+            clearTimeout(timer);
+        }
+    }
+    catch (error) {
+        if (error?.name !== 'AbortError')
+            attempt.failure = 'compatibility';
+        return false;
+    }
+}
+async function pumpClipboardWrites() {
+    if (clipboardBusy)
+        return;
+    clipboardBusy = true;
+    try {
+        while (queuedClipboardWrite) {
+            const attempt = queuedClipboardWrite;
+            queuedClipboardWrite = null;
+            const published = attempt.seq === localClipboardSeq && await awaitPublishTurn(attempt);
+            outstandingClipboardWrites.delete(attempt.seq);
+            removeClipboardIntent(attempt);
+            if (localClipboardWrite?.seq === attempt.seq) {
+                localClipboardWrite.state = published ? 'published' : 'failed';
+                if (!published)
+                    toast(I18N.t(attempt.failure === 'recovery' ? 'copy_recovery_needed' :
+                        attempt.failure === 'compatibility' ? 'copy_compatibility' : 'copy_local_only'));
+            }
+        }
+    }
+    finally {
+        clipboardBusy = false;
+    }
+}
+function publishClipboardCopy(attempt) {
+    outstandingClipboardWrites.set(attempt.seq, attempt);
+    dropQueuedClipboardWrite();
+    attempt.deferred = clipboardBusy;
+    queuedClipboardWrite = attempt;
+    void pumpClipboardWrites();
+}
+// A paste read still in flight. Its generation token is invalidated by the
+// next paste command, so a hanging read can never paste a second time.
+let pasteGeneration = 0;
+let pendingSystemRead = null;
+const clipboardHas = (obj, key) => isRecord(obj) && Object.prototype.hasOwnProperty.call(obj, key);
+const clipboardText = (value, max, trim = false) => {
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean')
+        return undefined;
+    const text = String(value);
+    return (trim ? text.trim() : text).slice(0, max);
+};
+const clipboardFiniteNumber = (value) => {
+    if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim()))
+        return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+};
+const clipboardNumber = (value, min, max, integer = false) => {
+    const n = clipboardFiniteNumber(value);
+    if (n === undefined)
+        return undefined;
+    if (!Number.isFinite(n))
+        return undefined;
+    return clamp(integer ? Math.trunc(n) : n, min, max);
+};
+const clipboardColor = (value) => {
+    if (typeof value !== 'string')
+        return undefined;
+    const text = value;
+    // '' is the editor's stored value for "unset", not a bad payload value.
+    if (text === '')
+        return '';
+    return /^#[0-9a-f]{6}$/i.test(text) ? text : undefined;
+};
+const clipboardChoice = (value, allowed) => {
+    if (typeof value !== 'string')
+        return undefined;
+    const text = value;
+    return text === '' || allowed.includes(text) ? text : undefined;
+};
+const clipboardDirection = (value) => {
+    if (typeof value === 'boolean' || value === 0 || value === 1)
+        return normalizeDirection(value);
+    if (typeof value !== 'string')
+        return undefined;
+    const text = value.trim().toLowerCase();
+    const aliases = ['directed', 'forward', 'true', '1', 'directed (one end)',
+        'mutual', 'both', 'bidirected', 'bidirectional', 'mutual (both ends)',
+        'undirected', 'none', 'false', '0', 'undirected (no ends)'];
+    return aliases.includes(text) ? normalizeDirection(text) : undefined;
+};
+let skippedClipboardFields = 0;
+// Clipboard is foreign input. Only fields the app itself writes are copied,
+// and each supplied field is normalized exactly as load/sanitize would.
+// Invalid values are treated as omitted so an in-place merge cannot corrupt
+// a live entity (and cannot overwrite it with a default either).
+function sanitizeClipboardEntity(raw, kind) {
+    if (!isRecord(raw))
+        return null;
+    const idText = clipboardText(raw.id, Number.MAX_SAFE_INTEGER, false);
+    if (!idText)
+        return null;
+    // Same identity normalization as the loader: a payload id that would be
+    // rewritten on reload must not be used to address a live entity here.
+    const id = uniqueSafeId(idText, kind === 'node' ? 'n' : 'e', new Set());
+    const out = { id };
+    const take = (key, normalize) => {
+        if (!clipboardHas(raw, key))
+            return;
+        const value = normalize(raw[key]);
+        if (value !== undefined)
+            out[key] = value;
+        else
+            skippedClipboardFields++;
+    };
+    const finiteCoordinate = clipboardFiniteNumber;
+    const endpointId = (value) => {
+        const text = clipboardText(value, 200, true);
+        return text ? uniqueSafeId(text, 'n', new Set()) : undefined;
+    };
+    if (kind === 'node') {
+        take('x', finiteCoordinate);
+        take('y', finiteCoordinate);
+        take('label', v => clipboardText(v, 80));
+        take('shape', v => clipboardChoice(v, NODE_SHAPES));
+        take('color', clipboardColor);
+        take('type', v => clipboardText(v, 40));
+        take('order', v => clipboardNumber(v, 0, 2147483647, true));
+        take('width', v => clipboardNumber(v, 10, 300));
+        take('height', v => clipboardNumber(v, 10, 300));
+        take('strokeColor', clipboardColor);
+        take('strokeSize', v => clipboardNumber(v, 0, 20));
+        take('strokeStyle', v => clipboardChoice(v, STROKE_STYLES));
+        take('labelColor', clipboardColor);
+        take('labelSize', v => clipboardNumber(v, 4, 72));
+        take('labelPosition', v => clipboardChoice(v, LABEL_POSITIONS));
+        take('labelFont', v => clipboardText(v, 60));
+    }
+    else {
+        take('from', endpointId);
+        take('to', endpointId);
+        take('label', v => clipboardText(v, 80));
+        take('direction', clipboardDirection);
+        take('directed', clipboardDirection);
+        take('type', v => clipboardText(v, 40));
+        take('weight', v => clipboardText(v, 50));
+        take('color', clipboardColor);
+        take('strokeSize', v => clipboardNumber(v, 0, 20));
+        take('strokeStyle', v => clipboardChoice(v, STROKE_STYLES));
+        take('arrowSize', v => clipboardNumber(v, 4, 40));
+        take('labelColor', clipboardColor);
+        take('labelSize', v => clipboardNumber(v, 4, 72));
+        take('labelFont', v => clipboardText(v, 60));
+        if (clipboardHas(out, 'direction'))
+            out.directed = out.direction !== 'undirected';
+        else if (clipboardHas(out, 'directed')) {
+            out.direction = normalizeDirection(out.directed);
+            out.directed = out.direction !== 'undirected';
+        }
+    }
+    if (clipboardHas(raw, 'custom')) {
+        const custom = cloneCustomMap(raw.custom);
+        if (custom)
+            out.custom = custom;
+    }
+    return out;
+}
 // clipboardData and pasteOffsetCount are defined in 10-core.ts (shared state)
 function getSelectedNodeIdsForCopy() {
     const ids = new Set(state.selection?.nodes || []);
@@ -9469,14 +10541,50 @@ function copySelectedNodes() {
         .map(attribute => attribute?.origin == null ? attribute
         : { ...attribute, origin: originForWire(attribute?.origin) });
     clipboardData = { nodes, edges, externalEdges, customAttributes };
-    // Deduplicate externalEdges that are duplicates of internal? Already separated
-    // Write to system clipboard as JSON for cross-tab paste
+    // Publish to the system clipboard for cross-tab paste, but remember the
+    // outcome. An in-memory copy is always newer than the system clipboard
+    // until this write resolves successfully.
+    const writeSeq = ++localClipboardSeq;
+    const stamp = { t: Date.now(), s: writeSeq, tab: clipboardTabId };
+    // Capture what the system clipboard held before this copy. If publishing
+    // fails, a later, different system payload is from another tab and is
+    // genuinely newer than our in-memory copy. A denied snapshot stays
+    // undefined so it is never mistaken for an empty clipboard.
+    let staleSystemText = Promise.resolve(undefined);
     try {
-        const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes });
-        if (navigator.clipboard && navigator.clipboard.writeText)
-            navigator.clipboard.writeText(payload).catch(() => { });
+        if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+            staleSystemText = navigator.clipboard.readText().then(text => text || '', () => undefined);
+        }
     }
-    catch { }
+    catch {
+        staleSystemText = Promise.resolve(undefined);
+    }
+    localClipboardWrite = { seq: writeSeq, state: 'pending', stamp, staleSystemText };
+    try {
+        const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
+        const registry = readPublishRegistry();
+        const intent = registerClipboardIntent(stamp);
+        const attempt = {
+            seq: writeSeq, payload, stamp, staleSystemText, deferred: false,
+            issuedAtCopy: JSON.stringify(isRecord(registry) ? registry.issued ?? null : null),
+            pendingBefore: intent?.pending ?? [], intentKey: intent?.key ?? '',
+            failure: intent ? 'transient' : 'compatibility',
+        };
+        outstandingClipboardWrites.set(writeSeq, attempt);
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            publishClipboardCopy(attempt);
+        }
+        else {
+            removeClipboardIntent(attempt);
+            outstandingClipboardWrites.delete(writeSeq);
+            localClipboardWrite.state = 'failed';
+        }
+    }
+    catch {
+        outstandingClipboardWrites.delete(writeSeq);
+        if (localClipboardWrite?.seq === writeSeq)
+            localClipboardWrite.state = 'failed';
+    }
     // Try to use copyText helper if available
     if (nodes.length || edges.length || externalEdges.length) {
         const internalCount = edges.length;
@@ -9501,7 +10609,12 @@ function duplicateSelectedNodes() {
         return;
     pasteClipboardInternal();
 }
-function pasteClipboardInternal(fromSystemClipboard) {
+function pasteClipboardInternal(fromSystemClipboard, options) {
+    // 'exact' is the in-place paste: no offset, no collision reshuffle, and
+    // carried ids that already exist update the entity in place instead of
+    // creating a second copy of it.
+    const exactPaste = options?.exact === true;
+    skippedClipboardFields = 0;
     // Clone the clipboard entities — the definition resolution below may
     // remap or coerce their custom values, which must never leak back into
     // the clipboard (a second paste has to start from the copied originals).
@@ -9517,14 +10630,54 @@ function pasteClipboardInternal(fromSystemClipboard) {
             c.type = sanitizeEntityType(c.type);
         return c;
     };
-    const cloneClipboardData = (src) => ({
-        nodes: (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord).map(cloneClipboardNode),
-        edges: (Array.isArray(src.edges) ? src.edges : []).filter(isRecord).map(cloneClipboardEdge),
-        externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).filter(isRecord).map(cloneClipboardEdge),
-        customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
-            .filter(isRecord)
-            .map((def) => ({ ...def })),
-    });
+    // Keep endpoint provenance separate from normalized IDs: a foreign host
+    // ID can equal the normalized ID allocated to a different carried node.
+    const carriedEndpoints = new WeakMap();
+    const cloneClipboardData = (src) => {
+        // Keep the raw namespace until all node identities are allocated. Two
+        // different raw ids can normalize to the same base; like the loader,
+        // allocate unique ids and map each raw endpoint to its own node.
+        const usedNodeIds = new Set();
+        const nodeReferences = new Map();
+        const nodes = (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord)
+            .map((raw) => {
+            const node = sanitizeClipboardEntity(cloneClipboardNode(raw), 'node');
+            const rawId = clipboardText(raw.id, Number.MAX_SAFE_INTEGER, false);
+            if (!node || !rawId)
+                return null;
+            node.id = uniqueSafeId(rawId, 'n', usedNodeIds);
+            if (!nodeReferences.has(rawId))
+                nodeReferences.set(rawId, node.id);
+            return node;
+        }).filter((n) => n !== null);
+        const readEdges = (entries) => (Array.isArray(entries) ? entries : []).filter(isRecord)
+            .map((raw) => {
+            const edge = sanitizeClipboardEntity(cloneClipboardEdge(raw), 'edge');
+            if (!edge)
+                return null;
+            const carried = new Set();
+            carriedEndpoints.set(edge, carried);
+            for (const endpoint of ['from', 'to']) {
+                if (!clipboardHas(raw, endpoint))
+                    continue;
+                const rawId = clipboardText(raw[endpoint], Number.MAX_SAFE_INTEGER, false);
+                // Never normalize a foreign endpoint into the host namespace.
+                // A supplied unresolved endpoint stays supplied and fails the
+                // fate check, even for an existing edge in exact-paste mode.
+                if (rawId != null && nodeReferences.has(rawId))
+                    carried.add(endpoint);
+                edge[endpoint] = rawId == null ? '' : nodeReferences.get(rawId) ?? rawId;
+            }
+            return edge;
+        }).filter((e) => e !== null);
+        return {
+            nodes,
+            edges: readEdges(src.edges),
+            externalEdges: readEdges(src.externalEdges),
+            customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
+                .filter(isRecord).map((def) => ({ ...def })),
+        };
+    };
     let data = null;
     if (fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard') {
         data = cloneClipboardData(fromSystemClipboard);
@@ -9532,12 +10685,54 @@ function pasteClipboardInternal(fromSystemClipboard) {
     else if (clipboardData) {
         data = cloneClipboardData(clipboardData);
     }
+    if (skippedClipboardFields)
+        toast(I18N.t('paste_invalid_fields', { n: skippedClipboardFields }));
     if (!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)) {
         toast(I18N.t('clipboard_empty'));
         return false;
     }
     const preserveExternal = state.settings.copyPreserveExternal !== false;
+    // Plan which entities will really be pasted BEFORE resolving custom
+    // definitions: a definition for a node/edge dropped by the document cap
+    // would otherwise be added to the document with no entity to use it.
+    const nodeCapacity = Math.max(0, MAX_GRAPH_NODES - state.nodes.length);
+    const edgeCapacity = Math.max(0, MAX_GRAPH_EDGES - state.edges.length);
+    let droppedNodes = 0, droppedEdges = 0;
+    const reportDropped = () => {
+        if (droppedNodes)
+            toast(I18N.t('paste_cap_nodes', { n: droppedNodes, limit: MAX_GRAPH_NODES }));
+        if (droppedEdges)
+            toast(I18N.t('paste_cap_edges', { n: droppedEdges, limit: MAX_GRAPH_EDGES }));
+    };
     const originalExistingNodeIds = new Set(state.nodes.map(n => n.id));
+    const originalExistingEdgeIds = new Set(state.edges.map(e => e.id));
+    const sortedCopyNodes = [...data.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const plannedNodes = [];
+    const plannedNodeIds = new Set();
+    // A carried node rejected by the cap must still be remembered: its id may
+    // name a real node in this document, but it is NOT an external endpoint
+    // for this paste — it was carried and dropped, so edges through it go too.
+    const rejectedNodeIds = new Set();
+    let nodeSlots = nodeCapacity;
+    for (const orig of sortedCopyNodes) {
+        const id = String(orig?.id ?? '');
+        if (!id || plannedNodeIds.has(id)) {
+            droppedNodes++;
+            continue;
+        }
+        plannedNodeIds.add(id);
+        // In exact mode an existing id is an update, so it consumes no slot.
+        if (!exactPaste || !originalExistingNodeIds.has(id)) {
+            if (nodeSlots <= 0) {
+                droppedNodes++;
+                rejectedNodeIds.add(id);
+                continue;
+            }
+            nodeSlots--;
+        }
+        plannedNodes.push(orig);
+    }
+    data.nodes = plannedNodes;
     // An endpoint's fate decides whether a carried edge will be pasted at
     // all: 'pasted' = it clones with this paste, 'existing' = it stays bound
     // to a node the document already has, 'absent' = it points nowhere and
@@ -9545,14 +10740,28 @@ function pasteClipboardInternal(fromSystemClipboard) {
     // that will actually materialize — a dropped edge must not leave a
     // phantom definition (and its values) behind.
     const carriedNodeIds = new Set(data.nodes.map(n => String(n?.id)));
-    const endpointFate = (id) => {
-        const key = String(id ?? '');
-        return carriedNodeIds.has(key) ? 'pasted' : originalExistingNodeIds.has(key) ? 'existing' : 'absent';
+    const endpointFate = (edge, endpoint) => {
+        const key = String(edge?.[endpoint] ?? '');
+        if (carriedEndpoints.get(edge)?.has(endpoint)) {
+            if (rejectedNodeIds.has(key))
+                return 'absent';
+            return carriedNodeIds.has(key) ? 'pasted' : 'absent';
+        }
+        return originalExistingNodeIds.has(key) ? 'existing' : 'absent';
     };
     const edgeMaterializes = (orig, isExternal) => {
         if (isExternal && !preserveExternal)
             return false;
-        const fs = endpointFate(orig?.from), ts = endpointFate(orig?.to);
+        // An omitted endpoint stays as it is on an existing edge; only a
+        // supplied endpoint has to name a node that will exist after the paste.
+        if (exactPaste && originalExistingEdgeIds.has(String(orig?.id ?? ''))) {
+            if (clipboardHas(orig, 'from') && endpointFate(orig, 'from') === 'absent')
+                return false;
+            if (clipboardHas(orig, 'to') && endpointFate(orig, 'to') === 'absent')
+                return false;
+            return true;
+        }
+        const fs = endpointFate(orig, 'from'), ts = endpointFate(orig, 'to');
         if (fs === 'pasted' && ts === 'pasted')
             return true;
         if (fs === 'absent' || ts === 'absent')
@@ -9562,10 +10771,31 @@ function pasteClipboardInternal(fromSystemClipboard) {
         // Exactly one pasted side: an external edge reaching into the document.
         return preserveExternal;
     };
-    const materializedEdges = [
+    const candidateEdges = [
         ...data.edges.filter(e => edgeMaterializes(e, false)).map(e => ({ entity: e })),
         ...(data.externalEdges || []).filter(e => edgeMaterializes(e, true)).map(e => ({ entity: e })),
     ];
+    const plannedEdgeIds = new Set();
+    const plannedEdges = [];
+    let edgeSlots = edgeCapacity;
+    for (const { entity: orig } of candidateEdges) {
+        const id = String(orig?.id ?? '');
+        if (!id || plannedEdgeIds.has(id)) {
+            droppedEdges++;
+            continue;
+        }
+        plannedEdgeIds.add(id);
+        // Updating an existing edge consumes no capacity; only new edges do.
+        if (!exactPaste || !originalExistingEdgeIds.has(id)) {
+            if (edgeSlots <= 0) {
+                droppedEdges++;
+                continue;
+            }
+            edgeSlots--;
+        }
+        plannedEdges.push(orig);
+    }
+    const materializedEdges = plannedEdges.map(entity => ({ entity }));
     // Re-create carried custom-attribute definitions this document lacks.
     // Definitions are resolved per (id, scope) PAIR, not by id alone: an
     // existing definition with the same id but a different scope cannot
@@ -9767,16 +10997,23 @@ function pasteClipboardInternal(fromSystemClipboard) {
     ensureEntityPairs(materializedEdges.map(m => m.entity), 'edge');
     if (defsToAdd.length)
         state.customAttributes.push(...defsToAdd);
-    // Remap carried values whose definition was re-created under a fresh id.
-    if (renameByPair.size) {
+    // A definition minted or rebound during this paste is a document change
+    // even if no entity field ends up differing — undo has to cover it.
+    const definitionsChanged = defsToAdd.length > 0 || renameByPair.size > 0;
+    // Discard values whose definitions could not be resolved before remapping:
+    // a colliding host definition is not evidence they are the same property.
+    if (renameByPair.size || failedPairs.size) {
         const remapCustom = (entity, scope) => {
             if (!isRecord(entity?.custom))
                 return;
             const out = Object.create(null);
             for (const [key, value] of Object.entries(entity.custom)) {
-                // Values of an all-scope definition are keyed under 'all|' — look
-                // there before the per-scope entry.
-                out[renameByPair.get(key + '|all') || renameByPair.get(key + '|' + scope) || key] = value;
+                // The resolution scope must match ensureEntityPairs, especially for
+                // carried 'all' definitions. A failed pair cannot bind to a host id.
+                const pair = key + '|' + (carriedScopeById.get(key) === 'all' ? 'all' : scope);
+                if (failedPairs.has(pair))
+                    continue;
+                out[renameByPair.get(pair) || key] = value;
             }
             entity.custom = out;
         };
@@ -9814,151 +11051,284 @@ function pasteClipboardInternal(fromSystemClipboard) {
         else
             delete entity?.custom;
     }
-    const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
-    let nextOrder = maxOrder + 1;
-    pasteOffsetCount = (pasteOffsetCount + 1) % 20;
-    const offsetDist = 40 + pasteOffsetCount * 10;
-    const idMap = new Map();
-    const newNodes = [];
-    const newNodeIds = [];
-    const existingNodeIds = new Set(originalExistingNodeIds);
-    const sortedCopyNodes = data.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const isFreeWithPlaced = (x, y, ignoreIds, placed) => {
-        if (!isPositionFree(x, y, ignoreIds))
-            return false;
-        for (const pn of placed) {
-            if (Math.hypot(pn.x - x, pn.y - y) < 50)
-                return false;
+    if (exactPaste) {
+        // The DOM-free core owns the exact merge semantics. This adapter owns
+        // only the clipboard/UI side effects: counters, selection, history,
+        // rendering, toasts and autosave stay here.
+        const result = GraphPatchCore.applyExactPatch(state, {
+            nodes: data.nodes,
+            edges: materializedEdges.map(m => m.entity),
+        }, {
+            maxNodes: MAX_GRAPH_NODES,
+            maxEdges: MAX_GRAPH_EDGES,
+            carriedNodeIds,
+        });
+        droppedNodes += result.droppedNodes;
+        droppedEdges += result.droppedEdges;
+        const changed = result.changed;
+        const pastedNodeIds = result.pastedNodeIds;
+        const pastedEdgeIds = result.pastedEdgeIds;
+        if (changed || definitionsChanged) {
+            invalidateGraphIndex();
+            pushHistory('paste in place');
         }
+        if (pastedNodeIds.length || pastedEdgeIds.length) {
+            setSelection(pastedNodeIds, pastedEdgeIds, pastedNodeIds.length ? { type: 'node', id: pastedNodeIds[0] } : { type: 'edge', id: pastedEdgeIds[0] }, false);
+        }
+        queueRender(true, true);
+        if (!changed && !definitionsChanged)
+            toast(I18N.t('pasted_exact_noop'));
+        else if (pastedNodeIds.length)
+            toast(I18N.t('pasted_exact_n_m', { n: pastedNodeIds.length, m: pastedEdgeIds.length }));
+        else
+            toast(I18N.t('pasted_exact_edges', { n: pastedEdgeIds.length }));
+        reportDropped();
+        saveSoon();
         return true;
-    };
-    const findFreeForPaste = (x, y, ignoreIds, placed) => {
-        if (isFreeWithPlaced(x, y, ignoreIds, placed))
-            return { x, y };
-        const step = 50;
-        for (let ring = 1; ring <= 8; ring++) {
-            const radius = step * ring;
-            const count = Math.max(8, ring * 8);
-            for (let i = 0; i < count; i++) {
-                const a = i * Math.PI * 2 / count;
-                const px = x + Math.cos(a) * radius;
-                const py = y + Math.sin(a) * radius;
-                if (isFreeWithPlaced(px, py, ignoreIds, placed))
-                    return { x: px, y: py };
+    }
+    else {
+        const maxOrder = state.nodes.reduce((m, n) => Math.max(m, n.order ?? 0), -1);
+        let nextOrder = maxOrder + 1;
+        pasteOffsetCount = (pasteOffsetCount + 1) % 20;
+        const offsetDist = 40 + pasteOffsetCount * 10;
+        const idMap = new Map();
+        const newNodes = [];
+        const newNodeIds = [];
+        const existingNodeIds = new Set(originalExistingNodeIds);
+        const isFreeWithPlaced = (x, y, ignoreIds, placed) => {
+            if (!isPositionFree(x, y, ignoreIds))
+                return false;
+            for (const pn of placed) {
+                if (Math.hypot(pn.x - x, pn.y - y) < 50)
+                    return false;
+            }
+            return true;
+        };
+        const findFreeForPaste = (x, y, ignoreIds, placed) => {
+            if (isFreeWithPlaced(x, y, ignoreIds, placed))
+                return { x, y };
+            const step = 50;
+            for (let ring = 1; ring <= 8; ring++) {
+                const radius = step * ring;
+                const count = Math.max(8, ring * 8);
+                for (let i = 0; i < count; i++) {
+                    const a = i * Math.PI * 2 / count;
+                    const px = x + Math.cos(a) * radius;
+                    const py = y + Math.sin(a) * radius;
+                    if (isFreeWithPlaced(px, py, ignoreIds, placed))
+                        return { x: px, y: py };
+                }
+            }
+            return { x: x + 80, y: y + 80 };
+        };
+        // data.nodes is the planned set: cap-rejected and duplicate-id entries
+        // were already removed before custom definitions were resolved.
+        for (const orig of data.nodes) {
+            let newId = orig.id;
+            const used = new Set([...existingNodeIds, ...newNodeIds]);
+            if (used.has(newId)) {
+                const allocated = allocateLocalId('n', used, state.nextNode);
+                newId = allocated.id;
+                state.nextNode = allocated.next;
+            }
+            else {
+                state.nextNode = advanceCounterFromId(state.nextNode, newId);
+            }
+            idMap.set(orig.id, newId);
+            const cloned = cloneNode({ ...orig, id: newId, order: nextOrder++ });
+            let nx = finite(orig.x, 0) + offsetDist;
+            let ny = finite(orig.y, 0) + offsetDist;
+            // The clone is not in state.nodes yet, so nothing may be ignored:
+            // ignoring every existing id (as the merged branch did) disables the
+            // overlap check against the graph entirely. Already-placed clones are
+            // covered by findFreeForPaste's `placed` check.
+            const free = findFreeForPaste(nx, ny, new Set(), newNodes);
+            cloned.x = free.x;
+            cloned.y = free.y;
+            newNodes.push(cloned);
+            newNodeIds.push(newId);
+            existingNodeIds.add(newId);
+        }
+        const finalNewEdges = [];
+        const usedEdgeIds2 = new Set(state.edges.map(e => e.id));
+        const edgeIdMap = new Set();
+        const addEdgeWithNewId = (orig, from, to) => {
+            let nid = orig.id;
+            if (usedEdgeIds2.has(nid) || edgeIdMap.has(nid)) {
+                const usedEdgeIds = new Set([...usedEdgeIds2, ...edgeIdMap]);
+                const allocated = allocateLocalId('e', usedEdgeIds, state.nextEdge);
+                nid = allocated.id;
+                state.nextEdge = allocated.next;
+            }
+            else {
+                state.nextEdge = advanceCounterFromId(state.nextEdge, nid);
+            }
+            const ce = cloneEdge({ ...orig, id: nid, from, to });
+            finalNewEdges.push(ce);
+            edgeIdMap.add(nid);
+            usedEdgeIds2.add(nid);
+        };
+        // The set was resolved before the definitions were minted; idMap now
+        // agrees with it one-to-one (an endpoint maps iff it is being pasted).
+        for (const { entity: orig } of materializedEdges) {
+            const from = String(orig.from ?? ''), to = String(orig.to ?? '');
+            // A node dropped by the node cap has no clone; an edge pointing at it
+            // would be dangling after reload, so it is dropped here as well.
+            const carried = carriedEndpoints.get(orig);
+            if ((carried?.has('from') && !idMap.has(from)) ||
+                (carried?.has('to') && !idMap.has(to))) {
+                droppedEdges++;
+                continue;
+            }
+            if (finalNewEdges.length >= edgeCapacity) {
+                droppedEdges++;
+                continue;
+            }
+            const nf = carried?.has('from') ? idMap.get(from) : undefined;
+            const nt = carried?.has('to') ? idMap.get(to) : undefined;
+            addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
+        }
+        if (newNodes.length)
+            state.nodes.push(...newNodes);
+        if (finalNewEdges.length)
+            state.edges.push(...finalNewEdges);
+        state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        if (finalNewEdges.length)
+            invalidateGraphIndex();
+        const selNodes = newNodes.map(n => n.id);
+        const selEdges = finalNewEdges.map(e => e.id);
+        if (selNodes.length || selEdges.length) {
+            setSelection(selNodes, selEdges, selNodes.length ? { type: 'node', id: selNodes[0] } : (selEdges.length ? { type: 'edge', id: selEdges[0] } : null), false);
+        }
+        pushHistory('paste');
+        queueRender(true, true);
+        const totalPastedEdges = finalNewEdges.length;
+        if (newNodes.length)
+            toast(I18N.t('pasted_n_m', { n: newNodes.length, m: totalPastedEdges }) || `Pasted ${newNodes.length} node(s), ${totalPastedEdges} edge(s)`);
+        else if (totalPastedEdges)
+            toast(I18N.t('pasted_edges', { n: totalPastedEdges }) || `Pasted ${totalPastedEdges} edge(s)`);
+        reportDropped();
+        saveSoon();
+        return true;
+    }
+}
+async function pasteFromClipboardSource(exact) {
+    const hasInternal = Boolean(clipboardData &&
+        (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length));
+    if (pendingSystemRead) {
+        // Supersede the in-flight command. Another paste is still a request to
+        // read the CURRENT system clipboard, never an implicit request to use
+        // the older local copy.
+        pasteGeneration++;
+        pendingSystemRead = null;
+    }
+    const token = ++pasteGeneration;
+    const pending = { token };
+    // Keep the marker for the whole command: the snapshot wait below is just
+    // as cancellable as the clipboard read itself.
+    pendingSystemRead = pending;
+    try {
+        const outcome = await (async () => {
+            try {
+                return { text: (await navigator.clipboard.readText()) || '' };
+            }
+            catch (e) {
+                return { error: e };
+            }
+        })();
+        if (token !== pasteGeneration)
+            return; // superseded by another paste
+        let systemData = null;
+        let systemIssue = null;
+        let text = '';
+        if (outcome && outcome.error) {
+            systemIssue = { key: 'paste_failed', params: { msg: outcome.error?.message } };
+            // Falling back to the in-memory copy is an explicit response to an
+            // unavailable system clipboard, not a side effect of another paste.
+            if (hasInternal) {
+                toast(I18N.t('paste_local_fallback'));
+                pasteClipboardInternal(null, { exact });
+                return;
             }
         }
-        return { x: x + 80, y: y + 80 };
-    };
-    for (const orig of sortedCopyNodes) {
-        let newId = orig.id;
-        const used = new Set([...existingNodeIds, ...newNodeIds]);
-        if (used.has(newId)) {
-            let counter = state.nextNode;
-            while (used.has('n' + counter))
-                counter++;
-            newId = 'n' + counter;
-            state.nextNode = counter + 1;
-        }
         else {
-            const num = Number((newId.match(/\d+$/) || [0])[0]);
-            if (Number.isFinite(num) && num >= state.nextNode)
-                state.nextNode = num + 1;
+            text = outcome?.text || '';
         }
-        idMap.set(orig.id, newId);
-        const cloned = cloneNode({ ...orig, id: newId, order: nextOrder++ });
-        let nx = finite(orig.x, 0) + offsetDist;
-        let ny = finite(orig.y, 0) + offsetDist;
-        // The clone is not in state.nodes yet, so nothing may be ignored:
-        // ignoring every existing id (as the merged branch did) disables the
-        // overlap check against the graph entirely. Already-placed clones are
-        // covered by findFreeForPaste's `placed` check.
-        const free = findFreeForPaste(nx, ny, new Set(), newNodes);
-        cloned.x = free.x;
-        cloned.y = free.y;
-        newNodes.push(cloned);
-        newNodeIds.push(newId);
-        existingNodeIds.add(newId);
-    }
-    const finalNewEdges = [];
-    const usedEdgeIds2 = new Set(state.edges.map(e => e.id));
-    const edgeIdMap = new Set();
-    const addEdgeWithNewId = (orig, from, to) => {
-        let nid = orig.id;
-        if (usedEdgeIds2.has(nid) || edgeIdMap.has(nid)) {
-            let c = state.nextEdge;
-            while (usedEdgeIds2.has('e' + c) || edgeIdMap.has('e' + c))
-                c++;
-            nid = 'e' + c;
-            state.nextEdge = c + 1;
+        if (text.trim()) {
+            try {
+                const parsed = JSON.parse(text);
+                if (parsed && parsed.type === 'graph-editor-clipboard') {
+                    systemData = parsed;
+                }
+                else if (parsed && Array.isArray(parsed.nodes)) {
+                    systemIssue = { key: 'paste_failed', params: { msg: I18N.t('err_not_node_clipboard') } };
+                }
+                else {
+                    systemIssue = { key: 'clipboard_empty' };
+                }
+            }
+            catch (e) {
+                systemIssue = { key: 'paste_failed', params: { msg: e.message } };
+            }
         }
-        else {
-            const num = Number((nid.match(/\d+$/) || [0])[0]);
-            if (Number.isFinite(num) && num >= state.nextEdge)
-                state.nextEdge = num + 1;
+        else if (!systemIssue) {
+            systemIssue = { key: 'clipboard_empty' };
         }
-        const ce = cloneEdge({ ...orig, id: nid, from, to });
-        finalNewEdges.push(ce);
-        edgeIdMap.add(nid);
-        usedEdgeIds2.add(nid);
-    };
-    // The set was resolved before the definitions were minted; idMap now
-    // agrees with it one-to-one (an endpoint maps iff it is being pasted).
-    for (const { entity: orig } of materializedEdges) {
-        const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
-        addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
-    }
-    if (newNodes.length)
-        state.nodes.push(...newNodes);
-    if (finalNewEdges.length)
-        state.edges.push(...finalNewEdges);
-    state.nodes.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    if (finalNewEdges.length)
-        invalidateGraphIndex();
-    const selNodes = newNodes.map(n => n.id);
-    const selEdges = finalNewEdges.map(e => e.id);
-    if (selNodes.length || selEdges.length) {
-        setSelection(selNodes, selEdges, selNodes.length ? { type: 'node', id: selNodes[0] } : (selEdges.length ? { type: 'edge', id: selEdges[0] } : null), false);
-    }
-    pushHistory('paste');
-    queueRender(true, true);
-    const totalPastedEdges = finalNewEdges.length;
-    if (newNodes.length)
-        toast(I18N.t('pasted_n_m', { n: newNodes.length, m: totalPastedEdges }) || `Pasted ${newNodes.length} node(s), ${totalPastedEdges} edge(s)`);
-    else if (totalPastedEdges)
-        toast(I18N.t('pasted_edges', { n: totalPastedEdges }) || `Pasted ${totalPastedEdges} edge(s)`);
-    saveSoon();
-    return true;
-}
-async function pasteFromSystemClipboard() {
-    // Try internal clipboard first (fast path); if empty, try system clipboard
-    if (clipboardData && (clipboardData.nodes.length || clipboardData.edges.length || clipboardData.externalEdges.length)) {
-        pasteClipboardInternal();
-        return;
-    }
-    try {
-        const text = await navigator.clipboard.readText();
-        if (!text) {
+        let systemCanBeNewer = !localClipboardWrite || localClipboardWrite.state === 'published';
+        let systemRejectedByStamp = false;
+        if (localClipboardWrite?.state === 'failed') {
+            // An unavailable snapshot gives no ordering evidence: keep the local
+            // copy authoritative rather than letting an old legacy payload win.
+            const staleText = await boundedRead(localClipboardWrite.staleSystemText, undefined);
+            if (token !== pasteGeneration)
+                return; // cancelled during the snapshot wait
+            systemCanBeNewer = staleText !== undefined && text !== staleText;
+        }
+        // A genuinely newer stamped payload wins over any local write. Only a
+        // KNOWN outstanding write may REJECT a payload as obsolete: once every
+        // write has settled, even an older restored history item is the user's
+        // current clipboard content and must stay pasteable.
+        if (systemData && localClipboardWrite &&
+            compareClipboardStamps(systemData.clipboardStamp, localClipboardWrite.stamp) === true) {
+            systemCanBeNewer = true;
+        }
+        const outstandingStamp = newestOutstandingClipboardStamp();
+        if (systemData && outstandingStamp &&
+            compareClipboardStamps(systemData.clipboardStamp, outstandingStamp) === false) {
+            systemCanBeNewer = false;
+            systemRejectedByStamp = true;
+        }
+        if (token !== pasteGeneration)
+            return;
+        if (systemData && systemCanBeNewer && !systemRejectedByStamp) {
+            pasteClipboardInternal(systemData, { exact });
+            toast(I18N.t('clipboard_order_warning'));
+            return;
+        }
+        if (hasInternal) {
+            pasteClipboardInternal(null, { exact });
+            return;
+        }
+        if (systemData && !systemRejectedByStamp) {
+            pasteClipboardInternal(systemData, { exact });
+            toast(I18N.t('clipboard_order_warning'));
+            return;
+        }
+        if (systemIssue)
+            toast(I18N.t(systemIssue.key, systemIssue.params));
+        else if (systemRejectedByStamp)
             toast(I18N.t('clipboard_empty'));
-            return;
-        }
-        const data = JSON.parse(text);
-        if (data && data.type === 'graph-editor-clipboard') {
-            pasteClipboardInternal(data);
-            return;
-        }
-        // Try to parse as generic graph JSON (whole graph paste)
-        // If it looks like a graph (has nodes), import as append?
-        if (data && Array.isArray(data.nodes)) {
-            // Use append import logic as fallback
-            toast(I18N.t('paste_failed', { msg: I18N.t('err_not_node_clipboard') }));
-            return;
-        }
-        toast(I18N.t('clipboard_empty'));
     }
-    catch (e) {
-        toast(I18N.t('paste_failed', { msg: e.message }));
+    catch (error) {
+        toast(I18N.t('paste_failed', { msg: error?.message || 'Invalid clipboard data' }));
+    }
+    finally {
+        if (pendingSystemRead === pending)
+            pendingSystemRead = null;
     }
 }
+function pasteFromSystemClipboard() { return pasteFromClipboardSource(false); }
+function pasteExactFromSystemClipboard() { return pasteFromClipboardSource(true); }
 let pointerRect = null; // viewport rect captured at pointerdown, reused for the whole gesture
 // True while a node/edge drag, pan, or pinch is in progress. Suppresses
 // background deselection so an active gesture never clears the current
@@ -14326,11 +15696,14 @@ function appendImportedGraph(data, label = 'graph') {
     for (const n of sane.nodes) {
         let newId = n.id;
         if (existingIds.has(newId)) {
-            // Generate a unique ID
-            while (existingIds.has('n' + counter))
-                counter++;
-            newId = 'n' + counter;
-            counter++;
+            // Bounded allocation: an unsafe or exhausted counter cannot be
+            // incremented in a loop, so fall back to a fresh safe id instead.
+            const allocated = allocateLocalId('n', existingIds, counter);
+            newId = allocated.id;
+            counter = allocated.next;
+        }
+        else {
+            counter = advanceCounterFromId(counter, newId);
         }
         existingIds.add(newId);
         idMap.set(n.id, newId);
@@ -14379,10 +15752,12 @@ function appendImportedGraph(data, label = 'graph') {
         e.to = newTo;
         let newId = e.id;
         if (existingEdgeIds.has(newId)) {
-            while (existingEdgeIds.has('e' + edgeCounter))
-                edgeCounter++;
-            newId = 'e' + edgeCounter;
-            edgeCounter++;
+            const allocated = allocateLocalId('e', existingEdgeIds, edgeCounter);
+            newId = allocated.id;
+            edgeCounter = allocated.next;
+        }
+        else {
+            edgeCounter = advanceCounterFromId(edgeCounter, newId);
         }
         existingEdgeIds.add(newId);
         e.id = newId;
@@ -18418,10 +19793,13 @@ function wireUi() {
     bindClipboardButton('btnCut', cutSelectedNodes);
     bindClipboardButton('btnDuplicate', duplicateSelectedNodes);
     bindClipboardButton('btnPaste', pasteFromSystemClipboard);
+    bindClipboardButton('btnPasteExact', pasteExactFromSystemClipboard);
     bindClipboardButton('btnCopy2', copySelectedNodes);
     bindClipboardButton('btnCut2', cutSelectedNodes);
     bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
     bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
+    bindClipboardButton('btnPasteExact2', pasteExactFromSystemClipboard);
+    bindClipboardButton('btnClipboardRecovery', recoverClipboardPublication);
     const chkPreserve = document.getElementById('chkCopyPreserve');
     if (chkPreserve) {
         chkPreserve.checked = state.settings.copyPreserveExternal !== false;
@@ -18441,14 +19819,17 @@ function wireUi() {
         if (!mod)
             return;
         const target = ev.target;
-        const isInput = target && (target.matches && (target.matches('input, textarea, [contenteditable]') || target.isContentEditable));
-        // If focus is in matrix/edge input that is readonly (selection mode), we still want clipboard shortcuts
+        const isInput = target && (target.matches && (target.matches('input, textarea, select, [contenteditable]') || target.isContentEditable));
+        // Even matrix fields are editable when they are not read-only. Only a
+        // read-only matrix cell represents graph selection, not text entry.
         const readonlyInput = isInput && target.readOnly;
-        if (isInput && !readonlyInput && !(target.matches && target.matches('.matrix-input,.matrix-label-input'))) {
-            // typing in a visible text field — don't hijack
+        if (isInput && !readonlyInput)
             return;
-        }
         const key = ev.key.toLowerCase();
+        // Option changes `key` on Mac layouts (V becomes "√"). Only the
+        // modified exact-paste command needs the physical-key fallback; plain
+        // Cmd/Ctrl+V must respect the produced key (e.g. KeyV -> "k" on Dvorak).
+        const isV = key === 'v' || (ev.altKey && ev.code === 'KeyV');
         if (key === 'c' && !ev.shiftKey && !ev.altKey) {
             // Ctrl+C copy
             if (state.selection?.nodes?.length || state.selection?.edges?.length || state.selected) {
@@ -18462,7 +19843,14 @@ function wireUi() {
                 cutSelectedNodes();
             }
         }
-        else if (key === 'v' && !ev.shiftKey && !ev.altKey) {
+        else if (isV && (ev.shiftKey || ev.altKey)) {
+            // Ctrl/Cmd+Alt+V (Illustrator-style "paste in place") and
+            // Ctrl/Cmd+Shift+V both restore the copied coordinates. The latter is
+            // normally "paste as plain text" in a browser; here the canvas owns it.
+            ev.preventDefault();
+            pasteExactFromSystemClipboard();
+        }
+        else if (isV && !ev.shiftKey && !ev.altKey) {
             ev.preventDefault();
             pasteFromSystemClipboard();
         }

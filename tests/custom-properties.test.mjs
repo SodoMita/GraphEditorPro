@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM, VirtualConsole } from 'jsdom';
+import { createWebLocks } from './helpers/web-locks.mjs';
 
 const html = await readFile('index.html', 'utf8');
 
@@ -15,6 +16,7 @@ function createEditorDom(savedGraph = null) {
   const dom = new JSDOM(source, {
     runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://offline.test/', virtualConsole,
     beforeParse(window) {
+      Object.defineProperty(window.navigator, 'locks', { configurable:true, value:createWebLocks() });
       window.matchMedia = () => ({ matches:false, addListener(){}, removeListener(){}, addEventListener(){}, removeEventListener(){} });
       window.alert = () => {};
       window.confirm = () => true;

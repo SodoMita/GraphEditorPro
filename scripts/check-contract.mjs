@@ -53,6 +53,25 @@ inv('import paths never re-decode an already-internal identity (originFromForeig
 inv('exact-pair merge requires recorded origin equality (no "no origin = free merge")', /pairOrigin === incOriginPair/.test(imp) && !imp.includes('!pairOrigin || pairOrigin === incOriginPair'));
 inv('exact-pair default identity is the existing definition\'s own id', /String\(\(pairHit as AnyRecord\)\?\.origin \?\? ''\)\.trim\(\) \|\| String\(pairHit\?\.id \?\? ''\)\.trim\(\)/.test(imp));
 
+// --- Clipboard/keyboard ingress guards ---
+const ui = read('80-ui.ts');
+inv('editable matrix fields keep native shortcuts (only read-only inputs route to the graph)', /if\(isInput && !readonlyInput\) return;/.test(ui));
+inv('plain paste respects the produced key; physical KeyV is an Alt-only fallback', /const isV = key === 'v' \|\| \(ev\.altKey && ev\.code === 'KeyV'\)/.test(ui));
+inv('clipboard publication is serialized instead of issuing overlapping writes', /function publishClipboardCopy[\s\S]{0,400}?queuedClipboardWrite = attempt;/.test(paste));
+inv('only one clipboard publication turn is held at a time', /let clipboardBusy = false;/.test(paste));
+inv('the newest copy is rechecked after every publication await', /attempt\.seq !== localClipboardSeq/.test(paste));
+inv('the publication verification read is bounded', /CLIPBOARD_PUBLISH_TIMEOUT_MS/.test(paste));
+inv('cross-tab publication is serialized and ordered by stamp', /navigator\.locks/.test(paste) && /CLIPBOARD_INFLIGHT_KEY/.test(paste) && /awaitPublishTurn/.test(paste));
+inv('an invalid patch is rejected before mutation', /validatePatchShape\(change\.patch\)/.test(readFileSync(join(root, 'src/core/graph-patch.ts'), 'utf8')));
+
+// --- Reusable change core ---
+inv('exact paste applies through the DOM-free GraphPatchCore', /GraphPatchCore\.applyExactPatch\(state/.test(paste));
+inv('shared safe-counter/allocator helpers delegate to the core', /GraphPatchCore\.safeCounter/.test(core) && /GraphPatchCore\.allocateId/.test(paste) && /GraphPatchCore\.advanceCounter/.test(paste));
+const patchCore = readFileSync(join(root, 'src/core/graph-patch.ts'), 'utf8');
+inv('server changes reuse the same exact-patch core', /function applyServerChange/.test(patchCore));
+inv('server patches validate supplied endpoints against the resulting node set', /!nodeById\.has\(from\)/.test(patchCore) && /!nodeById\.has\(to\)/.test(patchCore));
+inv('server changes distinguish partial and rejected work from acknowledged work', /status: 'applied' \| 'partial' \| 'rejected'/.test(patchCore) && /if\(status === 'applied'\) options\.appliedIds\?\.add/.test(patchCore));
+
 // --- Paste exact-pair branch: same rule (P3, ⑳) ---
 inv('paste exact-pair: an origin-less destination is evidence only by its own id', /String\(existing\?\.origin \?\? ''\)\.trim\(\) \|\| String\(existing\?\.id \?\? ''\)\.trim\(\)/.test(paste));
 inv('paste no longer free-merges an unproven foreign key onto an origin-less property', !paste.includes('if(!existingOrigin) return true;'));

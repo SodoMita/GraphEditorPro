@@ -42,11 +42,18 @@ The TypeScript files are deliberately ordered in `tsconfig.json`. They form one 
 | `src/app/80-ui.ts` | Event wiring and responsive view controls |
 | `src/app/90-bootstrap.ts` | Application initialization |
 | `src/app/types.d.ts` | Shared graph and UI type declarations |
+| `src/core/graph-patch.ts` | DOM-free graph change core used by clipboard paste and reusable by server updates |
 | `src/app/00-compat.ts` | ES2020 fallbacks for the ES2023 array helpers used in the app |
 | `src/template.html` | Semantic page markup |
 | `src/styles.css` | All application styles |
 
 `index.html` is generated and should not be edited directly.
+
+`src/core/graph-patch.ts` is the reusable change-application layer. `GraphPatchCore.applyExactPatch(target, patch, options)` mutates a plain graph-shaped target (`nodes`, `edges`, `nextNode`, `nextEdge`) and reports what changed; it has no DOM, clipboard, history, or toast dependencies. `GraphPatchCore.applyServerChange(target, change, options)` wraps it with idempotency and monotonic-revision checks for server-delivered patches. Its patch shape and built-in entity fields are validated before anything is mutated: malformed fields, missing IDs and duplicate IDs return `invalid`, leave the target untouched and are not acknowledged, so a corrected change can be resent at the same revision. Server changes enforce the editor's 3,000-node and 8,000-edge limits even when options are omitted; callers may choose stricter limits but cannot raise those ceilings. Its result distinguishes `applied`, `partial`, and `rejected`: work affected by the document caps is not acknowledged, so the caller can retry it when capacity returns. Clipboard paste in `src/app/30-graph-editing.ts` is a thin adapter that validates clipboard data, calls the same core, then performs selection/history/render/save side effects. The core is an ordinary TypeScript module: `import { GraphPatchCore } from './src/core/graph-patch.js'`. After `npm run build:core` (also included in `npm run build`), JavaScript and declarations are available at `dist/core/graph-patch.js` and `.d.ts`, or through the package subpath `graph-editor-pro/core`. The offline HTML bundles this same implementation inline. Server custom values must use canonical keys backed by definitions in `target.customAttributes`, with values that survive the loader unchanged; absent definitions and values that the loader would coerce are rejected before mutation. Validation uses the loader's shared coercion policy, so stated empty and other verbatim numeric/boolean strings remain valid. Server patches apply supplied node order changes, while exact clipboard paste preserves the existing nodes' order; other core callers can opt in via `applyExistingNodeOrder`. Legacy `directed` updates synchronize the authoritative `direction` field.
+
+## Paste in place
+
+`Ctrl+V` (⌘+V) pastes the copied nodes and edges with an increasing offset and never reuses the copied ids. The **Paste in place** button and `Ctrl+Alt+V` / `Ctrl+Shift+V` (⌘+Option+V / ⌘+Shift+V) paste the same payload at its original coordinates instead. Ids already present in the document are updated in place — only fields carried by the clipboard change, so unrelated node/edge data, custom values and omitted coordinates survive — while missing ids are created at their copied coordinates. Repeating an in-place paste is therefore idempotent rather than piling up clones. A readable system-clipboard payload wins over the in-memory copy once the latest local write succeeds; a failed or pending write leaves the local copy authoritative until the system clipboard actually changes again (a newer cross-tab copy). Clipboard fields are normalized with the loader's validation rules; edges resolve through the untrimmed raw node IDs and uncarried endpoints must match a host ID exactly. Both paste modes stop at the same 3,000-node / 8,000-edge limits as the loader — entities dropped there never leave orphan custom definitions behind, and definition changes are undoable.
 
 ## Moving selections: transform gizmos
 
@@ -162,3 +169,36 @@ The interactive-rendering model mirrors the mechanisms draw.io uses, verified ag
 | Drag feedback | `mxGraphHandler.updateLivePreview` repaints moved states and all connected edges live | connected edges follow drags live up to a 2000-edge budget, then freeze until release |
 | Undo history | `mxUndoManager` caps at 100 entries (delta edits) | 100 entries plus a total-size cap, since this editor stores full-state snapshots |
 | Off-screen culling | none — SVG clips at paint time | none by default, plus an optional order-based visible-range filter that removes non-visible nodes from the DOM entirely |
+
+## Clipboard publication
+
+Graph copies publish under an **origin-wide Web Lock**, held until `writeText`
+settles. Tabs announce pending copy intents before waiting; a later copy can
+recognize an earlier pending predecessor even if neither has reached the lock.
+Ambiguous equal timestamps across tabs fail closed. Before a delayed publication,
+bounded reads verify that the clipboard is still the pre-copy content or a
+known predecessor. A changed, unreadable, or stalled clipboard keeps the copy
+local and reports the failure. Lock waiting is cancelled after 30 seconds; it
+never cancels or steals an active write.
+
+**Different sites and downloaded instances do not share Web Locks or storage.**
+A delayed write at one origin can overwrite a newer copy from another origin,
+and a fresh tab cannot detect which clipboard item is newer. Graph pastes show
+a warning rather than silently claiming that system clipboard ordering is
+known. Clipboard-history items remain pasteable; the warning does not reject
+them. Use a single origin or export/import JSON to avoid cross-origin copy races.
+
+An in-flight marker guards against a tab disappearing while a browser write
+might still complete. If it remains after a tab is lost, subsequent copies are
+local only. To recover, close **all** Graph Editor tabs, completely restart the
+browser, then reopen the editor and choose **Edit → Clipboard recovery**. The
+confirmation explains why these steps are required; recovery refuses to clear a
+marker while another same-origin tab holds the lock. Never confirm recovery
+while an old write could still complete.
+
+Without Web Locks or usable site storage, system graph publication is disabled
+rather than risking unordered writes. The editor reports this separately from
+an abandoned write: enable site storage or use a browser supporting Web Locks,
+or export JSON and import it in the destination document. After a local-only
+Cut, use Undo before exporting. Ordinary system clipboard paste remains
+available, and the shared stamp registry is not used to reject restored history.
