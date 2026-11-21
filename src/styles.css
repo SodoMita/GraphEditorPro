@@ -403,7 +403,7 @@
     .matrix-controls .field{font-size:0.71875rem}
     .matrix-input{
       width:62px; min-width:44px; background:rgba(2,6,23,.55); border:1px solid var(--control-border); color:#dbeafe;
-      border-radius:7px; padding:4px 5px; text-align:center; min-height:28px;
+      border-radius:0; padding:4px 5px; text-align:center; min-height:28px;
     }
     .matrix-input:focus{outline:none; border-color:var(--accent)}
     /* Matrix inputs inside .field labels must keep their compact size —
@@ -417,7 +417,7 @@
     .matrix-input.matrix-selected,.matrix-label-input.matrix-selected{border-color:var(--accent)!important; box-shadow:0 0 0 2px rgba(34,211,238,.16)}
     .matrix-label-input{
       width:80px; background:transparent; border:1px solid transparent; color:#bfdbfe; text-align:center;
-      border-radius:6px; padding:3px;
+      border-radius:0; padding:3px;
     }
     .matrix-label-input:focus{background:rgba(2,6,23,.55); border-color:var(--accent); outline:none}
     .matrix-header-cell{display:flex; flex-direction:column; align-items:center; gap:3px; min-width:72px}
@@ -425,10 +425,10 @@
     .matrix-header-cell .matrix-label-input{width:72px; min-width:56px}
     .matrix-header-cell.row-head-cell .matrix-label-input{flex:1}
     .matrix-node-controls{display:flex; align-items:center; gap:2px}
-    .matrix-node-controls .btn.small.icon{width:22px; min-width:22px; height:22px; min-height:22px; padding:0; display:grid; place-items:center; border-radius:6px}
+    .matrix-node-controls .btn.small.icon{width:22px; min-width:22px; height:22px; min-height:22px; padding:0; display:grid; place-items:center; border-radius:0}
     .matrix-node-controls .btn.small.icon .ui-icon{width:12px;height:12px}
     .matrix-node-controls .btn[disabled]{opacity:.35; pointer-events:none}
-    .matrix-order-badge{font-size:0.625rem; color:var(--muted); background:rgba(2,6,23,.4); border:1px solid var(--line); border-radius:6px; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
+    .matrix-order-badge{font-size:0.625rem; color:var(--muted); background:rgba(2,6,23,.4); border:1px solid var(--line); border-radius:0; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
     .clipboard-controls .btn.small{flex:0 0 auto}
     .field.checkbox{display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--muted)}
     .field.checkbox input[type="checkbox"]{width:14px; height:14px}
@@ -438,8 +438,8 @@
     th,td{border:1px solid rgba(51,65,85,.55); padding:5px 7px; background:rgba(2,6,23,.3); white-space:nowrap; text-align:center}
     th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
     .row-head{position:sticky; left:0; z-index:3; text-align:left}
-    .table-scroll{overflow:auto; max-height:none; border-radius:8px; contain:layout; transform:translateZ(0); -webkit-overflow-scrolling:touch}
-    table thead th{transform:translateZ(0)}
+    .table-scroll{overflow:auto; max-height:none; border-radius:0; contain:layout; -webkit-overflow-scrolling:touch}
+    table thead th{position:sticky; top:0}
 
     /* ---------- Results / output ---------- */
     .result-box{
