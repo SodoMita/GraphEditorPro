@@ -1363,23 +1363,39 @@
       if('type' in c) c.type = sanitizeEntityType(c.type);
       return c;
     };
-    const cloneClipboardData = (src: AnyRecord) => ({
-      // Node/edge cloning normalizes the carried type (non-string values
-      // included); the clipboard sanitizer then keeps only fields the app
-      // itself writes, so foreign payloads cannot corrupt a live entity.
-      nodes: (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord)
-        .map((n: AnyRecord) => sanitizeClipboardEntity(cloneClipboardNode(n), 'node'))
-        .filter((n): n is AnyRecord => n !== null),
-      edges: (Array.isArray(src.edges) ? src.edges : []).filter(isRecord)
-        .map((e: AnyRecord) => sanitizeClipboardEntity(cloneClipboardEdge(e), 'edge'))
-        .filter((e): e is AnyRecord => e !== null),
-      externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).filter(isRecord)
-        .map((e: AnyRecord) => sanitizeClipboardEntity(cloneClipboardEdge(e), 'edge'))
-        .filter((e): e is AnyRecord => e !== null),
-      customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
-        .filter(isRecord)
-        .map((def: AnyRecord) => ({ ...def })),
-    });
+    const cloneClipboardData = (src: AnyRecord) => {
+      // Keep the raw namespace until all node identities are allocated. Two
+      // different raw ids can normalize to the same base; like the loader,
+      // allocate unique ids and map each raw endpoint to its own node.
+      const usedNodeIds = new Set<string>();
+      const nodeReferences = new Map<string, string>();
+      const nodes = (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord)
+        .map((raw: AnyRecord) => {
+          const node = sanitizeClipboardEntity(cloneClipboardNode(raw), 'node');
+          const rawId = clipboardText(raw.id, Number.MAX_SAFE_INTEGER, true);
+          if(!node || !rawId) return null;
+          node.id = uniqueSafeId(rawId.slice(0, 200), 'n', usedNodeIds);
+          if(!nodeReferences.has(rawId)) nodeReferences.set(rawId, node.id);
+          return node;
+        }).filter((n): n is AnyRecord => n !== null);
+      const readEdges = (entries: unknown) => (Array.isArray(entries) ? entries : []).filter(isRecord)
+        .map((raw: AnyRecord) => {
+          const edge = sanitizeClipboardEntity(cloneClipboardEdge(raw), 'edge');
+          if(!edge) return null;
+          for(const endpoint of ['from', 'to']){
+            const rawId = clipboardText(raw[endpoint], Number.MAX_SAFE_INTEGER, true);
+            if(rawId && nodeReferences.has(rawId)) edge[endpoint] = nodeReferences.get(rawId);
+          }
+          return edge;
+        }).filter((e): e is AnyRecord => e !== null);
+      return {
+        nodes,
+        edges: readEdges(src.edges),
+        externalEdges: readEdges(src.externalEdges),
+        customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
+          .filter(isRecord).map((def: AnyRecord) => ({ ...def })),
+      };
+    };
     let data = null;
     if(fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard'){
       data = cloneClipboardData(fromSystemClipboard);

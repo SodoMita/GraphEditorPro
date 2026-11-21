@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { createWebLocks } from './helpers/web-locks.mjs';
+import { GraphPatchCore } from '../dist/core/graph-patch.js';
 
 const html = await readFile('index.html', 'utf8');
 
@@ -588,7 +589,7 @@ test('a second paste does not fall back to an older local copy while reading', a
   dom.window.close();
 });
 
-test('offset paste iterates planned nodes so duplicate normalized ids paste once', async () => {
+test('offset paste allocates distinct ids for colliding normalized nodes', async () => {
   const { dom, errors } = createEditorDom(baseGraph);
   const { window } = dom; const { document } = window;
   await settle(window, 80);
@@ -605,11 +606,13 @@ test('offset paste iterates planned nodes so duplicate normalized ids paste once
   await settle(window, 120);
 
   const graph = exportGraph(document);
-  assert.equal(graph.nodes.length, 3, 'only the first normalized id is pasted');
+  assert.equal(graph.nodes.length, 4, 'both raw identities survive normalization');
   const one = graph.nodes.find(n => n.id === 'one');
+  const second = graph.nodes.find(n => n.id === 'one-2');
   assert.equal(one.label, 'First');
-  assert.deepEqual(one.custom, { p1: 'kept' }, 'the rejected duplicate cannot smuggle in a value');
-  assert.match(document.querySelector('.toast-stack').textContent, /skipped/i);
+  assert.deepEqual(one.custom, { p1: 'kept' });
+  assert.equal(second.label, 'Second');
+  assert.deepEqual(second.custom, { p1: 'dropped' });
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
@@ -1560,19 +1563,55 @@ test('skipped conflicting clipboard definitions cannot overwrite host node or ed
   }
 });
 
-test('edges to retained duplicate-normalized nodes survive both paste modes', async () => {
+test('edges resolve their original raw identities when normalized ids collide', async () => {
   for(const exact of [true,false]){
     const {dom,errors} = createEditorDom(baseGraph), {window} = dom;
     await settle(window,80);
     setClipboard(window,{type:'graph-editor-clipboard',nodes:[
       {id:'one!',label:'First',x:100,y:0,order:0}, {id:'one',label:'Duplicate',x:200,y:0,order:1},
-    ],edges:[{id:'self',from:'one!',to:'one!',label:'loop'}],externalEdges:[]});
+    ],edges:[{id:'self',from:'one!',to:'one!',label:'loop'}, {id:'other',from:'one',to:'one!',label:'other'}],externalEdges:[]});
     hotkey(window,'v',{ctrlKey:true,...(exact ? {altKey:true} : {})}); await settle(window,140);
     const out = exportGraph(window.document);
     const node = out.nodes.find(n => n.label === 'First');
     const edge = out.edges.find(e => e.label === 'loop');
     assert.ok(node); assert.ok(edge); assert.equal(edge.from,node.id); assert.equal(edge.to,node.id);
-    assert.equal(out.nodes.some(n => n.label === 'Duplicate'),false);
+    const duplicate = out.nodes.find(n => n.label === 'Duplicate');
+    const other = out.edges.find(e => e.label === 'other');
+    assert.ok(duplicate); assert.notEqual(node.id, duplicate.id);
+    assert.ok(other); assert.equal(other.from, duplicate.id); assert.equal(other.to, node.id);
+    assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
+  }
+});
+
+
+test('accepted server custom values survive a real editor reload', async () => {
+  const key = 'x'.repeat(128);
+  const target = structuredClone(baseGraph);
+  target.nextNode = 1; target.nextEdge = 2;
+  target.customAttributes = [{id:key,scope:'node',type:'string'}, {id:'count',scope:'node',type:'int'}];
+  target.nodes[0].custom = {[key]:'original',count:1};
+  const before = structuredClone(target), ids = new Set();
+  for(const custom of [{[key+'extra']:'corrupt'}, {undefinedField:'lost'}]){
+    const result = GraphPatchCore.applyServerChange(target, {id:'invalid',revision:1,patch:{nodes:[{id:'a',custom}]}}, {appliedIds:ids});
+    assert.equal(result.status,'invalid'); assert.deepEqual(target,before); assert.equal(ids.size,0);
+  }
+  assert.equal(GraphPatchCore.applyServerChange(target, {id:'valid',revision:1,patch:{nodes:[{id:'a',custom:{count:7}}]}}, {appliedIds:ids}).status,'applied');
+  const {dom,errors} = createEditorDom(target); await settle(dom.window,100);
+  const restored = exportGraph(dom.window.document).nodes.find(n => n.id === 'a');
+  assert.equal(restored.custom[key], 'original'); assert.equal(restored.custom.count,7);
+  assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
+});
+
+test('long raw clipboard ids with the same prefix retain distinct endpoints', async () => {
+  const prefix = 'z'.repeat(220), first = prefix+'a', second = prefix+'b';
+  for(const exact of [true,false]){
+    const {dom,errors} = createEditorDom(baseGraph), {window} = dom; await settle(window,80);
+    setClipboard(window,{type:'graph-editor-clipboard',nodes:[{id:first,label:'First',x:0,y:0},{id:second,label:'Second',x:100,y:0}],
+      edges:[{id:'long-edge',from:first,to:second,label:'long link'}],externalEdges:[]});
+    hotkey(window,'v',{ctrlKey:true,...(exact ? {altKey:true} : {})}); await settle(window,150);
+    const graph = exportGraph(window.document), a = graph.nodes.find(n => n.label === 'First'), b = graph.nodes.find(n => n.label === 'Second');
+    const edge = graph.edges.find(e => e.label === 'long link');
+    assert.ok(a && b && edge); assert.notEqual(a.id,b.id); assert.equal(edge.from,a.id); assert.equal(edge.to,b.id);
     assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
   }
 });

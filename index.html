@@ -2052,6 +2052,48 @@ const GraphPatchCore = (() => {
         }
         return null;
     }
+    // The loader truncates custom keys and discards keys lacking a surviving
+    // definition. Validate against the same first-wins definition namespace and
+    // reject values whose type would be coerced on reload.
+    function validateServerCustomValues(target, patch) {
+        const definitions = new Map();
+        const source = Array.isArray(target.customAttributes) ? target.customAttributes.slice(0, 2000) : [];
+        for (const def of source) {
+            if (!isRecord(def))
+                continue;
+            const rawId = String(def.id ?? '');
+            const id = rawId.trim().slice(0, 128);
+            if (!id || !['node', 'edge', 'graph', 'all'].includes(def.scope) || definitions.has(id))
+                continue;
+            definitions.set(id, { scope: def.scope, canonical: typeof def.id === 'string' && rawId === id,
+                type: ['string', 'boolean', 'int', 'long', 'float', 'double'].includes(def.type) ? def.type : 'string' });
+        }
+        for (const [scope, entities] of [['node', patch.nodes], ['edge', patch.edges]]) {
+            for (const entity of entities || []) {
+                if (!entity.custom)
+                    continue;
+                for (const [key, value] of Object.entries(entity.custom)) {
+                    if (!key || key !== key.trim() || key.length > 128)
+                        return `patch.${scope}s has a noncanonical custom key`;
+                    const def = definitions.get(key);
+                    if (!def || !def.canonical)
+                        return `patch.${scope}s has an undefined or noncanonical custom definition`;
+                    // Other-scope values survive as orphans verbatim. Applicable values
+                    // must already be canonical so coerceCustomValue does not change them.
+                    if (def.scope !== scope && def.scope !== 'all')
+                        continue;
+                    const canonical = def.type === 'string' ? typeof value === 'string'
+                        : def.type === 'boolean' ? typeof value === 'boolean'
+                            : def.type === 'int' ? typeof value === 'number' && Number.isInteger(value) && value >= -2147483648 && value <= 2147483647
+                                : def.type === 'long' ? typeof value === 'number' && Number.isSafeInteger(value)
+                                    : typeof value === 'number' && Number.isFinite(value);
+                    if (!canonical)
+                        return `patch.${scope}s has a noncanonical custom value`;
+                }
+            }
+        }
+        return null;
+    }
     // Apply an exact (in-place) patch to a graph-shaped target. The target's
     // nodes/edges arrays and next counters are mutated; everything else is
     // returned as a report so the caller owns history/UI/side effects.
@@ -2161,6 +2203,17 @@ const GraphPatchCore = (() => {
                 edge.from = from;
             if (suppliedTo)
                 edge.to = to;
+            // direction is authoritative in the renderer. A legacy directed-only
+            // patch must update it as well, and both fields must agree on reload.
+            if (Object.prototype.hasOwnProperty.call(edge, 'direction') || Object.prototype.hasOwnProperty.call(edge, 'directed')) {
+                const raw = Object.prototype.hasOwnProperty.call(edge, 'direction') ? edge.direction : edge.directed;
+                const text = String(raw ?? '').trim().toLowerCase();
+                const direction = raw === false || text === 'false' || text === '0' || text === 'none' || text === 'undirected' || text === 'undirected (no ends)'
+                    ? 'undirected' : text === 'mutual' || text === 'both' || text === 'bidirected' || text === 'bidirectional' || text === 'mutual (both ends)' || text.startsWith('bi')
+                    ? 'mutual' : 'directed';
+                edge.direction = direction;
+                edge.directed = direction !== 'undirected';
+            }
             const existing = edgeById.get(id);
             if (existing) {
                 if (mergeCarried(existing, edge))
@@ -2212,6 +2265,10 @@ const GraphPatchCore = (() => {
         const shapeProblem = validatePatchShape(change.patch);
         if (shapeProblem) {
             return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: shapeProblem };
+        }
+        const customProblem = validateServerCustomValues(target, change.patch);
+        if (customProblem) {
+            return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: customProblem };
         }
         const existingEdgeIds = new Set(target.edges.map(edge => String(edge.id)));
         for (const edge of change.patch.edges || []) {
@@ -10489,23 +10546,43 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
             c.type = sanitizeEntityType(c.type);
         return c;
     };
-    const cloneClipboardData = (src) => ({
-        // Node/edge cloning normalizes the carried type (non-string values
-        // included); the clipboard sanitizer then keeps only fields the app
-        // itself writes, so foreign payloads cannot corrupt a live entity.
-        nodes: (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord)
-            .map((n) => sanitizeClipboardEntity(cloneClipboardNode(n), 'node'))
-            .filter((n) => n !== null),
-        edges: (Array.isArray(src.edges) ? src.edges : []).filter(isRecord)
-            .map((e) => sanitizeClipboardEntity(cloneClipboardEdge(e), 'edge'))
-            .filter((e) => e !== null),
-        externalEdges: (Array.isArray(src.externalEdges) ? src.externalEdges : []).filter(isRecord)
-            .map((e) => sanitizeClipboardEntity(cloneClipboardEdge(e), 'edge'))
-            .filter((e) => e !== null),
-        customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
-            .filter(isRecord)
-            .map((def) => ({ ...def })),
-    });
+    const cloneClipboardData = (src) => {
+        // Keep the raw namespace until all node identities are allocated. Two
+        // different raw ids can normalize to the same base; like the loader,
+        // allocate unique ids and map each raw endpoint to its own node.
+        const usedNodeIds = new Set();
+        const nodeReferences = new Map();
+        const nodes = (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord)
+            .map((raw) => {
+            const node = sanitizeClipboardEntity(cloneClipboardNode(raw), 'node');
+            const rawId = clipboardText(raw.id, Number.MAX_SAFE_INTEGER, true);
+            if (!node || !rawId)
+                return null;
+            node.id = uniqueSafeId(rawId.slice(0, 200), 'n', usedNodeIds);
+            if (!nodeReferences.has(rawId))
+                nodeReferences.set(rawId, node.id);
+            return node;
+        }).filter((n) => n !== null);
+        const readEdges = (entries) => (Array.isArray(entries) ? entries : []).filter(isRecord)
+            .map((raw) => {
+            const edge = sanitizeClipboardEntity(cloneClipboardEdge(raw), 'edge');
+            if (!edge)
+                return null;
+            for (const endpoint of ['from', 'to']) {
+                const rawId = clipboardText(raw[endpoint], Number.MAX_SAFE_INTEGER, true);
+                if (rawId && nodeReferences.has(rawId))
+                    edge[endpoint] = nodeReferences.get(rawId);
+            }
+            return edge;
+        }).filter((e) => e !== null);
+        return {
+            nodes,
+            edges: readEdges(src.edges),
+            externalEdges: readEdges(src.externalEdges),
+            customAttributes: (Array.isArray(src.customAttributes) ? src.customAttributes : [])
+                .filter(isRecord).map((def) => ({ ...def })),
+        };
+    };
     let data = null;
     if (fromSystemClipboard && fromSystemClipboard.type === 'graph-editor-clipboard') {
         data = cloneClipboardData(fromSystemClipboard);

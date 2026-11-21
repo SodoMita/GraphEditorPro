@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { GraphPatchCore } from '../dist/core/graph-patch.js';
 
 const compiled = await readFile('.build/app.js', 'utf8');
 const instrumented = compiled.replace(
@@ -20,6 +21,7 @@ const inertElement = new Proxy({}, {
 });
 const context = vm.createContext({
   console,
+  GraphPatchCore,
   document: {
     querySelector: () => inertElement,
     querySelectorAll: () => [],

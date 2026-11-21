@@ -2,18 +2,16 @@
 // TypeScript source directly and evaluates it in Node: no index.html, no DOM,
 // no clipboard. That is the boundary a future server transport can reuse too.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import ts from 'typescript';
+import { GraphPatchCore as core } from '../dist/core/graph-patch.js';
 
-const source = await readFile('src/core/graph-patch.ts', 'utf8');
-const { outputText } = ts.transpileModule(source, {
-  compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None, removeComments: true },
-});
-const core = new Function(`${outputText}\nreturn GraphPatchCore;`)();
+const outputText = await readFile('dist/core/graph-patch.js', 'utf8');
 
 const graph = () => ({
   title: 'server-ready',
+  customAttributes: [{id:'p1',scope:'node',type:'string'}, {id:'p2',scope:'node',type:'string'}],
   nodes: [{ id: 'a', label: 'Old', x: -200, y: 0, order: 0, custom: { p1: 'old', p2: 'keep' } }],
   edges: [{ id: 'e1', from: 'a', to: 'a', label: 'link', weight: 'keep' }],
   nextNode: 2,
@@ -21,7 +19,7 @@ const graph = () => ({
 });
 
 test('the core has no DOM or transport dependency', () => {
-  assert.doesNotMatch(outputText, /\b(document|navigator|localStorage|window)\b/);
+  assert.doesNotMatch(outputText.replace(/\/\/[^\n]*/g, ''), /\b(document|navigator|localStorage|window)\b/);
   assert.equal(typeof core.applyExactPatch, 'function');
   assert.equal(typeof core.applyServerChange, 'function');
 });
@@ -330,4 +328,49 @@ test('new server entities without labels get safe string defaults', () => {
   assert.equal(result.status,'applied');
   assert.equal(target.nodes[0].label.padEnd(2), '  ');
   assert.equal(target.edges[0].label, '');
+});
+
+
+test('a TypeScript consumer can import the real core module', () => {
+  execFileSync(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '--strict', '--skipLibCheck', '--target', 'ES2020', '--module', 'Node16', '--moduleResolution', 'Node16', 'tests/fixtures/core-consumer.ts'], { stdio:'pipe' });
+});
+
+test('server custom values require canonical keys and surviving definitions', () => {
+  const long = 'x'.repeat(128);
+  const target = graph();
+  target.customAttributes.push({id:long, scope:'node', type:'string'}, {id:'n',scope:'node',type:'int'}, {id:'e',scope:'edge',type:'string'});
+  const before = structuredClone(target), appliedIds = new Set();
+  for(const custom of [{[long+'extra']:'overwrite'}, {missing:'lost'}, {' p1':'bad'}, {n:'123'}]){
+    const result = core.applyServerChange(target, {id:'bad',revision:1,patch:{nodes:[{id:'a',label:'changed',custom}]}}, {appliedIds});
+    assert.equal(result.status,'invalid'); assert.deepEqual(target,before); assert.equal(appliedIds.size,0);
+  }
+  const valid = core.applyServerChange(target, {id:'good',revision:1,patch:{nodes:[{id:'a',custom:{n:123,e:'orphan'}}]}}, {appliedIds});
+  assert.equal(valid.status,'applied');
+  assert.equal(target.nodes[0].custom.n,123); assert.equal(target.nodes[0].custom.e,'orphan');
+});
+
+test('server direction patches synchronize authoritative and legacy fields', () => {
+  const target = graph();
+  target.edges[0].direction = 'directed'; target.edges[0].directed = true;
+  const change = (id, revision, edge) => core.applyServerChange(target, {id,revision,patch:{edges:[{id:'e1',...edge}]}});
+  assert.equal(change('off',1,{directed:false}).status, 'applied');
+  assert.equal(target.edges[0].direction,'undirected'); assert.equal(target.edges[0].directed,false);
+  assert.equal(change('both',2,{direction:'mutual'}).status, 'applied');
+  assert.equal(target.edges[0].direction,'mutual'); assert.equal(target.edges[0].directed,true);
+  assert.equal(change('priority',3,{direction:'directed',directed:false}).status, 'applied');
+  assert.equal(target.edges[0].direction,'directed'); assert.equal(target.edges[0].directed,true);
+});
+
+
+test('the package core subpath is importable as an ES module', async () => {
+  const imported = await import('graph-editor-pro/core');
+  assert.equal(imported.GraphPatchCore, core);
+});
+
+test('server custom definitions are checked against the first loader-surviving identity', () => {
+  const key = 'k'.repeat(128), target = graph();
+  target.customAttributes.unshift({id:key+'suffix',scope:'node',type:'int'}, {id:key,scope:'node',type:'string'});
+  const before = structuredClone(target), ids = new Set();
+  const result = core.applyServerChange(target, {id:'collision',revision:1,patch:{nodes:[{id:'a',custom:{[key]:'unsafe'}}]}}, {appliedIds:ids});
+  assert.equal(result.status,'invalid'); assert.deepEqual(target,before); assert.equal(ids.size,0);
 });

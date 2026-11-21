@@ -7,6 +7,8 @@
 // the same semantics: carry only supplied fields, reuse carried ids, keep
 // unrelated data, respect document caps and leave counters safe.
 
+type AnyRecord = Record<string, any>;
+
 type GraphPatchTarget = {
   nodes: any[];
   edges: any[];
@@ -57,7 +59,7 @@ type ServerApplyResult = ExactPatchResult & {
   reason?: string;
 };
 
-const GraphPatchCore = (() => {
+export const GraphPatchCore = (() => {
   const MAX_GRAPH_NODES = 3000;
   const MAX_GRAPH_EDGES = 8000;
   const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
@@ -253,6 +255,42 @@ const GraphPatchCore = (() => {
     return null;
   }
 
+  // The loader truncates custom keys and discards keys lacking a surviving
+  // definition. Validate against the same first-wins definition namespace and
+  // reject values whose type would be coerced on reload.
+  function validateServerCustomValues(target: GraphPatchTarget, patch: ExactPatch): string | null {
+    const definitions = new Map<string, { scope: string; type: string; canonical: boolean }>();
+    const source = Array.isArray(target.customAttributes) ? target.customAttributes.slice(0, 2000) : [];
+    for(const def of source){
+      if(!isRecord(def)) continue;
+      const rawId = String(def.id ?? '');
+      const id = rawId.trim().slice(0, 128);
+      if(!id || !['node','edge','graph','all'].includes(def.scope) || definitions.has(id)) continue;
+      definitions.set(id, {scope: def.scope, canonical: typeof def.id === 'string' && rawId === id,
+        type: ['string','boolean','int','long','float','double'].includes(def.type) ? def.type : 'string'});
+    }
+    for(const [scope, entities] of [['node', patch.nodes], ['edge', patch.edges]] as const){
+      for(const entity of entities || []){
+        if(!entity.custom) continue;
+        for(const [key, value] of Object.entries(entity.custom)){
+          if(!key || key !== key.trim() || key.length > 128) return `patch.${scope}s has a noncanonical custom key`;
+          const def = definitions.get(key);
+          if(!def || !def.canonical) return `patch.${scope}s has an undefined or noncanonical custom definition`;
+          // Other-scope values survive as orphans verbatim. Applicable values
+          // must already be canonical so coerceCustomValue does not change them.
+          if(def.scope !== scope && def.scope !== 'all') continue;
+          const canonical = def.type === 'string' ? typeof value === 'string'
+            : def.type === 'boolean' ? typeof value === 'boolean'
+            : def.type === 'int' ? typeof value === 'number' && Number.isInteger(value) && value >= -2147483648 && value <= 2147483647
+            : def.type === 'long' ? typeof value === 'number' && Number.isSafeInteger(value)
+            : typeof value === 'number' && Number.isFinite(value);
+          if(!canonical) return `patch.${scope}s has a noncanonical custom value`;
+        }
+      }
+    }
+    return null;
+  }
+
   // Apply an exact (in-place) patch to a graph-shaped target. The target's
   // nodes/edges arrays and next counters are mutated; everything else is
   // returned as a report so the caller owns history/UI/side effects.
@@ -339,6 +377,17 @@ const GraphPatchCore = (() => {
       edge.id = id;
       if(suppliedFrom) edge.from = from;
       if(suppliedTo) edge.to = to;
+      // direction is authoritative in the renderer. A legacy directed-only
+      // patch must update it as well, and both fields must agree on reload.
+      if(Object.prototype.hasOwnProperty.call(edge, 'direction') || Object.prototype.hasOwnProperty.call(edge, 'directed')){
+        const raw = Object.prototype.hasOwnProperty.call(edge, 'direction') ? edge.direction : edge.directed;
+        const text = String(raw ?? '').trim().toLowerCase();
+        const direction = raw === false || text === 'false' || text === '0' || text === 'none' || text === 'undirected' || text === 'undirected (no ends)'
+          ? 'undirected' : text === 'mutual' || text === 'both' || text === 'bidirected' || text === 'bidirectional' || text === 'mutual (both ends)' || text.startsWith('bi')
+          ? 'mutual' : 'directed';
+        edge.direction = direction;
+        edge.directed = direction !== 'undirected';
+      }
       const existing = edgeById.get(id);
       if(existing){
         if(mergeCarried(existing, edge)) changed = true;
@@ -385,6 +434,10 @@ const GraphPatchCore = (() => {
     const shapeProblem = validatePatchShape(change.patch);
     if(shapeProblem){
       return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: shapeProblem };
+    }
+    const customProblem = validateServerCustomValues(target, change.patch);
+    if(customProblem){
+      return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: customProblem };
     }
     const existingEdgeIds = new Set(target.edges.map(edge => String(edge.id)));
     for(const edge of change.patch.edges || []){
