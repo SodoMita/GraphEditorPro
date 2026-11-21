@@ -282,3 +282,52 @@ test('noncanonical server identities are rejected before mutation or acknowledge
     assert.equal(appliedIds.size, 0);
   }
 });
+
+test('server changes reject malformed fields and duplicate or missing ids without mutation', () => {
+  const cases = [
+    {nodes:[{id:'a',label:'new'}, {id:'b',label:{evil:true}}]},
+    {nodes:[{id:'a',width:'wide'}]}, {nodes:[{id:'a',width:301}]},
+    {nodes:[{id:'a',shape:'not-a-shape'}]}, {nodes:[{id:'a',color:'red'}]},
+    {edges:[{id:'e1',from:null}]}, {edges:[{id:'e1',direction:'sideways'}]},
+    {nodes:[{id:'a',x:NaN}]}, {nodes:[{id:'a',label:null}]},
+    {nodes:[{id:'a',custom:{x:{bad:true}}}]},
+    {nodes:[{label:'missing'}]}, {nodes:[{id:'a'},{id:'a'}]},
+    {nodes:[{id:1},{id:'1'}]}, {edges:[{id:'e1'},{id:'e1'}]},
+    {edges:[{id:'new-edge',from:'a'}]}, {edges:[{id:'e1',weight:{bad:true}}]},
+  ];
+  for(const patch of cases){
+    const target = graph(), before = structuredClone(target), appliedIds = new Set();
+    const result = core.applyServerChange(target, {id:'bad', revision:3, patch}, {appliedIds});
+    assert.equal(result.status, 'invalid', JSON.stringify(patch));
+    assert.deepEqual(target, before);
+    assert.equal(appliedIds.size, 0);
+  }
+});
+
+test('server changes enforce default and absolute node and edge limits', () => {
+  const nodes = Array.from({length:3000}, (_,i) => ({id:'n'+i,label:'N',x:0,y:0,order:i}));
+  const edges = Array.from({length:8000}, (_,i) => ({id:'e'+i,from:'n0',to:'n0',label:''}));
+  for(const options of [{}, {maxNodes:Infinity,maxEdges:Infinity}, {maxNodes:100000,maxEdges:100000}]){
+    const target = {nodes:structuredClone(nodes),edges:structuredClone(edges),nextNode:1,nextEdge:1};
+    const appliedIds = new Set();
+    const result = core.applyServerChange(target, {id:'cap',revision:1,patch:{
+      nodes:[{id:'new',label:'excess'}],edges:[{id:'new-edge',from:'n0',to:'n0'}],
+    }}, {...options, appliedIds});
+    assert.equal(result.status,'rejected');
+    assert.equal(target.nodes.length,3000); assert.equal(target.edges.length,8000);
+    assert.equal(appliedIds.size,0);
+  }
+  const target = {nodes:structuredClone(nodes),edges:[],nextNode:1,nextEdge:1};
+  const appliedIds = new Set();
+  const result = core.applyServerChange(target, {id:'partial',revision:2,patch:{nodes:[{id:'n0',label:'changed'},{id:'new'}]}}, {appliedIds});
+  assert.equal(result.status,'partial'); assert.equal(target.nodes[0].label,'changed');
+  assert.equal(appliedIds.size,0);
+});
+
+test('new server entities without labels get safe string defaults', () => {
+  const target = {nodes:[],edges:[],nextNode:1,nextEdge:1};
+  const result = core.applyServerChange(target, {id:'defaults',revision:1,patch:{nodes:[{id:'n'}],edges:[{id:'e',from:'n',to:'n'}]}});
+  assert.equal(result.status,'applied');
+  assert.equal(target.nodes[0].label.padEnd(2), '  ');
+  assert.equal(target.edges[0].label, '');
+});

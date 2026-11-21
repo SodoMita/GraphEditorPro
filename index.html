@@ -1841,6 +1841,11 @@
 // the same semantics: carry only supplied fields, reuse carried ids, keep
 // unrelated data, respect document caps and leave counters safe.
 const GraphPatchCore = (() => {
+    const MAX_GRAPH_NODES = 3000;
+    const MAX_GRAPH_EDGES = 8000;
+    const NODE_SHAPES = ['circle', 'square', 'diamond', 'triangleUp', 'triangleDown', 'hexagon'];
+    const STROKE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot', 'dashdotdot', 'none'];
+    const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
     function isRecord(value) {
         return value !== null && typeof value === 'object' && !Array.isArray(value);
     }
@@ -1953,6 +1958,7 @@ const GraphPatchCore = (() => {
         if (!isRecord(patch))
             return 'patch is not an object';
         for (const key of ['nodes', 'edges']) {
+            const seenIds = new Set();
             if (!Object.prototype.hasOwnProperty.call(patch, key))
                 continue;
             const list = patch[key];
@@ -1961,6 +1967,63 @@ const GraphPatchCore = (() => {
             for (const entry of list) {
                 if (!isRecord(entry))
                     return `patch.${key} contains a non-object entry`;
+                if (entry.id == null || !['string', 'number', 'boolean'].includes(typeof entry.id) || String(entry.id) === '')
+                    return `patch.${key} has a missing id`;
+                const normalizedId = String(entry.id);
+                if (seenIds.has(normalizedId))
+                    return `patch.${key} has a duplicate id`;
+                seenIds.add(normalizedId);
+                // Built-in fields must already have the shape the editor consumes.
+                // The custom value map must contain only editor-supported scalar values.
+                const strings = key === 'nodes'
+                    ? ['label', 'shape', 'color', 'type', 'strokeColor', 'strokeStyle', 'labelColor', 'labelPosition', 'labelFont']
+                    : ['label', 'type', 'weight', 'color', 'strokeStyle', 'labelColor', 'labelFont', 'direction'];
+                for (const field of strings) {
+                    if (Object.prototype.hasOwnProperty.call(entry, field) && typeof entry[field] !== 'string')
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                const enums = key === 'nodes'
+                    ? { shape: NODE_SHAPES, strokeStyle: STROKE_STYLES, labelPosition: LABEL_POSITIONS }
+                    : { strokeStyle: STROKE_STYLES, direction: ['directed', 'mutual', 'undirected'] };
+                for (const [field, allowed] of Object.entries(enums)) {
+                    if (entry[field] !== undefined && entry[field] !== '' && !allowed.includes(entry[field]))
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                for (const field of ['color', 'strokeColor', 'labelColor']) {
+                    if (entry[field] !== undefined && (typeof entry[field] !== 'string' || (entry[field] !== '' && !/^#[0-9a-f]{6}$/i.test(entry[field]))))
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                if (entry.type !== undefined && entry.type.length > 40)
+                    return `patch.${key} has an invalid type`;
+                if (entry.label !== undefined && entry.label.length > 80)
+                    return `patch.${key} has an invalid label`;
+                if (entry.labelFont !== undefined && entry.labelFont.length > 60)
+                    return `patch.${key} has an invalid labelFont`;
+                if (key === 'edges' && entry.weight !== undefined && entry.weight.length > 50)
+                    return 'patch.edges has an invalid weight';
+                if (key === 'edges' && entry.directed !== undefined && typeof entry.directed !== 'boolean' && typeof entry.directed !== 'string')
+                    return 'patch.edges has an invalid directed';
+                const ranges = key === 'nodes'
+                    ? { x: [-Infinity, Infinity], y: [-Infinity, Infinity], order: [0, 2147483647], width: [10, 300], height: [10, 300], strokeSize: [0, 20], labelSize: [4, 72] }
+                    : { strokeSize: [0, 20], arrowSize: [4, 40], labelSize: [4, 72] };
+                for (const [field, [min, max]] of Object.entries(ranges)) {
+                    if (!Object.prototype.hasOwnProperty.call(entry, field))
+                        continue;
+                    const value = entry[field];
+                    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max || (field === 'order' && !Number.isInteger(value)))
+                        return `patch.${key} has an invalid ${field}`;
+                }
+                if (Object.prototype.hasOwnProperty.call(entry, 'custom')) {
+                    if (!isRecord(entry.custom))
+                        return `patch.${key} has an invalid custom`;
+                    if (Object.keys(entry.custom).length > 2000)
+                        return `patch.${key} has too many custom values`;
+                    for (const value of Object.values(entry.custom)) {
+                        if ((typeof value !== 'string' && typeof value !== 'boolean' && typeof value !== 'number') ||
+                            (typeof value === 'number' && !Number.isFinite(value)) || (typeof value === 'string' && value.length > 1000))
+                            return `patch.${key} has an invalid custom value`;
+                    }
+                }
                 // These fields are coerced with Number/String while applying a patch.
                 // JSON objects can have non-callable toString/valueOf properties, so
                 // coercing them may throw after an earlier entity was already changed.
@@ -1975,8 +2038,11 @@ const GraphPatchCore = (() => {
                 // which could make two distinct records collide on a later load.
                 for (const field of (key === 'nodes' ? ['id'] : ['id', 'from', 'to'])) {
                     const value = entry[field];
-                    if (value == null)
+                    if (value == null) {
+                        if (Object.prototype.hasOwnProperty.call(entry, field))
+                            return `patch.${key} has an invalid ${field}`;
                         continue;
+                    }
                     const identity = String(value);
                     if (!identity || identity.length > 40 || /[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/.test(identity)) {
                         return `patch.${key} has a noncanonical ${field}`;
@@ -2049,6 +2115,8 @@ const GraphPatchCore = (() => {
                 nextNode = advanceCounter(nextNode, node.id);
                 const carriedOrder = Number(node.order);
                 node.order = Number.isFinite(carriedOrder) ? carriedOrder : nextFreeOrder++;
+                if (!Object.prototype.hasOwnProperty.call(node, 'label'))
+                    node.label = '';
                 target.nodes.push(node);
                 nodeById.set(id, node);
                 pastedNodeIds.push(id);
@@ -2105,6 +2173,8 @@ const GraphPatchCore = (() => {
                     continue;
                 }
                 nextEdge = advanceCounter(nextEdge, edge.id);
+                if (!Object.prototype.hasOwnProperty.call(edge, 'label'))
+                    edge.label = '';
                 target.edges.push(edge);
                 edgeById.set(id, edge);
                 pastedEdgeIds.push(id);
@@ -2143,6 +2213,13 @@ const GraphPatchCore = (() => {
         if (shapeProblem) {
             return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: shapeProblem };
         }
+        const existingEdgeIds = new Set(target.edges.map(edge => String(edge.id)));
+        for (const edge of change.patch.edges || []) {
+            if (!existingEdgeIds.has(String(edge.id)) &&
+                (!Object.prototype.hasOwnProperty.call(edge, 'from') || !Object.prototype.hasOwnProperty.call(edge, 'to'))) {
+                return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: 'new edge is missing an endpoint' };
+            }
+        }
         // Stage against detached entity records. If an unexpected conversion or
         // comparison throws, no earlier entity in the caller's graph is changed.
         // Preserve existing entity and array identities when committing so UI
@@ -2157,7 +2234,11 @@ const GraphPatchCore = (() => {
                 return copy;
             };
             staged = { ...target, nodes: target.nodes.map(clone), edges: target.edges.map(clone) };
-            result = applyExactPatch(staged, change.patch, options);
+            const boundedLimit = (value, ceiling) => Number.isSafeInteger(value) && value >= 0 ? Math.min(value, ceiling) : ceiling;
+            result = applyExactPatch(staged, change.patch, { ...options,
+                maxNodes: boundedLimit(options.maxNodes, MAX_GRAPH_NODES),
+                maxEdges: boundedLimit(options.maxEdges, MAX_GRAPH_EDGES),
+            });
         }
         catch {
             return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: 'patch could not be applied' };
@@ -2190,6 +2271,7 @@ const GraphPatchCore = (() => {
         return { ...result, status, id: change.id, revision: change.revision };
     }
     return {
+        MAX_GRAPH_NODES, MAX_GRAPH_EDGES, NODE_SHAPES, STROKE_STYLES, LABEL_POSITIONS,
         isRecord, cloneCustomMap, cloneEntity, valuesEqual, mergeCustom, mergeCarried,
         safeCounter, advanceCounter, allocateId, validatePatchShape, applyExactPatch, applyServerChange,
     };
@@ -3007,8 +3089,8 @@ const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 // sanitizeState keeps at most this many entities on load. Every path that
 // can append to the document (import, paste) must respect the same caps, or
 // the autosaved graph silently shrinks on the next reopen.
-const MAX_GRAPH_NODES = 3000;
-const MAX_GRAPH_EDGES = 8000;
+const MAX_GRAPH_NODES = GraphPatchCore.MAX_GRAPH_NODES;
+const MAX_GRAPH_EDGES = GraphPatchCore.MAX_GRAPH_EDGES;
 // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
 // size is capped independently of the user-facing row limit. Every cell is a
 // form control: measured in Chromium on a 350-node document, a full render
@@ -3536,11 +3618,11 @@ const nodesLayer = $('#nodesLayer');
 const dragLine = $('#dragLine');
 const selectionOverlayLayer = $('#selectionOverlayLayer');
 const gizmoLayer = $('#gizmoLayer');
-const NODE_SHAPES = ['circle', 'square', 'diamond', 'triangleUp', 'triangleDown', 'hexagon'];
+const NODE_SHAPES = GraphPatchCore.NODE_SHAPES;
 // QVGE-compatible stroke styles: must match CUtils::textToPenStyle mapping
 // none=NoPen, solid=SolidLine, dashed=DashLine, dotted=DotLine, dashdot=DashDotLine, dashdotdot=DashDotDotLine
-const STROKE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot', 'dashdotdot', 'none'];
-const LABEL_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
+const STROKE_STYLES = GraphPatchCore.STROKE_STYLES;
+const LABEL_POSITIONS = GraphPatchCore.LABEL_POSITIONS;
 const LABEL_POLICIES = ['auto', 'on', 'off'];
 // Maximum number of custom attribute definitions the editor will hold.
 const CUSTOM_DEFINITIONS_MAX = 2000;
@@ -10462,8 +10544,6 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
         const id = String(orig?.id ?? '');
         if (!id || plannedNodeIds.has(id)) {
             droppedNodes++;
-            if (id)
-                rejectedNodeIds.add(id);
             continue;
         }
         plannedNodeIds.add(id);
@@ -10743,16 +10823,20 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
     // A definition minted or rebound during this paste is a document change
     // even if no entity field ends up differing — undo has to cover it.
     const definitionsChanged = defsToAdd.length > 0 || renameByPair.size > 0;
-    // Remap carried values whose definition was re-created under a fresh id.
-    if (renameByPair.size) {
+    // Discard values whose definitions could not be resolved before remapping:
+    // a colliding host definition is not evidence they are the same property.
+    if (renameByPair.size || failedPairs.size) {
         const remapCustom = (entity, scope) => {
             if (!isRecord(entity?.custom))
                 return;
             const out = Object.create(null);
             for (const [key, value] of Object.entries(entity.custom)) {
-                // Values of an all-scope definition are keyed under 'all|' — look
-                // there before the per-scope entry.
-                out[renameByPair.get(key + '|all') || renameByPair.get(key + '|' + scope) || key] = value;
+                // The resolution scope must match ensureEntityPairs, especially for
+                // carried 'all' definitions. A failed pair cannot bind to a host id.
+                const pair = key + '|' + (carriedScopeById.get(key) === 'all' ? 'all' : scope);
+                if (failedPairs.has(pair))
+                    continue;
+                out[renameByPair.get(pair) || key] = value;
             }
             entity.custom = out;
         };

@@ -1413,7 +1413,7 @@
     let nodeSlots = nodeCapacity;
     for(const orig of sortedCopyNodes){
       const id = String(orig?.id ?? '');
-      if(!id || plannedNodeIds.has(id)){ droppedNodes++; if(id) rejectedNodeIds.add(id); continue; }
+      if(!id || plannedNodeIds.has(id)){ droppedNodes++; continue; }
       plannedNodeIds.add(id);
       // In exact mode an existing id is an update, so it consumes no slot.
       if(!exactPaste || !originalExistingNodeIds.has(id)){
@@ -1662,15 +1662,18 @@
     // A definition minted or rebound during this paste is a document change
     // even if no entity field ends up differing — undo has to cover it.
     const definitionsChanged = defsToAdd.length > 0 || renameByPair.size > 0;
-    // Remap carried values whose definition was re-created under a fresh id.
-    if(renameByPair.size){
+    // Discard values whose definitions could not be resolved before remapping:
+    // a colliding host definition is not evidence they are the same property.
+    if(renameByPair.size || failedPairs.size){
       const remapCustom = (entity: AnyRecord, scope: 'node' | 'edge') => {
         if(!isRecord(entity?.custom)) return;
         const out: Record<string, CustomAttributeValue> = Object.create(null);
         for(const [key, value] of Object.entries(entity.custom)){
-          // Values of an all-scope definition are keyed under 'all|' — look
-          // there before the per-scope entry.
-          out[renameByPair.get(key + '|all') || renameByPair.get(key + '|' + scope) || key] = value as CustomAttributeValue;
+          // The resolution scope must match ensureEntityPairs, especially for
+          // carried 'all' definitions. A failed pair cannot bind to a host id.
+          const pair = key + '|' + (carriedScopeById.get(key) === 'all' ? 'all' : scope);
+          if(failedPairs.has(pair)) continue;
+          out[renameByPair.get(pair) || key] = value as CustomAttributeValue;
         }
         entity.custom = out;
       };

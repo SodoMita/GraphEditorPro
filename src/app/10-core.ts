@@ -11,8 +11,8 @@
   // sanitizeState keeps at most this many entities on load. Every path that
   // can append to the document (import, paste) must respect the same caps, or
   // the autosaved graph silently shrinks on the next reopen.
-  const MAX_GRAPH_NODES = 3000;
-  const MAX_GRAPH_EDGES = 8000;
+  const MAX_GRAPH_NODES = GraphPatchCore.MAX_GRAPH_NODES;
+  const MAX_GRAPH_EDGES = GraphPatchCore.MAX_GRAPH_EDGES;
   // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
   // size is capped independently of the user-facing row limit. Every cell is a
   // form control: measured in Chromium on a 350-node document, a full render
@@ -510,11 +510,11 @@
   const selectionOverlayLayer = $('#selectionOverlayLayer');
   const gizmoLayer = $('#gizmoLayer');
 
-  const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
+  const NODE_SHAPES = GraphPatchCore.NODE_SHAPES;
   // QVGE-compatible stroke styles: must match CUtils::textToPenStyle mapping
   // none=NoPen, solid=SolidLine, dashed=DashLine, dotted=DotLine, dashdot=DashDotLine, dashdotdot=DashDotDotLine
-  const STROKE_STYLES = ['solid','dashed','dotted','dashdot','dashdotdot','none'];
-  const LABEL_POSITIONS = ['center','top','bottom','left','right'];
+  const STROKE_STYLES = GraphPatchCore.STROKE_STYLES;
+  const LABEL_POSITIONS = GraphPatchCore.LABEL_POSITIONS;
   const LABEL_POLICIES = ['auto','on','off'];
   // Maximum number of custom attribute definitions the editor will hold.
   const CUSTOM_DEFINITIONS_MAX = 2000;

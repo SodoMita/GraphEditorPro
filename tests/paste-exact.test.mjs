@@ -1523,3 +1523,56 @@ test('a known waiting predecessor does not authorize overwriting newer external 
   assert.equal(hub.text, 'newer external copy');
   a.dom.window.close(); b.dom.window.close();
 });
+
+test('skipped conflicting clipboard definitions cannot overwrite host node or edge properties', async () => {
+  for(const exact of [true, false]){
+    const attrs = [
+      {id:'field',scope:'node',type:'string',name:'Host field'},
+      {id:'edgefield',scope:'edge',type:'string',name:'Host edge'},
+      {id:'allfield',scope:'all',type:'string',name:'Host all'},
+      ...Array.from({length:1997}, (_,i) => ({id:'filler'+i,scope:'node',type:'string'})),
+    ];
+    const saved = {...baseGraph, customAttributes:attrs,
+      nodes:baseGraph.nodes.map(n => n.id === 'a' ? {...n,custom:{field:'host',allfield:'host-all'}} : n),
+      edges:baseGraph.edges.map(e => ({...e,custom:{edgefield:'host-edge',allfield:'host-all-edge'}})),
+    };
+    const {dom,errors} = createEditorDom(saved), {window} = dom;
+    await settle(window,100);
+    setClipboard(window, {type:'graph-editor-clipboard',
+      nodes:[{id:'a',label:'Pasted',x:0,y:0,custom:{field:'foreign',allfield:'foreign-all'}}, {id:'b',label:'B',x:20,y:0}],
+      edges:[{id:'e1',from:'a',to:'b',custom:{edgefield:'foreign-edge',allfield:'foreign-all-edge'}}],externalEdges:[],
+      customAttributes:[{id:'field',scope:'node',type:'string',name:'Source field'},
+        {id:'edgefield',scope:'edge',type:'string',name:'Source edge'},
+        {id:'allfield',scope:'all',type:'string',name:'Source all'}],
+    });
+    hotkey(window,'v',{ctrlKey:true,...(exact ? {altKey:true} : {})}); await settle(window,200);
+    const out = exportGraph(window.document);
+    const node = out.nodes.find(n => n.id === 'a');
+    const edge = out.edges.find(e => e.id === 'e1');
+    assert.equal(node.custom.field,'host'); assert.equal(node.custom.allfield,'host-all');
+    assert.equal(edge.custom.edgefield,'host-edge'); assert.equal(edge.custom.allfield,'host-all-edge');
+    if(!exact){
+      const pasted = out.nodes.find(n => n.id !== 'a' && n.id !== 'b' && n.label === 'Pasted');
+      assert.ok(pasted); assert.equal(pasted.custom?.field,undefined); assert.equal(pasted.custom?.allfield,undefined);
+    }
+    assert.match(window.document.querySelector('.toast-stack').textContent,/skipped/i);
+    assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
+  }
+});
+
+test('edges to retained duplicate-normalized nodes survive both paste modes', async () => {
+  for(const exact of [true,false]){
+    const {dom,errors} = createEditorDom(baseGraph), {window} = dom;
+    await settle(window,80);
+    setClipboard(window,{type:'graph-editor-clipboard',nodes:[
+      {id:'one!',label:'First',x:100,y:0,order:0}, {id:'one',label:'Duplicate',x:200,y:0,order:1},
+    ],edges:[{id:'self',from:'one!',to:'one!',label:'loop'}],externalEdges:[]});
+    hotkey(window,'v',{ctrlKey:true,...(exact ? {altKey:true} : {})}); await settle(window,140);
+    const out = exportGraph(window.document);
+    const node = out.nodes.find(n => n.label === 'First');
+    const edge = out.edges.find(e => e.label === 'loop');
+    assert.ok(node); assert.ok(edge); assert.equal(edge.from,node.id); assert.equal(edge.to,node.id);
+    assert.equal(out.nodes.some(n => n.label === 'Duplicate'),false);
+    assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
+  }
+});

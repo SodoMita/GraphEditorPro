@@ -58,6 +58,11 @@ type ServerApplyResult = ExactPatchResult & {
 };
 
 const GraphPatchCore = (() => {
+  const MAX_GRAPH_NODES = 3000;
+  const MAX_GRAPH_EDGES = 8000;
+  const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
+  const STROKE_STYLES = ['solid','dashed','dotted','dashdot','dashdotdot','none'];
+  const LABEL_POSITIONS = ['center','top','bottom','left','right'];
   function isRecord(value: unknown): value is AnyRecord {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
@@ -167,11 +172,59 @@ const GraphPatchCore = (() => {
   function validatePatchShape(patch: unknown): string | null {
     if(!isRecord(patch)) return 'patch is not an object';
     for(const key of ['nodes', 'edges'] as const){
+      const seenIds = new Set<string>();
       if(!Object.prototype.hasOwnProperty.call(patch, key)) continue;
       const list = (patch as AnyRecord)[key];
       if(!Array.isArray(list)) return `patch.${key} is not an array`;
       for(const entry of list){
         if(!isRecord(entry)) return `patch.${key} contains a non-object entry`;
+        if(entry.id == null || !['string', 'number', 'boolean'].includes(typeof entry.id) || String(entry.id) === '') return `patch.${key} has a missing id`;
+        const normalizedId = String(entry.id);
+        if(seenIds.has(normalizedId)) return `patch.${key} has a duplicate id`;
+        seenIds.add(normalizedId);
+        // Built-in fields must already have the shape the editor consumes.
+        // The custom value map must contain only editor-supported scalar values.
+        const strings = key === 'nodes'
+          ? ['label', 'shape', 'color', 'type', 'strokeColor', 'strokeStyle', 'labelColor', 'labelPosition', 'labelFont']
+          : ['label', 'type', 'weight', 'color', 'strokeStyle', 'labelColor', 'labelFont', 'direction'];
+        for(const field of strings){
+          if(Object.prototype.hasOwnProperty.call(entry, field) && typeof entry[field] !== 'string')
+            return `patch.${key} has an invalid ${field}`;
+        }
+        const enums: Record<string, readonly string[]> = key === 'nodes'
+          ? { shape: NODE_SHAPES, strokeStyle: STROKE_STYLES, labelPosition: LABEL_POSITIONS }
+          : { strokeStyle: STROKE_STYLES, direction: ['directed','mutual','undirected'] };
+        for(const [field, allowed] of Object.entries(enums)){
+          if(entry[field] !== undefined && entry[field] !== '' && !allowed.includes(entry[field]))
+            return `patch.${key} has an invalid ${field}`;
+        }
+        for(const field of ['color','strokeColor','labelColor']){
+          if(entry[field] !== undefined && (typeof entry[field] !== 'string' || (entry[field] !== '' && !/^#[0-9a-f]{6}$/i.test(entry[field]))))
+            return `patch.${key} has an invalid ${field}`;
+        }
+        if(entry.type !== undefined && entry.type.length > 40) return `patch.${key} has an invalid type`;
+        if(entry.label !== undefined && entry.label.length > 80) return `patch.${key} has an invalid label`;
+        if(entry.labelFont !== undefined && entry.labelFont.length > 60) return `patch.${key} has an invalid labelFont`;
+        if(key === 'edges' && entry.weight !== undefined && entry.weight.length > 50) return 'patch.edges has an invalid weight';
+        if(key === 'edges' && entry.directed !== undefined && typeof entry.directed !== 'boolean' && typeof entry.directed !== 'string')
+          return 'patch.edges has an invalid directed';
+        const ranges: Record<string, [number, number]> = key === 'nodes'
+          ? { x: [-Infinity, Infinity], y: [-Infinity, Infinity], order: [0, 2147483647], width: [10, 300], height: [10, 300], strokeSize: [0, 20], labelSize: [4, 72] }
+          : { strokeSize: [0, 20], arrowSize: [4, 40], labelSize: [4, 72] };
+        for(const [field, [min, max]] of Object.entries(ranges)){
+          if(!Object.prototype.hasOwnProperty.call(entry, field)) continue;
+          const value = entry[field];
+          if(typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max || (field === 'order' && !Number.isInteger(value)))
+            return `patch.${key} has an invalid ${field}`;
+        }
+        if(Object.prototype.hasOwnProperty.call(entry, 'custom')){
+          if(!isRecord(entry.custom)) return `patch.${key} has an invalid custom`;
+          if(Object.keys(entry.custom).length > 2000) return `patch.${key} has too many custom values`;
+          for(const value of Object.values(entry.custom)){
+            if((typeof value !== 'string' && typeof value !== 'boolean' && typeof value !== 'number') ||
+               (typeof value === 'number' && !Number.isFinite(value)) || (typeof value === 'string' && value.length > 1000)) return `patch.${key} has an invalid custom value`;
+          }
+        }
         // These fields are coerced with Number/String while applying a patch.
         // JSON objects can have non-callable toString/valueOf properties, so
         // coercing them may throw after an earlier entity was already changed.
@@ -186,7 +239,10 @@ const GraphPatchCore = (() => {
         // which could make two distinct records collide on a later load.
         for(const field of (key === 'nodes' ? ['id'] : ['id', 'from', 'to'])){
           const value = entry[field];
-          if(value == null) continue;
+          if(value == null){
+            if(Object.prototype.hasOwnProperty.call(entry, field)) return `patch.${key} has an invalid ${field}`;
+            continue;
+          }
           const identity = String(value);
           if(!identity || identity.length > 40 || /[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/.test(identity)){
             return `patch.${key} has a noncanonical ${field}`;
@@ -251,6 +307,7 @@ const GraphPatchCore = (() => {
         nextNode = advanceCounter(nextNode, node.id);
         const carriedOrder = Number(node.order);
         node.order = Number.isFinite(carriedOrder) ? carriedOrder : nextFreeOrder++;
+        if(!Object.prototype.hasOwnProperty.call(node, 'label')) node.label = '';
         target.nodes.push(node);
         nodeById.set(id, node);
         pastedNodeIds.push(id);
@@ -289,6 +346,7 @@ const GraphPatchCore = (() => {
       } else {
         if(target.edges.length >= maxEdges){ droppedEdges++; continue; }
         nextEdge = advanceCounter(nextEdge, edge.id);
+        if(!Object.prototype.hasOwnProperty.call(edge, 'label')) edge.label = '';
         target.edges.push(edge);
         edgeById.set(id, edge);
         pastedEdgeIds.push(id);
@@ -328,6 +386,13 @@ const GraphPatchCore = (() => {
     if(shapeProblem){
       return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: shapeProblem };
     }
+    const existingEdgeIds = new Set(target.edges.map(edge => String(edge.id)));
+    for(const edge of change.patch.edges || []){
+      if(!existingEdgeIds.has(String(edge.id)) &&
+         (!Object.prototype.hasOwnProperty.call(edge, 'from') || !Object.prototype.hasOwnProperty.call(edge, 'to'))){
+        return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: 'new edge is missing an endpoint' };
+      }
+    }
     // Stage against detached entity records. If an unexpected conversion or
     // comparison throws, no earlier entity in the caller's graph is changed.
     // Preserve existing entity and array identities when committing so UI
@@ -342,7 +407,12 @@ const GraphPatchCore = (() => {
         return copy;
       };
       staged = { ...target, nodes: target.nodes.map(clone), edges: target.edges.map(clone) };
-      result = applyExactPatch(staged, change.patch, options);
+      const boundedLimit = (value: number | undefined, ceiling: number) =>
+        Number.isSafeInteger(value) && value! >= 0 ? Math.min(value!, ceiling) : ceiling;
+      result = applyExactPatch(staged, change.patch, { ...options,
+        maxNodes: boundedLimit(options.maxNodes, MAX_GRAPH_NODES),
+        maxEdges: boundedLimit(options.maxEdges, MAX_GRAPH_EDGES),
+      });
     } catch {
       return { ...empty, status: 'invalid', id: change.id, revision: change.revision, reason: 'patch could not be applied' };
     }
@@ -370,6 +440,7 @@ const GraphPatchCore = (() => {
   }
 
   return {
+    MAX_GRAPH_NODES, MAX_GRAPH_EDGES, NODE_SHAPES, STROKE_STYLES, LABEL_POSITIONS,
     isRecord, cloneCustomMap, cloneEntity, valuesEqual, mergeCustom, mergeCarried,
     safeCounter, advanceCounter, allocateId, validatePatchShape, applyExactPatch, applyServerChange,
   };
