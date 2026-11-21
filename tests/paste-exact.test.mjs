@@ -1615,3 +1615,13 @@ test('long raw clipboard ids with the same prefix retain distinct endpoints', as
     assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
   }
 });
+
+test('exact clipboard paste preserves the order of existing nodes', async () => {
+  const {dom,errors} = createEditorDom(baseGraph), {window} = dom;
+  await settle(window,80);
+  setClipboard(window, {type:'graph-editor-clipboard',nodes:[{id:'a',order:1},{id:'b',order:0}],edges:[],externalEdges:[]});
+  hotkey(window,'v',{ctrlKey:true,altKey:true}); await settle(window,120);
+  const graph = exportGraph(window.document);
+  assert.deepEqual(graph.nodes.map(n => [n.id,n.order]), [['a',0],['b',1]]);
+  assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
+});

@@ -374,3 +374,53 @@ test('server custom definitions are checked against the first loader-surviving i
   const result = core.applyServerChange(target, {id:'collision',revision:1,patch:{nodes:[{id:'a',custom:{[key]:'unsafe'}}]}}, {appliedIds:ids});
   assert.equal(result.status,'invalid'); assert.deepEqual(target,before); assert.equal(ids.size,0);
 });
+
+test('server reorders existing nodes before acknowledging and preserves omitted fields', () => {
+  const target = graph();
+  target.nodes.push({id:'b',label:'Other',x:50,y:10,order:1});
+  const nodes = target.nodes, a = nodes[0], b = nodes[1], ids = new Set();
+  const change = {id:'swap', revision:1, patch:{nodes:[{id:'a',order:1}, {id:'b',order:0}]}};
+  const result = core.applyServerChange(target, change, {appliedIds:ids});
+  assert.equal(result.status,'applied'); assert.equal(result.changed,true); assert.ok(ids.has('swap'));
+  assert.equal(target.nodes,nodes, 'array identity remains stable');
+  assert.deepEqual(target.nodes.map(n => [n.id,n.order]), [['b',0],['a',1]]);
+  assert.equal(target.nodes[0],b); assert.equal(target.nodes[1],a);
+  assert.equal(a.label,'Old'); assert.equal(b.x,50);
+  assert.equal(core.applyServerChange(target,change,{appliedIds:ids}).status,'duplicate');
+  const noOrder = core.applyServerChange(target, {id:'label',revision:2,patch:{nodes:[{id:'a',label:'Updated'}]}}, {appliedIds:ids});
+  assert.equal(noOrder.status,'applied'); assert.equal(a.order,1);
+});
+
+test('exact patch preserves existing order by default but can explicitly apply it', () => {
+  const target = graph(); target.nodes.push({id:'b',label:'B',x:0,y:0,order:1});
+  const patch = {nodes:[{id:'a',order:1},{id:'b',order:0}]};
+  const clipboard = core.applyExactPatch(target, patch);
+  assert.equal(clipboard.changed,false);
+  assert.deepEqual(target.nodes.map(n => [n.id,n.order]), [['a',0],['b',1]]);
+  const generic = core.applyExactPatch(target, patch, {applyExistingNodeOrder:true});
+  assert.equal(generic.changed,true);
+  assert.deepEqual(target.nodes.map(n => [n.id,n.order]), [['b',0],['a',1]]);
+});
+
+test('a partial server reorder remains retryable and applies new nodes when capacity is raised', () => {
+  const target = graph(); target.nodes.push({id:'b',label:'B',x:0,y:0,order:1});
+  const ids = new Set();
+  const change = {id:'partial-order',revision:2,patch:{nodes:[{id:'a',order:1},{id:'b',order:0},{id:'c',label:'C',order:2}]}};
+  const partial = core.applyServerChange(target,change,{appliedIds:ids,maxNodes:2});
+  assert.equal(partial.status,'partial'); assert.equal(ids.has(change.id),false);
+  assert.deepEqual(target.nodes.map(n => [n.id,n.order]), [['b',0],['a',1]]);
+  const retry = core.applyServerChange(target,change,{appliedIds:ids,maxNodes:3});
+  assert.equal(retry.status,'applied'); assert.ok(ids.has(change.id));
+  assert.deepEqual(target.nodes.map(n => [n.id,n.order]), [['b',0],['a',1],['c',2]]);
+});
+
+test('invalid server order is rejected atomically and does not consume the change id', () => {
+  const target = graph(); target.nodes.push({id:'b',label:'B',x:0,y:0,order:1});
+  const before = structuredClone(target), ids = new Set();
+  const bad = {id:'order',revision:1,patch:{nodes:[{id:'a',order:1},{id:'b',order:-1}]}};
+  assert.equal(core.applyServerChange(target,bad,{appliedIds:ids}).status,'invalid');
+  assert.deepEqual(target,before); assert.equal(ids.size,0);
+  const good = { ...bad, patch:{nodes:[{id:'a',order:1},{id:'b',order:0}]} };
+  assert.equal(core.applyServerChange(target,good,{appliedIds:ids}).status,'applied');
+  assert.deepEqual(target.nodes.map(n => n.id),['b','a']);
+});

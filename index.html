@@ -2145,7 +2145,7 @@ const GraphPatchCore = (() => {
             }
             const existing = nodeById.get(id);
             if (existing) {
-                if (mergeCarried(existing, node, ['order']))
+                if (mergeCarried(existing, node, options.applyExistingNodeOrder ? [] : ['order']))
                     changed = true;
                 pastedNodeIds.push(existing.id);
             }
@@ -2293,6 +2293,9 @@ const GraphPatchCore = (() => {
             staged = { ...target, nodes: target.nodes.map(clone), edges: target.edges.map(clone) };
             const boundedLimit = (value, ceiling) => Number.isSafeInteger(value) && value >= 0 ? Math.min(value, ceiling) : ceiling;
             result = applyExactPatch(staged, change.patch, { ...options,
+                // Clipboard paste preserves the target order; server patches represent
+                // document edits and must apply any supplied order before acknowledging.
+                applyExistingNodeOrder: true,
                 maxNodes: boundedLimit(options.maxNodes, MAX_GRAPH_NODES),
                 maxEdges: boundedLimit(options.maxEdges, MAX_GRAPH_EDGES),
             });

@@ -27,6 +27,8 @@ type ExactPatchOptions = {
   maxEdges?: number;
   /** Carried node ids; an edge pointing at one that was cap-dropped is skipped. */
   carriedNodeIds?: ReadonlySet<string>;
+  /** Apply supplied order to existing nodes. Defaults to false for exact clipboard paste. */
+  applyExistingNodeOrder?: boolean;
 };
 
 type ExactPatchResult = {
@@ -338,7 +340,7 @@ export const GraphPatchCore = (() => {
       }
       const existing = nodeById.get(id);
       if(existing){
-        if(mergeCarried(existing, node, ['order'])) changed = true;
+        if(mergeCarried(existing, node, options.applyExistingNodeOrder ? [] : ['order'])) changed = true;
         pastedNodeIds.push(existing.id);
       } else {
         if(target.nodes.length >= maxNodes){ droppedNodes++; continue; }
@@ -463,6 +465,9 @@ export const GraphPatchCore = (() => {
       const boundedLimit = (value: number | undefined, ceiling: number) =>
         Number.isSafeInteger(value) && value! >= 0 ? Math.min(value!, ceiling) : ceiling;
       result = applyExactPatch(staged, change.patch, { ...options,
+        // Clipboard paste preserves the target order; server patches represent
+        // document edits and must apply any supplied order before acknowledging.
+        applyExistingNodeOrder: true,
         maxNodes: boundedLimit(options.maxNodes, MAX_GRAPH_NODES),
         maxEdges: boundedLimit(options.maxEdges, MAX_GRAPH_EDGES),
       });
