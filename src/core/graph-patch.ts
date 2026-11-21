@@ -181,6 +181,17 @@ const GraphPatchCore = (() => {
             return `patch.${key} has a non-scalar ${field}`;
           }
         }
+        // The editor's loader removes these characters and caps identities at
+        // 40 characters. Reject rather than silently rename a server identity,
+        // which could make two distinct records collide on a later load.
+        for(const field of (key === 'nodes' ? ['id'] : ['id', 'from', 'to'])){
+          const value = entry[field];
+          if(value == null) continue;
+          const identity = String(value);
+          if(!identity || identity.length > 40 || /[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/.test(identity)){
+            return `patch.${key} has a noncanonical ${field}`;
+          }
+        }
       }
     }
     return null;
@@ -217,6 +228,7 @@ const GraphPatchCore = (() => {
       const node = cloneEntity(orig);
       const id = String(node.id ?? '');
       if(!id || seenNodeIds.has(id)){ droppedNodes++; continue; }
+      node.id = id;
       seenNodeIds.add(id);
       // Coordinates are restored only when carried; a partial patch must not
       // reset a stored position. Non-finite supplied values are treated as
@@ -267,6 +279,9 @@ const GraphPatchCore = (() => {
       const edge = cloneEntity(orig);
       const id = String(edge.id ?? '');
       if(!id){ droppedEdges++; continue; }
+      edge.id = id;
+      if(suppliedFrom) edge.from = from;
+      if(suppliedTo) edge.to = to;
       const existing = edgeById.get(id);
       if(existing){
         if(mergeCarried(existing, edge)) changed = true;

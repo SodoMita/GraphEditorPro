@@ -253,3 +253,32 @@ test('successful staged server changes preserve entity and array identities', ()
   assert.equal(target.nodes[0], node); assert.equal(target.edges[0], edge);
   assert.equal(node.label, 'new'); assert.equal(edge.label, 'new edge');
 });
+
+test('numeric identities are normalized in persisted entities and resolve through raw-key lookups', () => {
+  const target = { nodes: [], edges: [], nextNode: 1, nextEdge: 1 };
+  const result = core.applyServerChange(target, { id:'numeric', revision:1,
+    patch:{ nodes:[{id:1,label:'one'}, {id:2,label:'two'}],
+      edges:[{id:9,from:1,to:'2'}] } });
+  assert.equal(result.status, 'applied');
+  assert.equal(target.nodes[0].id, '1');
+  assert.equal(target.edges[0].id, '9');
+  const index = new Map(target.nodes.map(node => [node.id, node]));
+  assert.equal(index.get(target.edges[0].from).label, 'one');
+  assert.equal(index.get(target.edges[0].to).label, 'two');
+  const update = core.applyServerChange(target, {id:'update',revision:2,patch:{edges:[{id:9, from:2, to:1}]} });
+  assert.equal(update.status, 'applied');
+  assert.equal(index.get(target.edges[0].from).label, 'two');
+  assert.equal(index.get(target.edges[0].to).label, 'one');
+});
+
+test('noncanonical server identities are rejected before mutation or acknowledgement', () => {
+  for(const [kind, field, value] of [['nodes','id','bad id'], ['edges','id','x/y'], ['edges','to','x'.repeat(41)]]) {
+    const target = graph(), before = structuredClone(target), appliedIds = new Set();
+    const patch = { nodes:[{id:'a',label:'changed'}], edges:[] };
+    patch[kind].push({id:'a', [field]:value});
+    const result = core.applyServerChange(target, {id:'bad',revision:1,patch}, {appliedIds});
+    assert.equal(result.status, 'invalid');
+    assert.deepEqual(target, before);
+    assert.equal(appliedIds.size, 0);
+  }
+});

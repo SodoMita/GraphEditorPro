@@ -559,6 +559,7 @@
     bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
     bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
     bindClipboardButton('btnPasteExact2', pasteExactFromSystemClipboard);
+    bindClipboardButton('btnClipboardRecovery', recoverClipboardPublication);
     const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null;
     if(chkPreserve){
       chkPreserve.checked = state.settings.copyPreserveExternal !== false;

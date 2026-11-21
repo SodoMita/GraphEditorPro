@@ -9,14 +9,14 @@ import { createWebLocks } from './helpers/web-locks.mjs';
 
 const html = await readFile('index.html', 'utf8');
 
-function createEditorDom(savedGraph) {
+function createEditorDom(savedGraph, url = 'https://offline.test/') {
   const errors = [];
   const source = html.replace('<script>',
     `<script>localStorage.setItem('graph-editor-pro-v2', ${JSON.stringify(JSON.stringify(savedGraph))});</script><script>`);
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
   const dom = new JSDOM(source, {
-    runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://offline.test/', virtualConsole,
+    runScripts: 'dangerously', pretendToBeVisual: true, url, virtualConsole,
     beforeParse(window) {
       Object.defineProperty(window.navigator, 'locks', { configurable:true, value:createWebLocks() });
       window.matchMedia = () => ({ matches:false, addListener(){}, removeListener(){}, addEventListener(){}, removeEventListener(){} });
@@ -55,6 +55,8 @@ function setClipboardWrite(window, payload, writeText, readText = async () => JS
 function createClipboardHub(){
   const store = new Map();
   const storage = {
+    get length() { return store.size; },
+    key: index => [...store.keys()][index] ?? null,
     getItem: key => (store.has(key) ? store.get(key) : null),
     setItem: (key, value) => { store.set(key, String(value)); },
     removeItem: key => { store.delete(key); },
@@ -1378,6 +1380,7 @@ test('an abandoned write marker and missing Web Locks fail closed', async () => 
     if(mode === 'registry-denied') {
       const storage = window.localStorage;
       Object.defineProperty(window, 'localStorage', { configurable:true, value:{
+        get length() { return storage.length; }, key: index => storage.key(index),
         getItem: key => storage.getItem(key),
         setItem: (key, value) => { if(key === 'graph-editor-pro-clipboard-publish') throw new Error('denied'); storage.setItem(key, value); },
         removeItem: key => storage.removeItem(key),
@@ -1389,4 +1392,134 @@ test('an abandoned write marker and missing Web Locks fail closed', async () => 
     assert.match(window.document.body.textContent, /safely published/);
     dom.window.close();
   }
+});
+
+test('two tabs queued before publication publish in user-copy order', async () => {
+  const hub = createClipboardHub();
+  const a = createEditorDom(baseGraph), b = createEditorDom(baseGraph);
+  const aw = a.dom.window, bw = b.dom.window;
+  await settle(aw, 80); await settle(bw, 80);
+  const ca = hub.attach(aw, 'A'), cb = hub.attach(bw, 'B');
+  Object.defineProperty(aw, 'localStorage', { configurable:true, value:hub.storage });
+  Object.defineProperty(bw, 'localStorage', { configurable:true, value:hub.storage });
+  let releaseLock;
+  const held = aw.navigator.locks.request('graph-editor-pro-clipboard-publish', () => new Promise(resolve => { releaseLock = resolve; }));
+  await settle(aw, 20);
+  await selectNode(aw, 'a', 300, 330); await selectNode(bw, 'b', 700, 330);
+  aw.document.querySelector('#btnCopy').click(); await settle(aw, 50);
+  bw.document.querySelector('#btnCopy').click(); await settle(bw, 50);
+  assert.deepEqual(ca.writes, []); assert.deepEqual(cb.writes, []);
+  releaseLock(); await held; await settle(aw, 120);
+  assert.deepEqual(ca.writes, ['a']); assert.deepEqual(cb.writes, []);
+  ca.release(); await settle(bw, 200);
+  assert.deepEqual(cb.writes, ['b']);
+  cb.release(); await settle(bw, 100);
+  assert.equal(JSON.parse(hub.text).nodes[0].id, 'b');
+  a.dom.window.close(); b.dom.window.close();
+});
+
+test('clipboard recovery requires confirmation and refuses a live owner', async () => {
+  const { dom } = createEditorDom(baseGraph), { window } = dom;
+  await settle(window, 80);
+  const key = 'graph-editor-pro-clipboard-inflight';
+  window.localStorage.setItem(key, '{"old":true}');
+  const button = window.document.querySelector('#btnClipboardRecovery');
+  button.click(); await settle(window, 20);
+  assert.match(window.document.querySelector('.app-dialog-message').textContent, /closing ALL.*restarting the browser/);
+  window.document.querySelector('[data-dialog-cancel]').click(); await settle(window, 20);
+  assert.notEqual(window.localStorage.getItem(key), null, 'cancel does not clear the marker');
+
+  let release;
+  const held = window.navigator.locks.request('graph-editor-pro-clipboard-publish', () => new Promise(resolve => { release = resolve; }));
+  await settle(window, 20);
+  button.click(); await settle(window, 20);
+  window.document.querySelector('.app-dialog form').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true }));
+  await settle(window, 60);
+  assert.notEqual(window.localStorage.getItem(key), null, 'active owner prevents recovery');
+  assert.match(window.document.querySelector('.toast-stack').textContent, /still active/);
+  release(); await held; await settle(window, 30);
+
+  button.click(); await settle(window, 20);
+  window.document.querySelector('.app-dialog form').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true }));
+  await settle(window, 60);
+  assert.equal(window.localStorage.getItem(key), null);
+  assert.match(window.document.querySelector('.toast-stack').textContent, /recovery complete/i);
+  dom.window.close();
+});
+
+test('a fresh tab warns that system clipboard order across sites is ambiguous', async () => {
+  const { dom } = createEditorDom(baseGraph), { window } = dom;
+  await settle(window, 80);
+  setClipboard(window, { type:'graph-editor-clipboard', nodes:[{id:'a',label:'Clipboard item'}], edges:[], externalEdges:[] });
+  hotkey(window, 'v', { ctrlKey:true, altKey:true });
+  await settle(window, 100);
+  assert.equal(exportGraph(window.document).nodes.find(n => n.id === 'a').label, 'Clipboard item');
+  assert.match(window.document.querySelector('.toast-stack').textContent, /different sites.*older/);
+  dom.window.close();
+});
+
+test('compatibility and abandoned-copy failures explain different actions', async () => {
+  for(const mode of ['compatibility', 'recovery']) {
+    const { dom } = createEditorDom(baseGraph), { window } = dom;
+    await settle(window, 80);
+    let writes = 0;
+    Object.defineProperty(window.navigator, 'clipboard', { configurable:true, value:{ readText:async () => '', writeText:async () => { writes++; } } });
+    if(mode === 'compatibility') Object.defineProperty(window.navigator, 'locks', { configurable:true, value:undefined });
+    else window.localStorage.setItem('graph-editor-pro-clipboard-inflight', '{"old":true}');
+    await selectNode(window, 'a', 300, 330); window.document.querySelector('#btnCopy').click();
+    await settle(window, 120);
+    const toast = window.document.querySelector('.toast-stack').textContent;
+    if(mode === 'compatibility') assert.match(toast, /Web Locks.*storage.*export JSON/);
+    else assert.match(toast, /Clipboard recovery/);
+    assert.equal(writes, 0);
+    dom.window.close();
+  }
+});
+
+test('cross-origin late writes remain ambiguous and a fresh paste warns the user', async () => {
+  const hub = createClipboardHub();
+  const a = createEditorDom(baseGraph, 'https://a.example/');
+  const b = createEditorDom(baseGraph, 'https://b.example/');
+  const aw = a.dom.window, bw = b.dom.window;
+  await settle(aw, 80); await settle(bw, 80);
+  const ca = hub.attach(aw, 'A'), cb = hub.attach(bw, 'B');
+  // Web Locks and localStorage are distinct at different origins.
+  Object.defineProperty(aw.navigator, 'locks', { configurable:true, value:createWebLocks() });
+  Object.defineProperty(bw.navigator, 'locks', { configurable:true, value:createWebLocks() });
+  await selectNode(aw, 'a', 300, 330); await selectNode(bw, 'b', 700, 330);
+  aw.document.querySelector('#btnCopy').click(); await settle(aw, 50);
+  bw.document.querySelector('#btnCopy').click(); await settle(bw, 50);
+  cb.release(); await settle(bw, 40);
+  assert.equal(JSON.parse(hub.text).nodes[0].id, 'b');
+  ca.release(); await settle(aw, 40);
+  assert.equal(JSON.parse(hub.text).nodes[0].id, 'a', 'cross-origin lock scopes cannot prevent the late write');
+  const fresh = createEditorDom(baseGraph, 'https://a.example/');
+  await settle(fresh.dom.window, 80);
+  setClipboard(fresh.dom.window, JSON.parse(hub.text));
+  hotkey(fresh.dom.window, 'v', { ctrlKey:true, altKey:true });
+  await settle(fresh.dom.window, 100);
+  assert.match(fresh.dom.window.document.querySelector('.toast-stack').textContent, /different sites.*older/);
+  a.dom.window.close(); b.dom.window.close(); fresh.dom.window.close();
+});
+
+test('a known waiting predecessor does not authorize overwriting newer external text', async () => {
+  const hub = createClipboardHub();
+  const a = createEditorDom(baseGraph), b = createEditorDom(baseGraph);
+  const aw = a.dom.window, bw = b.dom.window;
+  await settle(aw, 80); await settle(bw, 80);
+  const ca = hub.attach(aw, 'A'), cb = hub.attach(bw, 'B');
+  Object.defineProperty(aw, 'localStorage', { configurable:true, value:hub.storage });
+  Object.defineProperty(bw, 'localStorage', { configurable:true, value:hub.storage });
+  let releaseLock;
+  const held = aw.navigator.locks.request('graph-editor-pro-clipboard-publish', () => new Promise(resolve => { releaseLock = resolve; }));
+  await settle(aw, 20);
+  await selectNode(aw, 'a', 300, 330); await selectNode(bw, 'b', 700, 330);
+  aw.document.querySelector('#btnCopy').click(); await settle(aw, 50);
+  bw.document.querySelector('#btnCopy').click(); await settle(bw, 50);
+  releaseLock(); await held; await settle(aw, 120);
+  ca.release(); hub.text = 'newer external copy';
+  await settle(bw, 250);
+  assert.deepEqual(cb.writes, []);
+  assert.equal(hub.text, 'newer external copy');
+  a.dom.window.close(); b.dom.window.close();
 });

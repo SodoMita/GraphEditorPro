@@ -171,22 +171,33 @@ The interactive-rendering model mirrors the mechanisms draw.io uses, verified ag
 
 ## Clipboard publication
 
-Graph copies publish under the browser's origin-wide **Web Lock**, held until
-`writeText` settles. A newer copy waits without stealing an expired lease; a
-superseded waiting copy never writes. Before a delayed publication, bounded
-reads verify that the clipboard is still the pre-copy content or the known
-predecessor write. A changed, unreadable, or stalled clipboard fails closed: the
-copy remains local and the editor reports that system publication failed. This
-avoids background writes over newer clipboard content. Waiting for a lock is
-cancelled after 30 seconds; it never cancels or steals an active write.
+Graph copies publish under an **origin-wide Web Lock**, held until `writeText`
+settles. Tabs announce pending copy intents before waiting; a later copy can
+recognize an earlier pending predecessor even if neither has reached the lock.
+Ambiguous equal timestamps across tabs fail closed. Before a delayed publication,
+bounded reads verify that the clipboard is still the pre-copy content or a
+known predecessor. A changed, unreadable, or stalled clipboard keeps the copy
+local and reports the failure. Lock waiting is cancelled after 30 seconds; it
+never cancels or steals an active write.
 
-A durable in-flight marker guards against a tab disappearing while a browser
-write might still complete. If the marker is left behind, subsequent copies
-remain local, even after the Web Lock is released. To recover, close **all**
-Graph Editor tabs and completely restart the browser, then remove the
-`graph-editor-pro-clipboard-inflight` localStorage entry for the editor's
-origin using browser developer tools and copy again. Do not clear the marker
-while an old write could still complete. Browsers without Web Locks or usable
-localStorage also keep graph copies local instead of risking unordered writes.
-System clipboard paste and deliberately restored clipboard-history items remain
-available; the shared stamp registry is not used to reject restored history.
+**Different sites and downloaded instances do not share Web Locks or storage.**
+A delayed write at one origin can overwrite a newer copy from another origin,
+and a fresh tab cannot detect which clipboard item is newer. Graph pastes show
+a warning rather than silently claiming that system clipboard ordering is
+known. Clipboard-history items remain pasteable; the warning does not reject
+them. Use a single origin or export/import JSON to avoid cross-origin copy races.
+
+An in-flight marker guards against a tab disappearing while a browser write
+might still complete. If it remains after a tab is lost, subsequent copies are
+local only. To recover, close **all** Graph Editor tabs, completely restart the
+browser, then reopen the editor and choose **Edit → Clipboard recovery**. The
+confirmation explains why these steps are required; recovery refuses to clear a
+marker while another same-origin tab holds the lock. Never confirm recovery
+while an old write could still complete.
+
+Without Web Locks or usable site storage, system graph publication is disabled
+rather than risking unordered writes. The editor reports this separately from
+an abandoned write: enable site storage or use a browser supporting Web Locks,
+or export JSON and import it in the destination document. After a local-only
+Cut, use Undo before exporting. Ordinary system clipboard paste remains
+available, and the shared stamp registry is not used to reject restored history.

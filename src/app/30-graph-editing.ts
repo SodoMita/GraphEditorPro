@@ -890,6 +890,9 @@
     staleSystemText: Promise<string | undefined>;
     issuedAtCopy: string;
     deferred: boolean;
+    pendingBefore: string[];
+    intentKey: string;
+    failure: 'transient' | 'compatibility' | 'recovery';
   };
   let localClipboardWrite: {
     seq: number;
@@ -916,11 +919,43 @@
   // the browser's clipboard operation can no longer complete.
   const CLIPBOARD_PUBLISH_KEY = 'graph-editor-pro-clipboard-publish';
   const CLIPBOARD_INFLIGHT_KEY = 'graph-editor-pro-clipboard-inflight';
+  const CLIPBOARD_INTENT_PREFIX = 'graph-editor-pro-clipboard-intent-';
   const CLIPBOARD_LOCK_WAIT_MS = 30000;
   const readPublishRegistry = (): any => {
     try { return JSON.parse(localStorage.getItem(CLIPBOARD_PUBLISH_KEY) || 'null'); }
     catch { return null; }
   };
+  // Each copy announces its intent before entering the lock queue. Individual
+  // storage keys avoid lost read/modify/write updates between tabs. A later
+  // copy records the intents already present, not an inferred timestamp order.
+  function registerClipboardIntent(stamp: ClipboardStamp): { key: string; pending: string[] } | null {
+    try {
+      const pending: string[] = [];
+      for(let i = 0; i < localStorage.length; i++){
+        const key = localStorage.key(i);
+        if(!key || !key.startsWith(CLIPBOARD_INTENT_PREFIX)) continue;
+        const value = localStorage.getItem(key);
+        if(!value) continue;
+        let previous: any;
+        try { previous = JSON.parse(value); } catch { continue; }
+        // Abandoned entries cannot be trusted indefinitely as proof of a live
+        // predecessor. Equal timestamps across tabs are ambiguous, not ordered.
+        if(isRecord(previous) && typeof previous.t === 'number' &&
+           Date.now() - previous.t >= 0 && Date.now() - previous.t <= CLIPBOARD_LOCK_WAIT_MS &&
+           compareClipboardStamps(stamp, previous) === true){
+          pending.push(JSON.stringify(previous));
+        }
+      }
+      const key = CLIPBOARD_INTENT_PREFIX + clipboardTabId + ':' + stamp.s;
+      const value = JSON.stringify(stamp);
+      localStorage.setItem(key, value);
+      if(localStorage.getItem(key) !== value) return null;
+      return { key, pending };
+    } catch { return null; }
+  }
+  function removeClipboardIntent(attempt: ClipboardWriteAttempt) {
+    try { if(attempt.intentKey) localStorage.removeItem(attempt.intentKey); } catch {}
+  }
   // Only a write this tab has issued and not yet seen settle can prove the
   // system clipboard still holds an obsolete payload of ours. Persistent
   // history (published stamps) says nothing about current user intent.
@@ -942,11 +977,13 @@
   // left an unresolved operation. No timeout is evidence a write is finished.
   const beginClipboardWrite = (attempt: ClipboardWriteAttempt): boolean => {
     try {
-      if(localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) !== null) return false;
+      if(localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) !== null){ attempt.failure = 'recovery'; return false; }
       const marker = JSON.stringify(attempt.stamp);
       localStorage.setItem(CLIPBOARD_INFLIGHT_KEY, marker);
-      return localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === marker;
-    } catch { return false; }
+      const ok = localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === marker;
+      if(!ok) attempt.failure = 'compatibility';
+      return ok;
+    } catch { attempt.failure = 'compatibility'; return false; }
   };
   const endClipboardWrite = (attempt: ClipboardWriteAttempt) => {
     try {
@@ -955,10 +992,35 @@
       }
     } catch { /* Keeping a marker is safer than assuming recovery. */ }
   };
+  // Recovery is deliberately explicit: a lock may be released on tab close
+  // while its browser write can still complete. Never clear the marker merely
+  // because a timeout elapsed or another tab disappeared.
+  async function recoverClipboardPublication(): Promise<void> {
+    const locks = navigator.locks;
+    if(!locks || typeof locks.request !== 'function'){ toast(I18N.t('copy_compatibility')); return; }
+    try {
+      if(localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null){ toast(I18N.t('clipboard_recovery_none')); return; }
+    } catch { toast(I18N.t('copy_compatibility')); return; }
+    const confirmed = await uiConfirm(I18N.t('clipboard_recovery_confirm'), {
+      title: I18N.t('clipboard_recovery_button'), confirmLabel: I18N.t('clipboard_recovery_button'), danger: true,
+    });
+    if(!confirmed) return;
+    try {
+      const result = await locks.request(CLIPBOARD_PUBLISH_KEY, { ifAvailable: true }, async lock => {
+        if(!lock) return 'busy';
+        if(localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null) return 'none';
+        localStorage.removeItem(CLIPBOARD_INFLIGHT_KEY);
+        return localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null ? 'done' : 'unavailable';
+      });
+      toast(I18N.t(result === 'busy' ? 'clipboard_recovery_busy' : result === 'done' ? 'clipboard_recovery_done' :
+        result === 'none' ? 'clipboard_recovery_none' : 'copy_compatibility'));
+    } catch { toast(I18N.t('copy_compatibility')); }
+  }
   const dropQueuedClipboardWrite = () => {
     if(!queuedClipboardWrite) return;
     const queued = queuedClipboardWrite;
     queuedClipboardWrite = null;
+    removeClipboardIntent(queued);
     markClipboardAttemptFailed(queued.seq);
   };
   function markClipboardAttemptFailed(seq: number){
@@ -979,6 +1041,7 @@
   async function issueClipboardWrite(attempt: ClipboardWriteAttempt): Promise<boolean> {
     if(!beginClipboardWrite(attempt)) return false;
     if(!publishIssuedStamp(attempt.stamp)){
+      attempt.failure = 'compatibility';
       endClipboardWrite(attempt);
       return false;
     }
@@ -1011,15 +1074,16 @@
     const registry = readPublishRegistry();
     const issued = JSON.stringify(isRecord(registry) ? registry.issued ?? null : null);
     const unchanged = snapshot !== undefined && current === snapshot && issued === attempt.issuedAtCopy;
-    const predecessor = attempt.issuedAtCopy !== 'null' &&
-      issued === attempt.issuedAtCopy && stampFromClipboardText(current) === attempt.issuedAtCopy;
+    const predecessor = issued !== 'null' && stampFromClipboardText(current) === issued &&
+      (issued === attempt.issuedAtCopy || attempt.pendingBefore.includes(issued));
     return unchanged || predecessor || (issued === attempt.issuedAtCopy && current === lastIssuedClipboardText);
   }
   // Obtain a real cross-context lock. The callback owns it until the write
   // settles. Waiting has a bounded cancellation, never a lock-stealing timeout.
   async function awaitPublishTurn(attempt: ClipboardWriteAttempt): Promise<boolean> {
+    if(!attempt.intentKey) return false;
     const locks = navigator.locks;
-    if(!locks || typeof locks.request !== 'function') return false;
+    if(!locks || typeof locks.request !== 'function'){ attempt.failure = 'compatibility'; return false; }
     const run = async (deferred: boolean): Promise<boolean> => {
       if(attempt.seq !== localClipboardSeq) return false;
       const registry = readPublishRegistry();
@@ -1042,7 +1106,10 @@
           return run(true);
         });
       } finally { clearTimeout(timer); }
-    } catch { return false; }
+    } catch (error) {
+      if((error as Error)?.name !== 'AbortError') attempt.failure = 'compatibility';
+      return false;
+    }
   }
   async function pumpClipboardWrites(): Promise<void> {
     if(clipboardBusy) return;
@@ -1053,9 +1120,11 @@
         queuedClipboardWrite = null;
         const published = attempt.seq === localClipboardSeq && await awaitPublishTurn(attempt);
         outstandingClipboardWrites.delete(attempt.seq);
+        removeClipboardIntent(attempt);
         if(localClipboardWrite?.seq === attempt.seq){
           localClipboardWrite.state = published ? 'published' : 'failed';
-          if(!published) toast(I18N.t('copy_local_only'));
+          if(!published) toast(I18N.t(attempt.failure === 'recovery' ? 'copy_recovery_needed' :
+            attempt.failure === 'compatibility' ? 'copy_compatibility' : 'copy_local_only'));
         }
       }
     } finally { clipboardBusy = false; }
@@ -1238,14 +1307,18 @@
     try {
       const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
       const registry = readPublishRegistry();
+      const intent = registerClipboardIntent(stamp);
       const attempt: ClipboardWriteAttempt = {
         seq: writeSeq, payload, stamp, staleSystemText, deferred: false,
         issuedAtCopy: JSON.stringify(isRecord(registry) ? registry.issued ?? null : null),
+        pendingBefore: intent?.pending ?? [], intentKey: intent?.key ?? '',
+        failure: intent ? 'transient' : 'compatibility',
       };
       outstandingClipboardWrites.set(writeSeq, attempt);
       if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function'){
         publishClipboardCopy(attempt);
       } else {
+        removeClipboardIntent(attempt);
         outstandingClipboardWrites.delete(writeSeq);
         localClipboardWrite.state = 'failed';
       }
@@ -1840,9 +1913,17 @@
       }
       if(token !== pasteGeneration) return;
 
-      if(systemData && systemCanBeNewer && !systemRejectedByStamp){ pasteClipboardInternal(systemData, { exact }); return; }
+      if(systemData && systemCanBeNewer && !systemRejectedByStamp){
+        pasteClipboardInternal(systemData, { exact });
+        toast(I18N.t('clipboard_order_warning'));
+        return;
+      }
       if(hasInternal){ pasteClipboardInternal(null, { exact }); return; }
-      if(systemData && !systemRejectedByStamp){ pasteClipboardInternal(systemData, { exact }); return; }
+      if(systemData && !systemRejectedByStamp){
+        pasteClipboardInternal(systemData, { exact });
+        toast(I18N.t('clipboard_order_warning'));
+        return;
+      }
       if(systemIssue) toast(I18N.t(systemIssue.key, systemIssue.params));
       else if(systemRejectedByStamp) toast(I18N.t('clipboard_empty'));
     } finally {

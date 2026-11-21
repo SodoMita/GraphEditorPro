@@ -1012,6 +1012,8 @@
                 <button id="btnPaste2" class="btn small" title="Paste copied nodes and edges (offset)" data-i18n-title="paste_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste"></use></svg> <span data-i18n="paste">Paste</span></button>
                 <button id="btnPasteExact2" class="btn small" title="Paste in place (Ctrl+Alt+V)" data-i18n-title="paste_exact_title"><svg class="ui-icon" aria-hidden="true"><use href="#icon-paste-exact"></use></svg> <span data-i18n="paste_exact">Paste in place</span></button>
               </div>
+              <button id="btnClipboardRecovery" class="btn small" type="button" data-i18n="clipboard_recovery_button">Clipboard recovery</button>
+              <div class="tiny muted" data-i18n="clipboard_order_warning">Clipboard order between different sites or downloaded copies cannot be verified; this graph may be older than another copy.</div>
               <label class="field checkbox" style="margin-top:6px" title="When on, edges with one endpoint outside the selection are restored on paste only if the external node still exists" data-i18n-title="copy_preserve_title"><input id="chkCopyPreserve" type="checkbox" checked> <span data-i18n="copy_preserve_label">Preserve dangling edges on paste if target exists</span></label>
             </div>
 
@@ -1940,6 +1942,18 @@ const GraphPatchCore = (() => {
                         return `patch.${key} has a non-scalar ${field}`;
                     }
                 }
+                // The editor's loader removes these characters and caps identities at
+                // 40 characters. Reject rather than silently rename a server identity,
+                // which could make two distinct records collide on a later load.
+                for (const field of (key === 'nodes' ? ['id'] : ['id', 'from', 'to'])) {
+                    const value = entry[field];
+                    if (value == null)
+                        continue;
+                    const identity = String(value);
+                    if (!identity || identity.length > 40 || /[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/.test(identity)) {
+                        return `patch.${key} has a noncanonical ${field}`;
+                    }
+                }
             }
         }
         return null;
@@ -1977,6 +1991,7 @@ const GraphPatchCore = (() => {
                 droppedNodes++;
                 continue;
             }
+            node.id = id;
             seenNodeIds.add(id);
             // Coordinates are restored only when carried; a partial patch must not
             // reset a stored position. Non-finite supplied values are treated as
@@ -2045,6 +2060,11 @@ const GraphPatchCore = (() => {
                 droppedEdges++;
                 continue;
             }
+            edge.id = id;
+            if (suppliedFrom)
+                edge.from = from;
+            if (suppliedTo)
+                edge.to = to;
             const existing = edgeById.get(id);
             if (existing) {
                 if (mergeCarried(existing, edge))
@@ -2710,6 +2730,14 @@ const I18N = {
         'paste_cap_nodes': { en: 'Skipped {n:node}: the document limit is {limit}', ru: 'Пропущено: {n:node} — предел документа {limit}' },
         'paste_cap_edges': { en: 'Skipped {n:edge}: the document limit is {limit}', ru: 'Пропущено: {n:edge} — предел документа {limit}' },
         'copy_local_only': { en: 'System copy could not be safely published; the copy is available locally. Try copying again.', ru: 'Не удалось безопасно скопировать в системный буфер; копия доступна локально. Попробуйте скопировать снова.' },
+        'copy_compatibility': { en: 'System copy needs Web Locks and site storage. Enable storage or use a supported browser. After Cut, use Undo; alternatively export JSON and import it in the other document.', ru: 'Для системного буфера нужны Web Locks и хранилище сайта. Включите хранилище или используйте поддерживаемый браузер. После вырезания отмените действие; либо экспортируйте JSON и импортируйте в другом документе.' },
+        'copy_recovery_needed': { en: 'A previous system copy may still be unresolved. Open Edit → Clipboard recovery for safe recovery instructions.', ru: 'Предыдущее копирование может быть не завершено. Откройте Правка → Восстановление буфера для безопасного восстановления.' },
+        'clipboard_recovery_button': { en: 'Clipboard recovery', ru: 'Восстановление буфера' },
+        'clipboard_recovery_confirm': { en: 'Only continue after closing ALL Graph Editor tabs and completely restarting the browser. An old clipboard write might otherwise finish later and overwrite newer clipboard contents. Have you completed these steps?', ru: 'Продолжайте только после закрытия ВСЕХ вкладок Graph Editor и полного перезапуска браузера. Иначе старое копирование может завершиться позже и перезаписать новый буфер. Вы выполнили эти действия?' },
+        'clipboard_recovery_busy': { en: 'A clipboard write is still active. Close all editor tabs and restart the browser before recovery.', ru: 'Копирование ещё выполняется. Закройте все вкладки редактора и перезапустите браузер перед восстановлением.' },
+        'clipboard_recovery_done': { en: 'Clipboard recovery complete. Copy again.', ru: 'Буфер восстановлен. Скопируйте снова.' },
+        'clipboard_recovery_none': { en: 'No abandoned clipboard write was found.', ru: 'Незавершённое копирование не найдено.' },
+        'clipboard_order_warning': { en: 'Clipboard order between different sites or downloaded copies cannot be verified; this graph may be older than another copy.', ru: 'Порядок копирования между разными сайтами или скачанными копиями нельзя проверить; этот граф может быть старее другой копии.' },
         'paste_local_fallback': { en: 'System clipboard unavailable — pasted the local copy', ru: 'Системный буфер недоступен — вставлена локальная копия' },
         'nodes_reversed': { en: 'Node order reversed', ru: 'Порядок узлов обращён' },
         'nodes_shuffled': { en: 'Node order shuffled', ru: 'Порядок узлов перемешан' },
@@ -9532,6 +9560,7 @@ let lastIssuedClipboardText = null;
 // the browser's clipboard operation can no longer complete.
 const CLIPBOARD_PUBLISH_KEY = 'graph-editor-pro-clipboard-publish';
 const CLIPBOARD_INFLIGHT_KEY = 'graph-editor-pro-clipboard-inflight';
+const CLIPBOARD_INTENT_PREFIX = 'graph-editor-pro-clipboard-intent-';
 const CLIPBOARD_LOCK_WAIT_MS = 30000;
 const readPublishRegistry = () => {
     try {
@@ -9541,6 +9570,52 @@ const readPublishRegistry = () => {
         return null;
     }
 };
+// Each copy announces its intent before entering the lock queue. Individual
+// storage keys avoid lost read/modify/write updates between tabs. A later
+// copy records the intents already present, not an inferred timestamp order.
+function registerClipboardIntent(stamp) {
+    try {
+        const pending = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith(CLIPBOARD_INTENT_PREFIX))
+                continue;
+            const value = localStorage.getItem(key);
+            if (!value)
+                continue;
+            let previous;
+            try {
+                previous = JSON.parse(value);
+            }
+            catch {
+                continue;
+            }
+            // Abandoned entries cannot be trusted indefinitely as proof of a live
+            // predecessor. Equal timestamps across tabs are ambiguous, not ordered.
+            if (isRecord(previous) && typeof previous.t === 'number' &&
+                Date.now() - previous.t >= 0 && Date.now() - previous.t <= CLIPBOARD_LOCK_WAIT_MS &&
+                compareClipboardStamps(stamp, previous) === true) {
+                pending.push(JSON.stringify(previous));
+            }
+        }
+        const key = CLIPBOARD_INTENT_PREFIX + clipboardTabId + ':' + stamp.s;
+        const value = JSON.stringify(stamp);
+        localStorage.setItem(key, value);
+        if (localStorage.getItem(key) !== value)
+            return null;
+        return { key, pending };
+    }
+    catch {
+        return null;
+    }
+}
+function removeClipboardIntent(attempt) {
+    try {
+        if (attempt.intentKey)
+            localStorage.removeItem(attempt.intentKey);
+    }
+    catch { }
+}
 // Only a write this tab has issued and not yet seen settle can prove the
 // system clipboard still holds an obsolete payload of ours. Persistent
 // history (published stamps) says nothing about current user intent.
@@ -9566,13 +9641,19 @@ const publishIssuedStamp = (stamp) => {
 // left an unresolved operation. No timeout is evidence a write is finished.
 const beginClipboardWrite = (attempt) => {
     try {
-        if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) !== null)
+        if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) !== null) {
+            attempt.failure = 'recovery';
             return false;
+        }
         const marker = JSON.stringify(attempt.stamp);
         localStorage.setItem(CLIPBOARD_INFLIGHT_KEY, marker);
-        return localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === marker;
+        const ok = localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === marker;
+        if (!ok)
+            attempt.failure = 'compatibility';
+        return ok;
     }
     catch {
+        attempt.failure = 'compatibility';
         return false;
     }
 };
@@ -9584,11 +9665,52 @@ const endClipboardWrite = (attempt) => {
     }
     catch { /* Keeping a marker is safer than assuming recovery. */ }
 };
+// Recovery is deliberately explicit: a lock may be released on tab close
+// while its browser write can still complete. Never clear the marker merely
+// because a timeout elapsed or another tab disappeared.
+async function recoverClipboardPublication() {
+    const locks = navigator.locks;
+    if (!locks || typeof locks.request !== 'function') {
+        toast(I18N.t('copy_compatibility'));
+        return;
+    }
+    try {
+        if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null) {
+            toast(I18N.t('clipboard_recovery_none'));
+            return;
+        }
+    }
+    catch {
+        toast(I18N.t('copy_compatibility'));
+        return;
+    }
+    const confirmed = await uiConfirm(I18N.t('clipboard_recovery_confirm'), {
+        title: I18N.t('clipboard_recovery_button'), confirmLabel: I18N.t('clipboard_recovery_button'), danger: true,
+    });
+    if (!confirmed)
+        return;
+    try {
+        const result = await locks.request(CLIPBOARD_PUBLISH_KEY, { ifAvailable: true }, async (lock) => {
+            if (!lock)
+                return 'busy';
+            if (localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null)
+                return 'none';
+            localStorage.removeItem(CLIPBOARD_INFLIGHT_KEY);
+            return localStorage.getItem(CLIPBOARD_INFLIGHT_KEY) === null ? 'done' : 'unavailable';
+        });
+        toast(I18N.t(result === 'busy' ? 'clipboard_recovery_busy' : result === 'done' ? 'clipboard_recovery_done' :
+            result === 'none' ? 'clipboard_recovery_none' : 'copy_compatibility'));
+    }
+    catch {
+        toast(I18N.t('copy_compatibility'));
+    }
+}
 const dropQueuedClipboardWrite = () => {
     if (!queuedClipboardWrite)
         return;
     const queued = queuedClipboardWrite;
     queuedClipboardWrite = null;
+    removeClipboardIntent(queued);
     markClipboardAttemptFailed(queued.seq);
 };
 function markClipboardAttemptFailed(seq) {
@@ -9609,6 +9731,7 @@ async function issueClipboardWrite(attempt) {
     if (!beginClipboardWrite(attempt))
         return false;
     if (!publishIssuedStamp(attempt.stamp)) {
+        attempt.failure = 'compatibility';
         endClipboardWrite(attempt);
         return false;
     }
@@ -9650,16 +9773,20 @@ async function verifyDeferredCopy(attempt) {
     const registry = readPublishRegistry();
     const issued = JSON.stringify(isRecord(registry) ? registry.issued ?? null : null);
     const unchanged = snapshot !== undefined && current === snapshot && issued === attempt.issuedAtCopy;
-    const predecessor = attempt.issuedAtCopy !== 'null' &&
-        issued === attempt.issuedAtCopy && stampFromClipboardText(current) === attempt.issuedAtCopy;
+    const predecessor = issued !== 'null' && stampFromClipboardText(current) === issued &&
+        (issued === attempt.issuedAtCopy || attempt.pendingBefore.includes(issued));
     return unchanged || predecessor || (issued === attempt.issuedAtCopy && current === lastIssuedClipboardText);
 }
 // Obtain a real cross-context lock. The callback owns it until the write
 // settles. Waiting has a bounded cancellation, never a lock-stealing timeout.
 async function awaitPublishTurn(attempt) {
-    const locks = navigator.locks;
-    if (!locks || typeof locks.request !== 'function')
+    if (!attempt.intentKey)
         return false;
+    const locks = navigator.locks;
+    if (!locks || typeof locks.request !== 'function') {
+        attempt.failure = 'compatibility';
+        return false;
+    }
     const run = async (deferred) => {
         if (attempt.seq !== localClipboardSeq)
             return false;
@@ -9691,7 +9818,9 @@ async function awaitPublishTurn(attempt) {
             clearTimeout(timer);
         }
     }
-    catch {
+    catch (error) {
+        if (error?.name !== 'AbortError')
+            attempt.failure = 'compatibility';
         return false;
     }
 }
@@ -9705,10 +9834,12 @@ async function pumpClipboardWrites() {
             queuedClipboardWrite = null;
             const published = attempt.seq === localClipboardSeq && await awaitPublishTurn(attempt);
             outstandingClipboardWrites.delete(attempt.seq);
+            removeClipboardIntent(attempt);
             if (localClipboardWrite?.seq === attempt.seq) {
                 localClipboardWrite.state = published ? 'published' : 'failed';
                 if (!published)
-                    toast(I18N.t('copy_local_only'));
+                    toast(I18N.t(attempt.failure === 'recovery' ? 'copy_recovery_needed' :
+                        attempt.failure === 'compatibility' ? 'copy_compatibility' : 'copy_local_only'));
             }
         }
     }
@@ -9914,15 +10045,19 @@ function copySelectedNodes() {
     try {
         const payload = JSON.stringify({ type: 'graph-editor-clipboard', nodes, edges, externalEdges, customAttributes, clipboardStamp: stamp });
         const registry = readPublishRegistry();
+        const intent = registerClipboardIntent(stamp);
         const attempt = {
             seq: writeSeq, payload, stamp, staleSystemText, deferred: false,
             issuedAtCopy: JSON.stringify(isRecord(registry) ? registry.issued ?? null : null),
+            pendingBefore: intent?.pending ?? [], intentKey: intent?.key ?? '',
+            failure: intent ? 'transient' : 'compatibility',
         };
         outstandingClipboardWrites.set(writeSeq, attempt);
         if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
             publishClipboardCopy(attempt);
         }
         else {
+            removeClipboardIntent(attempt);
             outstandingClipboardWrites.delete(writeSeq);
             localClipboardWrite.state = 'failed';
         }
@@ -10608,6 +10743,7 @@ async function pasteFromClipboardSource(exact) {
             return;
         if (systemData && systemCanBeNewer && !systemRejectedByStamp) {
             pasteClipboardInternal(systemData, { exact });
+            toast(I18N.t('clipboard_order_warning'));
             return;
         }
         if (hasInternal) {
@@ -10616,6 +10752,7 @@ async function pasteFromClipboardSource(exact) {
         }
         if (systemData && !systemRejectedByStamp) {
             pasteClipboardInternal(systemData, { exact });
+            toast(I18N.t('clipboard_order_warning'));
             return;
         }
         if (systemIssue)
@@ -18555,6 +18692,7 @@ function wireUi() {
     bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
     bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
     bindClipboardButton('btnPasteExact2', pasteExactFromSystemClipboard);
+    bindClipboardButton('btnClipboardRecovery', recoverClipboardPublication);
     const chkPreserve = document.getElementById('chkCopyPreserve');
     if (chkPreserve) {
         chkPreserve.checked = state.settings.copyPreserveExternal !== false;
