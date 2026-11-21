@@ -51,14 +51,36 @@
     return v;
   }
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
+  // Style columns come from the resolved visual, like every other exporter: a
+  // value the edge leaves unset is inherited from the edge defaults or its type
+  // style, and writing the raw field would record a blank and lose it on import.
   function edgeCsv(){
     const rows: unknown[][] = [['id','source_id','source_label','target_id','target_label','weight','directed','label','type','color','stroke_size','stroke_style','arrow_size','label_color','label_size']];
-    for(const e of state.edges){ const a=nodeById(e.from), b=nodeById(e.to); rows.push([e.id,e.from,a?.label||'',e.to,b?.label||'',e.weight,edgeDirection(e),e.label,e.type||'',e.color||'',e.strokeSize??'',e.strokeStyle||'',e.arrowSize??'',e.labelColor||'',e.labelSize??'']); }
+    for(const e of state.edges){
+      const a = nodeById(e.from), b = nodeById(e.to), v = edgeVisual(e);
+      rows.push([e.id, e.from, a?.label||'', e.to, b?.label||'', e.weight, edgeDirection(e), e.label,
+        v.type || '', v.color || '', v.strokeSize ?? '', v.strokeStyle || '', v.arrowSize ?? '',
+        v.labelColor || '', v.labelSize ?? '']);
+    }
     return rowsToCsv(rows);
   }
+  // A node carries far more than position and fill colour, and a CSV that only
+  // wrote those silently reset the rest on re-import. The columns are the same
+  // properties every other format writes, read from the resolved visual so an
+  // inherited value is recorded rather than a blank. Columns are appended after
+  // the original eight, so a file made by an older build still imports, and a
+  // reader that only knows the first eight still finds them where they were.
+  const NODE_CSV_COLUMNS = ['order','id','label','x','y','shape','color','type',
+    'width','height','stroke_color','stroke_size','stroke_style',
+    'label_color','label_size','label_position','label_font'];
   function nodeCsv(){
     const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    return rowsToCsv([['order','id','label','x','y','shape','color','type'], ...sorted.map(n => [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type])]);
+    return rowsToCsv([NODE_CSV_COLUMNS, ...sorted.map(n => {
+      const v = nodeVisual(n);
+      return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), v.shape || '', v.color || '', v.type || '',
+        v.width ?? '', v.height ?? '', v.strokeColor || '', v.strokeSize ?? '', v.strokeStyle || '',
+        v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
+    })]);
   }
   function matrixCsv(){
     const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
@@ -335,11 +357,18 @@
       attrs.push(`order=${n.order ?? 0}`);
       // `labelloc`/`labeljust` are real GraphViz attributes but cannot express
       // this editor's five-way position, so it goes under a reserved name too.
-      if(n.labelPosition) attrs.push(`_gep_labelPosition=${dotString(n.labelPosition)}`);
+      // The RESOLVED position: a node that inherits `top` from its type or the
+      // defaults is drawn at `top`, so writing the raw field dropped the property
+      // for exactly those nodes and a round-trip returned them to the centre.
+      // `v` is nodeVisual's output, the same source as every other attribute here.
+      if(v.labelPosition) attrs.push(`_gep_labelPosition=${dotString(v.labelPosition)}`);
       // Only when the node name had to be aliased: the real id must survive, and
       // `id` is already the attribute the edge exporter uses for the same job.
       if(dotAlias(n.id) !== n.id) attrs.push(`id=${dotString(n.id)}`);
-      if(n.type) attrs.push(`type=${dotString(n.type)}`);
+      // Read the resolved visual: a type the element does not carry itself is
+      // inherited from the defaults and is what the UI shows, so writing the raw
+      // field recorded nothing for those nodes.
+      if(v.type) attrs.push(`type=${dotString(v.type)}`);
       attrs.push(...dotLabelAttrs(v));
       attrs.push(...gepCustomAttrs(n.custom));
       lines.push(`  ${dotId(dotAlias(n.id))} [${attrs.join(', ')}];`);
@@ -362,21 +391,30 @@
       // QVGE DOT: color, penwidth, style, dir
       attrs.push(`color=${dotString(v.color)}`);
       attrs.push(`penwidth=${v.strokeSize}`);
+      if(v.type) attrs.push(`type=${dotString(v.type)}`);
+      if(v.labelColor) attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+      if(v.labelSize != null) attrs.push(`fontsize=${v.labelSize}`);
       const es = v.strokeStyle;
       if(es) attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
       if(dir === 'mutual') attrs.push(`dir=${dotString('both')}`);
       else if(dir === 'undirected') attrs.push(`dir=${dotString('none')}`);
       else attrs.push(`dir=${dotString('forward')}`);
       if(v.arrowSize != null){
+        // `arrowsize` is Graphviz's multiplier, so write it for other tools — but a
+        // multiplier is lossy in both directions: 20 -> 1.6667 -> 20.0004, and any
+        // value whose multiplier lands under 5 cannot be told apart from an
+        // absolute size on the way back in. Our own model stores the absolute
+        // size, so carry that exactly as well and let our reader prefer it.
         const mul = v.arrowSize / DEFAULT_ARROW_SIZE;
         const txt = Number(mul.toFixed(4)).toString();
         attrs.push(`arrowsize=${dotString(txt)}`);
+        attrs.push(`arrow_size=${dotString(String(v.arrowSize))}`);
       }
       // `type` was the one edge field this exporter never wrote, so a
       // round-trip through DOT silently dropped it while every other edge
       // property survived. QVGE keeps arbitrary edge attributes, so the name
       // is free to use.
-      if(e.type) attrs.push(`type=${dotString(e.type)}`);
+      if(v.type) attrs.push(`type=${dotString(v.type)}`);
       attrs.push(...gepCustomAttrs(e.custom));
       attrs.push(...dotLabelAttrs(v));
       // Endpoints are written with the SAME alias the node statements use, or
@@ -414,6 +452,25 @@
     keyId?: string;
   }
   const num = (raw: unknown, fallback: number, lo: number, hi: number) => clamp(finite(raw, fallback), lo, hi);
+  // Pixels -> inches for anything that lands in a Graphviz-named attribute.
+  // Graphviz measures in inches (72 per inch), so this is the same conversion the
+  // DOT exporter does inline for `width`/`height`. Kept as one function so the
+  // two exporters cannot drift apart again.
+  // Node size in GraphML is PIXELS, like this editor's own model.
+  //
+  // I briefly converted it to inches, on the theory that a GraphML reader maps
+  // each <data> onto a Graphviz attribute of the same name and Graphviz measures
+  // in inches. That was wrong for the reader this format actually targets: QVGE
+  // stores the value verbatim and passes it straight to resize()
+  // (CFormatGraphML::readNode -> CNode::setAttribute(attr_width)), and its own
+  // exporter writes getSize() unconverted. Dividing by 72 shrank a 50px node to
+  // 0.69 for every QVGE user. Sizes are written and read as pixels, unchanged.
+  //
+  // Fractions are kept: a node may legitimately be 50.5 x 45.25, and rounding on
+  // the way in silently resized every such node. The clamp stays, since that is
+  // the editor's own node range, not a unit conversion.
+  const nodeSizeFromGraphml = (raw: string) => clamp(finite(raw, 50), 10, 300);
+
   const colorOrUndef = (raw: unknown) => parseColor(raw) || undefined;
   const NODE_FIELDS_MODEL: readonly GraphmlField[] = [
     {field: 'label', name: 'label', aliases: ['name']},
@@ -640,9 +697,15 @@
       parts.push(`      <data key="order">${xmlEsc(n.order ?? 0)}</data>`);
       parts.push(`      <data key="x">${xmlEsc(fmtCoord(n.x))}</data>`);
       parts.push(`      <data key="y">${xmlEsc(fmtCoord(n.y))}</data>`);
-      if(n.type) parts.push(`      <data key="type">${xmlEsc(n.type)}</data>`);
+      // The resolved type, like every other visual above: a node whose type is
+      // inherited from the document defaults is drawn with that type's style, and
+      // writing the raw field omitted it — the round-trip lost the inherited type
+      // and the node came back unstyled.
+      if(v.type) parts.push(`      <data key="type">${xmlEsc(v.type)}</data>`);
       parts.push(`      <data key="shape">${xmlEsc(v.shape)}</data>`);
       parts.push(`      <data key="color">${xmlEsc(v.color)}</data>`);
+      // Pixels, unconverted — see nodeSizeFromGraphml above. (DOT is the format
+      // that carries inches; GraphML carries the editor's own units.)
       parts.push(`      <data key="width">${xmlEsc(v.width)}</data>`);
       parts.push(`      <data key="height">${xmlEsc(v.height)}</data>`);
       parts.push(`      <data key="strokeColor">${xmlEsc(v.strokeColor)}</data>`);
@@ -670,7 +733,7 @@
       const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${directedBool ? 'true' : 'false'}">`];
       parts.push(`      <data key="weight">${xmlEsc(e.weight)}</data>`);
       parts.push(`      <data key="edgeLabel">${xmlEsc(e.label)}</data>`);
-      if(e.type) parts.push(`      <data key="edgeType">${xmlEsc(e.type)}</data>`);
+      if(v.type) parts.push(`      <data key="edgeType">${xmlEsc(v.type)}</data>`);
       parts.push(`      <data key="edgeColor">${xmlEsc(v.color)}</data>`);
       parts.push(`      <data key="edgeStrokeSize">${xmlEsc(v.strokeSize)}</data>`);
       parts.push(`      <data key="edgeStrokeStyle">${xmlEsc(v.strokeStyle)}</data>`);
@@ -700,9 +763,17 @@
   // foreign payload may not mint a token.
   function jsonExportText(){
     const obj = JSON.parse(snapshot()) as AnyRecord;
-    if(isRecord(obj) && Array.isArray(obj.customAttributes)){
-      for(const attribute of obj.customAttributes as AnyRecord[]){
-        if(isRecord(attribute) && typeof attribute.origin === 'string') attribute.origin = originForWire(attribute.origin);
+    if(isRecord(obj)){
+      // `viewBox` is the camera, and the camera is where the user is looking,
+      // not where the graph is: zoom out and it grows without limit, pan and it
+      // moves. Exporting it as the document's extent made the bounds of a file
+      // depend on the last scroll wheel. The file records where the content
+      // actually is; the camera stays in snapshots/autosave, where it belongs.
+      obj.viewBox = graphBounds();
+      if(Array.isArray(obj.customAttributes)){
+        for(const attribute of obj.customAttributes as AnyRecord[]){
+          if(isRecord(attribute) && typeof attribute.origin === 'string') attribute.origin = originForWire(attribute.origin);
+        }
       }
     }
     return JSON.stringify(obj, null, 2);
@@ -731,12 +802,17 @@
       nodeCustom: isRecord(data.settings) && isRecord((data.settings as AnyRecord).nodeCustom) ? (data.settings as AnyRecord).nodeCustom : Object.create(null),
       edgeCustom: isRecord(data.settings) && isRecord((data.settings as AnyRecord).edgeCustom) ? (data.settings as AnyRecord).edgeCustom : Object.create(null) };
     const sane = sanitizeState({...data, title:data.title || fileBase(), settings: mergedSettings});
+    const dropped = takeImportDropped();
     // Snapshot the pre-import document FIRST: after a replace, undo must bring
     // the old document back instead of starting from a one-entry history.
     pushHistory('before import ' + label);
     state = {...state, ...sane, selected:null, selection:{nodes:[], edges:[]}};
     pushHistory('import ' + label);
     syncControls(); updateUndoRedo(); fitView(); queueRender(true, true); saveSoon();
+    // The ceilings silently cut the tail of a large document. Saying so matters
+    // more than the import message: the graph on screen is no longer the file.
+    const lost = dropped.nodes + dropped.edges;
+    if(lost > 0){ toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: sane.nodes.length, m: sane.edges.length}), dropped: I18N.t('n_nodes_m_edges', {n: dropped.nodes, m: dropped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})})); return; }
     toast(I18N.t('imported', {label: label}));
   }
   // Resolve an element's *unset* visual properties against the defaults of the
@@ -752,31 +828,15 @@
   // Materialising here is the only correct moment — after this the imported
   // document's defaults no longer exist anywhere. Which properties to copy is
   // decided by the fields the element left unset, so nothing is overwritten.
-  function materializeDefaults(nodes, edges, settings){
-    if(settings?.inheritDefaults === false) return; // not inheriting: nothing to resolve
-    const nd = settings?.nodeDefaults || {};
-    const ed = settings?.edgeDefaults || {};
-    const unset = (value) => value == null || value === '';
-    const NODE_FIELDS = ['shape','color','width','height','strokeColor','strokeSize',
-      'strokeStyle','labelColor','labelSize','labelPosition','labelFont'];
-    const EDGE_FIELDS = ['color','strokeSize','strokeStyle','arrowSize',
-      'labelColor','labelSize','labelFont'];
-    // The caller has not sanitised yet — that is exactly what it is about to do —
-    // so an entry may be null or a non-object. Skip those here and let the
-    // sanitizer decide their fate; throwing would reject the whole import,
-    // including the entries that are perfectly good.
-    const isRecord = value => value != null && typeof value === 'object';
-    for(const n of nodes){
-      if(!isRecord(n)) continue;
-      for(const field of NODE_FIELDS){
-        if(unset(n[field]) && nd[field] != null) n[field] = nd[field];
-      }
+  // Resolve only sanitized source data, exactly as opening the source would.
+  // Targets retain traced/remapped custom values; visuals come from the plan's
+  // corresponding sanitized entities, never from a second set of validity rules.
+  function materializeDefaults(nodes, edges, sourceNodes, sourceEdges, settings){
+    for(let i = 0; i < nodes.length; i++){
+      Object.assign(nodes[i], nodeVisual(sourceNodes[i], settings));
     }
-    for(const e of edges){
-      if(!isRecord(e)) continue;
-      for(const field of EDGE_FIELDS){
-        if(unset(e[field]) && ed[field] != null) e[field] = ed[field];
-      }
+    for(let i = 0; i < edges.length; i++){
+      Object.assign(edges[i], edgeVisual(sourceEdges[i], settings));
     }
   }
   function appendImportedGraph(data, label='graph'){
@@ -786,26 +846,190 @@
     // resolved onto its elements first — otherwise those elements inherit the host
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
-    materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
-    // Keep the current graph's attribute definitions while still learning the
-    // import's: values in the imported file reference the imported definitions,
-    // and pruning against the merged set drops nothing legitimate. Document-wide
-    // (graph-scope) values merge with the imported ones taking precedence.
-    // Imported definitions that fit the remaining capacity are merged; the
-    // rest are skipped with a toast. Identity is scope-aware and provenance-
-    // aware (see capCustomDefinitions): an identical property merges or
-    // reuses for free, a different property sharing the id gets a fresh id
-    // here, and same id AND scope with matching provenance — the current
-    // definition wins.
-    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(data.customAttributes, state.customAttributes);
+    // Sanitize the source once for identity planning and visual resolution. Keep
+    // its own settings here; host settings are applied only by the final pass.
+    const plannedTrace = { nodes: [] as number[], edges: [] as number[], complete: true };
+    const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
+    const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
+    const hostIds = new Set(state.nodes.map(n => n.id));
+    // The plan reads the whole payload, with a limit that is a guard against a
+    // pathological document rather than a capacity decision.
+    //
+    // Bounding it by the remaining room looks attractive and is wrong: an id the plan
+    // never read is an id nobody can tell apart from a host node of the same name, so
+    // an edge naming it silently re-points at the host's node. That is a correctness
+    // property, not a performance one, and it must not be traded for speed. The cost
+    // of reading everything is addressed in the sanitizer instead: it processes entries
+    // linearly, and malformed ones are no longer charged to the limit.
+    const PLANNING_LIMIT = 200000;
+    const planned = sanitizeState(data, {
+      externalNodeIds: hostIds, recordDropped: false,
+      limits: {nodes: PLANNING_LIMIT, edges: PLANNING_LIMIT},
+      // The plan remembers which payload entry produced each survivor, so the
+      // authoritative pass can reuse those entries instead of matching text.
+      trace: plannedTrace
+    });
+    // A payload larger than the planning window is REFUSED, not partly planned.
+    //
+    // Past the window the plan has not seen every id, and an id it has not seen is
+    // indistinguishable from a host node of the same name: with 200,000 valid nodes
+    // ahead of one named `outside`, an edge meant for that node re-pointed at the
+    // host's `outside` and nothing reported it. There is no bound that makes a
+    // partial plan safe — the ambiguity is exactly what the plan exists to resolve —
+    // so the honest answer is to decline the document. The window is 200,000
+    // entries, far above the 3,000/8,000 an append can actually keep; reaching it
+    // means the file is unusable as an append regardless of how its edges resolve.
+    if(plannedTrace.complete === false){
+      toast(I18N.t('import_failed', {msg: I18N.t('err_import_too_many_entries', {limit: PLANNING_LIMIT})}));
+      return;
+    }
+    // Entries the sanitizer rejected outright (an invalid record, or an edge to a
+    // node that exists in neither document) never reach the capacity question, so
+    // they do not spend a slot and are not counted as capacity losses — the payload
+    // could not express them, which is not the destination's ceiling to report.
+    // Phase 2 — spend capacity, in the payload's own order, on entries that are
+    // valid. Invalid entries no longer consume a slot, and the count below is of
+    // genuinely dropped valid entries.
+    const keptPlannedNodes = planned.nodes.slice(0, nodeRoom);
+    // The payload index of each survivor, from the plan's own trace. Positions are
+    // kept alongside the entries rather than recomputed later: every attempt to
+    // re-derive them by comparing ids or endpoint text eventually met a payload where
+    // those strings no longer agreed with the entries they described.
+    const keptNodeSources = plannedTrace.nodes.slice(0, nodeRoom);
+    const keptPlannedNodeIds = new Set(keptPlannedNodes.map(node => node.id));
+    // Every id the payload itself defines, whether or not it fits. This is what makes
+    // an ambiguous name resolvable: `dropped` means the payload's node even when the
+    // cap rejected that node, so an edge to it is dropped rather than silently
+    // re-pointed at a host node that happens to share the name. Without this, the
+    // two ids are one string and nothing downstream can tell them apart.
+    const payloadPlannedIds = new Set(planned.nodes.map(node => node.id));
+    // An edge survives only if BOTH endpoints exist after the cap: a node that fits,
+    // or one the host already has — never a payload node that did not fit.
+    const endpointSurvives = (id) => {
+      if(keptPlannedNodeIds.has(id)) return true;
+      if(payloadPlannedIds.has(id)) return false;   // the payload's own node, dropped
+      return hostIds.has(id);                        // a node the host already has
+    };
+    // The surviving edges and their payload indexes, kept in step.
+    const survivingPlannedEdges = [];
+    const survivingEdgeSources = [];
+    for(let i = 0; i < planned.edges.length; i++){
+      const edge = planned.edges[i];
+      if(!endpointSurvives(edge.from) || !endpointSurvives(edge.to)) continue;
+      survivingPlannedEdges.push(edge);
+      survivingEdgeSources.push(plannedTrace.edges[i]);
+    }
+    const keptPlannedEdges = survivingPlannedEdges.slice(0, edgeRoom);
+    const keptEdgeSources = survivingEdgeSources.slice(0, edgeRoom);
+    const droppedByCap = {
+      nodes: Math.max(0, planned.nodes.length - keptPlannedNodes.length),
+      edges: Math.max(0, planned.edges.length - keptPlannedEdges.length)
+    };
+    // Phase 3 — definitions the kept elements need get first claim on the remaining
+    // budget. A definition is needed when a KEPT element's values name it; an edge
+    // that the capacity dropped cannot spend a slot a kept edge needs.
+    // A value key names a definition of a specific SCOPE. The same id may be declared
+    // for nodes and for edges, and those are different properties — so the priority
+    // set is keyed by scope and id together. Without the scope, an unused edge
+    // definition called `score` outranked the node definition a retained node's value
+    // actually needed: the edge definition took the last slot, and the node's value
+    // survived only as an orphan bound to a definition that does not apply to it.
+    const neededDefs = new Set<string>();
+    const defKey = (scope, id) => scope + '\u0000' + id;
+    const noteValueKeys = (custom, scope) => {
+      if(!isRecord(custom)) return;
+      for(const key of Object.keys(custom)){
+        // A value key is a definition id verbatim. Splitting on `|` looked
+        // reasonable when keys were assumed to carry a scope prefix, but a pipe is
+        // an ordinary character in a property id: a definition called `region|A` was
+        // read as `A`, so the value looked unreferenced and its definition lost the
+        // slot to an unused one.
+        neededDefs.add(defKey(scope, String(key)));
+      }
+    };
+    // Read from the PAYLOAD entries, not the plan's. The sanitizer truncates a custom
+    // key to the 128-character storage cap, so two long ids that share their first
+    // 128 characters are one key in the plan — and the retained node's value would be
+    // attributed to the definition of whichever node was dropped. The payload holds
+    // both keys at full length, which is the form the definitions are declared under.
+    const payloadNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const payloadEdges = Array.isArray(data?.edges) ? data.edges : [];
+    for(const index of keptNodeSources) if(isRecord(payloadNodes[index])) noteValueKeys(payloadNodes[index].custom, 'node');
+    for(const index of keptEdgeSources) if(isRecord(payloadEdges[index])) noteValueKeys(payloadEdges[index].custom, 'edge');
+    noteValueKeys(data?.graphCustom, 'graph');
+    const isNeeded = (def) => {
+      if(!isRecord(def)) return false;
+      const id = String(def.id ?? '').trim();
+      if(!id) return false;
+      // Scope decides. A definition is needed by a value of its own scope, and an
+      // 'all' definition is needed by a value of any scope.
+      //
+      // The fallback is one-directional on purpose. Adding `all|id` for every value
+      // made every definition of that id match — which is how an unused edge
+      // definition still won the last slot — because `all|id` was true for a node
+      // value as well. Only the definition's own scope decides, plus 'all' covering
+      // the narrower ones.
+      const scope = ['graph','node','edge','all'].includes(String(def.scope)) ? String(def.scope) : 'node';
+      if(scope === 'all') return [...neededDefs].some(key => key.endsWith('\u0000' + id));
+      return neededDefs.has(defKey(scope, id));
+    };
+    const carriedDefs = Array.isArray(data?.customAttributes) ? data.customAttributes : [];
+    // Ordered, never filtered: unneeded definitions move to the back but still go
+    // through the capper, so one that does not fit is still counted and reported.
+    // Order is otherwise untouched — the capper mints a colliding id in declaration
+    // order.
+    const orderedDefs = [
+      ...carriedDefs.filter(def => isNeeded(def)),
+      ...carriedDefs.filter(def => !isNeeded(def))
+    ];
+    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(orderedDefs, state.customAttributes);
     if(defsSkipped) toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
     if(renamed) toast(I18N.t('attribute_scope_renamed', { n: renamed }));
-    // Definitions re-created under a fresh id (or reused across an earlier
-    // mint) bind their payload's values to the RESOLVED id.
-    data = remapImportedCustomValues(data, renameByPair);
+    // Definitions re-created under a fresh id (or reused across an earlier mint)
+    // bind their payload's values to the RESOLVED id. Done in phase 4, immediately
+    // before the traced entries are read, so nothing re-reads the unremapped payload.
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
+    // Phase 4 — take each survivor's content from the payload entry the plan traced it
+    // to.
+    //
+    // The plan resolves IDENTITY (which node an edge really reaches, what id a node
+    // really gets); the payload supplies CONTENT (labels, weights, values, styling).
+    // The plan's own content is not usable: it was read against the payload's uncapped
+    // definitions, where two keys that truncate to the same 128-character id collapse
+    // and one value is lost.
+    //
+    // The link is the trace, not a comparison. Matching sanitized edges back to raw
+    // ones by id and endpoint text failed in three different ways: an endpoint
+    // normalised from `a!` to `a` no longer matched; two parallel edges with the same
+    // endpoints matched each other; and an omitted id colliding with an explicit `e1`
+    // matched the wrong entry — each time silently, and each time giving an edge
+    // another edge's label, weight, direction, type, colour and values.
+    data = remapImportedCustomValues(data, renameByPair);
+    // Graph-scope values are remapped with the same call, so the merged map must be
+    // read AFTER it. Building it from the un-remapped payload left every graph value
+    // keyed by the id its own file used, which the final read then resolved against
+    // the RENAMED definitions — the value landed on whichever definition now held that
+    // spelling, or on nothing at all.
     const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
-    const sane = sanitizeState({...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom});
+    const remappedNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const remappedEdges = Array.isArray(data?.edges) ? data.edges : [];
+    const keptNodesSource = keptPlannedNodes.map((plannedNode, k) => {
+      const raw = remappedNodes[keptNodeSources[k]];
+      return { ...(isRecord(raw) ? raw : {}), id: plannedNode.id };
+    });
+    // Endpoints come from the plan; traced payload entries retain remapped custom
+    // values. Sanitized source visuals are applied below.
+    const keptEdgesSource = keptPlannedEdges.map((plannedEdge, k) => {
+      const raw = remappedEdges[keptEdgeSources[k]];
+      return { ...(isRecord(raw) ? raw : {}), id: plannedEdge.id, from: plannedEdge.from, to: plannedEdge.to };
+    });
+    // Resolve the visual the source document drew, using the defaults THAT document
+    // was opened with. `data.settings` is only what the file spelled out; a payload
+    // that omits them entirely is still opened against the built-in defaults, so
+    // passing the raw object resolved against nothing and the elements arrived at
+    // the host's styling.
+    materializeDefaults(keptNodesSource, keptEdgesSource, keptPlannedNodes, keptPlannedEdges, planned.settings);
+    const sane = sanitizeState({...data, nodes: keptNodesSource, edges: keptEdgesSource, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom}, {externalNodeIds: hostIds});
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -823,8 +1047,27 @@
       n.id = newId;
       // Offset position to avoid overlap with existing nodes
       n.x += 200; n.y += 200;
-      n.order = state.nodes.length + state.nodes.filter(x => x.order >= n.order).length;
     }
+    // Give the appended nodes consecutive places at the end of the display order.
+    //
+    // `order` is a sequence the user reorders (matrix move buttons, Sort by label,
+    // Renumber), not a free-form field, and existing nodes hold 0..N-1. Appending
+    // used to compute `state.nodes.length + count(host order >= this order)` inside
+    // the loop above — but nothing is pushed to state.nodes until after it, so the
+    // count was re-read against an unchanged array and the incoming document's own
+    // 0,1,2... offsets leaked through: a 3-node host took 3 and 4 as 6 and 5, and
+    // an empty host gave every node 0. Position-in-the-list is the order that
+    // append should keep; the incoming numbers only decide it when the document
+    // defines an order of its own.
+    const incomingOrder = new Map(sane.nodes.map(node => [node.id, node.order]));
+    sane.nodes.sort((a, b) => (incomingOrder.get(a.id) ?? 0) - (incomingOrder.get(b.id) ?? 0));
+    // Continue from the highest order actually in the document, not from the node
+    // count. Orders are not guaranteed consecutive — a document loaded from a file,
+    // or one the user has reordered, can hold 100 and 200 with two nodes — so
+    // `state.nodes.length` gave an appended node order 2, which sorted it to the
+    // top of the list and made it the first row of the matrix.
+    let nextOrder = state.nodes.reduce((max, node) => Math.max(max, (node.order ?? 0) + 1), 0);
+    sane.nodes.forEach(node => { node.order = nextOrder++; });
     // Remap edge endpoints — DISCARD edges with dangling references.
     // An edge is dangling if its endpoint wasn't in the imported nodes list
     // AND doesn't already exist in the current graph (would "snap" to wrong node).
@@ -853,8 +1096,19 @@
       e.id = newId;
       validEdges.push(e);
     }
-    state.nodes.push(...sane.nodes);
-    state.edges.push(...validEdges);
+    // The document must stay inside the same ceiling the loader applies, or the
+    // appended entries are written to autosave and then silently dropped on the
+    // next reload: the toast says "appended", the user keeps the node until they
+    // reopen the app, and then it is gone. The ceiling is a property of the whole
+    // document, so append has to account for what the host already holds.
+    // The node ceiling was applied before anything was resolved, so `sane.nodes`
+    // is already what fits. Edges still have a ceiling of their own to meet; their
+    // endpoints are resolved now, and `sanitizeState` dropped any that referenced a
+    // node which did not survive — which is why no dangling edge can remain here.
+    const keptNodes = sane.nodes;
+    const keptEdges = validEdges.slice(0, edgeRoom);
+    state.nodes.push(...keptNodes);
+    state.edges.push(...keptEdges);
     // sanitizeState(merged) is the authoritative definition list: current
     // definitions first (they win on same-id-and-scope conflicts), imported
     // definitions after, with scope-aware renames already applied and values
@@ -870,9 +1124,25 @@
     flushDeferredCustomAttributes(); syncEditTypeLists(); renderSelectionPanel();
     pushHistory(`append ${label}`);
     queueRender(true, true); saveSoon();
+    const capped = takeImportDropped();
+    // Entries cut by the *document* ceiling, on top of whatever the payload itself
+    // lost while it was sanitised.
+    // What the payload itself could not express (invalid entries) plus what did not
+    // fit. Invalid entries are the payload's problem and stay silent; capacity is
+    // the destination's, and is reported.
+    capped.nodes += droppedByCap.nodes;
+    capped.edges += droppedByCap.edges;
+    capped.edges += validEdges.length - keptEdges.length;
+    const lost = capped.nodes + capped.edges;
+    // Truncation first: it means the document itself did not fit, so the counts
+    // below would understate what the user expected to see.
+    if(lost > 0){
+      toast(I18N.t('csv_import_capped', {imported: I18N.t('n_nodes_m_edges', {n: keptNodes.length, m: keptEdges.length}), dropped: I18N.t('n_nodes_m_edges', {n: capped.nodes, m: capped.edges}), limit: I18N.t('n_nodes_m_edges', {n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES})}));
+      return;
+    }
     toast(discarded > 0
-      ? I18N.t('appended_n_m_discarded', {label, n: sane.nodes.length, m: validEdges.length, d: discarded})
-      : I18N.t('appended_n_m', {label, n: sane.nodes.length, m: validEdges.length}));
+      ? I18N.t('appended_n_m_discarded', {label, n: keptNodes.length, m: keptEdges.length, d: discarded})
+      : I18N.t('appended_n_m', {label, n: keptNodes.length, m: keptEdges.length}));
   }
   // Identity of an imported definition against the current document (and the
   // payload itself), in one pass over the carried list:
@@ -1131,12 +1401,18 @@
       toast(I18N.t('import_failed', { msg: I18N.t('err_no_valid_nodes') }));
       return;
     }
-    // A document with zero nodes can never carry edges: dangling edges are
-    // dropped on every path in the app, so the editor's own exports won't
-    // have them either. An empty nodes array with a non-empty edge list is
-    // input whose edges are all meaningless — reject it instead of wiping
-    // the document with a success toast.
-    if(data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0){
+    // A REPLACEMENT document with zero nodes can never carry edges: dangling edges
+    // are dropped on every path in the app, so the editor's own exports won't have
+    // them either. An empty nodes array with a non-empty edge list is input whose
+    // edges are all meaningless — reject it instead of wiping the document with a
+    // success toast.
+    //
+    // Append is a different question. Its endpoints may all be nodes the HOST
+    // already has, so `{nodes: [], edges: [{from:'h1', to:'h2'}]}` is a perfectly
+    // good request to connect two existing nodes — and the guard rejected it as an
+    // empty graph. The invariant it protects (no edge may dangle) belongs to the
+    // replacement path, which is the only one that can destroy a document.
+    if(!append && data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0){
       toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
       return;
     }
@@ -1304,6 +1580,9 @@
     const iId = idx('id'), iFrom = idx('source_id') >= 0 ? idx('source_id') : idx('from'), iTo = idx('target_id') >= 0 ? idx('target_id') : idx('to');
     const iWeight = idx('weight'), iLabel = idx('label'), iDirected = idx('directed'), iType = idx('type');
     const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style'), iArrowSize = idx('arrow_size');
+    // The exporter has always written these two columns; the reader ignored them,
+    // so an edge's label colour and size were lost on every CSV round trip.
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
     if(iFrom < 0 || iTo < 0){ toast(I18N.t('csv_needs_cols')); return; }
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
     const idSet = new Set(state.nodes.map(n => n.id));
@@ -1340,9 +1619,16 @@
         type: (iType >= 0 ? row[iType] : '') || ''
       };
       if(iColor >= 0 && row[iColor]) e.color = row[iColor];
-      if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(parseFloat(row[iStrokeSize])||2.4, 0, 20);
+      // A parsed number, not a truthy one. `parseFloat(cell) || 2.4` treats 0 the same
+      // as an unparseable cell, so an edge exported with an inherited zero-width
+      // stroke came back visible at 2.4 — 0 is a width the model allows and the
+      // exporter writes. NaN is what "could not parse" looks like.
+      const numCell = (cell, fallback) => { const n = parseFloat(cell); return Number.isFinite(n) ? n : fallback; };
+      if(iStrokeSize >= 0 && row[iStrokeSize]) e.strokeSize = clamp(numCell(row[iStrokeSize], 2.4), 0, 20);
       if(iStrokeStyle >= 0 && row[iStrokeStyle]) e.strokeStyle = row[iStrokeStyle];
-      if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(parseFloat(row[iArrowSize])||DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      if(iArrowSize >= 0 && row[iArrowSize]) e.arrowSize = clamp(numCell(row[iArrowSize], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+      if(iLabelColor >= 0 && /^#[0-9a-f]{6}$/i.test(row[iLabelColor] || '')) e.labelColor = row[iLabelColor];
+      if(iLabelSize >= 0 && row[iLabelSize]) e.labelSize = clamp(numCell(row[iLabelSize], 12), 4, 72);
       edges.push(e); parsed++;
     }
     if(parsed === 0 && !append){ toast(I18N.t('csv_nothing_parsed')); return; }
@@ -1434,6 +1720,10 @@
     const idx = name => header.indexOf(name);
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
+    const iWidth = idx('width'), iHeight = idx('height');
+    const iStrokeColor = idx('stroke_color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
+    const iLabelPos = idx('label_position'), iLabelFont = idx('label_font');
     const initialNodes = append ? state.nodes.length : 0;
     // Missing orders fall back to the position in the imported file, which is
     // 0-based in replace mode (the old list is gone) and continues after the
@@ -1459,6 +1749,20 @@
         type: (iType >= 0 ? row[iType] : '') || '',
         order: Number.isFinite(parsedOrder) ? Math.max(0, Math.trunc(parsedOrder)) : orderBase + parsed
       };
+      // Only the columns the file actually carries are set, so an older CSV — or a
+      // hand-written one — still leaves the rest inheriting as before.
+      const num = (i, lo, hi) => (i >= 0 && String(row[i] ?? '').trim() !== '' && Number.isFinite(parseFloat(row[i])) ? clamp(parseFloat(row[i]), lo, hi) : undefined);
+      const col = (i) => (i >= 0 ? String(row[i] ?? '').trim() : '');
+      const w = num(iWidth, 10, 300), h = num(iHeight, 10, 300);
+      if(w !== undefined) (n as AnyRecord).width = w;
+      if(h !== undefined) (n as AnyRecord).height = h;
+      if(col(iStrokeColor)) (n as AnyRecord).strokeColor = col(iStrokeColor);
+      const ss = num(iStrokeSize, 0, 20); if(ss !== undefined) (n as AnyRecord).strokeSize = ss;
+      if(col(iStrokeStyle)) (n as AnyRecord).strokeStyle = col(iStrokeStyle);
+      if(col(iLabelColor)) (n as AnyRecord).labelColor = col(iLabelColor);
+      const ls = num(iLabelSize, 4, 72); if(ls !== undefined) (n as AnyRecord).labelSize = ls;
+      if(col(iLabelPos)) (n as AnyRecord).labelPosition = col(iLabelPos);
+      if(col(iLabelFont)) (n as AnyRecord).labelFont = col(iLabelFont);
       nodes.push(n); parsed++;
     }
     // Replace mode replaces the whole document, exactly as it did before the
@@ -1554,8 +1858,8 @@
     'labelColor': raw => colorOrUndef(raw),
     'labelSize': raw => num(raw, 13, 4, 72),
     'labelPosition': raw => parseLabelPosition(raw) || undefined,
-    'width': raw => num(raw, 50, 10, 300),
-    'height': raw => num(raw, 50, 10, 300),
+    'width': raw => nodeSizeFromGraphml(raw),
+    'height': raw => nodeSizeFromGraphml(raw),
     // Edge values carry their own fallbacks; one parser serves both scopes
     // because the ranges are the same shape and the defaults only differ where
     // the property has a different natural size.

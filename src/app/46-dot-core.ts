@@ -483,7 +483,14 @@
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (e as any).strokeStyle = ss;
       }
-      if(attrs.arrowsize != null){
+      // `arrow_size` is our own exact absolute size. `arrowsize` is Graphviz's
+      // multiplier and is lossy in both directions (20 -> 1.6667 -> 20.0004, and
+      // a multiplier under 5 cannot be told apart from a legacy absolute size),
+      // so prefer the exact attribute whenever the file carries it — which our
+      // exporter always does.
+      if(attrs.arrow_size != null && Number.isFinite(Number(attrs.arrow_size))){
+        (e as any).arrowSize = dotClampArrowSize(Number(attrs.arrow_size));
+      } else if(attrs.arrowsize != null){
         const mul = Number(attrs.arrowsize);
         const mv = Number.isFinite(mul) ? mul : 1;
         // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
@@ -493,6 +500,13 @@
         // numbers; a fraction of a pixel is not a size.
         (e as any).arrowSize = Math.round(dotClampArrowSize(mv > 5 ? mv : mv * DOT_DEFAULT_ARROW_SIZE) * 100) / 100;
       }
+      // Label styling and type, spelled the way Graphviz spells them. The
+      // exporter writes these from the resolved visual, so reading them back is
+      // what makes a round trip lossless rather than silently restyling every
+      // label and dropping the edge's type.
+      if(attrs.type) (e as any).type = String(attrs.type).slice(0, 40);
+      if(attrs.fontcolor){ const lc = parseColor(attrs.fontcolor); if(lc) (e as any).labelColor = lc; }
+      if(attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize))) (e as any).labelSize = Number(attrs.fontsize);
       // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
       if(attrs.dir){
         const dir = String(attrs.dir).toLowerCase();
@@ -548,6 +562,16 @@
       if(attrs.style){
         const ss = parseStrokeStyle(attrs.style);
         if(ss) (n as any).strokeStyle = ss;
+      }
+      // Label colour, size and family are read by `readDotLabelAttrs`, which runs a
+      // few lines above: it also strips the bold/italic suffix QVGE appends to the
+      // family. Re-reading `fontname` here overwrote that cleaned value with the raw
+      // one, so a QVGE font arrived as "DejaVu Sans bold" and the editor's
+      // family-only field round-tripped a style word as part of the name.
+      if(attrs.labelloc){
+        const loc = String(attrs.labelloc).toLowerCase();
+        if(loc === 't' || loc === 'top') (n as any).labelPosition = 'top';
+        else if(loc === 'b' || loc === 'bottom') (n as any).labelPosition = 'bottom';
       }
       // width/height from DOT are in inches (72 dpi -> px)
       if(attrs.width != null && Number.isFinite(Number(attrs.width))) (n as any).width = Math.max(10, Math.round(Number(attrs.width)*DOT_PX_PER_INCH));

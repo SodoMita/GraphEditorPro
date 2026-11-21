@@ -589,10 +589,12 @@ const I18N: I18nService = {
     'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
     'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
     'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
+    'nothing_to_import': { en: 'Nothing to import: {label} contains no nodes or edges', ru: 'Нечего импортировать: {label} не содержит узлов или рёбер' },
     'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
     'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
     'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },
     'copied': { en: 'Copied', ru: 'Скопировано' },
+    'copy_failed': { en: 'Could not copy — select the text and copy it manually', ru: 'Не удалось скопировать — выделите текст и скопируйте вручную' },
     'toast_region': { en: 'Notifications', ru: 'Уведомления' },
     'toast_close': { en: 'Dismiss notification', ru: 'Закрыть уведомление' },
     'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание «{name}» — если ничего не произошло, нажмите «Копировать»' },
@@ -674,6 +676,13 @@ const I18N: I18nService = {
     'err_not_node_clipboard': { en: 'the clipboard does not contain nodes', ru: 'в буфере обмена нет узлов' },
     'err_invalid_graphml': { en: 'invalid XML/GraphML', ru: 'некорректный XML/GraphML' },
     'err_empty_graph': { en: 'the input contains no graph (zero nodes found)', ru: 'во вводе не найден граф (ноль узлов)' },
+    // An append has to read every incoming id to know which nodes its edges name. A
+    // document past that window cannot be appended safely, and guessing would attach
+    // edges to the wrong nodes — so it is refused with a reason instead.
+    'err_import_too_many_entries': {
+      en: 'the input has more than {limit} entries, which is too large to append safely',
+      ru: 'во вводе больше {limit} записей — это слишком много для безопасного добавления'
+    },
     'err_no_valid_nodes': { en: 'none of the nodes in the input are usable (all entries were empty or malformed)', ru: 'ни один узел во вводе не является корректным (все записи пустые или повреждены)' },
     'camera_readout': { en: 'center ({x}, {y}) · zoom {zoom}%', ru: 'центр ({x}, {y}) · масштаб {zoom}%' },
     'preset_what_nodes': { en: '{n:node}', ru: '{n:node}' },

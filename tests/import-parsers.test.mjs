@@ -42,6 +42,14 @@ function exportedGraph(document) {
   return data;
 }
 
+// Run a text exporter and return what it wrote, without closing the modal twice.
+function exportVia(document, buttonId) {
+  document.querySelector(buttonId).click();
+  const value = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  return value;
+}
+
 async function paste(document, window, buttonId, text) {
   Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async () => {}, readText: async () => text } });
   document.querySelector(buttonId).click();
@@ -2881,6 +2889,559 @@ test('a type default reaches the elements and survives export', async () => {
   dom.window.close();
 });
 
+test('every <data> key the exporter writes is declared in its own key block', async () => {
+  // The exporter emits its <data> lines as literals, so nothing structurally
+  // stops it naming a key it never declared — which is how the edge style once
+  // went out as "style" while the reader looked for "stroke.style". This checks
+  // the two sides agree, so that class of mismatch fails here rather than in a
+  // round trip.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  // The document needs elements: an empty graph only exports graph-level <data>,
+  // so a mismatch on a node or edge key would never appear here.
+  await paste(document, dom.window, '#btnPasteGraphml', [
+    '<?xml version="1.0"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <graph edgedefault="directed">',
+    '    <node id="n1"><data key="label">A</data></node><node id="n2"/>',
+    '    <edge id="e1" source="n1" target="n2"/>',
+    '  </graph>',
+    '</graphml>',
+  ].join('\n'));
+  document.querySelector('#btnExportGraphml').click();
+  const xml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  const declared = new Set([...xml.matchAll(/<key id="([^"]+)"/g)].map(match => match[1]));
+  const used = [...xml.matchAll(/<data key="([^"]+)"/g)].map(match => match[1]);
+  for(const key of used){
+    assert.ok(declared.has(key), `<data key="${key}"> has a matching <key> declaration`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an appended edge may end on a node the host graph already has', async () => {
+  // Append keeps the host graph, so an incoming edge is allowed to reference a
+  // node from it. Sanitising the incoming payload alone made every such edge look
+  // dangling and dropped it.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const pasteJson = async payload => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+    });
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 60);
+  };
+  await pasteJson({title: 'host', nodes: [{id: 'a', x: 0, y: 0}, {id: 'a2', x: 20, y: 20}], edges: []});
+  document.querySelector('#optImportAppend').checked = true;
+  await pasteJson({title: 'incoming', nodes: [{id: 'b', x: 60, y: 60}], edges: [{id: 'ab', from: 'a', to: 'b'}]});
+
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.edges.map(edge => edge.id), ['ab'], 'the edge survives');
+  assert.deepEqual(graph.nodes.map(node => node.id), ['a', 'a2', 'b'], 'and the host nodes are not duplicated');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an appended edge that really is dangling is still dropped', async () => {
+  // The counterpart: merging the host nodes must not disable the dangling check.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const pasteJson = async payload => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {
+      configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+    });
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 60);
+  };
+  await pasteJson({title: 'host', nodes: [{id: 'a', x: 0, y: 0}], edges: []});
+  document.querySelector('#optImportAppend').checked = true;
+  await pasteJson({title: 'incoming', nodes: [{id: 'b', x: 60, y: 60}], edges: [{id: 'bad', from: 'b', to: 'nowhere'}]});
+
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.edges.map(edge => edge.id), [], 'a dangling edge is not invented into the graph');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+// Append must resolve each edge against the document its endpoints belong to.
+// A node id that exists on both sides is the hard case: the appended edge has to
+// follow the appended node's rename, while an edge that genuinely names a host
+// node has to keep pointing at it.
+function appendPair(host, incoming) {
+  return async () => {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    const pasteJson = async payload => {
+      Object.defineProperty(dom.window.navigator, 'clipboard', {
+        configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(payload)}
+      });
+      document.querySelector('#btnPasteJson').click();
+      await settle(dom.window, 80);
+    };
+    await pasteJson(host);
+    document.querySelector('#optImportAppend').checked = true;
+    await pasteJson(incoming);
+    const graph = exportedGraph(document);
+    const close = () => { assert.deepEqual(errors.map(error => error.message), []); dom.window.close(); };
+    return {graph, close};
+  };
+}
+
+const HOST_TWO = {title: 'host', nodes: [{id: 'n1', label: 'H1', x: 0, y: 0}, {id: 'n2', label: 'H2', x: 100, y: 0}], edges: [{id: 'e1', from: 'n1', to: 'n2'}]};
+
+test('an appended edge follows its node when the id collides with a host node', async () => {
+  // The appended nodes are renamed (n1, n2 already exist), so the appended edge
+  // must follow them. Re-pointing it at the host nodes would silently connect the
+  // wrong pair — it looked plausible on screen and was only visible on export.
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'n1', label: 'I1', x: 50, y: 50}, {id: 'n2', label: 'I2', x: 150, y: 50}],
+    edges: [{id: 'ie', from: 'n1', to: 'n2'}],
+  });
+  const {graph, close} = await run();
+  const appended = graph.nodes.filter(node => node.label === 'I1' || node.label === 'I2');
+  const edge = graph.edges.find(candidate => candidate.id === 'ie');
+  assert.ok(edge, 'the appended edge survives');
+  assert.deepEqual(appended.map(node => node.id).sort(), [edge.from, edge.to].sort(), 'and it joins the appended nodes');
+  const hostEdge = graph.edges.find(candidate => candidate.id === 'e1');
+  assert.deepEqual([hostEdge.from, hostEdge.to], ['n1', 'n2'], 'the host edge is untouched');
+  close();
+});
+
+test('an appended edge may join a host node and an appended one', async () => {
+  // The mixed case, with a collision present to make sure the two rules do not
+  // interfere: one endpoint is genuinely the host's.
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'n1', label: 'I1', x: 50, y: 50}, {id: 'c', label: 'C', x: 70, y: 70}],
+    edges: [{id: 'mix', from: 'c', to: 'n2'}],
+  });
+  const {graph, close} = await run();
+  const edge = graph.edges.find(candidate => candidate.id === 'mix');
+  assert.ok(edge, 'the mixed edge survives');
+  const appended = graph.nodes.find(node => node.label === 'C');
+  assert.equal(edge.from, appended.id, 'the appended endpoint follows its rename');
+  assert.equal(edge.to, 'n2', 'the host endpoint keeps its id');
+  close();
+});
+
+test('a self edge on an appended node keeps both endpoints on it', async () => {
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 's', x: 60, y: 60}], edges: [{id: 'ss', from: 's', to: 's'}]});
+  const {graph, close} = await run();
+  const edge = graph.edges.find(candidate => candidate.id === 'ss');
+  assert.ok(edge, 'the self edge survives');
+  assert.equal(edge.from, edge.to, 'and stays a self edge');
+  close();
+});
+
+test('an appended edge and a host edge may share an id without merging', async () => {
+  // Edge ids collide too; the appended one takes a fresh id and both are kept.
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 'c', x: 60, y: 60}, {id: 'd', x: 90, y: 90}], edges: [{id: 'e1', from: 'c', to: 'd', label: 'INC'}]});
+  const {graph, close} = await run();
+  assert.equal(graph.edges.length, 2, 'both edges are kept');
+  assert.deepEqual(graph.edges.map(edge => edge.label || '').sort(), ['', 'INC'], 'and they stay distinct');
+  close();
+});
+
+test('append survives nodes/edges that are not arrays', async () => {
+  // `data` is untrusted. A document with `"edges": {}` is malformed but its nodes
+  // are fine, and the whole append used to abort with "edges is not iterable" —
+  // the user got a Paste failed toast and exactly nothing imported. Defaults are
+  // materialised before sanitising, so the shape has to be normalised first.
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 'kept', label: 'KEPT', x: 10, y: 10}], edges: {}});
+  const {graph, close} = await run();
+  assert.ok(graph.nodes.some(node => node.label === 'KEPT'), 'the well-formed nodes are still appended');
+  assert.equal(graph.nodes.length, 3, 'host node, second host node and the appended node');
+  close();
+});
+
+test('append gives appended nodes consecutive places at the end of the order', async () => {
+  // `order` is a display sequence — the matrix view shows it as a badge and the
+  // move buttons reorder by it — so it has to stay 0..N-1. Appending used to
+  // compute it from a count re-read inside the loop, leaking the incoming
+  // document's own offsets: a 3-node host took 3 and 4 as 6 and 5.
+  const run = appendPair(HOST_TWO, {title: 'incoming', nodes: [{id: 'x', x: 10, y: 10}, {id: 'y', x: 20, y: 20}]});
+  const {graph, close} = await run();
+  assert.deepEqual(graph.nodes.map(node => node.order), [0, 1, 2, 3], 'contiguous and after the host');
+  close();
+});
+
+test('append into an empty graph numbers the nodes instead of giving them all zero', async () => {
+  const run = appendPair({title: 'empty', nodes: [], edges: []}, {title: 'incoming', nodes: [{id: 'p', x: 10, y: 10}, {id: 'q', x: 20, y: 20}], edges: []});
+  const {graph, close} = await run();
+  assert.deepEqual(graph.nodes.map(node => node.order), [0, 1], 'each node gets its own place');
+  close();
+});
+
+test('append materialises a default type, which the element cannot re-derive', async () => {
+  // nodeVisual/edgeVisual resolve an element's style through the *default's* type
+  // style (d.type -> nodeTypeStyles), so an element with no type of its own is
+  // fine as long as its document keeps that default. Append deliberately keeps the
+  // host's settings, so the incoming default is discarded — whatever the element
+  // needed from it has to be copied on first, or the type (and its style) is gone.
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'inherits', label: 'INHERITS', x: 10, y: 10}, {id: 'explicit', label: 'EXPLICIT', x: 20, y: 20, type: 'own'}],
+    edges: [],
+    settings: {nodeDefaults: {type: 'database'}},
+  });
+  const {graph, close} = await run();
+  assert.equal(graph.nodes.find(node => node.label === 'INHERITS').type, 'database', 'the default type is materialised');
+  assert.equal(graph.nodes.find(node => node.label === 'EXPLICIT').type, 'own', 'an explicit type is not overwritten');
+  assert.equal(graph.nodes.find(node => node.label === 'H1').type, '', 'and the host is untouched');
+  close();
+});
+
+test('every node/edge default an element can inherit survives an append', async () => {
+  // The materialise lists were the one place that had to be edited by hand when a
+  // new inherited property was added, and they had already fallen behind (`type`).
+  // Rather than assert the list, drive it from the defaults the app itself keeps:
+  // set every key to a distinctive valid value in the incoming document, append an
+  // element that sets none of them, and require each one to arrive.
+  const PROBE = {
+    node: {shape: 'square', color: '#ff0000', width: 66, height: 77, strokeColor: '#00ff00',
+      strokeSize: 3, strokeStyle: 'dashed', labelColor: '#0000ff', labelSize: 21,
+      labelPosition: 'top', labelFont: 'Courier', type: 'probe-type'},
+    edge: {color: '#ff0000', strokeSize: 3, strokeStyle: 'dashed', arrowSize: 9,
+      labelColor: '#0000ff', labelSize: 21, labelFont: 'Courier', type: 'probe-type'},
+  };
+  const run = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'n-empty', label: 'NODE', x: 10, y: 10}],
+    edges: [],
+    settings: {nodeDefaults: PROBE.node},
+  });
+  const {graph, close} = await run();
+  const node = graph.nodes.find(candidate => candidate.label === 'NODE');
+  const missing = Object.keys(PROBE.node).filter(key => {
+    const want = PROBE.node[key], got = node[key];
+    return want === '' ? got !== '' : String(got) !== String(want);
+  });
+  assert.deepEqual(missing, [], 'node defaults that did not survive the append');
+  close();
+
+  // Edges need a real edge in the incoming document.
+  const runEdge = appendPair(HOST_TWO, {
+    title: 'incoming',
+    nodes: [{id: 'e-from', x: 10, y: 10}, {id: 'e-to', x: 40, y: 40}],
+    edges: [{id: 'edge-empty', from: 'e-from', to: 'e-to'}],
+    settings: {edgeDefaults: PROBE.edge},
+  });
+  const {graph: g2, close: close2} = await runEdge();
+  const edge = g2.edges.find(candidate => candidate.id === 'edge-empty');
+  const missingEdge = Object.keys(PROBE.edge).filter(key => {
+    const want = PROBE.edge[key], got = edge[key];
+    return want === '' ? got !== '' : String(got) !== String(want);
+  });
+  assert.deepEqual(missingEdge, [], 'edge defaults that did not survive the append');
+  close2();
+});
+
+test('a payload with no nodes or edges does not replace the graph', async () => {
+  // Paste has no "replace?" confirmation and resets the undo history, so an empty
+  // payload used to destroy the graph outright and report success into the
+  // bargain. A JSON array, a bare value or `{}` is not a graph document.
+  const host = {title: 'work', nodes: [{id: 'n1', label: 'A'}, {id: 'n2', label: 'B'}], edges: [{id: 'e1', from: 'n1', to: 'n2'}]};
+  // An explicitly empty document ({"nodes":[],"edges":[]}) is NOT in this list:
+  // it is the editor's own export of an empty graph and must round-trip, which a
+  // later test covers. Only inputs that are not graph documents at all are here.
+  for (const payload of ['[]', '{}', 'null', '"text"', '42']) {
+    const {dom, errors} = createEditorDom(host);
+    const {document} = dom.window;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => payload}});
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 80);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, 2, `the graph survives ${payload}`);
+    assert.equal(graph.edges.length, 1, `and keeps its edge after ${payload}`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('a real document still replaces the graph', async () => {
+  // The guard must not block the normal case.
+  const {dom, errors} = createEditorDom({title: 'old', nodes: [{id: 'a', label: 'OLD'}], edges: []});
+  const {document} = dom.window;
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => '{"nodes":[{"id":"z","label":"NEW"}],"edges":[]}'}});
+  document.querySelector('#btnPasteJson').click();
+  await settle(dom.window, 80);
+  const graph = exportedGraph(document);
+  assert.deepEqual(graph.nodes.map(node => node.label), ['NEW'], 'replaced as asked');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('the empty-payload guard does not block formats that legitimately bring little', async () => {
+  // The guard keys on "no nodes and no edges", not on size: a single node with no
+  // edges is still a graph, and DOT/GraphML must never be caught by it.
+  const cases = [
+    ['#btnPasteDot', 'digraph{a;}', 1],
+    ['#btnPasteGraphml', '<graphml><graph edgedefault="directed"><node id="solo"/></graph></graphml>', 1],
+  ];
+  for (const [button, text, want] of cases) {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+    document.querySelector(button).click();
+    await settle(dom.window, 80);
+    const graph = exportedGraph(document);
+    assert.equal(graph.nodes.length, want, `${button} still imports`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('an over-large document says what the ceiling dropped', async () => {
+  // The ceilings are a deliberate guard against a hostile payload, but cutting
+  // 500 nodes off the tail and reporting "JSON imported" leaves the user with a
+  // graph that silently is not their file. Both modes must say so.
+  const big = {
+    title: 'big',
+    nodes: Array.from({length: 3005}, (_, i) => ({id: 'n' + i, label: 'L' + i})),
+    edges: [],
+  };
+  for (const append of [false, true]) {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(big)}});
+    document.querySelector('#optImportAppend').checked = append;
+    document.querySelector('#btnPasteJson').click();
+    await settle(dom.window, 300);
+    const toast = [...document.querySelectorAll('.toast')].map(el => el.textContent).join(' ');
+    assert.match(toast, /5 nodes .* dropped/, `truncation is reported (append=${append})`);
+    assert.equal(exportedGraph(document).nodes.length, 3000, 'and the ceiling still holds');
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('a document inside the ceiling imports with no truncation notice', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const small = {title: 's', nodes: [{id: 'a', label: 'A'}, {id: 'b', label: 'B'}], edges: [{id: 'e', from: 'a', to: 'b'}]};
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => JSON.stringify(small)}});
+  document.querySelector('#btnPasteJson').click();
+  await settle(dom.window, 120);
+  const toast = [...document.querySelectorAll('.toast')].map(el => el.textContent).join(' ');
+  assert.doesNotMatch(toast, /dropped/, 'no truncation notice for a normal import');
+  assert.match(toast, /imported/i);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a DOT export carries every arrow size back exactly', async () => {
+  // Graphviz's `arrowsize` is a multiplier, so writing it is lossy in both
+  // directions: 20 -> 1.6667 -> 20.0004, and a multiplier below 5 cannot be told
+  // apart from a legacy absolute size. Our own export therefore also carries the
+  // exact absolute value, which our reader prefers; other tools still get the
+  // standard attribute.
+  for (const size of [4, 5, 20, 37.5, 40]) {
+    const {dom, errors} = createEditorDom();
+    const {document} = dom.window;
+    const paste = async (text, button) => {
+      Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+      document.querySelector(button).click();
+      await settle(dom.window, 90);
+    };
+    await paste(JSON.stringify({nodes: [{id: 'a', x: 0, y: 0}, {id: 'b', x: 50, y: 0}], edges: [{id: 'e', from: 'a', to: 'b', arrowSize: size}]}), '#btnPasteJson');
+    document.querySelector('#btnExportDot').click();
+    await settle(dom.window, 60);
+    const dot = document.querySelector('.export-modal textarea').value;
+    document.querySelector('#expCloseBtn').click();
+    assert.match(dot, /arrowsize="/, 'the standard multiplier is still written for other tools');
+    await paste(dot, '#btnPasteDot');
+    assert.equal(exportedGraph(document).edges[0].arrowSize, size, `size ${size} survives the round trip`);
+    assert.deepEqual(errors.map(error => error.message), []);
+    dom.window.close();
+  }
+});
+
+test('a third-party DOT arrow multiplier still converts through the default', async () => {
+  // Files that only have the Graphviz attribute must keep working: the value is a
+  // multiplier of the 12px default, except where it is too large to be one.
+  const cases = [['0.5', 6], ['2', 24], ['12', 12], ['', 12]];
+  for (const [attr, want] of cases) {
+    const {dom} = createEditorDom();
+    const {document} = dom.window;
+    const dot = attr === '' ? 'digraph{a->b}' : `digraph{a->b[arrowsize="${attr}"]}`;
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => dot}});
+    document.querySelector('#btnPasteDot').click();
+    await settle(dom.window, 90);
+    const size = exportedGraph(document).edges[0].arrowSize;
+    assert.ok(size === want || size === undefined, `arrowsize ${attr || '(absent)'} -> ${size}, wanted ${want}`);
+    dom.window.close();
+  }
+});
+
+test('DOT keeps label styling, node label placement and edge type', async () => {
+  // The exporter wrote shape/colour/size but never the label's own styling, so a
+  // DOT round trip silently reset a label's colour, size, font and position to the
+  // document defaults, and dropped an edge's type. The attributes are Graphviz's
+  // own spellings, and the reader accepts them from other tools too.
+  const src = {
+    nodes: [
+      {id: 'n1', label: 'A', x: 12, y: -67, labelColor: '#0000ff', labelSize: 21, labelPosition: 'top', labelFont: 'Courier'},
+      {id: 'n2', label: 'B', x: 100, y: 200},
+    ],
+    edges: [{id: 'e1', from: 'n1', to: 'n2', label: 'L', type: 'et', labelColor: '#0000ff', labelSize: 21}],
+  };
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const paste = async (text, button) => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+    document.querySelector(button).click();
+    await settle(dom.window, 90);
+  };
+  await paste(JSON.stringify(src), '#btnPasteJson');
+  document.querySelector('#btnExportDot').click();
+  await settle(dom.window, 60);
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(dot, '#btnPasteDot');
+  const graph = exportedGraph(document);
+  const node = graph.nodes.find(candidate => candidate.label === 'A');
+  assert.equal(node.labelColor, '#0000ff', 'node label colour');
+  assert.equal(node.labelSize, 21, 'node label size');
+  assert.equal(node.labelFont, 'Courier', 'node label font');
+  assert.equal(node.labelPosition, 'top', 'node label position');
+  assert.equal(graph.edges[0].type, 'et', 'edge type');
+  assert.equal(graph.edges[0].labelColor, '#0000ff', 'edge label colour');
+  assert.equal(graph.edges[0].labelSize, 21, 'edge label size');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a third-party DOT using Graphviz label attributes is read', async () => {
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const dot = 'digraph{a[label="A",fontcolor="#123456",fontsize=18,fontname="Arial",labelloc="b"];b;a->b[type="flow",fontcolor="#654321",fontsize=14]}';
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => dot}});
+  document.querySelector('#btnPasteDot').click();
+  await settle(dom.window, 90);
+  const graph = exportedGraph(document);
+  const node = graph.nodes.find(candidate => candidate.label === 'A');
+  assert.equal(node.labelColor, '#123456');
+  assert.equal(node.labelSize, 18);
+  assert.equal(node.labelFont, 'Arial');
+  assert.equal(node.labelPosition, 'bottom');
+  assert.equal(graph.edges[0].type, 'flow');
+  assert.equal(graph.edges[0].labelColor, '#654321');
+  assert.equal(graph.edges[0].labelSize, 14);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a nodes CSV keeps every node property', async () => {
+  // The node CSV wrote only order/id/label/x/y/shape/color/type, so size, stroke
+  // and the label's own styling were reset by a round trip. The new columns are
+  // appended after the original eight, so files made by an older build still read.
+  const src = {
+    nodes: [{id: 'n1', label: 'Alpha', x: 12.5, y: -67.25, order: 0, shape: 'diamond', color: '#ff0000',
+      width: 66, height: 77, strokeColor: '#00ff00', strokeSize: 3, strokeStyle: 'dashed',
+      labelColor: '#0000ff', labelSize: 21, labelPosition: 'top', labelFont: 'Courier', type: 'nt'}],
+    edges: [],
+  };
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const paste = async (text, button) => {
+    Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => text}});
+    document.querySelector(button).click();
+    await settle(dom.window, 90);
+  };
+  await paste(JSON.stringify(src), '#btnPasteJson');
+  const before = exportedGraph(document).nodes[0];
+  document.querySelector('#btnExportNodesCsv').click();
+  await settle(dom.window, 60);
+  const csv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(csv, '#btnPasteNodesCsv');
+  const after = exportedGraph(document).nodes[0];
+  for (const key of ['x', 'y', 'shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize',
+    'strokeStyle', 'labelColor', 'labelSize', 'labelPosition', 'labelFont', 'type', 'order']) {
+    assert.equal(String(after[key]), String(before[key]), `node ${key} survives`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an older eight-column nodes CSV still imports', async () => {
+  // The header decides what is read, so a file from an older build must keep
+  // working — and its absent styling stays inherited rather than becoming blank.
+  const {dom, errors} = createEditorDom();
+  const {document} = dom.window;
+  const csv = 'order,id,label,x,y,shape,color,type\n0,n1,Alpha,10,20,square,#ff0000,nt\n';
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => csv}});
+  document.querySelector('#btnPasteNodesCsv').click();
+  await settle(dom.window, 90);
+  const node = exportedGraph(document).nodes[0];
+  assert.equal(node.label, 'Alpha');
+  assert.equal(node.x, 10);
+  assert.equal(node.shape, 'square');
+  assert.equal(node.color, '#ff0000');
+  assert.equal(node.type, 'nt');
+  assert.equal(node.labelColor, undefined, 'styling the file does not carry stays inherited');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edges CSV keeps an edge label colour and size', async () => {
+  // The exporter has always written label_color and label_size; the reader
+  // ignored both, so they were lost on every round trip.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id: 'n1', label: 'Alpha'}, {id: 'n2', label: 'Beta'}], edges: []});
+  const {document} = dom.window;
+  const csv = 'id,source_id,source_label,target_id,target_label,weight,directed,label,type,color,stroke_size,stroke_style,arrow_size,label_color,label_size\n'
+    + 'e1,n1,Alpha,n2,Beta,5,mutual,L,et,#00ff00,3,dashed,20,#0000ff,21\n';
+  Object.defineProperty(dom.window.navigator, 'clipboard', {configurable: true, value: {writeText: async () => {}, readText: async () => csv}});
+  document.querySelector('#btnPasteEdgesCsv').click();
+  await settle(dom.window, 90);
+  const edge = exportedGraph(document).edges[0];
+  assert.equal(edge.labelColor, '#0000ff');
+  assert.equal(edge.labelSize, 21);
+  assert.equal(edge.arrowSize, 20);
+  assert.equal(edge.direction, 'mutual');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a type inherited from the defaults is exported rather than written blank', async () => {
+  // A type the element does not carry itself is inherited from the defaults and
+  // shows in the UI, so it is part of what is drawn and must survive export.
+  // DOT and both CSVs used to write the raw field here, recording nothing.
+  const saved = {
+    nodes: [{id:'n1', label:'A', x:0, y:0}],
+    edges: [{id:'e1', from:'n1', to:'n1', weight:'1'}],
+    settings: { nodeDefaults: {type:'server'}, edgeDefaults: {type:'link'} },
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {document} = dom.window;
+
+  document.querySelector('#btnExportDot').click();
+  await settle(dom.window, 60);
+  const dot = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(dot.includes('type="server"'), 'the node type is written to DOT');
+  assert.ok(dot.includes('type="link"'), 'the edge type is written to DOT');
+
+  document.querySelector('#btnExportNodesCsv').click();
+  await settle(dom.window, 60);
+  const nodesCsv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(nodesCsv.split(/\r?\n/)[1].includes('server'), 'the node type is in the nodes CSV');
+
+  document.querySelector('#btnExportEdgesCsv').click();
+  await settle(dom.window, 60);
+  const edgesCsv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  assert.ok(edgesCsv.split(/\r?\n/)[1].includes('link'), 'the edge type is in the edges CSV');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
 // === Audit round: three P2 regressions (2026-11) ===
 
 test('re-importing same-name properties in reverse declaration order keeps each value with its own definition', async () => {
@@ -4075,6 +4636,234 @@ test('a literal key equal to a long key’s fingerprint never merges with that p
   dom.window.close();
 });
 
+test('the exported bounds are the nodes, not the camera', async () => {
+  // The camera is where the user is looking, not where the graph is: zooming out
+  // grows it without limit and panning moves it. Exporting it as the document's
+  // extent made a small graph export with arbitrarily large bounds, and the value
+  // changed every time the user scrolled. The file must describe the content.
+  const saved = {
+    title: 'bounds',
+    nodes: [{id:'n1', label:'A', x:0, y:0}, {id:'n2', label:'B', x:100, y:50}],
+    edges: [{id:'e1', from:'n1', to:'n2'}],
+  };
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  // Nodes are 50x50 by default, so the box is the centre span grown by half a
+  // node on every side: x in [-25, 125], y in [-25, 75].
+  const atRest = exportedGraph(document).viewBox;
+  assert.deepEqual(atRest, {x:-25, y:-25, w:150, h:100}, 'the bounds are the node bounding box');
+
+  // Zooming out must not change the bounds in the file, however far it goes.
+  for (let i = 0; i < 15; i++) {
+    document.querySelector('#graphCanvas').dispatchEvent(new window.WheelEvent('wheel', {
+      deltaY: 120, clientX: 400, clientY: 300, bubbles: true, cancelable: true,
+    }));
+  }
+  await settle(window, 120);
+  assert.deepEqual(exportedGraph(document).viewBox, atRest, 'zooming out does not inflate the exported bounds');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('exported bounds measure an inherited node size as drawn', async () => {
+  // Size comes from the resolved visual, so a node that takes its width/height
+  // from the defaults is measured at the size it is actually drawn — the same
+  // rule every other exporter follows.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'n1', label:'A', x:0, y:0}], edges: [],
+    settings: { nodeDefaults: { width: 120, height: 80 } },
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+  assert.deepEqual(exportedGraph(document).viewBox, {x:-60, y:-40, w:120, h:80}, 'the inherited size is measured');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an empty document exports finite zero bounds, not Infinity', async () => {
+  const {dom, errors} = createEditorDom({title:'t', nodes: [], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+  const bounds = exportedGraph(document).viewBox;
+  assert.deepEqual(bounds, {x:0, y:0, w:0, h:0}, 'no content has no extent, and stays JSON-clean');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('GraphML writes node size in pixels, which is what a GraphML reader uses', async () => {
+  // GraphML `width`/`height` are pixels to the reader this format targets: QVGE
+  // stores the <data> value verbatim and hands it to resize()
+  // (CFormatGraphML::readNode -> CNode::setAttribute(attr_width)), and its own
+  // exporter writes getSize() unconverted. Dividing by 72 to satisfy Graphviz's
+  // inch convention shrank every node to 1/72nd for QVGE users, so the size is
+  // written exactly as the editor holds it.
+  const {dom, errors} = createEditorDom();
+  const {window} = dom;
+  const {document} = window;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 't', nodes: [{id:'a', x:0, y:0}, {id:'b', x:100, y:50}], edges: [{id:'e', from:'a', to:'b'}],
+  }));
+
+  document.querySelector('#btnExportGraphml').click();
+  await settle(window, 60);
+  const xml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  const widths = [...xml.matchAll(/<data key="width">([^<]+)<\/data>/g)].map(m => m[1]);
+  assert.equal(widths.length, 2, 'both nodes carry a width');
+  assert.deepEqual(widths, ['50', '50'], 'a 50px node is written as 50, not as 0.6944 inches');
+
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('GraphML round-trips a fractional node size unchanged', async () => {
+  // Node size is not a whole number: the resize handles produce fractions, and
+  // rounding on import silently resized every such node (50.5 x 45.25 came back
+  // as 51 x 45). The clamp stays — that is the editor's node range — but it is
+  // not a reason to round.
+  const {dom, errors} = createEditorDom();
+  const {window} = dom;
+  const {document} = window;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 't', nodes: [{id:'n1', x:0, y:0, width:50.5, height:45.25}], edges: [],
+  }));
+
+  document.querySelector('#btnExportGraphml').click();
+  await settle(window, 60);
+  const xml = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  await paste(document, window, '#btnPasteGraphml', xml);
+
+  const node = exportedGraph(document).nodes[0];
+  assert.equal(node.width, 50.5, 'the fractional width survives');
+  assert.equal(node.height, 45.25, 'the fractional height survives');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('appending at the document ceiling keeps the document loadable', async () => {
+  // The loader caps a document at MAX_IMPORT_NODES. Append pushed into state
+  // without checking what the host already held, so a full graph plus one pasted
+  // node became 3000+1 in memory and in autosave — reported as a success — and the
+  // next reload silently dropped the node. The ceiling belongs to the document,
+  // so append has to respect the space that is actually left.
+  const nodes = Array.from({length: 3000}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'full', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+  assert.equal(exportedGraph(document).nodes.length, 3000, 'the host starts at the ceiling');
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'extra', nodes: [{id:'extra', x:0, y:0}], edges: [],
+  }));
+
+  // It may not exceed the ceiling, and the toast must not claim it did.
+  const after = exportedGraph(document);
+  assert.equal(after.nodes.length, 3000, 'the document stays inside the ceiling');
+  assert.doesNotMatch(toasts(document), /appended 1/, 'the toast does not claim a node that was dropped');
+
+  // Whatever was written for autosave must load back to the same thing.
+  const saved = JSON.parse(window.localStorage.getItem('graph-editor-pro-v2') || 'null');
+  if (saved) assert.ok(saved.nodes.length <= 3000, 'autosave stays inside the ceiling too');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an appended node follows a non-consecutive host order instead of sorting first', async () => {
+  // Orders are a user-visible sequence and are not guaranteed consecutive: a file
+  // can carry 100 and 200 for two nodes. Continuing from the node *count* gave the
+  // newcomer order 2, which put it at the top of the list and the first matrix row.
+  const {dom, errors} = createEditorDom({
+    title: 't',
+    nodes: [{id:'a', order:100, x:0, y:0}, {id:'b', order:200, x:100, y:0}],
+    edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'x', nodes: [{id:'c', x:0, y:100}], edges: [],
+  }));
+
+  // The appended node is renamed off its colliding id, so identify it by position
+  // in the document (it is pushed last), not by the id it arrived with.
+  const nodes = exportedGraph(document).nodes;
+  assert.equal(nodes.length, 3, 'the node was appended');
+  const appended = nodes[nodes.length - 1];
+  assert.ok(appended.order > 200, `the appended node sorts last, got order ${appended.order}`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append materialises the style a default *type* gives, not the raw default', async () => {
+  // The renderer resolves an element through its default's type style
+  // (nodeVisual reads nodeTypeStyles[d.type] and lets it win over the plain
+  // default), so a node inheriting through the default type is drawn with the
+  // type's colour and size. Materialisation copied the raw default instead, so
+  // that node silently changed appearance on append.
+  const {dom, errors} = createEditorDom({
+    title: 'host', nodes: [{id:'h1', label:'H', x:0, y:0}], edges: [],
+    settings: {nodeDefaults: {type:'', color:'#000000', width:50}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'src',
+    nodes: [{id:'s1', label:'S', x:500, y:500}],
+    edges: [],
+    settings: {
+      nodeDefaults: {type:'alert', color:'#111111'},
+      nodeTypeStyles: {alert: {color:'#ff0000', width:99}},
+    },
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.color, '#ff0000', 'the type style colour is materialised, not the raw default');
+  assert.equal(node.width, 99, 'the type style width is materialised, not the raw default');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('exported bounds include every node, whatever the camera is showing', async () => {
+  // graphBounds filtered through isRenderablePoint, which is bounded by the render
+  // scale the camera sets. Zooming in far enough pushed a distant node outside the
+  // safe window, so it vanished from the exported bounds and reappeared on zooming
+  // out — the file still described the viewport. Renderability is a painting
+  // concern; the file describes the document.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'a', x:0, y:0}, {id:'b', x:50000000, y:0}], edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  const atRest = exportedGraph(document).viewBox;
+  assert.ok(atRest.w > 50000000, 'both nodes are in the bounds at rest');
+
+  for (let i = 0; i < 40; i++) {
+    document.querySelector('#graphCanvas').dispatchEvent(new window.WheelEvent('wheel', {
+      deltaY: -120, clientX: 400, clientY: 300, bubbles: true, cancelable: true,
+    }));
+  }
+  await settle(window, 120);
+  assert.deepEqual(exportedGraph(document).viewBox, atRest, 'zooming in does not drop a node from the bounds');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
 
 // === DOT interoperability units and shapes (QVGE_GAP_ANALYSIS.md §1.7, §1.8) ===
 test('DOT export states its convention: pos and node size agree, no reader gets both wrong', async () => {
@@ -4701,4 +5490,971 @@ test('DOT export aliases a non-ASCII node name and brings the real id back', asy
   assert.equal(graph.edges.length, 1);
   assert.equal(graph.edges[0].from, 'ключ');
   assert.equal(graph.edges[0].to, 'узел');
+});
+
+test('a capped append leaves no edge pointing at a node it dropped', async () => {
+  // Endpoint validation ran against existingIds, which already contained every
+  // incoming node — including the ones the cap was about to reject. With one slot
+  // left, an edge between two incoming nodes survived because both nodes were
+  // "known", and its node was then cut: the document held an edge to nothing and
+  // the reload discarded it silently. Capacity is decided before anything is
+  // resolved for it, so an edge is validated against what will exist.
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'full', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'pair',
+    nodes: [{id:'p1', x:0, y:0}, {id:'p2', x:100, y:0}],
+    edges: [{id:'pe', from:'p1', to:'p2'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3000, 'one node fits');
+  const known = new Set(graph.nodes.map(node => node.id));
+  const dangling = graph.edges.filter(edge => !known.has(edge.from) || !known.has(edge.to));
+  assert.deepEqual(dangling, [], 'no edge outlives the node it pointed at');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a dropped node cannot spend the definition a retained node needs', async () => {
+  // Definitions were capped in payload order, before the append knew which nodes
+  // fit. With one node slot and one definition slot, a dropped node's definition
+  // took the slot and the retained node lost its custom value — the value survived
+  // in the file but its definition did not, so it was pruned on the next load.
+  const hostDefs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'host' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'full', nodes, edges: [], customAttributes: hostDefs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'props',
+    nodes: [
+      {id:'keep', label:'KEEP', x:0, y:0, custom:{keepDef:'keepval'}},
+      {id:'drop', label:'DROPPED', x:100, y:0, custom:{dropDef:'dropval'}},
+    ],
+    edges: [],
+    // The dropped node's definition is declared first, so declaration order alone
+    // would give it the last slot.
+    customAttributes: [
+      {id:'dropDef', name:'dropDef', scope:'node', type:'string', origin:'dropDef'},
+      {id:'keepDef', name:'keepDef', scope:'node', type:'string', origin:'keepDef'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the node that fits is there');
+  const ids = new Set((graph.customAttributes || []).map(def => def.id));
+  assert.ok(ids.has('keepDef'), 'the retained node\'s definition was imported');
+  const keptValues = kept.custom || {};
+  const value = keptValues.keepDef;
+  assert.equal(value, 'keepval', 'and its value survived with it');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append materialises the style of an explicitly typed element', async () => {
+  // The resolver reads an element's OWN type style before the default's, so a node
+  // explicitly typed `server` is drawn from nodeTypeStyles.server. Materialisation
+  // resolved only the default type's style, so that node arrived with the host's
+  // raw default colour and width.
+  const {dom, errors} = createEditorDom({
+    title: 'host', nodes: [{id:'h1', x:0, y:0}], edges: [],
+    settings: {nodeDefaults: {type:'', color:'#000000', width:50}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'src',
+    nodes: [{id:'s1', label:'S', type:'server', x:900, y:900}],
+    edges: [],
+    settings: {
+      nodeDefaults: {type:'', color:'#111111'},
+      nodeTypeStyles: {server: {color:'#ff0000', width:99}},
+    },
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.color, '#ff0000', 'the explicit type\'s colour is materialised');
+  assert.equal(node.width, 99, 'the explicit type\'s width is materialised');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('extreme but finite coordinates still export a numeric viewBox', async () => {
+  // `w` is maxX - minX. Nodes at -1e308 and 1e308 are both finite, but their
+  // difference overflows to Infinity, and an Infinity origin minus a finite one is
+  // -Infinity. JSON writes those as null, so the export produced a viewBox that was
+  // not numeric while every input was. A large-but-real extent is left alone.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'a', x:-1e308, y:0}, {id:'b', x:1e308, y:0}], edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  const viewBox = exportedGraph(document).viewBox;
+  for (const key of ['x', 'y', 'w', 'h']) {
+    assert.equal(typeof viewBox[key], 'number', `${key} is a number, not null`);
+    assert.ok(Number.isFinite(viewBox[key]), `${key} is finite`);
+  }
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a dropped incoming id never resolves to a same-named host node', async () => {
+  // `dropped` is ambiguous: the payload ships a node under that id AND the host
+  // already has one. The payload's definition has to win even when the cap then
+  // rejects it — otherwise the edge silently re-points at a node it never
+  // referenced, attaching an import to unrelated content with no error anywhere.
+  const host = [...Array.from({length: 2998}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0})),
+    {id: 'dropped', label: 'HOST', x: 5, y: 5}];
+  const {dom, errors} = createEditorDom({title: 'h', nodes: host, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'p', label:'P', x:0, y:0}, {id:'dropped', label:'INCOMING', x:100, y:0}],
+    edges: [{id:'pe', from:'p', to:'dropped'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.find(node => node.label === 'INCOMING'), undefined, 'the second node did not fit');
+  const hostNode = graph.nodes.find(node => node.label === 'HOST');
+  const attached = graph.edges.filter(edge => edge.to === hostNode.id || edge.from === hostNode.id);
+  assert.deepEqual(attached, [], 'the edge is not re-pointed at the host node of the same id');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append resolves endpoints with the sanitizer\'s id normalisation', async () => {
+  // A payload may carry `id: 123` on a node and `"from": "123"` on an edge — the
+  // shape every real exporter produces. The fit filter compared raw values with
+  // strict equality, so 123 !== "123" and the edge was dropped while both nodes
+  // imported. The sanitizer normalises both to the string id; the filter has to
+  // use the same rule.
+  const {dom, errors} = createEditorDom({title: 't', nodes: [{id:'base', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:123, label:'A', x:0, y:0}, {id:456, label:'B', x:100, y:0}],
+    edges: [{id:'e', from:'123', to:'456'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'both nodes imported');
+  assert.equal(graph.edges.length, 1, 'and the edge that names them by string survived');
+  const endpoints = new Set([graph.edges[0].from, graph.edges[0].to]);
+  const imported = new Set(graph.nodes.filter(n => n.label === 'A' || n.label === 'B').map(n => n.id));
+  assert.deepEqual([...endpoints].sort(), [...imported].sort(), 'it is the edge between those two nodes');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edge CSV keeps an inherited zero-width stroke at zero', async () => {
+  // `parseFloat(cell) || 2.4` cannot tell 0 from an unparseable cell, so an edge
+  // drawn with a zero-width stroke (inherited from its type) round-tripped through
+  // the edge CSV and came back visible at 2.4. Zero is a width the model allows.
+  const {dom, errors} = createEditorDom({
+    title: 't',
+    nodes: [{id:'a', x:0, y:0}, {id:'b', x:100, y:0}],
+    edges: [{id:'e1', from:'a', to:'b', type:'invis'}],
+    settings: {edgeTypeStyles: {invis: {strokeSize: 0}}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#btnExportEdgesCsv').click();
+  await settle(window, 60);
+  const csv = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+
+  await paste(document, window, '#btnPasteEdgesCsv', csv);
+  const edge = exportedGraph(document).edges[0];
+  assert.ok(edge, 'the edge came back');
+  assert.equal(edge.strokeSize, 0, 'zero stayed zero instead of becoming 2.4');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a span that collapses in floating point exports as zero, not as MAX_VALUE', async () => {
+  // At x = 1e18 a 50-unit node's two edges are the same double, so maxX - minX is a
+  // finite 0. Treating that as an overflow reported 1.7976931348623157e+308 — an
+  // enormous bound for a graph that is one node wide. Only a non-finite difference
+  // is an overflow.
+  const {dom, errors} = createEditorDom({
+    title: 't', nodes: [{id:'a', x:1e18, y:0, width:50, height:50}], edges: [],
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  const viewBox = exportedGraph(document).viewBox;
+  assert.equal(viewBox.w, 0, 'the collapsed width is zero');
+  assert.ok(Number.isFinite(viewBox.h) && viewBox.h === 50, 'the unaffected axis is untouched');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an id-less appended node is numbered, not left as a bare prefix', async () => {
+  // sanitizeState numbers a node with no id by its position ('n1'), so the fit
+  // filter has to do the same. Deriving the bare prefix 'n' instead would let such
+  // a node claim the id of a host node actually named `n`, and the edge the payload
+  // wrote to it would vanish with no error.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'n', label:'HOST-N', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{label:'A', x:0, y:100}, {label:'B', x:100, y:100}],
+    edges: [{id:'e', from:'n1', to:'n2'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3, 'both nodes imported');
+  assert.equal(graph.edges.length, 1, 'the edge between them survived');
+  const hostNode = graph.nodes.find(node => node.label === 'HOST-N');
+  assert.ok(!graph.edges.some(edge => edge.from === hostNode.id || edge.to === hostNode.id),
+    'and it did not attach to the host node');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a capped append never re-points an edge at a node whose id merely normalises alike', async () => {
+  // `a!` and `a` normalise to the same id. Planning compared normalised ids without
+  // resolving the collision, so with one slot left the edge meant for the dropped `a`
+  // was attached to the kept `a!` — a wrong connection rather than a missing one.
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'a!', label:'KEEP', x:0, y:0}, {id:'a', label:'DROP', x:100, y:0}],
+    edges: [{id:'e', from:'a!', to:'a'}],
+  }));
+
+  const graph = exportedGraph(document);
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the first node fits');
+  assert.equal(graph.nodes.find(node => node.label === 'DROP'), undefined, 'the second does not');
+  const selfLoop = graph.edges.filter(edge => edge.from === kept.id && edge.to === kept.id);
+  assert.deepEqual(selfLoop, [], 'the edge to the dropped node did not become a self-loop on the kept one');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edge the capacity drops cannot spend the definition a kept edge needs', async () => {
+  // Definition priority was computed from every endpoint-valid edge, before the edge
+  // ceiling was applied. With one edge slot and one definition slot left, a dangling
+  // edge's definition took the slot and the edge that actually survived lost its
+  // custom value.
+  const edges = Array.from({length: 7999}, (_, i) => ({id: 'he' + i, from: 'h1', to: 'h2'}));
+  const defs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'edge', type: 'string', origin: 'hd' + i}
+  ));
+  const {dom, errors} = createEditorDom({
+    title: 'h', nodes: [{id:'h1', x:0, y:0}, {id:'h2', x:100, y:0}], edges, customAttributes: defs,
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    // A node is required or the payload is rejected as "no graph".
+    nodes: [{id:'p1', label:'P', x:0, y:0}],
+    // BOTH edges are endpoint-valid; the second is dropped by the EDGE ceiling, which
+    // is the capacity the priority calculation used to ignore.
+    edges: [
+      {id:'survives', from:'p1', to:'h1', custom:{keepDef:'y'}},
+      {id:'capacitydrop', from:'p1', to:'h2', custom:{dropDef:'x'}},
+    ],
+    // The dropped edge's definition is declared first, so declaration order alone
+    // would give it the last slot.
+    customAttributes: [
+      {id:'dropDef', name:'dropDef', scope:'edge', type:'string', origin:'dropDef'},
+      {id:'keepDef', name:'keepDef', scope:'edge', type:'string', origin:'keepDef'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const imported = new Set(graph.customAttributes.filter(d => !d.id.startsWith('hd')).map(d => d.id));
+  assert.ok(imported.has('keepDef'), 'the surviving edge\'s definition was imported');
+  const keptEdge = graph.edges.find(edge => !edge.id.startsWith('he'));
+  assert.ok(keptEdge, 'the edge survived');
+  assert.equal(keptEdge.custom?.keepDef, 'y', 'and kept its value');
+  assert.ok(!imported.has('dropDef'), 'the edge the ceiling dropped spent no definition slot');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('prioritising definitions does not split a property id on a pipe', async () => {
+  // A value key is a definition id verbatim. Stripping everything through the first
+  // pipe assumed keys carry a scope prefix, so a definition called `region|A` looked
+  // unreferenced and lost the last slot to a definition nothing used.
+  const defs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: [], customAttributes: defs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [
+      {id:'keep', label:'KEEP', x:0, y:0, custom:{'region|A':'EU'}},
+      {id:'drop', label:'DROP', x:100, y:0, custom:{unusedDef:'z'}},
+    ],
+    edges: [],
+    customAttributes: [
+      {id:'unusedDef', name:'unusedDef', scope:'node', type:'string', origin:'unusedDef'},
+      {id:'region|A', name:'region', scope:'node', type:'string', origin:'region|A'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the retained node arrived');
+  assert.equal(kept.custom?.['region|A'], 'EU', 'its value survived under the piped id');
+  const ids = new Set(graph.customAttributes.map(def => def.id));
+  assert.ok(ids.has('region|A'), 'and so did its definition');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append resolves against the defaults its source document was opened with', async () => {
+  // A payload that carries no `settings` at all is still opened against the built-in
+  // defaults. Resolving against the raw (empty) settings object instead resolved
+  // against nothing, so the appended node took the HOST's styling — a visible restyle
+  // on an append that should have changed nothing.
+  const {dom, errors} = createEditorDom({
+    title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: [],
+    // The host is deliberately styled unlike the built-ins.
+    settings: {nodeDefaults: {width: 99, color: '#ff0000'}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 100);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p', nodes: [{id:'s1', label:'S', x:900, y:900}], edges: [],
+    // no settings
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.width, 50, 'it kept the built-in width its source was drawn with');
+  assert.equal(node.color, '#0ea5e9', 'and the built-in colour, not the host\'s');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('invalid entries do not spend node capacity', async () => {
+  // The raw list was sliced to the remaining room before the sanitizer dropped its
+  // invalid entries, so `[null, valid]` with one slot left imported nothing: the null
+  // took the slot and the valid node was cut.
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [null, {id:'valid', label:'VALID', x:0, y:0}],
+    edges: [],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.ok(graph.nodes.find(node => node.label === 'VALID'), 'the valid node took the slot');
+  assert.equal(graph.nodes.length, 3000, 'and the document is full, not over-full');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an appended edge keeps its properties when its endpoint id was normalised', async () => {
+  // The planner used to match sanitized edges back to raw ones by id AND endpoint
+  // text. `a!` normalises to `a`, so the match failed and the survivor was built from
+  // an empty object: the edge silently lost its label, weight, direction, type,
+  // colour and custom value. The link is now the plan's source trace, not a guess.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'a', x:0, y:0}, {id:'b', x:100, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'a!', label:'A', x:0, y:0}, {id:'b', label:'B', x:100, y:0}],
+    edges: [{id:'e1', from:'a!', to:'b', label:'LBL', weight:'7', color:'#ff0000', type:'t1', custom:{dk:'dv'}}],
+    customAttributes: [{id:'dk', name:'dk', scope:'edge', type:'string', origin:'dk'}],
+  }));
+
+  const edge = exportedGraph(document).edges.find(candidate => candidate.label === 'LBL');
+  assert.ok(edge, 'the edge arrived under its own label');
+  assert.equal(edge.weight, '7', 'weight kept');
+  assert.equal(edge.color, '#ff0000', 'colour kept');
+  assert.equal(edge.type, 't1', 'type kept');
+  assert.equal(edge.custom?.dk, 'dv', 'custom value kept');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('parallel appended edges do not swap their properties', async () => {
+  // Two edges between the same pair. The old matcher looked for a raw edge with the
+  // same endpoints AND the same id, and fell back to endpoints alone — so any payload
+  // where the plan assigned ids in a different order than the raw list declared them
+  // paired the two across, and each edge wore the other's label and weight. The trace
+  // makes the correspondence exact rather than inferred, which is what this asserts:
+  // every property stays with the edge that declared it, under every id shape.
+  const cases = [
+    {name: 'omitted id before an explicit e1', edges: [
+      {from:'c', to:'d', label:'ONE', weight:'1'},
+      {id:'e1', from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+    {name: 'explicit e1 before an omitted id', edges: [
+      {id:'e1', from:'c', to:'d', label:'ONE', weight:'1'},
+      {from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+    {name: 'a duplicate id between them', edges: [
+      {id:'e1', from:'c', to:'d', label:'ONE', weight:'1'},
+      {id:'e1', from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+    {name: 'a dangling edge between them', edges: [
+      {id:'e1', from:'c', to:'d', label:'ONE', weight:'1'},
+      {from:'c', to:'zzz', label:'X'},
+      {from:'c', to:'d', label:'TWO', weight:'2'},
+    ]},
+  ];
+  for (const testCase of cases) {
+    const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'a', x:0, y:0}], edges: []});
+    const {window} = dom;
+    const {document} = window;
+    await settle(window, 80);
+    document.querySelector('#optImportAppend').checked = true;
+    await paste(document, window, '#btnPasteJson', JSON.stringify({
+      title: 'p',
+      nodes: [{id:'c', label:'C', x:0, y:100}, {id:'d', label:'D', x:100, y:100}],
+      edges: testCase.edges,
+    }));
+    const edges = exportedGraph(document).edges;
+    for (const expected of testCase.edges.filter(edge => edge.label && edge.label !== 'X')) {
+      const found = edges.find(edge => edge.label === expected.label);
+      assert.ok(found, `${testCase.name}: ${expected.label} arrived`);
+      assert.equal(found.weight, expected.weight, `${testCase.name}: ${expected.label} kept its weight`);
+    }
+    assert.deepEqual(errors.map(error => error.message), [], `${testCase.name}: no errors`);
+    dom.window.close();
+  }
+});
+
+test('definition priority reads custom keys from the payload, not the truncated plan', async () => {
+  // The plan's custom keys are already cut to the 128-character storage cap, so two
+  // long ids sharing that prefix are ONE key there. Prioritising from the plan meant
+  // the retained node's value was attributed to the dropped node's definition: that
+  // definition took the last slot, the one the retained node actually needs was
+  // skipped, and the value survived only because the plan's truncated binding made it
+  // look bound — it would not survive a reload. The payload holds both keys at full
+  // length, which is the form the definitions are declared under.
+  const base = 'K' + 'z'.repeat(130);      // longer than the 128-char cap
+  const keepId = base + 'KEEP', dropId = base + 'DROP';
+  assert.equal(keepId.slice(0, 128), dropId.slice(0, 128), 'the two ids share their truncated form');
+  const hostDefs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: [], customAttributes: hostDefs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [
+      {id:'keep', label:'KEEP', x:0, y:0, custom:{[keepId]:'KEEPVAL'}},
+      {id:'drop', label:'DROP', x:100, y:0, custom:{[dropId]:'DROPVAL'}},
+    ],
+    edges: [],
+    // The dropped node's definition is declared FIRST, so payload order alone would
+    // hand it the last slot.
+    customAttributes: [
+      {id:dropId, name:'dropProp', scope:'node', type:'string', origin:dropId},
+      {id:keepId, name:'keepProp', scope:'node', type:'string', origin:keepId},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  // The definition the retained node's value actually names is the one that has to
+  // arrive. Checking the value alone is not enough: a truncated binding can carry the
+  // value in memory while its definition was never imported.
+  const names = (graph.customAttributes || []).map(def => def.name);
+  assert.ok(names.includes('keepProp'), `the retained node's definition was imported, got ${JSON.stringify(names.filter(Boolean))}`);
+  assert.ok(!names.includes('dropProp'), 'and the dropped node\'s definition did not take the last slot');
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  assert.ok(kept, 'the retained node arrived');
+  const bound = Object.entries(kept.custom || {});
+  assert.equal(bound.length, 1, 'its single value is bound');
+  assert.equal(bound[0][1], 'KEEPVAL', 'to the retained value');
+  const defs = new Set((graph.customAttributes || []).map(def => def.id));
+  assert.ok(defs.has(bound[0][0]), 'and that binding names a definition the document actually holds');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('appending many dangling edges stays linear in the payload size', async () => {
+  // Pairing used to scan the whole raw edge list for every retained edge: 12,000
+  // dangling edges ahead of 3,000 valid ones took ~7.8s against ~0.14s for the valid
+  // ones alone. The trace makes it one pass. The assertion is deliberately loose — a
+  // timing test on shared CI hardware should only catch a return to quadratic
+  // behaviour, not a few milliseconds of noise.
+  const build = async (danglingCount) => {
+    const {dom} = createEditorDom({title:'h', nodes:[{id:'h1', x:0, y:0}, {id:'h2', x:100, y:0}], edges: []});
+    const {window} = dom;
+    const {document} = window;
+    await settle(window, 80);
+    document.querySelector('#optImportAppend').checked = true;
+    const valid = Array.from({length: 300}, (_, i) => ({id:'v' + i, from:'h1', to:'h2'}));
+    const dangling = Array.from({length: danglingCount}, (_, i) => ({id:'d' + i, from:'h1', to:'missing' + i}));
+    const payload = JSON.stringify({title:'p', nodes:[{id:'p1', label:'P', x:0, y:0}], edges:[...dangling, ...valid]});
+    Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{writeText:async()=>{}, readText:async()=>payload}});
+    await settle(window, 40);
+    const started = Date.now();
+    document.querySelector('#btnPasteJson').click();
+    // The paste is asynchronous; let it finish before tearing the document down, so
+    // the measurement covers the append and never a half-torn-down window.
+    await settle(window, 30);
+    const elapsed = Date.now() - started;
+    dom.window.close();
+    return elapsed;
+  };
+  const small = await build(0);
+  const large = await build(6000);
+  // 6,000 extra dangling edges against a 300-edge payload is a 20x larger input. A
+  // quadratic scan would be ~400x the work; allow a generous constant-factor margin
+  // over "twenty times the linear cost".
+  assert.ok(large < Math.max(1500, small * 40),
+    `6,000 dangling edges took ${large}ms against ${small}ms with none`);
+});
+
+test('definition priority respects scope', async () => {
+  // A value key names a definition of a specific scope. Priority ignored that, so an
+  // unused EDGE definition called `score` outranked the NODE definition a retained
+  // node's value needed: the edge definition took the last slot and the value was left
+  // bound to a definition that does not apply to a node — an orphan, not a property.
+  const hostDefs = Array.from({length: 1999}, (_, i) => (
+    {id: 'hd' + i, name: 'h' + i, scope: 'node', type: 'string', origin: 'hd' + i}
+  ));
+  const nodes = Array.from({length: 2999}, (_, i) => ({id: 'n' + (i + 1), x: 0, y: 0}));
+  const {dom, errors} = createEditorDom({title: 'h', nodes, edges: [], customAttributes: hostDefs});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 150);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'keep', label:'KEEP', x:0, y:0, custom:{score:'42'}}],
+    edges: [],
+    // The unused edge definition is declared first, so declaration order alone would
+    // give it the last slot.
+    customAttributes: [
+      {id:'score', name:'score', scope:'edge', type:'string', origin:'edgeScore'},
+      {id:'score', name:'score', scope:'node', type:'string', origin:'nodeScore'},
+    ],
+  }));
+
+  const graph = exportedGraph(document);
+  const imported = graph.customAttributes.filter(def => !def.id.startsWith('hd'));
+  assert.equal(imported.length, 1, 'exactly one definition took the last slot');
+  assert.equal(imported[0].scope, 'node', 'and it is the node definition the value needs');
+  const kept = graph.nodes.find(node => node.label === 'KEEP');
+  const bound = Object.keys(kept.custom || {});
+  assert.equal(bound.length, 1, 'the value is bound');
+  assert.equal(bound[0], imported[0].id, 'to that definition — a usable node property, not an orphan');
+  assert.equal(kept.custom[bound[0]], '42');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append preserves the source visual when the source disables inheritance', async () => {
+  // `inheritDefaults: false` means new elements get their properties written out; it
+  // does not change how an element with an unset property is DRAWN — nodeVisual still
+  // resolves it through the defaults. Materialisation returned early on the flag, so a
+  // node drawn green at width 77 in a document that disabled inheritance arrived at
+  // the host's red and 99.
+  const {dom, errors} = createEditorDom({
+    title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: [],
+    settings: {nodeDefaults: {width: 99, color: '#ff0000'}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 100);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'s1', label:'S', x:900, y:900}],
+    edges: [],
+    settings: {inheritDefaults: false, nodeDefaults: {width: 77, color: '#00ff00'}},
+  }));
+
+  const node = exportedGraph(document).nodes.find(candidate => candidate.label === 'S');
+  assert.ok(node, 'the node was appended');
+  assert.equal(node.width, 77, 'it kept the width its own document drew');
+  assert.equal(node.color, '#00ff00', 'and its own colour');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a payload of duplicate ids appends in linear time', async () => {
+  // Duplicate-id allocation rescanned suffixes from 2 for every entry, which is
+  // quadratic: 12,000 identically named nodes blocked the page for ~35 seconds even
+  // though only ~3,000 could fit. The scan now resumes where it stopped.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  const nodes = Array.from({length: 12000}, () => ({id:'same', x:0, y:0}));
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{
+    writeText:async()=>{}, readText:async()=>JSON.stringify({title:'p', nodes, edges:[]}),
+  }});
+  const started = Date.now();
+  document.querySelector('#btnPasteJson').click();
+  await settle(window, 40);
+  const elapsed = Date.now() - started;
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3000, 'the document filled to its ceiling');
+  const ids = graph.nodes.map(node => node.id);
+  assert.equal(new Set(ids).size, ids.length, 'and every id is distinct');
+  // 35 seconds was the quadratic behaviour; a generous bound catches a return to it
+  // without failing on a slow machine.
+  assert.ok(elapsed < 8000, `12,000 duplicates took ${elapsed}ms`);
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a payload larger than the argument limit imports what fits instead of throwing', async () => {
+  // `Math.max(...nodes.map(...))` passes one argument per node, so a payload of 200,001
+  // nodes overflowed the call stack — "Maximum call stack size exceeded" from a
+  // document that is merely big, before the capacity limit could drop the excess.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  // 150,000 is past the argument limit the spread imposed (it throws there) and still
+  // inside the 200,000-entry planning window, which is refused past that — see the
+  // next test. The two findings are independent and each test pins its own.
+  const nodes = Array.from({length: 150000}, (_, i) => ({id:'n' + i, x:0, y:0}));
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{
+    writeText:async()=>{}, readText:async()=>JSON.stringify({title:'p', nodes, edges:[]}),
+  }});
+  document.querySelector('#btnPasteJson').click();
+  await settle(window, 120);
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 3000, 'the document filled to its ceiling instead of throwing');
+  assert.deepEqual(errors.map(error => error.message), [], 'and nothing overflowed the stack');
+  dom.window.close();
+});
+
+test('invalid entries ahead of a real node do not hide it from the plan', async () => {
+  // The planning window was filled before malformed entries were filtered, so a real
+  // node behind enough junk was never read. Its id was then unknown, and an edge
+  // naming it resolved to a HOST node of the same name — attached to the wrong node,
+  // with a success toast and no loss reported.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'a', x:0, y:0}, {id:'h', label:'HOST-H', x:100, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  // Junk ahead of the node whose id collides with a host node, plus an edge to it.
+  const nodes = [...Array.from({length: 200000}, () => null), {id:'h', label:'INCOMING-H', x:0, y:100}];
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{
+    writeText:async()=>{},
+    readText:async()=>JSON.stringify({title:'p', nodes, edges:[{id:'e', from:'h', to:'a'}]}),
+  }});
+  document.querySelector('#btnPasteJson').click();
+  await settle(window, 150);
+
+  const graph = exportedGraph(document);
+  const hostH = graph.nodes.find(node => node.label === 'HOST-H');
+  const attached = graph.edges.filter(edge => edge.from === hostH.id || edge.to === hostH.id);
+  assert.deepEqual(attached, [], 'the edge did not attach to the host node of the same id');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a payload past the planning window is refused instead of partly planned', async () => {
+  // The planning pass has to see every incoming id, because an id it never read is
+  // indistinguishable from a host node of the same name. With 200,000 valid nodes
+  // ahead of one named `outside`, an edge meant for that node attached to the host's
+  // `outside` and the toast reported no loss. There is no bound that makes a partial
+  // plan safe, so a document past the window is declined with a reason.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [{id:'outside', label:'HOST', x:0, y:0}], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  const nodes = Array.from({length: 200001}, (_, i) => ({id:'n' + i, x:0, y:0}));
+  nodes.push({id:'outside', label:'INCOMING', x:0, y:100});
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true, value:{
+    writeText:async()=>{},
+    readText:async()=>JSON.stringify({title:'p', nodes, edges:[{id:'e', from:'outside', to:'n0'}]}),
+  }});
+  document.querySelector('#btnPasteJson').click();
+  await settle(window, 200);
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 1, 'the document is unchanged');
+  assert.equal(graph.nodes[0].label, 'HOST');
+  assert.deepEqual(graph.edges, [], 'and no edge was attached to the host node');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('a generated incoming id cannot capture a host endpoint', async () => {
+  // Ids were allocated without knowing which ones the host already owns, so an
+  // incoming `a!` normalised to `a`, collided with nothing, and an incoming `a`
+  // took `a-2` — the host's node. An edge from `a!` to `a-2` then attached to the
+  // incoming node instead of the host's. The host's ids are reserved before
+  // allocation now, so the incoming nodes are named around them.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [
+    {id:'a-2', label:'HOST-A2', x:0, y:0}, {id:'z', label:'Z', x:100, y:0}
+  ], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [{id:'a!', label:'EXCL', x:900, y:900}, {id:'a', label:'PLAIN', x:700, y:900}],
+    edges: [{id:'e1', from:'a!', to:'a-2'}],
+  }));
+
+  const graph = exportedGraph(document);
+  const byLabel = new Map(graph.nodes.map(node => [node.label, node.id]));
+  assert.equal(byLabel.get('HOST-A2'), 'a-2', 'the host keeps its id');
+  assert.equal(graph.edges.length, 1, 'the edge was imported');
+  const edge = graph.edges[0];
+  assert.equal(edge.from, byLabel.get('EXCL'), 'from the incoming node it names');
+  assert.equal(edge.to, 'a-2', 'to the HOST node it names, not an incoming node');
+  assert.notEqual(byLabel.get('PLAIN'), 'a-2', 'no incoming node took the host id');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('append resolves the visual the source document actually drew', async () => {
+  // A source document sanitises before it renders, so an invalid explicit colour is
+  // unset and the node is DRAWN from its defaults. Materialisation treated the raw
+  // rubbish as "the element states this itself", copied it through, and the
+  // sanitizer then cleared it — the node arrived with the HOST's colour, the one case
+  // where append restyled an element that never looked that way. A type longer than
+  // the 40-character cap lost its type style for the same reason.
+  const {dom, errors} = createEditorDom({
+    title: 'h', nodes: [{id:'h1', x:0, y:0}], edges: [],
+    settings: {nodeDefaults: {color: '#ff0000', width: 99}},
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  const longType = 'T'.repeat(60);
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p',
+    nodes: [
+      {id:'bad', label:'BAD-COLOR', x:900, y:900, color:'not-a-color'},
+      {id:'typed', label:'LONG-TYPE', x:700, y:900, type:longType},
+    ],
+    edges: [],
+    settings: {nodeDefaults: {color: '#00ff00', width: 77}, nodeTypeStyles: {[longType]: {color: '#0000ff'}}},
+  }));
+
+  const graph = exportedGraph(document);
+  const bad = graph.nodes.find(node => node.label === 'BAD-COLOR');
+  assert.equal(bad.color, '#00ff00', 'the invalid colour is replaced by the SOURCE default');
+  assert.equal(bad.width, 77, 'and the source width, not the host 99');
+  const typed = graph.nodes.find(node => node.label === 'LONG-TYPE');
+  assert.equal(typed.color, '#0000ff', 'the long type keeps its own type style');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('exports write inherited type and label position', async () => {
+  // Both exporters read the RESOLVED visual for every other property but the raw
+  // field for these two, so a node that inherits its type from the document defaults
+  // (GraphML) or its label position from its type (DOT) lost them on round-trip.
+  const {dom, errors} = createEditorDom({
+    title: 'h',
+    // No explicit `type` on the node: its type is INHERITED from nodeDefaults, which
+    // is exactly the value the exporter used to omit. Its label position is
+    // inherited from that type's style.
+    nodes: [{id:'n1', label:'N', x:0, y:0}],
+    edges: [],
+    settings: {
+      nodeDefaults: {type: 'host'},
+      nodeTypeStyles: {host: {labelPosition: 'top'}},
+    },
+  });
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 120);
+
+  // GraphML: the inherited type must be written for the node.
+  const graphml = exportVia(document, '#btnExportGraphml');
+  assert.match(graphml, /<data key="type">host<\/data>/, 'GraphML carries the inherited type');
+
+  // DOT: the label position inherited from the type must be written.
+  const dot = exportVia(document, '#btnExportDot');
+  assert.match(dot, /_gep_labelPosition="top"/, 'DOT carries the inherited label position');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+test('an edge-only payload appends against host endpoints', async () => {
+  // The empty-graph guard exists so a REPLACEMENT cannot wipe the document with a
+  // success toast. Append has no such risk — its endpoints may all be host nodes —
+  // but the guard ran for both, so connecting two existing nodes was rejected.
+  const {dom, errors} = createEditorDom({title: 'h', nodes: [
+    {id:'h1', label:'A', x:0, y:0}, {id:'h2', label:'B', x:200, y:0}
+  ], edges: []});
+  const {window} = dom;
+  const {document} = window;
+  await settle(window, 80);
+
+  document.querySelector('#optImportAppend').checked = true;
+  await paste(document, window, '#btnPasteJson', JSON.stringify({
+    title: 'p', nodes: [], edges: [{id:'e1', from:'h1', to:'h2'}],
+  }));
+
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 2, 'the host nodes are untouched');
+  assert.equal(graph.edges.length, 1, 'the edge was appended');
+  assert.equal(graph.edges[0].from, 'h1');
+  assert.equal(graph.edges[0].to, 'h2');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});
+
+// GraphML exports resolved visuals, unlike JSON's intentionally sparse fields.
+function exportedVisuals(document) {
+  const xml = exportVia(document, '#btnExportGraphml');
+  const parsed = new document.defaultView.DOMParser().parseFromString(xml, 'application/xml');
+  const fields = new Set(['type', 'shape', 'color', 'width', 'height', 'strokeColor',
+    'strokeSize', 'strokeStyle', 'labelColor', 'labelFont', 'labelSize', 'labelPosition',
+    'edgeType', 'edgeColor', 'edgeStrokeSize', 'edgeStrokeStyle', 'edgeLabelColor',
+    'edgeLabelFont', 'edgeLabelSize', 'arrowSize']);
+  const read = tag => [...parsed.getElementsByTagName(tag)].map(element =>
+    Object.fromEntries([...element.children]
+      .filter(child => child.localName === 'data' && fields.has(child.getAttribute('key')))
+      .map(child => [child.getAttribute('key'), child.textContent])));
+  return {nodes: read('node'), edges: read('edge')};
+}
+
+for (const layer of ['element', 'defaults', 'type style']) {
+  test(`append matches opening the source with invalid ${layer} visuals`, async () => {
+    const badNode = {shape:'invalid', color:'invalid', strokeColor:'invalid',
+      strokeStyle:'invalid', labelColor:'invalid', labelPosition:'invalid',
+      width:-5, height:99999, labelSize:-20};
+    const badEdge = {color:'invalid', strokeStyle:'invalid', labelColor:'invalid',
+      strokeSize:-5, labelSize:-20, arrowSize:-1};
+    const source = {title:'source', nodes:[{id:'s', x:0, y:0}],
+      edges:[{id:'e', from:'s', to:'s'}], settings:{
+        nodeDefaults:{shape:'diamond', strokeColor:'#ff0000', labelPosition:'top'},
+        edgeDefaults:{color:'#ff0000', strokeStyle:'dash'},
+      }};
+    if(layer === 'element') {
+      Object.assign(source.nodes[0], badNode);
+      Object.assign(source.edges[0], badEdge);
+    } else if(layer === 'defaults') {
+      Object.assign(source.settings.nodeDefaults, badNode);
+      Object.assign(source.settings.edgeDefaults, badEdge);
+    } else {
+      source.nodes[0].type = 'T'; source.edges[0].type = 'T';
+      source.settings.nodeTypeStyles = {T:badNode};
+      source.settings.edgeTypeStyles = {T:badEdge};
+    }
+    const original = createEditorDom(source);
+    const host = createEditorDom({title:'host', nodes:[{id:'h', x:0, y:0}], edges:[],
+      settings:{nodeDefaults:{shape:'hexagon', color:'#abcdef', strokeColor:'#112233',
+        labelPosition:'right'}, edgeDefaults:{color:'#112233'}}});
+    try {
+      await settle(original.dom.window, 80); await settle(host.dom.window, 80);
+      const expected = exportedVisuals(original.dom.window.document);
+      const document = host.dom.window.document;
+      document.querySelector('#optImportAppend').checked = true;
+      await paste(document, host.dom.window, '#btnPasteJson', JSON.stringify(source));
+      const actual = exportedVisuals(document);
+      assert.deepEqual(actual.nodes.slice(1), expected.nodes);
+      assert.deepEqual(actual.edges, expected.edges);
+      assert.deepEqual([...original.errors, ...host.errors].map(e => e.message), []);
+    } finally { original.dom.window.close(); host.dom.window.close(); }
+  });
+}
+
+test('append uses source sanitizer collision rules for node and edge type styles', async () => {
+  const long = 'X'.repeat(41), short = 'X'.repeat(40);
+  const styles = {[long]:{color:'#ff0000'}, [short]:{color:'#0000ff'}};
+  const source = {title:'source', nodes:[{id:'s', x:0, y:0, type:long}],
+    edges:[{id:'e', from:'s', to:'s', type:long}],
+    settings:{nodeTypeStyles:styles, edgeTypeStyles:styles}};
+  const original = createEditorDom(source);
+  const host = createEditorDom({title:'host', nodes:[{id:'h', x:0, y:0}], edges:[]});
+  try {
+    await settle(original.dom.window, 80); await settle(host.dom.window, 80);
+    const expected = exportedVisuals(original.dom.window.document);
+    assert.equal(expected.nodes[0].color, '#0000ff');
+    assert.equal(expected.edges[0].edgeColor, '#0000ff');
+    const document = host.dom.window.document;
+    document.querySelector('#optImportAppend').checked = true;
+    await paste(document, host.dom.window, '#btnPasteJson', JSON.stringify(source));
+    const actual = exportedVisuals(document);
+    assert.deepEqual(actual.nodes.slice(1), expected.nodes);
+    assert.deepEqual(actual.edges, expected.edges);
+    assert.deepEqual([...original.errors, ...host.errors].map(e => e.message), []);
+  } finally { original.dom.window.close(); host.dom.window.close(); }
 });

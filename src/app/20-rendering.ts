@@ -1,39 +1,6 @@
-  function nodeVisual(n){
-    const d = state.settings.nodeDefaults || {};
-    const effectiveType = n.type || d.type || '';
-    const ts = getTypeStyle(state.settings.nodeTypeStyles, n.type) || {};
-    const dts = getTypeStyle(state.settings.nodeTypeStyles, d.type) || {};
-    return {
-      shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
-      color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-      type: effectiveType,
-      width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
-      height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
-      strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
-      strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-      strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-      labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-      labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-      labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
-      labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-  }
-  function edgeVisual(e){
-    const d = state.settings.edgeDefaults || {};
-    const effectiveType = e.type || d.type || '';
-    const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type) || {};
-    const dts = getTypeStyle(state.settings.edgeTypeStyles, d.type) || {};
-    return {
-      color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-      type: effectiveType,
-      strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-      strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-      arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
-      labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-      labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-      labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-  }
+  // nodeVisual/edgeVisual live in 10-core: the renderer is their first consumer
+  // but not the only one — append materialises the same resolution onto imported
+  // elements, and two copies of the ladder is how they drifted apart.
   function edgeArrowSize(e){
     const v = edgeVisual(e);
     return clamp(finite(v.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
@@ -1064,6 +1031,13 @@
   // k*stepX - remainder corresponds to world G + k*stepX, where G is a multiple
   // of majorX. BigInt makes the remainder exact even for a 1e20 world camera.
   function worldGridPhase(origin, majorStep){
+    // A camera can span enough that the decimated grid step itself overflows to
+    // Infinity (a node parked at a huge coordinate, then Fit). BigInt rejects
+    // that, and the throw escaped from the middle of a render, leaving the canvas
+    // blank. A step that large is meaningless anyway: nothing is drawn at that
+    // scale, so treat it as "no phase" and let the caller's own finiteness check
+    // skip the grid.
+    if(!Number.isFinite(majorStep) || !Number.isFinite(finite(origin, NaN))) return 0;
     const m = BigInt(Math.max(1, Math.round(majorStep)));
     const v = BigInt(Math.trunc(finite(origin, 0)));
     return Number(((v % m) + m) % m);
@@ -1505,6 +1479,7 @@
         g.addEventListener('pointerdown', ev => {
           ev.stopPropagation();
           flushZoomPreview();
+          notePress('edge', e.id);
           if(ev.button === 1 || ev.button === 2){ registerPointer(ev); pendingEdgeFrom = null; startPan(ev); return; }
           if(ev.button !== 0) return;
           if(polygonToolActive()){ registerPointer(ev); handlePolygonPointerDown(ev); return; }
@@ -1523,7 +1498,12 @@
           const combine = effectiveSelectCombine(ev);
           setSelection([], [e.id], {type:'edge', id:e.id}, combine);
         });
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
+        // Deliberately no stopPropagation: a double click is resolved only on the
+        // canvas (see canvasWrap's dblclick). With pointer capture active the
+        // browser delivers the event there directly; this listener exists only to
+        // commit a pending zoom, and swallowing the event would hide it from the
+        // resolver when it does arrive here.
+        g.addEventListener('dblclick', () => { flushZoomPreview(); });
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
         const fresh = spineEntry(e.id, g);
@@ -1921,7 +1901,8 @@
         g = document.createElementNS(NS,'g'); g.classList.add('node');
         g.id = 'node-' + n.id; g.dataset.id = n.id;
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
+        // Resolved on the canvas, for the same reason as the edge handler above.
+        g.addEventListener('dblclick', () => { flushZoomPreview(); });
         nodesLayer.appendChild(g);
         nodeEls.set(n.id, g);
         const fresh = spineEntry(n.id, g);

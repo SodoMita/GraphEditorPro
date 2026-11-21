@@ -2410,10 +2410,12 @@ const I18N = {
         'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
         'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
         'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
+        'nothing_to_import': { en: 'Nothing to import: {label} contains no nodes or edges', ru: 'Нечего импортировать: {label} не содержит узлов или рёбер' },
         'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
         'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
         'could_not_import': { en: 'Could not import file: {msg}', ru: 'Не удалось импортировать файл: {msg}' },
         'copied': { en: 'Copied', ru: 'Скопировано' },
+        'copy_failed': { en: 'Could not copy — select the text and copy it manually', ru: 'Не удалось скопировать — выделите текст и скопируйте вручную' },
         'toast_region': { en: 'Notifications', ru: 'Уведомления' },
         'toast_close': { en: 'Dismiss notification', ru: 'Закрыть уведомление' },
         'download_hint': { en: 'Download "{name}" — if nothing happened, tap "Copy" instead', ru: 'Скачивание «{name}» — если ничего не произошло, нажмите «Копировать»' },
@@ -2495,6 +2497,13 @@ const I18N = {
         'err_not_node_clipboard': { en: 'the clipboard does not contain nodes', ru: 'в буфере обмена нет узлов' },
         'err_invalid_graphml': { en: 'invalid XML/GraphML', ru: 'некорректный XML/GraphML' },
         'err_empty_graph': { en: 'the input contains no graph (zero nodes found)', ru: 'во вводе не найден граф (ноль узлов)' },
+        // An append has to read every incoming id to know which nodes its edges name. A
+        // document past that window cannot be appended safely, and guessing would attach
+        // edges to the wrong nodes — so it is refused with a reason instead.
+        'err_import_too_many_entries': {
+            en: 'the input has more than {limit} entries, which is too large to append safely',
+            ru: 'во вводе больше {limit} записей — это слишком много для безопасного добавления'
+        },
         'err_no_valid_nodes': { en: 'none of the nodes in the input are usable (all entries were empty or malformed)', ru: 'ни один узел во вводе не является корректным (все записи пустые или повреждены)' },
         'camera_readout': { en: 'center ({x}, {y}) · zoom {zoom}%', ru: 'центр ({x}, {y}) · масштаб {zoom}%' },
         'preset_what_nodes': { en: '{n:node}', ru: '{n:node}' },
@@ -2620,6 +2629,17 @@ const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 // is hidden *below* this cap; it can never raise the cap itself.
 const MATRIX_MAX_CELLS = 14400;
 const MATRIX_MAX_NODES = Math.floor(Math.sqrt(MATRIX_MAX_CELLS)); // 120
+// Import ceilings. A pasted or dropped document is untrusted, and these bounds
+// are what keep a hostile payload from locking the tab up. Truncation is
+// reported by the importer rather than silently dropping entries.
+const MAX_IMPORT_NODES = 3000;
+const MAX_IMPORT_EDGES = 8000;
+// Set by the most recent sanitizeState: how many nodes/edges its ceilings cut.
+// Kept beside the caps rather than inside GraphState because it describes the
+// *import that just happened*, not the document — nothing should persist it or
+// undo it. sanitizeState is synchronous and its callers read this immediately.
+let lastImportDropped = { nodes: 0, edges: 0 };
+function takeImportDropped() { const dropped = lastImportDropped; lastImportDropped = { nodes: 0, edges: 0 }; return dropped; }
 // Pair-interaction budget for the force layout (see layoutForce): bounds one
 // click to roughly a second on a mid-range machine instead of O(iter·n²).
 const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
@@ -2797,6 +2817,138 @@ function boundedCamera(camera) {
     const cam = { x: x + (ow - w) / 2, y: y + (oh - h) / 2, w, h };
     syncRenderScaleForCamera(cam);
     return cam;
+}
+// The box the *document* occupies: the union of every node's resolved shape,
+// not the viewport.
+//
+// These are different things and only the second belongs in a file. The camera
+// is where the user happens to be looking — zoom out and it grows without
+// limit, pan and it moves — so writing it as a graph's extent made every
+// export's bounds depend on the last scroll wheel, and a bounded graph could
+// export as arbitrarily large. This is the answer a consumer of the file
+// actually wants: where the content is, and how far it reaches.
+//
+// Size comes from the resolved visual so a node that inherits its width from
+// the type/defaults is measured at the size it is drawn, exactly like every
+// other exporter. An empty document has no extent; `w`/`h` are then 0 and
+// `x`/`y` are 0 rather than Infinity, so the value is still JSON-clean.
+function graphBounds() {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of state.nodes) {
+        // Every node, including the ones the current camera cannot paint.
+        //
+        // isRenderablePoint is a *painting* concern: it is bounded by renderScale,
+        // which the camera sets, so filtering on it made the exported extent depend
+        // on where the user was looking — zoom in far enough and a far node fell
+        // outside the safe window and vanished from the bounds, zoom back out and it
+        // reappeared. The file has to describe the document, so it uses the
+        // coordinates the document actually holds. They are finite by
+        // sanitizeState, so an unrenderable node still has a real position to
+        // include.
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y))
+            continue;
+        const v = nodeVisual(n);
+        const hw = (v.width != null ? v.width : 50) / 2, hh = (v.height != null ? v.height : 50) / 2;
+        if (n.x - hw < minX)
+            minX = n.x - hw;
+        if (n.y - hh < minY)
+            minY = n.y - hh;
+        if (n.x + hw > maxX)
+            maxX = n.x + hw;
+        if (n.y + hh > maxY)
+            maxY = n.y + hh;
+    }
+    if (!(maxX >= minX) || !(maxY >= minY))
+        return { x: 0, y: 0, w: 0, h: 0 };
+    return boundedBox(minX, minY, maxX, maxY);
+}
+// A box that is safe to write into a file.
+//
+// `w` is `maxX - minX`, and two finite coordinates do not guarantee a finite
+// difference: nodes at -1e308 and 1e308 differ by 2e308, which is Infinity, and an
+// Infinity origin subtracted from a finite one is -Infinity. JSON writes those as
+// `null`, so a viewBox that was documented as numbers became unreadable while
+// every input was finite.
+//
+// The fix is confined to what is actually broken. A large-but-real extent is
+// legitimate — a graph spanning 50,000,000 units is a graph the user made, and
+// clamping it would repeat the original bug of describing something other than the
+// document — so finite values are passed through untouched. Only a non-finite one
+// is replaced: the box collapses to the part of the range that is representable,
+// which keeps the result numeric and keeps it inside coordinates that exist.
+function boundedBox(minX, minY, maxX, maxY) {
+    const span = (lo, hi) => {
+        const w = hi - lo;
+        // A FINITE span is reported as computed, including zero. Two coordinates can
+        // be distinct in intent and equal in floating point — at x = 1e18 a 50-unit
+        // node's left and right edges are the same double — and that is a zero-width
+        // box, not an overflow. Conflating the two reported 1.7976931348623157e+308.
+        if (Number.isFinite(w))
+            return w > 0 ? w : 0;
+        // Only a non-finite span means the endpoints are beyond double precision of
+        // each other. Report the largest extent a finite origin can still subtract
+        // from, which is the full representable range.
+        return Number.isFinite(lo) && Number.isFinite(hi) ? Number.MAX_VALUE - Math.abs(lo) : 0;
+    };
+    const origin = (value) => Number.isFinite(value) ? value : 0;
+    return { x: origin(minX), y: origin(minY), w: span(minX, maxX), h: span(minY, maxY) };
+}
+// The visual value of every property, resolved from the element, its own type
+// style, the default type's style, and the plain default — in that order.
+//
+// This lives in the core rather than beside the renderer because it is the
+// definition of "what this element looks like", and more than one consumer needs
+// it: the renderer draws it, and append has to materialise it onto an imported
+// element before its own document's defaults disappear. Append resolving this
+// itself is how it came to copy raw defaults — and then only the *default*
+// type's style — while the renderer was doing something else.
+// A ladder step only counts when it is a value the editor can DRAW.
+//
+// The ladder used to test truthiness, so an element carrying `color:
+// 'not-a-color'` supplied its own colour and the renderer received a string that
+// is not a colour. Sanitisation usually removes those before they reach here,
+// which hid the problem — but the same resolver is what append calls to learn
+// what a foreign document drew, and that document's elements are raw. Both
+// callers must get the same answer to "what does this element look like", and
+// that answer has to be drawable, so validity is enforced here, once.
+const drawableColor = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : '';
+function nodeVisual(n, settings = state.settings) {
+    const s = settings || {};
+    const d = s.nodeDefaults || {};
+    const effectiveType = n.type || d.type || '';
+    const ts = getTypeStyle(s.nodeTypeStyles, n.type) || {};
+    const dts = getTypeStyle(s.nodeTypeStyles, d.type) || {};
+    return {
+        shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
+        color: drawableColor(n.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
+        type: effectiveType,
+        width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
+        height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
+        strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
+        strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+        strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+        labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+        labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+        labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
+        labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
+    };
+}
+function edgeVisual(e, settings = state.settings) {
+    const s = settings || {};
+    const d = s.edgeDefaults || {};
+    const effectiveType = e.type || d.type || '';
+    const ts = getTypeStyle(s.edgeTypeStyles, e.type) || {};
+    const dts = getTypeStyle(s.edgeTypeStyles, d.type) || {};
+    return {
+        color: drawableColor(e.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
+        type: effectiveType,
+        strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+        strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+        arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
+        labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+        labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+        labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
+    };
 }
 // One floating origin for every surface inside the scene. It changes only
 // when the camera centre moves past a 1e6 snap boundary, so ordinary
@@ -4308,8 +4460,37 @@ function renderCustomPropHosts() {
     renderNewElementCustomProps();
     renderSelectionPanel();
 }
-function sanitizeState(input) {
+// `externalNodeIds` lets a caller say "these ids exist even though they are not
+// in this payload". Append needs it: an incoming edge may end on a node the host
+// graph already has. They are treated as *known* endpoints only — never as an id
+// to resolve a colliding node onto, which is what merging the host's nodes into
+// the payload used to cause.
+// The settings a document is read with, without reading the document.
+//
+// `sanitizeState` merges whatever the payload carries over the defaults, so a
+// document that carries no `settings` at all is still drawn with them. Append
+// resolves an incoming element against the defaults its source document was
+// opened with; passing the payload's raw `settings` object instead (empty when it
+// omits them) resolved against nothing, and the element arrived at whatever the
+// HOST's defaults said — a visible restyle on an append that changed nothing.
+function effectiveDefaults(inputSettings) {
     const base = defaultState();
+    const input = isRecord(inputSettings) ? inputSettings : {};
+    return {
+        nodeDefaults: { ...base.settings.nodeDefaults, ...(isRecord(input.nodeDefaults) ? input.nodeDefaults : {}) },
+        edgeDefaults: { ...base.settings.edgeDefaults, ...(isRecord(input.edgeDefaults) ? input.edgeDefaults : {}) },
+        nodeTypeStyles: isRecord(input.nodeTypeStyles) ? input.nodeTypeStyles : {},
+        edgeTypeStyles: isRecord(input.edgeTypeStyles) ? input.edgeTypeStyles : {},
+        inheritDefaults: input.inheritDefaults !== false
+    };
+}
+function sanitizeState(input, options = {}) {
+    const externalNodeIds = options.externalNodeIds ?? null;
+    const recordDropped = options.recordDropped !== false;
+    const limits = options.limits ?? { nodes: MAX_IMPORT_NODES, edges: MAX_IMPORT_EDGES };
+    const trace = options.trace ?? null;
+    const base = defaultState();
+    lastImportDropped = { nodes: 0, edges: 0 };
     if (!isRecord(input))
         return base;
     const source = input;
@@ -4362,12 +4543,53 @@ function sanitizeState(input) {
     const graphCustomTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'graph')));
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'node')));
     const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'edge')));
+    // Ids that belong to the HOST start out reserved.
+    //
+    // `uniqueSafeId` only avoids ids already handed out, so an incoming entry
+    // whose normalised id happened to equal a host node's id took that id from
+    // the host's side of the namespace: host `a-2`, incoming `a!` and `a`, and the
+    // edge from `a!` to `a-2` attached to the incoming `a-2` — a node it has no
+    // relation to. Reserving the host's ids first makes the collision visible at
+    // allocation time, so the incoming node is named around them and the edge's
+    // `a-2` can only mean the host's node.
     const usedNodeIds = new Set();
+    if (externalNodeIds)
+        for (const id of externalNodeIds)
+            usedNodeIds.add(id);
     const nodeReferences = new Map();
-    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, 3000).filter(isRecord) : [];
+    // Which ids the PAYLOAD itself defines, as allocated — distinct from ids a
+    // host node happens to share. An endpoint naming a payload node maps through
+    // `nodeReferences`; an endpoint naming only an external id is the host's node.
+    const payloadNodeIds = new Set();
+    // How many entries the ceilings cut, so an importer can tell the user instead
+    // of appearing to succeed. Counted against the raw list, before the record
+    // filter, because that filter is a per-entry concern and already silent.
+    const nodeOverflow = Array.isArray(source.nodes) ? Math.max(0, source.nodes.length - limits.nodes) : 0;
+    const edgeOverflow = Array.isArray(source.edges) ? Math.max(0, source.edges.length - limits.edges) : 0;
+    // A dry run answers "what ids would these entries get", not "what did this
+    // import lose" — the caller counts the loss itself.
+    if (recordDropped)
+        lastImportDropped = { nodes: nodeOverflow, edges: edgeOverflow };
+    // Did the ceiling cut anything at all? See SanitizeTrace['complete'].
+    if (trace)
+        trace.complete = nodeOverflow === 0 && edgeOverflow === 0;
+    // Valid entries first, THEN the ceiling. Slicing first let malformed entries spend
+    // the budget: 200,000 invalid records ahead of a real node filled the planning
+    // window, so the real node's id was unknown and an edge naming it resolved to a
+    // host node of the same name. A record that is not an object is not an entry, at
+    // any layer.
+    const validSourceNodes = (Array.isArray(source.nodes) ? source.nodes : []).filter(isRecord);
+    const rawNodes = validSourceNodes.slice(0, limits.nodes);
+    // The source position of each valid entry, so a trace can name the payload entry a
+    // survivor came from rather than its position among the survivors.
+    const rawNodeIndex = (Array.isArray(source.nodes) ? source.nodes : [])
+        .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const nodes = rawNodes.map((n, i) => {
         const rawId = String(n.id || ('n' + (i + 1)));
+        if (trace)
+            trace.nodes.push(rawNodeIndex[i] ?? i);
         const id = uniqueSafeId(rawId, 'n', usedNodeIds);
+        payloadNodeIds.add(id);
         // Ambiguous duplicate source IDs deliberately resolve to the first node.
         if (!nodeReferences.has(rawId))
             nodeReferences.set(rawId, id);
@@ -4406,11 +4628,33 @@ function sanitizeState(input) {
     });
     const nodeIds = new Set(nodes.map(node => node.id));
     const usedEdgeIds = new Set();
-    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, 8000).filter(isRecord) : [];
+    const validSourceEdges = (Array.isArray(source.edges) ? source.edges : []).filter(isRecord);
+    const rawEdges = validSourceEdges.slice(0, limits.edges);
+    const rawEdgeIndex = (Array.isArray(source.edges) ? source.edges : [])
+        .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const edges = [];
     rawEdges.forEach((e, i) => {
-        const from = nodeReferences.get(String(e.from)) || (nodeIds.has(String(e.from)) ? String(e.from) : '');
-        const to = nodeReferences.get(String(e.to)) || (nodeIds.has(String(e.to)) ? String(e.to) : '');
+        const resolveEndpoint = (raw) => {
+            // Three questions, asked in this order and no other:
+            //   1. does the payload name this id? then it is the payload's node, whose
+            //      allocated id the mapping holds;
+            //   2. does a node THIS pass allocated carry the id? (an endpoint written in
+            //      the *allocated* namespace rather than the payload's);
+            //   3. otherwise is it the host's? The host is the last resort on purpose:
+            //      an id the payload defines must never fall through to a host node
+            //      that shares the name.
+            const key = String(raw);
+            const mapped = nodeReferences.get(key);
+            if (mapped)
+                return mapped;
+            if (nodeIds.has(key))
+                return key;
+            if (externalNodeIds?.has(key))
+                return key;
+            return '';
+        };
+        const from = resolveEndpoint(e.from);
+        const to = resolveEndpoint(e.to);
         if (!from || !to)
             return; // Drop dangling edges before they reach render/algorithm code.
         const dir = normalizeDirection(e.direction ?? e.directed);
@@ -4443,6 +4687,8 @@ function sanitizeState(input) {
         const customValues = sanitizeCustomValues(e.custom, edgeDefaultTypeById, allSurvivingTypeById);
         if (customValues)
             edge.custom = customValues;
+        if (trace)
+            trace.edges.push(rawEdgeIndex[i] ?? i);
         edges.push(edge);
     });
     const inputSettings = isRecord(source.settings) ? source.settings : {};
@@ -4695,8 +4941,21 @@ function sanitizeState(input) {
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
-    const maxN = Math.max(...nodes.map(n => Number((n.id.match(/\d+$/) || [0])[0])), finite(source.nextNode, 1) - 1, nodes.length);
-    const maxE = Math.max(...edges.map(e => Number((e.id.match(/\d+$/) || [0])[0])), finite(source.nextEdge, 1) - 1, edges.length);
+    // Reduced, not spread. `Math.max(...array)` passes one argument per element and a
+    // payload large enough to matter overflows the call stack — "Maximum call stack
+    // size exceeded" from a document that is merely big, before the capacity limit
+    // gets a chance to drop the excess.
+    const maxIdSuffix = (items) => {
+        let max = 0;
+        for (const item of items) {
+            const digits = item.id.match(/\d+$/);
+            if (digits)
+                max = Math.max(max, Number(digits[0]));
+        }
+        return max;
+    };
+    const maxN = Math.max(maxIdSuffix(nodes), finite(source.nextNode, 1) - 1, nodes.length);
+    const maxE = Math.max(maxIdSuffix(edges), finite(source.nextEdge, 1) - 1, edges.length);
     return {
         ...base,
         title: String(source.title || 'untitled').slice(0, 80),
@@ -4740,9 +4999,18 @@ function safeId(value, prefix) {
 function uniqueSafeId(value, prefix, used) {
     const base = String(value ?? '').replace(/[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/g, '').slice(0, 40) || prefix;
     let id = base;
-    for (let suffix = 2; used.has(id); suffix++) {
-        const ending = `-${suffix}`;
-        id = base.slice(0, Math.max(1, 40 - ending.length)) + ending;
+    if (used.has(id)) {
+        const resume = used.resume ?? (used.resume = new Map());
+        let suffix = Math.max(2, resume.get(base) ?? 2);
+        for (;; suffix++) {
+            const ending = `-${suffix}`;
+            const candidate = base.slice(0, Math.max(1, 40 - ending.length)) + ending;
+            if (!used.has(candidate)) {
+                id = candidate;
+                resume.set(base, suffix);
+                break;
+            }
+        }
     }
     used.add(id);
     return id;
@@ -4803,42 +5071,9 @@ function getTypeStyle(styles, type) {
     return key && styles && Object.prototype.hasOwnProperty.call(styles, key) ? styles[key] : undefined;
 }
 // === Visual resolution: merge per-item overrides → type styles → defaults ===
-function nodeVisual(n) {
-    const d = state.settings.nodeDefaults || {};
-    const effectiveType = n.type || d.type || '';
-    const ts = getTypeStyle(state.settings.nodeTypeStyles, n.type) || {};
-    const dts = getTypeStyle(state.settings.nodeTypeStyles, d.type) || {};
-    return {
-        shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
-        color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-        type: effectiveType,
-        width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
-        height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
-        strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
-        strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-        strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-        labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-        labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-        labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
-        labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-}
-function edgeVisual(e) {
-    const d = state.settings.edgeDefaults || {};
-    const effectiveType = e.type || d.type || '';
-    const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type) || {};
-    const dts = getTypeStyle(state.settings.edgeTypeStyles, d.type) || {};
-    return {
-        color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-        type: effectiveType,
-        strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-        strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-        arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
-        labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-        labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-        labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-}
+// nodeVisual/edgeVisual live in 10-core: the renderer is their first consumer
+// but not the only one — append materialises the same resolution onto imported
+// elements, and two copies of the ladder is how they drifted apart.
 function edgeArrowSize(e) {
     const v = edgeVisual(e);
     return clamp(finite(v.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
@@ -6086,6 +6321,14 @@ function invalidateGridCache() { gridBounds = null; }
 // k*stepX - remainder corresponds to world G + k*stepX, where G is a multiple
 // of majorX. BigInt makes the remainder exact even for a 1e20 world camera.
 function worldGridPhase(origin, majorStep) {
+    // A camera can span enough that the decimated grid step itself overflows to
+    // Infinity (a node parked at a huge coordinate, then Fit). BigInt rejects
+    // that, and the throw escaped from the middle of a render, leaving the canvas
+    // blank. A step that large is meaningless anyway: nothing is drawn at that
+    // scale, so treat it as "no phase" and let the caller's own finiteness check
+    // skip the grid.
+    if (!Number.isFinite(majorStep) || !Number.isFinite(finite(origin, NaN)))
+        return 0;
     const m = BigInt(Math.max(1, Math.round(majorStep)));
     const v = BigInt(Math.trunc(finite(origin, 0)));
     return Number(((v % m) + m) % m);
@@ -6621,6 +6864,7 @@ function renderEdges() {
             g.addEventListener('pointerdown', ev => {
                 ev.stopPropagation();
                 flushZoomPreview();
+                notePress('edge', e.id);
                 if (ev.button === 1 || ev.button === 2) {
                     registerPointer(ev);
                     pendingEdgeFrom = null;
@@ -6655,10 +6899,12 @@ function renderEdges() {
                 const combine = effectiveSelectCombine(ev);
                 setSelection([], [e.id], { type: 'edge', id: e.id }, combine);
             });
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
-                finishPolygonSelection(false);
-            else
-                editEdgeQuick(e.id); });
+            // Deliberately no stopPropagation: a double click is resolved only on the
+            // canvas (see canvasWrap's dblclick). With pointer capture active the
+            // browser delivers the event there directly; this listener exists only to
+            // commit a pending zoom, and swallowing the event would hide it from the
+            // resolver when it does arrive here.
+            g.addEventListener('dblclick', () => { flushZoomPreview(); });
             edgesLayer.appendChild(g);
             edgeEls.set(e.id, g);
             const fresh = spineEntry(e.id, g);
@@ -7111,10 +7357,8 @@ function renderNodes() {
             g.id = 'node-' + n.id;
             g.dataset.id = n.id;
             g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-            g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if (polygonToolActive() && selectDraft?.tool === 'polygon')
-                finishPolygonSelection(false);
-            else
-                editNodeQuick(n.id); });
+            // Resolved on the canvas, for the same reason as the edge handler above.
+            g.addEventListener('dblclick', () => { flushZoomPreview(); });
             nodesLayer.appendChild(g);
             nodeEls.set(n.id, g);
             const fresh = spineEntry(n.id, g);
@@ -10240,7 +10484,50 @@ function isEmptyCanvasTarget(el) {
     // outside the canvas, so use the actual element under the pointer.
     return Boolean(el && canvasWrap.contains(el) && !isCanvasOverlayControl(el) && !el.closest('.node,.edge'));
 }
+// What the last press landed on, so a dblclick that pointer capture retargeted
+// to the canvas can still be attributed. Cleared on release so a stale value
+// cannot make an unrelated double click edit something.
+let lastPressed = null;
+function notePress(kind, id) { lastPressed = { kind, id }; }
+// Resolve which element a dblclick means. Prefer the event target (works when
+// capture is not involved); otherwise look up what is actually under the
+// pointer, then fall back to the element the press began on.
+//
+// Editor chrome (the gizmo's hit shapes, selection accents) sits above the
+// document and swallows presses: the gizmo owns the press for a selected node
+// and stops propagation, so no node press is ever recorded. Resolving from the
+// topmost element alone would therefore find chrome and give up. Walk the hit
+// stack instead and take the first document element in it, so a double click
+// on a selected node reaches the node whether or not a handle covers it.
+function documentHitAt(x, y) {
+    const stack = typeof document.elementsFromPoint === 'function'
+        ? document.elementsFromPoint(x, y)
+        : [typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null];
+    for (const el of stack) {
+        const hit = el?.closest?.('.node, .edge');
+        if (hit?.dataset?.id)
+            return { kind: hit.classList.contains('node') ? 'node' : 'edge', id: hit.dataset.id };
+    }
+    return null;
+}
+function doubleClickTarget(ev) {
+    const direct = ev.target?.closest?.('.node, .edge');
+    if (direct?.dataset?.id)
+        return { kind: direct.classList.contains('node') ? 'node' : 'edge', id: direct.dataset.id };
+    return documentHitAt(ev.clientX, ev.clientY) || lastPressed;
+}
+function editQuickByHit(hit) {
+    // Only in the tools where a double click is unambiguous. In the drag-select
+    // tools a double click is two sweeps, and in edge/node modes it is drawing.
+    if (state.mode !== 'select' || state.selectTool !== 'single')
+        return;
+    if (hit.kind === 'node')
+        editNodeQuick(hit.id);
+    else
+        editEdgeQuick(hit.id);
+}
 function onNodePointerDown(ev, id) {
+    notePress('node', id);
     ev.preventDefault();
     ev.stopPropagation();
     try {
@@ -10355,6 +10642,10 @@ function onNodePointerDown(ev, id) {
 // #canvasWrap rather than the <svg> it contains, so input over every pixel of
 // the canvas viewport is always received.
 canvasWrap.addEventListener('pointerdown', ev => {
+    // A press on the canvas itself (empty space) means the double click was not
+    // about any element; drop the previous attribution so a stale one cannot
+    // make it edit something.
+    lastPressed = null;
     if (isCanvasOverlayControl(ev.target))
         return;
     svg.focus();
@@ -10425,6 +10716,17 @@ canvasWrap.addEventListener('dblclick', ev => {
         finishPolygonSelection(false);
         return;
     }
+    // Quick edit, resolved here rather than on the node/edge element itself.
+    //
+    // A node press calls setPointerCapture on the canvas so a drag keeps tracking
+    // outside the element. While the canvas holds capture, the browser retargets
+    // the events of that pointer to the capturing element — so the second click
+    // of a double click lands on #canvasWrap, and a dblclick listener on the node
+    // group never fires at all. Naming the element on press and resolving the hit
+    // here works with capture instead of against it.
+    const hit = doubleClickTarget(ev);
+    if (hit)
+        editQuickByHit(hit);
     // Node creation is intentionally handled only by Node-mode pointerdown/tap.
     // This avoids accidental nodes from double-clicks in selection tools or edge mode.
 });
@@ -12300,7 +12602,15 @@ function parseDot(text, options = {}) {
             if (ss)
                 e.strokeStyle = ss;
         }
-        if (attrs.arrowsize != null) {
+        // `arrow_size` is our own exact absolute size. `arrowsize` is Graphviz's
+        // multiplier and is lossy in both directions (20 -> 1.6667 -> 20.0004, and
+        // a multiplier under 5 cannot be told apart from a legacy absolute size),
+        // so prefer the exact attribute whenever the file carries it — which our
+        // exporter always does.
+        if (attrs.arrow_size != null && Number.isFinite(Number(attrs.arrow_size))) {
+            e.arrowSize = dotClampArrowSize(Number(attrs.arrow_size));
+        }
+        else if (attrs.arrowsize != null) {
             const mul = Number(attrs.arrowsize);
             const mv = Number.isFinite(mul) ? mul : 1;
             // Graphviz arrowsize is a multiplier (default 1); convert to editor's absolute size (default 12)
@@ -12310,6 +12620,19 @@ function parseDot(text, options = {}) {
             // numbers; a fraction of a pixel is not a size.
             e.arrowSize = Math.round(dotClampArrowSize(mv > 5 ? mv : mv * DOT_DEFAULT_ARROW_SIZE) * 100) / 100;
         }
+        // Label styling and type, spelled the way Graphviz spells them. The
+        // exporter writes these from the resolved visual, so reading them back is
+        // what makes a round trip lossless rather than silently restyling every
+        // label and dropping the edge's type.
+        if (attrs.type)
+            e.type = String(attrs.type).slice(0, 40);
+        if (attrs.fontcolor) {
+            const lc = parseColor(attrs.fontcolor);
+            if (lc)
+                e.labelColor = lc;
+        }
+        if (attrs.fontsize != null && Number.isFinite(Number(attrs.fontsize)))
+            e.labelSize = Number(attrs.fontsize);
         // dir attribute (QVGE uses dir=forward/none/both) maps to directed/undirected/mutual
         if (attrs.dir) {
             const dir = String(attrs.dir).toLowerCase();
@@ -12391,6 +12714,18 @@ function parseDot(text, options = {}) {
                 const ss = parseStrokeStyle(attrs.style);
                 if (ss)
                     n.strokeStyle = ss;
+            }
+            // Label colour, size and family are read by `readDotLabelAttrs`, which runs a
+            // few lines above: it also strips the bold/italic suffix QVGE appends to the
+            // family. Re-reading `fontname` here overwrote that cleaned value with the raw
+            // one, so a QVGE font arrived as "DejaVu Sans bold" and the editor's
+            // family-only field round-tripped a style word as part of the name.
+            if (attrs.labelloc) {
+                const loc = String(attrs.labelloc).toLowerCase();
+                if (loc === 't' || loc === 'top')
+                    n.labelPosition = 'top';
+                else if (loc === 'b' || loc === 'bottom')
+                    n.labelPosition = 'bottom';
             }
             // width/height from DOT are in inches (72 dpi -> px)
             if (attrs.width != null && Number.isFinite(Number(attrs.width)))
@@ -12886,17 +13221,36 @@ function csvUnescapeCell(v) {
     return v;
 }
 function rowsToCsv(rows) { return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
+// Style columns come from the resolved visual, like every other exporter: a
+// value the edge leaves unset is inherited from the edge defaults or its type
+// style, and writing the raw field would record a blank and lose it on import.
 function edgeCsv() {
     const rows = [['id', 'source_id', 'source_label', 'target_id', 'target_label', 'weight', 'directed', 'label', 'type', 'color', 'stroke_size', 'stroke_style', 'arrow_size', 'label_color', 'label_size']];
     for (const e of state.edges) {
-        const a = nodeById(e.from), b = nodeById(e.to);
-        rows.push([e.id, e.from, a?.label || '', e.to, b?.label || '', e.weight, edgeDirection(e), e.label, e.type || '', e.color || '', e.strokeSize ?? '', e.strokeStyle || '', e.arrowSize ?? '', e.labelColor || '', e.labelSize ?? '']);
+        const a = nodeById(e.from), b = nodeById(e.to), v = edgeVisual(e);
+        rows.push([e.id, e.from, a?.label || '', e.to, b?.label || '', e.weight, edgeDirection(e), e.label,
+            v.type || '', v.color || '', v.strokeSize ?? '', v.strokeStyle || '', v.arrowSize ?? '',
+            v.labelColor || '', v.labelSize ?? '']);
     }
     return rowsToCsv(rows);
 }
+// A node carries far more than position and fill colour, and a CSV that only
+// wrote those silently reset the rest on re-import. The columns are the same
+// properties every other format writes, read from the resolved visual so an
+// inherited value is recorded rather than a blank. Columns are appended after
+// the original eight, so a file made by an older build still imports, and a
+// reader that only knows the first eight still finds them where they were.
+const NODE_CSV_COLUMNS = ['order', 'id', 'label', 'x', 'y', 'shape', 'color', 'type',
+    'width', 'height', 'stroke_color', 'stroke_size', 'stroke_style',
+    'label_color', 'label_size', 'label_position', 'label_font'];
 function nodeCsv() {
     const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    return rowsToCsv([['order', 'id', 'label', 'x', 'y', 'shape', 'color', 'type'], ...sorted.map(n => [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), n.shape, n.color, n.type])]);
+    return rowsToCsv([NODE_CSV_COLUMNS, ...sorted.map(n => {
+            const v = nodeVisual(n);
+            return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), v.shape || '', v.color || '', v.type || '',
+                v.width ?? '', v.height ?? '', v.strokeColor || '', v.strokeSize ?? '', v.strokeStyle || '',
+                v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
+        })]);
 }
 function matrixCsv() {
     const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -13233,14 +13587,21 @@ function exportDotText() {
         attrs.push(`order=${n.order ?? 0}`);
         // `labelloc`/`labeljust` are real GraphViz attributes but cannot express
         // this editor's five-way position, so it goes under a reserved name too.
-        if (n.labelPosition)
-            attrs.push(`_gep_labelPosition=${dotString(n.labelPosition)}`);
+        // The RESOLVED position: a node that inherits `top` from its type or the
+        // defaults is drawn at `top`, so writing the raw field dropped the property
+        // for exactly those nodes and a round-trip returned them to the centre.
+        // `v` is nodeVisual's output, the same source as every other attribute here.
+        if (v.labelPosition)
+            attrs.push(`_gep_labelPosition=${dotString(v.labelPosition)}`);
         // Only when the node name had to be aliased: the real id must survive, and
         // `id` is already the attribute the edge exporter uses for the same job.
         if (dotAlias(n.id) !== n.id)
             attrs.push(`id=${dotString(n.id)}`);
-        if (n.type)
-            attrs.push(`type=${dotString(n.type)}`);
+        // Read the resolved visual: a type the element does not carry itself is
+        // inherited from the defaults and is what the UI shows, so writing the raw
+        // field recorded nothing for those nodes.
+        if (v.type)
+            attrs.push(`type=${dotString(v.type)}`);
         attrs.push(...dotLabelAttrs(v));
         attrs.push(...gepCustomAttrs(n.custom));
         lines.push(`  ${dotId(dotAlias(n.id))} [${attrs.join(', ')}];`);
@@ -13264,6 +13625,12 @@ function exportDotText() {
         // QVGE DOT: color, penwidth, style, dir
         attrs.push(`color=${dotString(v.color)}`);
         attrs.push(`penwidth=${v.strokeSize}`);
+        if (v.type)
+            attrs.push(`type=${dotString(v.type)}`);
+        if (v.labelColor)
+            attrs.push(`fontcolor=${dotString(v.labelColor)}`);
+        if (v.labelSize != null)
+            attrs.push(`fontsize=${v.labelSize}`);
         const es = v.strokeStyle;
         if (es)
             attrs.push(`style=${dotString(dotStrokeStyle(es))}`);
@@ -13274,16 +13641,22 @@ function exportDotText() {
         else
             attrs.push(`dir=${dotString('forward')}`);
         if (v.arrowSize != null) {
+            // `arrowsize` is Graphviz's multiplier, so write it for other tools — but a
+            // multiplier is lossy in both directions: 20 -> 1.6667 -> 20.0004, and any
+            // value whose multiplier lands under 5 cannot be told apart from an
+            // absolute size on the way back in. Our own model stores the absolute
+            // size, so carry that exactly as well and let our reader prefer it.
             const mul = v.arrowSize / DEFAULT_ARROW_SIZE;
             const txt = Number(mul.toFixed(4)).toString();
             attrs.push(`arrowsize=${dotString(txt)}`);
+            attrs.push(`arrow_size=${dotString(String(v.arrowSize))}`);
         }
         // `type` was the one edge field this exporter never wrote, so a
         // round-trip through DOT silently dropped it while every other edge
         // property survived. QVGE keeps arbitrary edge attributes, so the name
         // is free to use.
-        if (e.type)
-            attrs.push(`type=${dotString(e.type)}`);
+        if (v.type)
+            attrs.push(`type=${dotString(v.type)}`);
         attrs.push(...gepCustomAttrs(e.custom));
         attrs.push(...dotLabelAttrs(v));
         // Endpoints are written with the SAME alias the node statements use, or
@@ -13297,6 +13670,24 @@ function exportDotText() {
 function exportDot() { showExportPreview(`${fileBase()}.dot`, exportDotText(), 'text/vnd.graphviz;charset=utf-8'); }
 function xmlEsc(v) { return String(v ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&apos;', '"': '&quot;' }[c])); }
 const num = (raw, fallback, lo, hi) => clamp(finite(raw, fallback), lo, hi);
+// Pixels -> inches for anything that lands in a Graphviz-named attribute.
+// Graphviz measures in inches (72 per inch), so this is the same conversion the
+// DOT exporter does inline for `width`/`height`. Kept as one function so the
+// two exporters cannot drift apart again.
+// Node size in GraphML is PIXELS, like this editor's own model.
+//
+// I briefly converted it to inches, on the theory that a GraphML reader maps
+// each <data> onto a Graphviz attribute of the same name and Graphviz measures
+// in inches. That was wrong for the reader this format actually targets: QVGE
+// stores the value verbatim and passes it straight to resize()
+// (CFormatGraphML::readNode -> CNode::setAttribute(attr_width)), and its own
+// exporter writes getSize() unconverted. Dividing by 72 shrank a 50px node to
+// 0.69 for every QVGE user. Sizes are written and read as pixels, unchanged.
+//
+// Fractions are kept: a node may legitimately be 50.5 x 45.25, and rounding on
+// the way in silently resized every such node. The clamp stays, since that is
+// the editor's own node range, not a unit conversion.
+const nodeSizeFromGraphml = (raw) => clamp(finite(raw, 50), 10, 300);
 const colorOrUndef = (raw) => parseColor(raw) || undefined;
 const NODE_FIELDS_MODEL = [
     { field: 'label', name: 'label', aliases: ['name'] },
@@ -13511,10 +13902,16 @@ function exportGraphmlText() {
         parts.push(`      <data key="order">${xmlEsc(n.order ?? 0)}</data>`);
         parts.push(`      <data key="x">${xmlEsc(fmtCoord(n.x))}</data>`);
         parts.push(`      <data key="y">${xmlEsc(fmtCoord(n.y))}</data>`);
-        if (n.type)
-            parts.push(`      <data key="type">${xmlEsc(n.type)}</data>`);
+        // The resolved type, like every other visual above: a node whose type is
+        // inherited from the document defaults is drawn with that type's style, and
+        // writing the raw field omitted it — the round-trip lost the inherited type
+        // and the node came back unstyled.
+        if (v.type)
+            parts.push(`      <data key="type">${xmlEsc(v.type)}</data>`);
         parts.push(`      <data key="shape">${xmlEsc(v.shape)}</data>`);
         parts.push(`      <data key="color">${xmlEsc(v.color)}</data>`);
+        // Pixels, unconverted — see nodeSizeFromGraphml above. (DOT is the format
+        // that carries inches; GraphML carries the editor's own units.)
         parts.push(`      <data key="width">${xmlEsc(v.width)}</data>`);
         parts.push(`      <data key="height">${xmlEsc(v.height)}</data>`);
         parts.push(`      <data key="strokeColor">${xmlEsc(v.strokeColor)}</data>`);
@@ -13544,8 +13941,8 @@ function exportGraphmlText() {
         const parts = [`    <edge id="${xmlEsc(e.id)}" source="${xmlEsc(e.from)}" target="${xmlEsc(e.to)}" directed="${directedBool ? 'true' : 'false'}">`];
         parts.push(`      <data key="weight">${xmlEsc(e.weight)}</data>`);
         parts.push(`      <data key="edgeLabel">${xmlEsc(e.label)}</data>`);
-        if (e.type)
-            parts.push(`      <data key="edgeType">${xmlEsc(e.type)}</data>`);
+        if (v.type)
+            parts.push(`      <data key="edgeType">${xmlEsc(v.type)}</data>`);
         parts.push(`      <data key="edgeColor">${xmlEsc(v.color)}</data>`);
         parts.push(`      <data key="edgeStrokeSize">${xmlEsc(v.strokeSize)}</data>`);
         parts.push(`      <data key="edgeStrokeStyle">${xmlEsc(v.strokeStyle)}</data>`);
@@ -13577,10 +13974,18 @@ function exportGraphml() { showExportPreview(`${fileBase()}.graphml`, exportGrap
 // foreign payload may not mint a token.
 function jsonExportText() {
     const obj = JSON.parse(snapshot());
-    if (isRecord(obj) && Array.isArray(obj.customAttributes)) {
-        for (const attribute of obj.customAttributes) {
-            if (isRecord(attribute) && typeof attribute.origin === 'string')
-                attribute.origin = originForWire(attribute.origin);
+    if (isRecord(obj)) {
+        // `viewBox` is the camera, and the camera is where the user is looking,
+        // not where the graph is: zoom out and it grows without limit, pan and it
+        // moves. Exporting it as the document's extent made the bounds of a file
+        // depend on the last scroll wheel. The file records where the content
+        // actually is; the camera stays in snapshots/autosave, where it belongs.
+        obj.viewBox = graphBounds();
+        if (Array.isArray(obj.customAttributes)) {
+            for (const attribute of obj.customAttributes) {
+                if (isRecord(attribute) && typeof attribute.origin === 'string')
+                    attribute.origin = originForWire(attribute.origin);
+            }
         }
     }
     return JSON.stringify(obj, null, 2);
@@ -13609,6 +14014,7 @@ function replaceWithImportedGraph(data, label = 'graph') {
         nodeCustom: isRecord(data.settings) && isRecord(data.settings.nodeCustom) ? data.settings.nodeCustom : Object.create(null),
         edgeCustom: isRecord(data.settings) && isRecord(data.settings.edgeCustom) ? data.settings.edgeCustom : Object.create(null) };
     const sane = sanitizeState({ ...data, title: data.title || fileBase(), settings: mergedSettings });
+    const dropped = takeImportDropped();
     // Snapshot the pre-import document FIRST: after a replace, undo must bring
     // the old document back instead of starting from a one-entry history.
     pushHistory('before import ' + label);
@@ -13619,6 +14025,13 @@ function replaceWithImportedGraph(data, label = 'graph') {
     fitView();
     queueRender(true, true);
     saveSoon();
+    // The ceilings silently cut the tail of a large document. Saying so matters
+    // more than the import message: the graph on screen is no longer the file.
+    const lost = dropped.nodes + dropped.edges;
+    if (lost > 0) {
+        toast(I18N.t('csv_import_capped', { imported: I18N.t('n_nodes_m_edges', { n: sane.nodes.length, m: sane.edges.length }), dropped: I18N.t('n_nodes_m_edges', { n: dropped.nodes, m: dropped.edges }), limit: I18N.t('n_nodes_m_edges', { n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES }) }));
+        return;
+    }
     toast(I18N.t('imported', { label: label }));
 }
 // Resolve an element's *unset* visual properties against the defaults of the
@@ -13634,36 +14047,15 @@ function replaceWithImportedGraph(data, label = 'graph') {
 // Materialising here is the only correct moment — after this the imported
 // document's defaults no longer exist anywhere. Which properties to copy is
 // decided by the fields the element left unset, so nothing is overwritten.
-function materializeDefaults(nodes, edges, settings) {
-    if (settings?.inheritDefaults === false)
-        return; // not inheriting: nothing to resolve
-    const nd = settings?.nodeDefaults || {};
-    const ed = settings?.edgeDefaults || {};
-    const unset = (value) => value == null || value === '';
-    const NODE_FIELDS = ['shape', 'color', 'width', 'height', 'strokeColor', 'strokeSize',
-        'strokeStyle', 'labelColor', 'labelSize', 'labelPosition', 'labelFont'];
-    const EDGE_FIELDS = ['color', 'strokeSize', 'strokeStyle', 'arrowSize',
-        'labelColor', 'labelSize', 'labelFont'];
-    // The caller has not sanitised yet — that is exactly what it is about to do —
-    // so an entry may be null or a non-object. Skip those here and let the
-    // sanitizer decide their fate; throwing would reject the whole import,
-    // including the entries that are perfectly good.
-    const isRecord = value => value != null && typeof value === 'object';
-    for (const n of nodes) {
-        if (!isRecord(n))
-            continue;
-        for (const field of NODE_FIELDS) {
-            if (unset(n[field]) && nd[field] != null)
-                n[field] = nd[field];
-        }
+// Resolve only sanitized source data, exactly as opening the source would.
+// Targets retain traced/remapped custom values; visuals come from the plan's
+// corresponding sanitized entities, never from a second set of validity rules.
+function materializeDefaults(nodes, edges, sourceNodes, sourceEdges, settings) {
+    for (let i = 0; i < nodes.length; i++) {
+        Object.assign(nodes[i], nodeVisual(sourceNodes[i], settings));
     }
-    for (const e of edges) {
-        if (!isRecord(e))
-            continue;
-        for (const field of EDGE_FIELDS) {
-            if (unset(e[field]) && ed[field] != null)
-                e[field] = ed[field];
-        }
+    for (let i = 0; i < edges.length; i++) {
+        Object.assign(edges[i], edgeVisual(sourceEdges[i], settings));
     }
 }
 function appendImportedGraph(data, label = 'graph') {
@@ -13673,28 +14065,203 @@ function appendImportedGraph(data, label = 'graph') {
     // resolved onto its elements first — otherwise those elements inherit the host
     // graph's style, and an export then writes the wrong values. Read them from
     // the incoming data, before the settings are replaced.
-    materializeDefaults(data.nodes || [], data.edges || [], data.settings || {});
-    // Keep the current graph's attribute definitions while still learning the
-    // import's: values in the imported file reference the imported definitions,
-    // and pruning against the merged set drops nothing legitimate. Document-wide
-    // (graph-scope) values merge with the imported ones taking precedence.
-    // Imported definitions that fit the remaining capacity are merged; the
-    // rest are skipped with a toast. Identity is scope-aware and provenance-
-    // aware (see capCustomDefinitions): an identical property merges or
-    // reuses for free, a different property sharing the id gets a fresh id
-    // here, and same id AND scope with matching provenance — the current
-    // definition wins.
-    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(data.customAttributes, state.customAttributes);
+    // Sanitize the source once for identity planning and visual resolution. Keep
+    // its own settings here; host settings are applied only by the final pass.
+    const plannedTrace = { nodes: [], edges: [], complete: true };
+    const nodeRoom = Math.max(0, MAX_IMPORT_NODES - state.nodes.length);
+    const edgeRoom = Math.max(0, MAX_IMPORT_EDGES - state.edges.length);
+    const hostIds = new Set(state.nodes.map(n => n.id));
+    // The plan reads the whole payload, with a limit that is a guard against a
+    // pathological document rather than a capacity decision.
+    //
+    // Bounding it by the remaining room looks attractive and is wrong: an id the plan
+    // never read is an id nobody can tell apart from a host node of the same name, so
+    // an edge naming it silently re-points at the host's node. That is a correctness
+    // property, not a performance one, and it must not be traded for speed. The cost
+    // of reading everything is addressed in the sanitizer instead: it processes entries
+    // linearly, and malformed ones are no longer charged to the limit.
+    const PLANNING_LIMIT = 200000;
+    const planned = sanitizeState(data, {
+        externalNodeIds: hostIds, recordDropped: false,
+        limits: { nodes: PLANNING_LIMIT, edges: PLANNING_LIMIT },
+        // The plan remembers which payload entry produced each survivor, so the
+        // authoritative pass can reuse those entries instead of matching text.
+        trace: plannedTrace
+    });
+    // A payload larger than the planning window is REFUSED, not partly planned.
+    //
+    // Past the window the plan has not seen every id, and an id it has not seen is
+    // indistinguishable from a host node of the same name: with 200,000 valid nodes
+    // ahead of one named `outside`, an edge meant for that node re-pointed at the
+    // host's `outside` and nothing reported it. There is no bound that makes a
+    // partial plan safe — the ambiguity is exactly what the plan exists to resolve —
+    // so the honest answer is to decline the document. The window is 200,000
+    // entries, far above the 3,000/8,000 an append can actually keep; reaching it
+    // means the file is unusable as an append regardless of how its edges resolve.
+    if (plannedTrace.complete === false) {
+        toast(I18N.t('import_failed', { msg: I18N.t('err_import_too_many_entries', { limit: PLANNING_LIMIT }) }));
+        return;
+    }
+    // Entries the sanitizer rejected outright (an invalid record, or an edge to a
+    // node that exists in neither document) never reach the capacity question, so
+    // they do not spend a slot and are not counted as capacity losses — the payload
+    // could not express them, which is not the destination's ceiling to report.
+    // Phase 2 — spend capacity, in the payload's own order, on entries that are
+    // valid. Invalid entries no longer consume a slot, and the count below is of
+    // genuinely dropped valid entries.
+    const keptPlannedNodes = planned.nodes.slice(0, nodeRoom);
+    // The payload index of each survivor, from the plan's own trace. Positions are
+    // kept alongside the entries rather than recomputed later: every attempt to
+    // re-derive them by comparing ids or endpoint text eventually met a payload where
+    // those strings no longer agreed with the entries they described.
+    const keptNodeSources = plannedTrace.nodes.slice(0, nodeRoom);
+    const keptPlannedNodeIds = new Set(keptPlannedNodes.map(node => node.id));
+    // Every id the payload itself defines, whether or not it fits. This is what makes
+    // an ambiguous name resolvable: `dropped` means the payload's node even when the
+    // cap rejected that node, so an edge to it is dropped rather than silently
+    // re-pointed at a host node that happens to share the name. Without this, the
+    // two ids are one string and nothing downstream can tell them apart.
+    const payloadPlannedIds = new Set(planned.nodes.map(node => node.id));
+    // An edge survives only if BOTH endpoints exist after the cap: a node that fits,
+    // or one the host already has — never a payload node that did not fit.
+    const endpointSurvives = (id) => {
+        if (keptPlannedNodeIds.has(id))
+            return true;
+        if (payloadPlannedIds.has(id))
+            return false; // the payload's own node, dropped
+        return hostIds.has(id); // a node the host already has
+    };
+    // The surviving edges and their payload indexes, kept in step.
+    const survivingPlannedEdges = [];
+    const survivingEdgeSources = [];
+    for (let i = 0; i < planned.edges.length; i++) {
+        const edge = planned.edges[i];
+        if (!endpointSurvives(edge.from) || !endpointSurvives(edge.to))
+            continue;
+        survivingPlannedEdges.push(edge);
+        survivingEdgeSources.push(plannedTrace.edges[i]);
+    }
+    const keptPlannedEdges = survivingPlannedEdges.slice(0, edgeRoom);
+    const keptEdgeSources = survivingEdgeSources.slice(0, edgeRoom);
+    const droppedByCap = {
+        nodes: Math.max(0, planned.nodes.length - keptPlannedNodes.length),
+        edges: Math.max(0, planned.edges.length - keptPlannedEdges.length)
+    };
+    // Phase 3 — definitions the kept elements need get first claim on the remaining
+    // budget. A definition is needed when a KEPT element's values name it; an edge
+    // that the capacity dropped cannot spend a slot a kept edge needs.
+    // A value key names a definition of a specific SCOPE. The same id may be declared
+    // for nodes and for edges, and those are different properties — so the priority
+    // set is keyed by scope and id together. Without the scope, an unused edge
+    // definition called `score` outranked the node definition a retained node's value
+    // actually needed: the edge definition took the last slot, and the node's value
+    // survived only as an orphan bound to a definition that does not apply to it.
+    const neededDefs = new Set();
+    const defKey = (scope, id) => scope + '\u0000' + id;
+    const noteValueKeys = (custom, scope) => {
+        if (!isRecord(custom))
+            return;
+        for (const key of Object.keys(custom)) {
+            // A value key is a definition id verbatim. Splitting on `|` looked
+            // reasonable when keys were assumed to carry a scope prefix, but a pipe is
+            // an ordinary character in a property id: a definition called `region|A` was
+            // read as `A`, so the value looked unreferenced and its definition lost the
+            // slot to an unused one.
+            neededDefs.add(defKey(scope, String(key)));
+        }
+    };
+    // Read from the PAYLOAD entries, not the plan's. The sanitizer truncates a custom
+    // key to the 128-character storage cap, so two long ids that share their first
+    // 128 characters are one key in the plan — and the retained node's value would be
+    // attributed to the definition of whichever node was dropped. The payload holds
+    // both keys at full length, which is the form the definitions are declared under.
+    const payloadNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const payloadEdges = Array.isArray(data?.edges) ? data.edges : [];
+    for (const index of keptNodeSources)
+        if (isRecord(payloadNodes[index]))
+            noteValueKeys(payloadNodes[index].custom, 'node');
+    for (const index of keptEdgeSources)
+        if (isRecord(payloadEdges[index]))
+            noteValueKeys(payloadEdges[index].custom, 'edge');
+    noteValueKeys(data?.graphCustom, 'graph');
+    const isNeeded = (def) => {
+        if (!isRecord(def))
+            return false;
+        const id = String(def.id ?? '').trim();
+        if (!id)
+            return false;
+        // Scope decides. A definition is needed by a value of its own scope, and an
+        // 'all' definition is needed by a value of any scope.
+        //
+        // The fallback is one-directional on purpose. Adding `all|id` for every value
+        // made every definition of that id match — which is how an unused edge
+        // definition still won the last slot — because `all|id` was true for a node
+        // value as well. Only the definition's own scope decides, plus 'all' covering
+        // the narrower ones.
+        const scope = ['graph', 'node', 'edge', 'all'].includes(String(def.scope)) ? String(def.scope) : 'node';
+        if (scope === 'all')
+            return [...neededDefs].some(key => key.endsWith('\u0000' + id));
+        return neededDefs.has(defKey(scope, id));
+    };
+    const carriedDefs = Array.isArray(data?.customAttributes) ? data.customAttributes : [];
+    // Ordered, never filtered: unneeded definitions move to the back but still go
+    // through the capper, so one that does not fit is still counted and reported.
+    // Order is otherwise untouched — the capper mints a colliding id in declaration
+    // order.
+    const orderedDefs = [
+        ...carriedDefs.filter(def => isNeeded(def)),
+        ...carriedDefs.filter(def => !isNeeded(def))
+    ];
+    const { defs: cappedDefs, skipped: defsSkipped, renameByPair, renamed } = capCustomDefinitions(orderedDefs, state.customAttributes);
     if (defsSkipped)
         toast(I18N.t('attribute_import_skipped', { n: defsSkipped }));
     if (renamed)
         toast(I18N.t('attribute_scope_renamed', { n: renamed }));
-    // Definitions re-created under a fresh id (or reused across an earlier
-    // mint) bind their payload's values to the RESOLVED id.
-    data = remapImportedCustomValues(data, renameByPair);
+    // Definitions re-created under a fresh id (or reused across an earlier mint)
+    // bind their payload's values to the RESOLVED id. Done in phase 4, immediately
+    // before the traced entries are read, so nothing re-reads the unremapped payload.
     const mergedCustomAttributes = [...state.customAttributes, ...cappedDefs];
+    // Phase 4 — take each survivor's content from the payload entry the plan traced it
+    // to.
+    //
+    // The plan resolves IDENTITY (which node an edge really reaches, what id a node
+    // really gets); the payload supplies CONTENT (labels, weights, values, styling).
+    // The plan's own content is not usable: it was read against the payload's uncapped
+    // definitions, where two keys that truncate to the same 128-character id collapse
+    // and one value is lost.
+    //
+    // The link is the trace, not a comparison. Matching sanitized edges back to raw
+    // ones by id and endpoint text failed in three different ways: an endpoint
+    // normalised from `a!` to `a` no longer matched; two parallel edges with the same
+    // endpoints matched each other; and an omitted id colliding with an explicit `e1`
+    // matched the wrong entry — each time silently, and each time giving an edge
+    // another edge's label, weight, direction, type, colour and values.
+    data = remapImportedCustomValues(data, renameByPair);
+    // Graph-scope values are remapped with the same call, so the merged map must be
+    // read AFTER it. Building it from the un-remapped payload left every graph value
+    // keyed by the id its own file used, which the final read then resolved against
+    // the RENAMED definitions — the value landed on whichever definition now held that
+    // spelling, or on nothing at all.
     const mergedGraphCustom = { ...(isRecord(state.graphCustom) ? state.graphCustom : {}), ...(isRecord(data.graphCustom) ? data.graphCustom : {}) };
-    const sane = sanitizeState({ ...data, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom });
+    const remappedNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const remappedEdges = Array.isArray(data?.edges) ? data.edges : [];
+    const keptNodesSource = keptPlannedNodes.map((plannedNode, k) => {
+        const raw = remappedNodes[keptNodeSources[k]];
+        return { ...(isRecord(raw) ? raw : {}), id: plannedNode.id };
+    });
+    // Endpoints come from the plan; traced payload entries retain remapped custom
+    // values. Sanitized source visuals are applied below.
+    const keptEdgesSource = keptPlannedEdges.map((plannedEdge, k) => {
+        const raw = remappedEdges[keptEdgeSources[k]];
+        return { ...(isRecord(raw) ? raw : {}), id: plannedEdge.id, from: plannedEdge.from, to: plannedEdge.to };
+    });
+    // Resolve the visual the source document drew, using the defaults THAT document
+    // was opened with. `data.settings` is only what the file spelled out; a payload
+    // that omits them entirely is still opened against the built-in defaults, so
+    // passing the raw object resolved against nothing and the elements arrived at
+    // the host's styling.
+    materializeDefaults(keptNodesSource, keptEdgesSource, keptPlannedNodes, keptPlannedEdges, planned.settings);
+    const sane = sanitizeState({ ...data, nodes: keptNodesSource, edges: keptEdgesSource, settings: state.settings, customAttributes: mergedCustomAttributes, graphCustom: mergedGraphCustom }, { externalNodeIds: hostIds });
     // Map imported node IDs to avoid collisions with existing nodes
     const existingIds = new Set(state.nodes.map(n => n.id));
     const idMap = new Map();
@@ -13714,8 +14281,27 @@ function appendImportedGraph(data, label = 'graph') {
         // Offset position to avoid overlap with existing nodes
         n.x += 200;
         n.y += 200;
-        n.order = state.nodes.length + state.nodes.filter(x => x.order >= n.order).length;
     }
+    // Give the appended nodes consecutive places at the end of the display order.
+    //
+    // `order` is a sequence the user reorders (matrix move buttons, Sort by label,
+    // Renumber), not a free-form field, and existing nodes hold 0..N-1. Appending
+    // used to compute `state.nodes.length + count(host order >= this order)` inside
+    // the loop above — but nothing is pushed to state.nodes until after it, so the
+    // count was re-read against an unchanged array and the incoming document's own
+    // 0,1,2... offsets leaked through: a 3-node host took 3 and 4 as 6 and 5, and
+    // an empty host gave every node 0. Position-in-the-list is the order that
+    // append should keep; the incoming numbers only decide it when the document
+    // defines an order of its own.
+    const incomingOrder = new Map(sane.nodes.map(node => [node.id, node.order]));
+    sane.nodes.sort((a, b) => (incomingOrder.get(a.id) ?? 0) - (incomingOrder.get(b.id) ?? 0));
+    // Continue from the highest order actually in the document, not from the node
+    // count. Orders are not guaranteed consecutive — a document loaded from a file,
+    // or one the user has reordered, can hold 100 and 200 with two nodes — so
+    // `state.nodes.length` gave an appended node order 2, which sorted it to the
+    // top of the list and made it the first row of the matrix.
+    let nextOrder = state.nodes.reduce((max, node) => Math.max(max, (node.order ?? 0) + 1), 0);
+    sane.nodes.forEach(node => { node.order = nextOrder++; });
     // Remap edge endpoints — DISCARD edges with dangling references.
     // An edge is dangling if its endpoint wasn't in the imported nodes list
     // AND doesn't already exist in the current graph (would "snap" to wrong node).
@@ -13745,8 +14331,19 @@ function appendImportedGraph(data, label = 'graph') {
         e.id = newId;
         validEdges.push(e);
     }
-    state.nodes.push(...sane.nodes);
-    state.edges.push(...validEdges);
+    // The document must stay inside the same ceiling the loader applies, or the
+    // appended entries are written to autosave and then silently dropped on the
+    // next reload: the toast says "appended", the user keeps the node until they
+    // reopen the app, and then it is gone. The ceiling is a property of the whole
+    // document, so append has to account for what the host already holds.
+    // The node ceiling was applied before anything was resolved, so `sane.nodes`
+    // is already what fits. Edges still have a ceiling of their own to meet; their
+    // endpoints are resolved now, and `sanitizeState` dropped any that referenced a
+    // node which did not survive — which is why no dangling edge can remain here.
+    const keptNodes = sane.nodes;
+    const keptEdges = validEdges.slice(0, edgeRoom);
+    state.nodes.push(...keptNodes);
+    state.edges.push(...keptEdges);
     // sanitizeState(merged) is the authoritative definition list: current
     // definitions first (they win on same-id-and-scope conflicts), imported
     // definitions after, with scope-aware renames already applied and values
@@ -13766,9 +14363,25 @@ function appendImportedGraph(data, label = 'graph') {
     pushHistory(`append ${label}`);
     queueRender(true, true);
     saveSoon();
+    const capped = takeImportDropped();
+    // Entries cut by the *document* ceiling, on top of whatever the payload itself
+    // lost while it was sanitised.
+    // What the payload itself could not express (invalid entries) plus what did not
+    // fit. Invalid entries are the payload's problem and stay silent; capacity is
+    // the destination's, and is reported.
+    capped.nodes += droppedByCap.nodes;
+    capped.edges += droppedByCap.edges;
+    capped.edges += validEdges.length - keptEdges.length;
+    const lost = capped.nodes + capped.edges;
+    // Truncation first: it means the document itself did not fit, so the counts
+    // below would understate what the user expected to see.
+    if (lost > 0) {
+        toast(I18N.t('csv_import_capped', { imported: I18N.t('n_nodes_m_edges', { n: keptNodes.length, m: keptEdges.length }), dropped: I18N.t('n_nodes_m_edges', { n: capped.nodes, m: capped.edges }), limit: I18N.t('n_nodes_m_edges', { n: MAX_IMPORT_NODES, m: MAX_IMPORT_EDGES }) }));
+        return;
+    }
     toast(discarded > 0
-        ? I18N.t('appended_n_m_discarded', { label, n: sane.nodes.length, m: validEdges.length, d: discarded })
-        : I18N.t('appended_n_m', { label, n: sane.nodes.length, m: validEdges.length }));
+        ? I18N.t('appended_n_m_discarded', { label, n: keptNodes.length, m: keptEdges.length, d: discarded })
+        : I18N.t('appended_n_m', { label, n: keptNodes.length, m: keptEdges.length }));
 }
 // Identity of an imported definition against the current document (and the
 // payload itself), in one pass over the carried list:
@@ -14045,12 +14658,18 @@ function importGraphData(data, label, append) {
         toast(I18N.t('import_failed', { msg: I18N.t('err_no_valid_nodes') }));
         return;
     }
-    // A document with zero nodes can never carry edges: dangling edges are
-    // dropped on every path in the app, so the editor's own exports won't
-    // have them either. An empty nodes array with a non-empty edge list is
-    // input whose edges are all meaningless — reject it instead of wiping
-    // the document with a success toast.
-    if (data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0) {
+    // A REPLACEMENT document with zero nodes can never carry edges: dangling edges
+    // are dropped on every path in the app, so the editor's own exports won't have
+    // them either. An empty nodes array with a non-empty edge list is input whose
+    // edges are all meaningless — reject it instead of wiping the document with a
+    // success toast.
+    //
+    // Append is a different question. Its endpoints may all be nodes the HOST
+    // already has, so `{nodes: [], edges: [{from:'h1', to:'h2'}]}` is a perfectly
+    // good request to connect two existing nodes — and the guard rejected it as an
+    // empty graph. The invariant it protects (no edge may dangle) belongs to the
+    // replacement path, which is the only one that can destroy a document.
+    if (!append && data.nodes.length === 0 && Array.isArray(data.edges) && data.edges.length > 0) {
         toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
         return;
     }
@@ -14283,6 +14902,9 @@ function importEdgesCsv(text, append) {
     const iId = idx('id'), iFrom = idx('source_id') >= 0 ? idx('source_id') : idx('from'), iTo = idx('target_id') >= 0 ? idx('target_id') : idx('to');
     const iWeight = idx('weight'), iLabel = idx('label'), iDirected = idx('directed'), iType = idx('type');
     const iColor = idx('color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style'), iArrowSize = idx('arrow_size');
+    // The exporter has always written these two columns; the reader ignored them,
+    // so an edge's label colour and size were lost on every CSV round trip.
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
     if (iFrom < 0 || iTo < 0) {
         toast(I18N.t('csv_needs_cols'));
         return;
@@ -14332,12 +14954,21 @@ function importEdgesCsv(text, append) {
         };
         if (iColor >= 0 && row[iColor])
             e.color = row[iColor];
+        // A parsed number, not a truthy one. `parseFloat(cell) || 2.4` treats 0 the same
+        // as an unparseable cell, so an edge exported with an inherited zero-width
+        // stroke came back visible at 2.4 — 0 is a width the model allows and the
+        // exporter writes. NaN is what "could not parse" looks like.
+        const numCell = (cell, fallback) => { const n = parseFloat(cell); return Number.isFinite(n) ? n : fallback; };
         if (iStrokeSize >= 0 && row[iStrokeSize])
-            e.strokeSize = clamp(parseFloat(row[iStrokeSize]) || 2.4, 0, 20);
+            e.strokeSize = clamp(numCell(row[iStrokeSize], 2.4), 0, 20);
         if (iStrokeStyle >= 0 && row[iStrokeStyle])
             e.strokeStyle = row[iStrokeStyle];
         if (iArrowSize >= 0 && row[iArrowSize])
-            e.arrowSize = clamp(parseFloat(row[iArrowSize]) || DEFAULT_ARROW_SIZE, ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+            e.arrowSize = clamp(numCell(row[iArrowSize], DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
+        if (iLabelColor >= 0 && /^#[0-9a-f]{6}$/i.test(row[iLabelColor] || ''))
+            e.labelColor = row[iLabelColor];
+        if (iLabelSize >= 0 && row[iLabelSize])
+            e.labelSize = clamp(numCell(row[iLabelSize], 12), 4, 72);
         edges.push(e);
         parsed++;
     }
@@ -14455,6 +15086,10 @@ function importNodesCsv(text, append) {
     const idx = name => header.indexOf(name);
     const iOrder = idx('order'), iId = idx('id'), iLabel = idx('label'), iX = idx('x'), iY = idx('y');
     const iShape = idx('shape'), iColor = idx('color'), iType = idx('type');
+    const iWidth = idx('width'), iHeight = idx('height');
+    const iStrokeColor = idx('stroke_color'), iStrokeSize = idx('stroke_size'), iStrokeStyle = idx('stroke_style');
+    const iLabelColor = idx('label_color'), iLabelSize = idx('label_size');
+    const iLabelPos = idx('label_position'), iLabelFont = idx('label_font');
     const initialNodes = append ? state.nodes.length : 0;
     // Missing orders fall back to the position in the imported file, which is
     // 0-based in replace mode (the old list is gone) and continues after the
@@ -14482,6 +15117,31 @@ function importNodesCsv(text, append) {
             type: (iType >= 0 ? row[iType] : '') || '',
             order: Number.isFinite(parsedOrder) ? Math.max(0, Math.trunc(parsedOrder)) : orderBase + parsed
         };
+        // Only the columns the file actually carries are set, so an older CSV — or a
+        // hand-written one — still leaves the rest inheriting as before.
+        const num = (i, lo, hi) => (i >= 0 && String(row[i] ?? '').trim() !== '' && Number.isFinite(parseFloat(row[i])) ? clamp(parseFloat(row[i]), lo, hi) : undefined);
+        const col = (i) => (i >= 0 ? String(row[i] ?? '').trim() : '');
+        const w = num(iWidth, 10, 300), h = num(iHeight, 10, 300);
+        if (w !== undefined)
+            n.width = w;
+        if (h !== undefined)
+            n.height = h;
+        if (col(iStrokeColor))
+            n.strokeColor = col(iStrokeColor);
+        const ss = num(iStrokeSize, 0, 20);
+        if (ss !== undefined)
+            n.strokeSize = ss;
+        if (col(iStrokeStyle))
+            n.strokeStyle = col(iStrokeStyle);
+        if (col(iLabelColor))
+            n.labelColor = col(iLabelColor);
+        const ls = num(iLabelSize, 4, 72);
+        if (ls !== undefined)
+            n.labelSize = ls;
+        if (col(iLabelPos))
+            n.labelPosition = col(iLabelPos);
+        if (col(iLabelFont))
+            n.labelFont = col(iLabelFont);
         nodes.push(n);
         parsed++;
     }
@@ -14586,8 +15246,8 @@ const FIELD_PARSERS = {
     'labelColor': raw => colorOrUndef(raw),
     'labelSize': raw => num(raw, 13, 4, 72),
     'labelPosition': raw => parseLabelPosition(raw) || undefined,
-    'width': raw => num(raw, 50, 10, 300),
-    'height': raw => num(raw, 50, 10, 300),
+    'width': raw => nodeSizeFromGraphml(raw),
+    'height': raw => nodeSizeFromGraphml(raw),
     // Edge values carry their own fallbacks; one parser serves both scopes
     // because the ranges are the same shape and the defaults only differ where
     // the property has a different natural size.
@@ -15705,16 +16365,33 @@ async function copyText(text) {
     try {
         await navigator.clipboard.writeText(text);
         toast(I18N.t('copied'));
+        return;
     }
-    catch {
-        const ta = document.createElement('textarea');
+    catch { /* fall through to the legacy path */ }
+    // The Clipboard API is refused outright in a sandboxed iframe or under a
+    // restrictive permissions policy, which is exactly when the fallback runs —
+    // and execCommand is deprecated, so it may not exist at all. Calling it
+    // unguarded threw an uncaught TypeError out of the handler, and the toast
+    // said "Copied" regardless, so the user was told a copy had happened when
+    // nothing was on the clipboard. Now the legacy path is guarded and the
+    // message reflects the result.
+    let copied = false;
+    const ta = document.createElement('textarea');
+    try {
         ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0';
         document.body.appendChild(ta);
         ta.select();
-        document.execCommand('copy');
-        ta.remove();
-        toast(I18N.t('copied'));
+        copied = typeof document.execCommand === 'function' && document.execCommand('copy') === true;
     }
+    catch {
+        copied = false;
+    }
+    finally {
+        ta.remove();
+    }
+    toast(copied ? I18N.t('copied') : I18N.t('copy_failed'));
 }
 // === Copy-to-clipboard for every export format ===
 function copyJson() { copyText(exportJsonText()); }
@@ -15919,13 +16596,24 @@ let _hotkeysCache = null;
 function getHotkeys() {
     if (_hotkeysCache)
         return _hotkeysCache;
+    _hotkeysCache = { ...DEFAULT_HOTKEYS };
     try {
         const stored = localStorage.getItem(HOTKEYS_KEY);
-        _hotkeysCache = stored ? { ...DEFAULT_HOTKEYS, ...JSON.parse(stored) } : { ...DEFAULT_HOTKEYS };
+        const saved = stored ? JSON.parse(stored) : null;
+        // Storage is user-writable and survives upgrades, so anything can be in
+        // there. Only a known action with a string code is adopted — a null, a
+        // number or an object in a slot used to reach prettyKeyCode and throw
+        // "code.startsWith is not a function" from the settings panel, which then
+        // failed to render at all. Unknown keys are ignored the same way.
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+            for (const name of Object.keys(DEFAULT_HOTKEYS)) {
+                const code = saved[name];
+                if (typeof code === 'string')
+                    _hotkeysCache[name] = code;
+            }
+        }
     }
-    catch {
-        _hotkeysCache = { ...DEFAULT_HOTKEYS };
-    }
+    catch { /* unreadable storage: defaults stand */ }
     return _hotkeysCache;
 }
 function setHotkey(name, code) {
@@ -15946,7 +16634,7 @@ function resetHotkeys() {
     toast(I18N.t('hotkeys_reset'));
 }
 function prettyKeyCode(code) {
-    if (!code)
+    if (typeof code !== 'string' || !code)
         return '\u2014';
     if (code === 'Space')
         return 'Space';
