@@ -7,12 +7,13 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "typecheck": "tsc --noEmit",
-    "build": "node scripts/clean.mjs && tsc && node scripts/build.mjs && node scripts/check-static.mjs",
+    "build": "node scripts/clean.mjs && npm run build:core && tsc && node scripts/build.mjs && node scripts/check-static.mjs",
     "check:static": "node scripts/check-static.mjs",
     "test": "npm run build && node scripts/test.mjs",
     "test:browser": "node --test tests/chromium/presets-focus.test.mjs",
     "check": "npm run typecheck && npm run check:contract && npm test",
-    "check:contract": "node scripts/check-contract.mjs"
+    "check:contract": "node scripts/check-contract.mjs",
+    "build:core": "tsc -p tsconfig.core.json"
   },
   "devDependencies": {
     "@sparticuz/chromium": "^149.0.0",
@@ -23,5 +24,11 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "exports": {
+    "./core": {
+      "types": "./dist/core/graph-patch.d.ts",
+      "import": "./dist/core/graph-patch.js"
+    }
   }
 }

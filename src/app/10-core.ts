@@ -8,6 +8,11 @@
   // bounds per-frame work at a few milliseconds.
   const DRAG_LIVE_EDGE_LIMIT = 2000;
   const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+  // sanitizeState keeps at most this many entities on load. Every path that
+  // can append to the document (import, paste) must respect the same caps, or
+  // the autosaved graph silently shrinks on the next reopen.
+  const MAX_GRAPH_NODES = GraphPatchCore.MAX_GRAPH_NODES;
+  const MAX_GRAPH_EDGES = GraphPatchCore.MAX_GRAPH_EDGES;
   // The adjacency matrix is an O(n²) grid of <input> elements, so its rendered
   // size is capped independently of the user-facing row limit. Every cell is a
   // form control: measured in Chromium on a 350-node document, a full render
@@ -505,11 +510,11 @@
   const selectionOverlayLayer = $('#selectionOverlayLayer');
   const gizmoLayer = $('#gizmoLayer');
 
-  const NODE_SHAPES = ['circle','square','diamond','triangleUp','triangleDown','hexagon'];
+  const NODE_SHAPES = GraphPatchCore.NODE_SHAPES;
   // QVGE-compatible stroke styles: must match CUtils::textToPenStyle mapping
   // none=NoPen, solid=SolidLine, dashed=DashLine, dotted=DotLine, dashdot=DashDotLine, dashdotdot=DashDotDotLine
-  const STROKE_STYLES = ['solid','dashed','dotted','dashdot','dashdotdot','none'];
-  const LABEL_POSITIONS = ['center','top','bottom','left','right'];
+  const STROKE_STYLES = GraphPatchCore.STROKE_STYLES;
+  const LABEL_POSITIONS = GraphPatchCore.LABEL_POSITIONS;
   const LABEL_POLICIES = ['auto','on','off'];
   // Maximum number of custom attribute definitions the editor will hold.
   const CUSTOM_DEFINITIONS_MAX = 2000;
@@ -916,6 +921,8 @@
     const pasteBtn = document.getElementById('btnPaste') as HTMLButtonElement | null;
     const pasteExtBtn = document.getElementById('btnPasteWithExternal') as HTMLButtonElement | null;
     if(pasteBtn) pasteBtn.disabled = !hasClipboard;
+    // Paste in place stays clickable: a fresh tab may have a valid system
+    // clipboard and no in-memory payload to enable the button from.
     if(pasteExtBtn) pasteExtBtn.disabled = !hasClipboard;
     const copyBtn = document.getElementById('btnCopy') as HTMLButtonElement | null;
     const cutBtn = document.getElementById('btnCut') as HTMLButtonElement | null;
@@ -953,7 +960,7 @@
   // always stored as plain string|number|boolean scalars with capped sizes, so a
   // hand-edited file cannot smuggle objects, prototype pollution or huge blobs
   // into the document.
-  const CUSTOM_VALUE_MAX = 1000;
+  const CUSTOM_VALUE_MAX = GraphPatchCore.CUSTOM_VALUE_MAX;
   const CUSTOM_VALUE_KEYS_MAX = CUSTOM_DEFINITIONS_MAX; // one value per definition, never more
   // Rendering every row of a 2000-definition section costs hundreds of
   // milliseconds and several hundred kilobytes of innerHTML parsing, every
@@ -966,84 +973,8 @@
     for(const attribute of definitions) map.set(attribute.id, attribute.type);
     return map;
   }
-  const INTEGER_TEXT_RE = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:[eE]([+-]?\d+))?$/;
-  const ABS_INT_MAX = '2147483647';        // 2^31 - 1
-  const ABS_INT_MIN = '2147483648';        // |−2^31| — one past the positive bound
-  const ABS_LONG_MAX = '9007199254740991'; // 2^53 - 1 (Number.MAX_SAFE_INTEGER)
-  // Magnitude comparison for decimal digit strings without leading zeros.
-  const cmpMagnitude = (a: string, b: string) => a.length !== b.length ? a.length - b.length : (a < b ? -1 : a > b ? 1 : 0);
-  // Exact integer handling for int/long custom values.
-  //
-  // `Number(text)` rounds to the nearest double BEFORE any integer check can
-  // run — '1.0000000000000001' becomes 1 and the stated value is silently
-  // destroyed. The text is therefore validated as a decimal integer literal
-  // first; the exact integer (when there is one) is assembled digit-by-digit
-  // and only then converted — never through a rounding conversion.
-  //   'number'   — exact integer text within the type's range → convert
-  //   'verbatim' — stated, but fraction-bearing or out of range → keep the exact text
-  //   'empty'    — whitespace-only (a stated empty)
-  //   'invalid'  — not a number at all
-  // This is the one policy every int/long path shares: editing, import,
-  // sanitization and type migration all convert exactly this set and preserve
-  // exactly this other set.
-  function parseIntegerText(text: string, type: 'int' | 'long'):
-      | { kind: 'number'; value: number }
-      | { kind: 'verbatim'; text: string }
-      | { kind: 'empty' }
-      | { kind: 'invalid' } {
-    const trimmed = text.trim();
-    if(trimmed === '') return { kind: 'empty' };
-    const m = INTEGER_TEXT_RE.exec(trimmed);
-    if(!m) return { kind: 'invalid' };
-    const [, sign, mantissa, expText] = m;
-    const dot = mantissa.indexOf('.');
-    const intPart = dot === -1 ? mantissa : mantissa.slice(0, dot);
-    const fracPart = dot === -1 ? '' : mantissa.slice(dot + 1);
-    let exp = 0;
-    if(expText){
-      exp = parseInt(expText, 10);
-      // Beyond this the magnitude is unusable in either direction anyway.
-      if(!Number.isFinite(exp) || Math.abs(exp) > 400) return { kind: 'verbatim', text: trimmed };
-    }
-    const digits = intPart + fracPart;
-    // Effective position of the decimal point within `digits`.
-    const point = intPart.length + exp;
-    // Integer iff everything at or after the point is '0'.
-    if([...digits.slice(Math.max(point, 0))].some(d => d !== '0')) return { kind: 'verbatim', text: trimmed };
-    const integerDigits = (point <= digits.length
-      ? digits.slice(0, Math.max(point, 0))
-      : digits + '0'.repeat(point - digits.length)).replace(/^0+(?=\d)/, '') || '0';
-    // int is asymmetric: −2147483648 is valid but 2147483648 is not.
-    const bound = type === 'int' ? (sign === '-' ? ABS_INT_MIN : ABS_INT_MAX) : ABS_LONG_MAX;
-    if(cmpMagnitude(integerDigits, bound) > 0) return { kind: 'verbatim', text: trimmed };
-    // In range: the conversion is exact (|value| <= 2^53 - 1). -0 normalises to 0.
-    const value = Number((sign === '-' ? '-' : '') + integerDigits);
-    return { kind: 'number', value: value === 0 ? 0 : value };
-  }
-  function coerceCustomValue(value: unknown, type: string): CustomAttributeValue {
-    const raw = typeof value === 'number' || typeof value === 'boolean' ? String(value) : String(value ?? '');
-    const text = raw.trim();
-    if(type === 'boolean'){
-      if(value === true || /^(true|1|yes|on)$/i.test(text)) return true;
-      if(value === false || /^(false|0|no|off)$/i.test(text)) return false;
-      return raw.slice(0, CUSTOM_VALUE_MAX); // unparseable: the exact text as written
-    }
-    if(type === 'int' || type === 'long'){
-      // Validate the TEXT as an integer literal before any numeric conversion
-      // — see parseIntegerText: '1.0000000000000001' must not collapse to 1.
-      const parsed = parseIntegerText(text, type);
-      if(parsed.kind === 'empty') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
-      if(parsed.kind === 'number') return parsed.value;
-      return raw.slice(0, CUSTOM_VALUE_MAX); // fractions, out-of-range, non-numeric: the exact text as written
-    }
-    if(type === 'float' || type === 'double'){
-      if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
-      const numeric = Number(text);
-      if(Number.isFinite(numeric)) return numeric;
-      return raw.slice(0, CUSTOM_VALUE_MAX);
-    }
-    return raw.slice(0, CUSTOM_VALUE_MAX);
-  }
+  // Shared with server patch validation so reload and patch semantics agree.
+  const { parseIntegerText, coerceCustomValue } = GraphPatchCore;
   // Migrates stored values of one attribute to a new type. A stated empty is
   // a stated value for every target type and survives migration verbatim
   // (never becomes 0). Unlike coerceCustomValue (the import path, which keeps
@@ -2044,20 +1975,19 @@
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
-    // Reduced, not spread. `Math.max(...array)` passes one argument per element and a
-    // payload large enough to matter overflows the call stack — "Maximum call stack
-    // size exceeded" from a document that is merely big, before the capacity limit
-    // gets a chance to drop the excess.
+    // Reduce instead of spreading potentially large import plans, while
+    // keeping every counter safe even for maximum-suffix identities.
     const maxIdSuffix = (items: {id: string}[]) => {
       let max = 0;
       for(const item of items){
-        const digits = item.id.match(/\d+$/);
-        if(digits) max = Math.max(max, Number(digits[0]));
+        const num = Number((item.id.match(/\d+$/) || [0])[0]);
+        if(Number.isSafeInteger(num)) max = Math.max(max, num);
       }
       return max;
     };
-    const maxN = Math.max(maxIdSuffix(nodes), finite(source.nextNode,1)-1, nodes.length);
-    const maxE = Math.max(maxIdSuffix(edges), finite(source.nextEdge,1)-1, edges.length);
+    const maxN = Math.max(maxIdSuffix(nodes), safeGraphCounter(source.nextNode, 1) - 1, nodes.length);
+    const maxE = Math.max(maxIdSuffix(edges), safeGraphCounter(source.nextEdge, 1) - 1, edges.length);
+    const nextCounter = (max: number) => max >= Number.MAX_SAFE_INTEGER ? 1 : max + 1;
     return {
       ...base,
       title: String(source.title || 'untitled').slice(0,80),
@@ -2065,8 +1995,8 @@
       selectTool: ['single','rect','brush','lasso','line','polygon'].includes(source.selectTool) ? source.selectTool : 'single',
       selectCombine: ['replace','add','subtract'].includes(source.selectCombine) ? source.selectCombine : 'replace',
       selection: {nodes: [], edges: []},
-      nextNode: maxN + 1,
-      nextEdge: maxE + 1,
+      nextNode: nextCounter(maxN),
+      nextEdge: nextCounter(maxE),
       nodes, edges, customAttributes, graphCustom, settings,
       viewBox: boundedCamera({ x:finite(vb.x,-500), y:finite(vb.y,-330), w:finite(vb.w,1000), h:finite(vb.h,660) })
     };
@@ -2077,6 +2007,11 @@
   function finite(value: unknown, fallback: number): number {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
+  }
+  // Counters derived from ids must stay exactly representable: an unsafe
+  // integer cannot be incremented, which would make id allocation loop.
+  function safeGraphCounter(value: unknown, fallback = 1): number {
+    return GraphPatchCore.safeCounter(value, fallback);
   }
   function positiveInteger(value: unknown, fallback: number): number {
     const numeric = Math.trunc(finite(value, fallback));

@@ -552,10 +552,13 @@
     bindClipboardButton('btnCut', cutSelectedNodes);
     bindClipboardButton('btnDuplicate', duplicateSelectedNodes);
     bindClipboardButton('btnPaste', pasteFromSystemClipboard);
+    bindClipboardButton('btnPasteExact', pasteExactFromSystemClipboard);
     bindClipboardButton('btnCopy2', copySelectedNodes);
     bindClipboardButton('btnCut2', cutSelectedNodes);
     bindClipboardButton('btnDuplicate2', duplicateSelectedNodes);
     bindClipboardButton('btnPaste2', pasteFromSystemClipboard);
+    bindClipboardButton('btnPasteExact2', pasteExactFromSystemClipboard);
+    bindClipboardButton('btnClipboardRecovery', recoverClipboardPublication);
     const chkPreserve = document.getElementById('chkCopyPreserve') as HTMLInputElement | null;
     if(chkPreserve){
       chkPreserve.checked = state.settings.copyPreserveExternal !== false;
@@ -572,14 +575,16 @@
       const mod = ev.ctrlKey || ev.metaKey;
       if(!mod) return;
       const target = ev.target as HTMLElement;
-      const isInput = target && ((target as any).matches && ((target as HTMLElement).matches('input, textarea, [contenteditable]') || (target as any).isContentEditable));
-      // If focus is in matrix/edge input that is readonly (selection mode), we still want clipboard shortcuts
+      const isInput = target && ((target as any).matches && ((target as HTMLElement).matches('input, textarea, select, [contenteditable]') || (target as any).isContentEditable));
+      // Even matrix fields are editable when they are not read-only. Only a
+      // read-only matrix cell represents graph selection, not text entry.
       const readonlyInput = isInput && (target as HTMLInputElement).readOnly;
-      if(isInput && !readonlyInput && !((target as HTMLElement).matches && (target as HTMLElement).matches('.matrix-input,.matrix-label-input'))) {
-        // typing in a visible text field — don't hijack
-        return;
-      }
+      if(isInput && !readonlyInput) return;
       const key = ev.key.toLowerCase();
+      // Option changes `key` on Mac layouts (V becomes "√"). Only the
+      // modified exact-paste command needs the physical-key fallback; plain
+      // Cmd/Ctrl+V must respect the produced key (e.g. KeyV -> "k" on Dvorak).
+      const isV = key === 'v' || (ev.altKey && ev.code === 'KeyV');
       if(key === 'c' && !ev.shiftKey && !ev.altKey){
         // Ctrl+C copy
         if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
@@ -589,7 +594,12 @@
         if(state.selection?.nodes?.length || state.selection?.edges?.length || state.selected){
           ev.preventDefault(); cutSelectedNodes();
         }
-      } else if(key === 'v' && !ev.shiftKey && !ev.altKey){
+      } else if(isV && (ev.shiftKey || ev.altKey)){
+        // Ctrl/Cmd+Alt+V (Illustrator-style "paste in place") and
+        // Ctrl/Cmd+Shift+V both restore the copied coordinates. The latter is
+        // normally "paste as plain text" in a browser; here the canvas owns it.
+        ev.preventDefault(); pasteExactFromSystemClipboard();
+      } else if(isV && !ev.shiftKey && !ev.altKey){
         ev.preventDefault(); pasteFromSystemClipboard();
       } else if(key === 'd' && !ev.shiftKey && !ev.altKey){
         // Ctrl+D duplicate — prevent browser bookmark
