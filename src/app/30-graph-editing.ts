@@ -704,28 +704,28 @@
   }
   // === Sorting and reordering ===
   function sortNodesById(){
-    const sorted = [...state.nodes].sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
+    const sorted = state.nodes.toSorted((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('sort nodes by id'); queueRender(true); toast(I18N.t('nodes_sorted_id'));
   }
   function sortNodesByLabel(){
-    const sorted = [...state.nodes].sort((a,b) => (a.label||'').localeCompare(b.label||'', undefined, {numeric:true}));
+    const sorted = state.nodes.toSorted((a,b) => (a.label||'').localeCompare(b.label||'', undefined, {numeric:true}));
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('sort nodes by label'); queueRender(true); toast(I18N.t('nodes_sorted_label'));
   }
   function renumberNodeOrder(){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('renumber node order'); queueRender(true); saveSoon(); toast(I18N.t('node_order_renumbered'));
   }
   function moveNode(nodeId, dir){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     const idx = sorted.findIndex(n => n.id === nodeId);
     if(idx < 0) return;
     const newIdx = idx + dir;
@@ -738,7 +738,7 @@
     pushHistory('move node'); queueRender(true); saveSoon();
   }
   function moveNodeToPosition(nodeId, newPosition){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     const idx = sorted.findIndex(n => n.id === nodeId);
     if(idx < 0) return;
     newPosition = clamp(Math.trunc(newPosition), 0, sorted.length - 1);
@@ -751,15 +751,14 @@
     pushHistory('move node to position'); queueRender(true); saveSoon();
   }
   function reverseNodeOrder(){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    sorted.reverse();
+    const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0)).toReversed();
     sorted.forEach((n,i) => { n.order = i; });
     state.nodes.sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
     invalidateGraphIndex(); // order fields changed in place: sorted-nodes cache must rebuild
     pushHistory('reverse node order'); queueRender(true); toast(I18N.t('nodes_reversed'));
   }
   function shuffleNodeOrder(){
-    const sorted = [...state.nodes].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     for(let i = sorted.length - 1; i > 0; i--){
       const j = Math.floor(Math.random() * (i + 1));
       [sorted[i], sorted[j]] = [sorted[j], sorted[i]];

@@ -5,7 +5,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 
 const html = await readFile('index.html', 'utf8');
 
-function createEditorDom(savedGraph = null, storedValues = {}) {
+function createEditorDom(savedGraph = null, storedValues = {}, beforeBoot = () => {}) {
   const errors = [];
   const values = { ...storedValues };
   if (savedGraph) values['graph-editor-pro-v2'] = JSON.stringify(savedGraph);
@@ -59,6 +59,7 @@ function createEditorDom(savedGraph = null, storedValues = {}) {
         return originalRect.call(this);
       };
       window.__canvasRect = canvasRect;
+      beforeBoot(window);
     },
   });
   return { dom, errors };
@@ -788,4 +789,328 @@ test('pane edge drags resize the correct axis, respect bounds, and clean up capt
   } finally {
     dom.window.close();
   }
+});
+
+// === Interruptible layout, modal ownership and compatibility ===
+const layoutGraph = {
+  title: 'test graph',
+  nodes: [{ id: 'n2', label: 'B', x: -90, y: -40, order: 0 }, { id: 'n1', label: 'A', x: 90, y: 40, order: 1 }],
+  edges: [{ id: 'e1', from: 'n2', to: 'n1' }],
+};
+
+async function openGraph(t, beforeBoot) {
+  const { dom, errors } = createEditorDom(layoutGraph, {}, beforeBoot);
+  t.after(() => { dom.window.close(); assert.deepEqual(errors.map(e => e.message), []); });
+  await nextFrame(dom.window);
+  const { document } = dom.window;
+  return { window: dom.window, document, byId: id => document.getElementById(id) };
+}
+
+function positions(document) {
+  document.querySelector('#btnExportJson').click();
+  const modal = document.querySelector('.export-modal');
+  const graph = JSON.parse(modal.querySelector('textarea').value);
+  modal.querySelector('#expCloseBtn').click();
+  return graph.nodes.map(({id, x, y}) => ({id, x, y}));
+}
+
+// Park only the first yield. Restore the real scheduler *before* releasing it:
+// a second yield must not hang forever and let a stale-write test pass by luck.
+function pauseForceLayout(window) {
+  const now = window.performance.now, scheduler = window.scheduler;
+  let ticks = 0, resume;
+  try {
+    // Let several passes complete before yielding so a partial live write is observable.
+    window.performance.now = () => (++ticks < 24 ? 0 : 100);
+    window.scheduler = { yield: () => new window.Promise(resolve => { resume = resolve; }) };
+    window.document.querySelector('#btnLayoutForce').click();
+    assert.equal(typeof resume, 'function', 'force layout reached the controlled yield');
+  } finally {
+    window.performance.now = now;
+    window.scheduler = scheduler;
+  }
+  return async () => { resume(); await nextFrame(window); };
+}
+
+for (const [name, command] of [['grid layout', 'btnLayoutGrid'], ['sort by ID', 'btnSortNodeId']]) {
+  test(`${name} during a force-layout yield owns the only undo entry`, async t => {
+    const {window, document, byId} = await openGraph(t);
+    const before = positions(document);
+    const resume = pauseForceLayout(window);
+    assert.deepEqual(positions(document), before, 'export must not see partial relaxation');
+    byId(command).click();
+    const afterEdit = positions(document);
+    assert.notDeepEqual(afterEdit, before, 'the command changed the positions or the node order');
+    if (command === 'btnSortNodeId') assert.deepEqual(afterEdit, [before[1], before[0]], 'sort changed only the order');
+    await resume();
+    assert.deepEqual(positions(document), afterEdit);
+    byId('btnUndo').click();
+    await nextFrame(window); // command states update on the queued render
+    assert.deepEqual(positions(document), before);
+    assert.equal(byId('btnUndo').disabled, true, 'no phantom undo entry');
+    byId('btnRedo').click();
+    assert.deepEqual(positions(document), afterEdit, 'redo did not capture partially relaxed positions');
+  });
+}
+
+test('undo can restore an edge with a missing layout endpoint during a yield', async t => {
+  const {window, document, byId} = await openGraph(t);
+  byId('btnMatrixAddNode').click(); // leave two nodes to relax after deleting n1
+  const original = positions(document);
+  const pointer = {pointerId: 1, clientX: 590, clientY: 370};
+  dispatchPointer(window, byId('node-n1'), 'pointerdown', pointer);
+  dispatchPointer(window, byId('graphCanvas'), 'pointerup', pointer);
+  byId('btnDelete').click();
+  const deleted = positions(document);
+  assert.deepEqual(deleted, original.filter(n => n.id !== 'n1'));
+  const resume = pauseForceLayout(window);
+  byId('btnUndo').click(); // brings back n1 and its incident edge, absent from the in-flight solve
+  await resume();
+  assert.deepEqual(positions(document), original);
+  assert.equal(byId('btnRedo').disabled, false);
+  byId('btnRedo').click();
+  assert.deepEqual(positions(document), deleted);
+});
+
+test('force layout does not capture an uncommitted title edit', async t => {
+  const {window, document, byId} = await openGraph(t);
+  const initial = positions(document), title = byId('docTitleInput');
+  const resume = pauseForceLayout(window);
+  title.focus(); title.value = 'Still typing';
+  title.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await resume();
+  assert.equal(byId('btnUndo').disabled, true, 'nothing committed before change/blur');
+  assert.deepEqual(positions(document), initial);
+  title.dispatchEvent(new window.Event('change', { bubbles: true }));
+  byId('btnUndo').click();
+  await nextFrame(window);
+  assert.equal(title.value, layoutGraph.title);
+  assert.equal(byId('btnUndo').disabled, true);
+});
+
+test('typing a camera draft during a force-layout yield still allows the layout to commit', async t => {
+  const {window, document, byId} = await openGraph(t);
+  const initial = positions(document), cameraX = byId('cameraX');
+  byId('tab-data').click();
+  cameraX.closest('details').open = true;
+  const resume = pauseForceLayout(window);
+  cameraX.focus(); cameraX.value = '123';
+  cameraX.dispatchEvent(new window.Event('input', { bubbles: true })); // no Enter or change
+  await resume();
+  assert.equal(document.activeElement, cameraX);
+  assert.equal(cameraX.value, '123', 'the focused draft survives the layout repaint');
+  assert.notDeepEqual(positions(document), initial, 'a UI-only input did not cancel relaxation');
+  byId('btnUndo').click();
+  await nextFrame(window);
+  assert.deepEqual(positions(document), initial);
+  assert.equal(byId('btnUndo').disabled, true, 'only the layout added an undo entry');
+});
+
+test('a force-layout commit leaves an unsubmitted edge-list draft in place', async t => {
+  const {window, document} = await openGraph(t);
+  document.querySelector('[data-view-btn="edges"]').click();
+  // The table is installed on a 60ms debounce. Edit the settled table, then
+  // check again after the same window so a delayed rebuild cannot hide a loss.
+  const settleTable = () => new Promise(resolve => window.setTimeout(resolve, 80));
+  await settleTable();
+  const initial = positions(document), weight = document.querySelector('#edgeListHost input.edge-weight');
+  const resume = pauseForceLayout(window);
+  weight.focus(); weight.value = '37';
+  weight.dispatchEvent(new window.Event('input', { bubbles: true })); // no document write until change
+  await resume();
+  await settleTable();
+  assert.equal(document.activeElement, weight, 'a geometry-only commit did not replace the edited cell');
+  assert.equal(weight.value, '37');
+  assert.notDeepEqual(positions(document), initial);
+});
+
+test('a live edge colour edit during a yield still invalidates the layout before change', async t => {
+  const {window, document, byId} = await openGraph(t);
+  document.querySelector('[data-view-btn="edges"]').click();
+  await nextFrame(window); // opening the view schedules its list render
+  const initial = positions(document), color = document.querySelector('#edgeListHost .edge-color');
+  const resume = pauseForceLayout(window);
+  color.value = '#123456';
+  color.dispatchEvent(new window.Event('input', { bubbles: true })); // delegated edit, not yet in history
+  await resume();
+  assert.equal(byId('edge-e1').querySelector('.edge-line').getAttribute('stroke'), color.value);
+  assert.deepEqual(positions(document), initial);
+  assert.equal(byId('btnUndo').disabled, true);
+});
+
+test('a layout cannot move a node already held for a drag', async t => {
+  const {window, document, byId} = await openGraph(t);
+  const initial = positions(document);
+  const resume = pauseForceLayout(window);
+  const pointer = {pointerId: 1, clientX: 590, clientY: 370};
+  dispatchPointer(window, byId('node-n1'), 'pointerdown', pointer); // no position/history change yet
+  await resume();
+  dispatchPointer(window, byId('graphCanvas'), 'pointerup', pointer);
+  assert.deepEqual(positions(document), initial);
+  assert.equal(byId('btnUndo').disabled, true);
+});
+
+test('an uninterrupted force layout publishes moved positions in exactly one undo step', async t => {
+  const {window, document, byId} = await openGraph(t);
+  const initial = positions(document);
+  const resume = pauseForceLayout(window);
+  assert.deepEqual(positions(document), initial);
+  await resume();
+  const relaxed = positions(document);
+  assert.notDeepEqual(relaxed, initial);
+  assert.ok(relaxed.every(p => Number.isFinite(p.x) && Number.isFinite(p.y)));
+  byId('btnUndo').click();
+  await nextFrame(window);
+  assert.deepEqual(positions(document), initial);
+  assert.equal(byId('btnUndo').disabled, true);
+  byId('btnRedo').click();
+  assert.deepEqual(positions(document), relaxed);
+});
+
+test('the generated app boots without native ES2023 array helpers', async t => {
+  let absentAtBoot = false;
+  const {window, document} = await openGraph(t, w => {
+    delete w.Array.prototype.toSorted;
+    delete w.Array.prototype.toReversed;
+    absentAtBoot = !('toSorted' in w.Array.prototype || 'toReversed' in w.Array.prototype);
+  });
+  assert.ok(absentAtBoot, 'the APIs really were removed before the inline bundle ran');
+  // Use page-realm arrays, not the test runner's native Node methods.
+  const input = window.Array.of(3, 10, 1);
+  assert.deepEqual(Array.from(input.toSorted((a,b) => a-b)), [1, 3, 10]);
+  assert.deepEqual(Array.from(input.toReversed()), [1, 10, 3]);
+  assert.deepEqual(Array.from(input), [3, 10, 1], 'neither operation mutates the input');
+  assert.equal(document.querySelectorAll('#nodesLayer > g').length, layoutGraph.nodes.length);
+});
+
+// jsdom has no top layer. Exercise the native branch with just the dialog
+// open/close events, and model the UA's cancel action *only* for an Escape
+// keydown that our application has not consumed. Also exercise the fallback.
+for (const native of [true, false]) {
+  test(`Escape and graph shortcuts respect stacked dialogs (${native ? 'native events' : 'fallback'})`, async t => {
+    const {window, document, byId} = await openGraph(t, w => {
+      if (!native) return;
+      const proto = w.HTMLDialogElement.prototype;
+      proto.showModal = function () { this.open = true; };
+      proto.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
+    });
+    const key = (key, code, ctrlKey = false) => document.activeElement.dispatchEvent(
+      new window.KeyboardEvent('keydown', { key, code, ctrlKey, bubbles: true, cancelable: true }));
+    const escape = dialog => {
+      if (key('Escape', 'Escape') && native) {
+        if (dialog.dispatchEvent(new window.Event('cancel', { cancelable: true }))) dialog.close();
+      }
+    };
+    byId('btnMatrixAddNode').click(); // a selection to save, and a real undo entry
+    const original = positions(document);
+    byId('btnMenu').click();
+    const presets = byId('presetsOverlay'), trigger = byId('btnPresets'), save = byId('btnPresetSave');
+    trigger.focus(); trigger.click(); save.focus(); save.click();
+    const prompt = document.querySelector('.app-dialog');
+    assert.ok(prompt, 'Save from selection opened the name prompt');
+    assert.equal(document.activeElement, prompt.querySelector('input'));
+    const cancel = prompt.querySelector('[data-dialog-cancel]');
+    cancel.focus(); // where a quick Tab from the text field takes the user
+    await nextFrame(window);
+    assert.equal(document.activeElement, cancel, 'opening the prompt must not steal focus back on a later task');
+    escape(prompt);
+    assert.equal(prompt.isConnected, false);
+    assert.ok(presets.open || presets.classList.contains('open'), 'Escape closed only the prompt');
+    assert.equal(document.activeElement, save);
+    assert.ok(key('Delete', 'Delete'), 'do not delete the selection under presets');
+    assert.ok(key('z', 'KeyZ', true), 'do not undo under presets');
+    assert.ok(key('d', 'KeyD', true), 'do not duplicate the selection under presets');
+    escape(presets);
+    assert.ok(!(presets.open || presets.classList.contains('open')));
+    assert.ok(byId('toolsPanel').classList.contains('open'), 'the sidebar remains open');
+    assert.equal(document.activeElement, trigger);
+    assert.deepEqual(positions(document), original);
+  });
+}
+
+test('preset feedback is reachable from the body in the fallback, and the live region survives closing it', async t => {
+  const {window, byId, document} = await openGraph(t);
+  const stack = byId('toastStack');
+  byId('btnPresets').click(); byId('btnPresetSave').click(); // no selection: adds a toast after opening
+  const dismiss = stack.querySelector('.toast-close');
+  assert.ok(dismiss);
+  assert.ok(byId('presetsOverlay').contains(stack), 'an external region would be inert in a native modal');
+  document.activeElement.blur();
+  assert.equal(document.activeElement, document.body);
+  const backTab = new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+  assert.equal(document.body.dispatchEvent(backTab), false);
+  assert.equal(document.activeElement, dismiss, 'the newly added control is the last tab stop');
+  byId('btnPresetClose').click();
+  assert.equal(stack.parentElement, document.body);
+  assert.equal(document.activeElement, byId('btnPresets'), 'restore the opener even when its click did not focus it');
+});
+
+test('toast expiry waits for both keyboard focus and pointer hover to leave', async t => {
+  const {window, byId} = await openGraph(t);
+  byId('btnPresets').click();
+  // Drive only the timers created by this toast, without a wall-clock wait.
+  const timers = new Map();
+  let nextId = 0;
+  t.mock.method(window, 'setTimeout', fn => { timers.set(++nextId, fn); return nextId; });
+  t.mock.method(window, 'clearTimeout', id => timers.delete(id));
+  const expire = () => { for (const [id, fn] of timers) { timers.delete(id); fn(); } };
+  byId('btnPresetSave').click();
+  const toast = byId('toastStack').lastElementChild, close = toast.querySelector('button');
+  const hover = inside => toast.dispatchEvent(new window.Event(inside ? 'pointerenter' : 'pointerleave'));
+  close.focus(); hover(true); hover(false); expire();
+  assert.ok(toast.isConnected, 'leaving with the pointer does not restart expiry while focused');
+  hover(true); close.blur(); expire();
+  assert.ok(toast.isConnected, 'blurring does not restart expiry while hovered');
+  hover(false); expire();
+  assert.equal(toast.isConnected, false, 'expiry resumes when neither interaction is active');
+
+  byId('btnPresetSave').click();
+  const nextClose = byId('toastStack').lastElementChild.querySelector('button');
+  nextClose.focus(); nextClose.click(); expire();
+  assert.equal(nextClose.isConnected, false, 'focus protection does not block an explicit dismissal');
+});
+
+function assertToastOrder(stack, expected) {
+  assert.equal(stack.childElementCount, expected.length);
+  expected.forEach((toast, i) => assert.equal(stack.children[i], toast, `toast at index ${i}`));
+}
+
+for (const oldest of ['focused', 'hovered']) {
+  test(`a fifth toast skips the ${oldest} oldest notification and evicts the oldest idle one`, async t => {
+    const {window, document, byId} = await openGraph(t);
+    byId('btnPresets').click();
+    const stack = byId('toastStack');
+    const notify = () => { byId('btnPresetSave').click(); return stack.lastElementChild; };
+    const first = notify(), second = notify();
+    const [focused, hovered] = oldest === 'focused' ? [first, second] : [second, first];
+    const close = focused.querySelector('button');
+    close.focus();
+    hovered.dispatchEvent(new window.Event('pointerenter'));
+    const oldestIdle = notify(), nextIdle = notify(), latest = notify();
+    assert.equal(document.activeElement, close, 'overflow must not send keyboard focus to the body');
+    assert.equal(oldestIdle.isConnected, false);
+    assertToastOrder(stack, [first, second, nextIdle, latest]);
+
+    hovered.dispatchEvent(new window.Event('pointerleave'));
+    close.blur();
+    const another = notify();
+    assertToastOrder(stack, [second, nextIdle, latest, another]);
+  });
+}
+
+test('toast eviction waits for interaction to end if all four notifications are in use', async t => {
+  const {window, byId} = await openGraph(t);
+  byId('btnPresets').click();
+  const stack = byId('toastStack'), held = [];
+  for(let i = 0; i < 4; i++) {
+    byId('btnPresetSave').click();
+    const toast = stack.lastElementChild;
+    toast.dispatchEvent(new window.Event('pointerenter'));
+    held.push(toast);
+  }
+  byId('btnPresetSave').click();
+  const latest = stack.lastElementChild;
+  assertToastOrder(stack, [...held, latest]);
+  held[0].dispatchEvent(new window.Event('pointerleave'));
+  assertToastOrder(stack, [...held.slice(1), latest]);
 });

@@ -1,39 +1,6 @@
-  function nodeVisual(n){
-    const d = state.settings.nodeDefaults || {};
-    const effectiveType = n.type || d.type || '';
-    const ts = getTypeStyle(state.settings.nodeTypeStyles, n.type) || {};
-    const dts = getTypeStyle(state.settings.nodeTypeStyles, d.type) || {};
-    return {
-      shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
-      color: n.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-      type: effectiveType,
-      width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
-      height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
-      strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
-      strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-      strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-      labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-      labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-      labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
-      labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-  }
-  function edgeVisual(e){
-    const d = state.settings.edgeDefaults || {};
-    const effectiveType = e.type || d.type || '';
-    const ts = getTypeStyle(state.settings.edgeTypeStyles, e.type) || {};
-    const dts = getTypeStyle(state.settings.edgeTypeStyles, d.type) || {};
-    return {
-      color: e.color || ts.color || (d.type ? (dts.color || d.color) : d.color),
-      type: effectiveType,
-      strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
-      strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
-      arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
-      labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
-      labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
-      labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
-    };
-  }
+  // nodeVisual/edgeVisual live in 10-core: the renderer is their first consumer
+  // but not the only one — append materialises the same resolution onto imported
+  // elements, and two copies of the ladder is how they drifted apart.
   function edgeArrowSize(e){
     const v = edgeVisual(e);
     return clamp(finite(v.arrowSize, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX);
@@ -355,7 +322,7 @@
     if(sortedNodesCache.arr === arr && sortedNodesCache.len === arr.length && sortedNodesCache.rev === graphRev){
       return sortedNodesCache.sorted;
     }
-    const sorted = [...arr].sort((a,b) => (a.order ?? 0) - (b.order ?? 0));
+    const sorted = arr.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     sortedNodesCache.arr = arr; sortedNodesCache.len = arr.length; sortedNodesCache.rev = graphRev; sortedNodesCache.sorted = sorted;
     return sorted;
   }
@@ -1064,6 +1031,13 @@
   // k*stepX - remainder corresponds to world G + k*stepX, where G is a multiple
   // of majorX. BigInt makes the remainder exact even for a 1e20 world camera.
   function worldGridPhase(origin, majorStep){
+    // A camera can span enough that the decimated grid step itself overflows to
+    // Infinity (a node parked at a huge coordinate, then Fit). BigInt rejects
+    // that, and the throw escaped from the middle of a render, leaving the canvas
+    // blank. A step that large is meaningless anyway: nothing is drawn at that
+    // scale, so treat it as "no phase" and let the caller's own finiteness check
+    // skip the grid.
+    if(!Number.isFinite(majorStep) || !Number.isFinite(finite(origin, NaN))) return 0;
     const m = BigInt(Math.max(1, Math.round(majorStep)));
     const v = BigInt(Math.trunc(finite(origin, 0)));
     return Number(((v % m) + m) % m);
@@ -1505,6 +1479,7 @@
         g.addEventListener('pointerdown', ev => {
           ev.stopPropagation();
           flushZoomPreview();
+          notePress('edge', e.id);
           if(ev.button === 1 || ev.button === 2){ registerPointer(ev); pendingEdgeFrom = null; startPan(ev); return; }
           if(ev.button !== 0) return;
           if(polygonToolActive()){ registerPointer(ev); handlePolygonPointerDown(ev); return; }
@@ -1523,7 +1498,12 @@
           const combine = effectiveSelectCombine(ev);
           setSelection([], [e.id], {type:'edge', id:e.id}, combine);
         });
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editEdgeQuick(e.id); });
+        // Deliberately no stopPropagation: a double click is resolved only on the
+        // canvas (see canvasWrap's dblclick). With pointer capture active the
+        // browser delivers the event there directly; this listener exists only to
+        // commit a pending zoom, and swallowing the event would hide it from the
+        // resolver when it does arrive here.
+        g.addEventListener('dblclick', () => { flushZoomPreview(); });
         edgesLayer.appendChild(g);
         edgeEls.set(e.id, g);
         const fresh = spineEntry(e.id, g);
@@ -1921,7 +1901,8 @@
         g = document.createElementNS(NS,'g'); g.classList.add('node');
         g.id = 'node-' + n.id; g.dataset.id = n.id;
         g.addEventListener('pointerdown', ev => onNodePointerDown(ev, n.id));
-        g.addEventListener('dblclick', ev => { ev.stopPropagation(); flushZoomPreview(); if(polygonToolActive() && selectDraft?.tool === 'polygon') finishPolygonSelection(false); else editNodeQuick(n.id); });
+        // Resolved on the canvas, for the same reason as the edge handler above.
+        g.addEventListener('dblclick', () => { flushZoomPreview(); });
         nodesLayer.appendChild(g);
         nodeEls.set(n.id, g);
         const fresh = spineEntry(n.id, g);
@@ -2189,16 +2170,16 @@
         $('#mulNodeLabel').addEventListener('change', e => { const v = e.target.value.slice(0,80); for(const id of nodeIds){ const n = nodeById(id); if(n) n.label = v; } pushHistory('multi node label'); queueRender(true); markSidebarDirty(); saveSoon(); });
         $('#mulNodeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of nodeIds){ const n = nodeById(id); if(n){ n.type = v; applyTypeStyleToNode(n); } } invalidateGraphIndex(); pushHistory('multi node type'); queueRender(false); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
         $('#mulNodeOrder').addEventListener('change', e => { const v = e.target.value; if(v === '') return; const ord = clamp(parseInt(v,10)||0, 0, 2147483647); for(const id of nodeIds){ const n = nodeById(id); if(n) n.order = ord; } invalidateGraphIndex(); pushHistory('multi node order'); queueRender(true); saveSoon(); });
-        $('#mulNodeColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.color = e.target.value; } queueRender(false); saveSoon(); });
+        $('#mulNodeColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.color = e.target.value; } queueRender(false); saveLiveDocumentEdit(); });
         $('#mulNodeColor').addEventListener('change', () => pushHistory('multi node color'));
         $('#mulNodeShape').addEventListener('change', e => { const v = e.target.value; for(const id of nodeIds){ const n = nodeById(id); if(n) n.shape = v; } pushHistory('multi node shape'); queueRender(false); });
         $('#mulNodeWidth').addEventListener('change', e => { const val = e.target.value; if(val === '') return; const v = clamp(finite(val,50),10,300); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.width = v; } pushHistory('multi node width'); queueRender(false); saveSoon(); });
         $('#mulNodeHeight').addEventListener('change', e => { const val = e.target.value; if(val === '') return; const v = clamp(finite(val,50),10,300); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.height = v; } pushHistory('multi node height'); queueRender(false); saveSoon(); });
-        $('#mulNodeStrokeColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.strokeColor = e.target.value; } queueRender(false); saveSoon(); });
+        $('#mulNodeStrokeColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.strokeColor = e.target.value; } queueRender(false); saveLiveDocumentEdit(); });
         $('#mulNodeStrokeColor').addEventListener('change', () => pushHistory('multi stroke color'));
         $('#mulNodeStrokeSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,2.2),0,20); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.strokeSize = v; } pushHistory('multi stroke size'); queueRender(false); });
         $('#mulNodeStrokeStyle').addEventListener('change', e => { const v = e.target.value; for(const id of nodeIds){ const n = nodeById(id); if(n) n.strokeStyle = v; } pushHistory('multi stroke style'); queueRender(false); });
-        $('#mulNodeLabelColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.labelColor = e.target.value; } queueRender(false); saveSoon(); });
+        $('#mulNodeLabelColor').addEventListener('input', e => { for(const id of nodeIds){ const n = nodeById(id); if(n) n.labelColor = e.target.value; } queueRender(false); saveLiveDocumentEdit(); });
         $('#mulNodeLabelColor').addEventListener('change', () => pushHistory('multi label color'));
         $('#mulNodeLabelSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,13),4,72); e.target.value=v; for(const id of nodeIds){ const n = nodeById(id); if(n) n.labelSize = v; } pushHistory('multi label size'); queueRender(false); });
         $('#mulNodeLabelPos').addEventListener('change', e => { const v = e.target.value; for(const id of nodeIds){ const n = nodeById(id); if(n) n.labelPosition = v; } pushHistory('multi label pos'); queueRender(false); });
@@ -2225,12 +2206,12 @@
         $('#mulEdgeWeight').addEventListener('change', e => { const v = e.target.value.slice(0,50); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ if(v === '') delete ed.weight; else ed.weight = v; } } pushHistory('multi edge weight'); queueRender(true); saveSoon(); });
         $('#mulEdgeType').addEventListener('change', e => { const v = e.target.value.slice(0,40); for(const id of edgeIds){ const ed = edgeById(id); if(ed){ ed.type = v; applyTypeStyleToEdge(ed); } } invalidateGraphIndex(); pushHistory('multi edge type'); queueRender(true); saveSoon(); syncEditTypeLists(); renderSelectionPanel(); });
         $('#mulEdgeDirected').addEventListener('change', e => { const v = e.target.value; if(v === '') return; for(const id of edgeIds){ const ed = edgeById(id); if(ed){ (ed as any).direction = v; (ed as any).directed = v !== 'undirected'; } } pushHistory('multi edge directed'); queueRender(true); });
-        $('#mulEdgeColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.color = e.target.value; } queueRender(false); saveSoon(); });
+        $('#mulEdgeColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.color = e.target.value; } queueRender(false); saveLiveDocumentEdit(); });
         $('#mulEdgeColor').addEventListener('change', () => pushHistory('multi edge color'));
         $('#mulEdgeStrokeSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,2.4),0,20); e.target.value=v; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.strokeSize = v; } pushHistory('multi edge stroke size'); queueRender(false); });
         $('#mulEdgeStrokeStyle').addEventListener('change', e => { const v = e.target.value; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.strokeStyle = v; } pushHistory('multi edge stroke style'); queueRender(false); });
         $('#mulEdgeArrowSize').addEventListener('change', e => { const val = e.target.value; if(val === '') return; const v = clamp(finite(val, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); e.target.value=v; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.arrowSize = v; } pushHistory('multi edge arrow size'); queueRender(true); });
-        $('#mulEdgeLabelColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelColor = e.target.value; } queueRender(false); saveSoon(); });
+        $('#mulEdgeLabelColor').addEventListener('input', e => { for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelColor = e.target.value; } queueRender(false); saveLiveDocumentEdit(); });
         $('#mulEdgeLabelColor').addEventListener('change', () => pushHistory('multi edge label color'));
         $('#mulEdgeLabelSize').addEventListener('change', e => { const v = clamp(finite(e.target.value,12),4,72); e.target.value=v; for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelSize = v; } pushHistory('multi edge label size'); queueRender(false); });
         $('#mulEdgeLabelFont').addEventListener('change', e => { const v = e.target.value.trim().slice(0,60); for(const id of edgeIds){ const ed = edgeById(id); if(ed) ed.labelFont = v || undefined; } pushHistory('multi edge label font'); queueRender(false); saveSoon(); });
@@ -2312,21 +2293,21 @@
         n[axis] = snapAxisValue(axis, value, n.id);
         syncCoordInputs();
         moveNodeFast(n.id);
-        saveSoon();
+        saveLiveDocumentEdit();
         if(final) pushHistory('move node coordinate');
       };
       $('#selNodeLabel').addEventListener('change', e => { n.label = e.target.value.slice(0,80); pushHistory(); queueRender(true); markSidebarDirty(); });
       $('#selNodeType').addEventListener('change', e => { n.type = e.target.value.slice(0,40); applyTypeStyleToNode(n); invalidateGraphIndex(); pushHistory('node type'); queueRender(false); syncEditTypeLists(); renderSelectionPanel(); });
-      $('#selNodeColor').addEventListener('input', e => { n.color = e.target.value; queueRender(false); saveSoon(); });
+      $('#selNodeColor').addEventListener('input', e => { n.color = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
       $('#selNodeColor').addEventListener('change', () => pushHistory());
       $('#selNodeShape').addEventListener('change', e => { n.shape = e.target.value; pushHistory(); queueRender(false); });
       $('#selNodeWidth').addEventListener('change', e => { n.width = clamp(finite(e.target.value,50),10,300); e.target.value=n.width; pushHistory(); queueRender(false); });
       $('#selNodeHeight').addEventListener('change', e => { n.height = clamp(finite(e.target.value,50),10,300); e.target.value=n.height; pushHistory(); queueRender(false); });
-      $('#selNodeStrokeColor').addEventListener('input', e => { n.strokeColor = e.target.value; queueRender(false); saveSoon(); });
+      $('#selNodeStrokeColor').addEventListener('input', e => { n.strokeColor = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
       $('#selNodeStrokeColor').addEventListener('change', () => pushHistory());
       $('#selNodeStrokeSize').addEventListener('change', e => { n.strokeSize = clamp(finite(e.target.value,2.2),0,20); e.target.value=n.strokeSize; pushHistory(); queueRender(false); });
       $('#selNodeStrokeStyle').addEventListener('change', e => { n.strokeStyle = e.target.value; pushHistory(); queueRender(false); });
-      $('#selNodeLabelColor').addEventListener('input', e => { n.labelColor = e.target.value; queueRender(false); saveSoon(); });
+      $('#selNodeLabelColor').addEventListener('input', e => { n.labelColor = e.target.value; queueRender(false); saveLiveDocumentEdit(); });
       $('#selNodeLabelColor').addEventListener('change', () => pushHistory());
       $('#selNodeLabelSize').addEventListener('change', e => { n.labelSize = clamp(finite(e.target.value,13),4,72); e.target.value=n.labelSize; pushHistory(); queueRender(false); });
       $('#selNodeLabelPos').addEventListener('change', e => { n.labelPosition = e.target.value; pushHistory(); queueRender(false); });
@@ -2393,12 +2374,12 @@
       $('#selEdgeType').addEventListener('change', ev => { e.type = ev.target.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); pushHistory('edge type'); queueRender(true); syncEditTypeLists(); renderSelectionPanel(); });
       ($('#selEdgeDirected') as any).value = edgeDirection(e);
       $('#selEdgeDirected').addEventListener('change', ev => { (e as any).direction = (ev.target as any).value; (e as any).directed = (ev.target as any).value !== 'undirected'; pushHistory(); queueRender(true); });
-      $('#selEdgeColor').addEventListener('input', ev => { e.color = ev.target.value; queueRender(false); saveSoon(); });
+      $('#selEdgeColor').addEventListener('input', ev => { e.color = ev.target.value; queueRender(false); saveLiveDocumentEdit(); });
       $('#selEdgeColor').addEventListener('change', () => pushHistory());
       $('#selEdgeStrokeSize').addEventListener('change', ev => { e.strokeSize = clamp(finite(ev.target.value,2.4),0,20); ev.target.value=e.strokeSize; pushHistory(); queueRender(false); });
       $('#selEdgeStrokeStyle').addEventListener('change', ev => { e.strokeStyle = ev.target.value; pushHistory(); queueRender(false); });
       $('#selEdgeArrowSize').addEventListener('change', ev => { e.arrowSize = clamp(finite(ev.target.value, DEFAULT_ARROW_SIZE), ARROW_SIZE_MIN, ARROW_SIZE_MAX); ev.target.value=e.arrowSize; pushHistory(); queueRender(true); });
-      $('#selEdgeLabelColor').addEventListener('input', ev => { e.labelColor = ev.target.value; queueRender(false); saveSoon(); });
+      $('#selEdgeLabelColor').addEventListener('input', ev => { e.labelColor = ev.target.value; queueRender(false); saveLiveDocumentEdit(); });
       $('#selEdgeLabelColor').addEventListener('change', () => pushHistory());
       $('#selEdgeLabelSize').addEventListener('change', ev => { e.labelSize = clamp(finite(ev.target.value,12),4,72); ev.target.value=e.labelSize; pushHistory(); queueRender(false); });
       $('#selEdgeLabelFont').addEventListener('change', ev => { e.labelFont = ev.target.value.slice(0,60) || undefined; pushHistory(); queueRender(false); });
@@ -2513,7 +2494,7 @@
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
     // Global order index for each node (for move boundaries)
-    const allSorted = [...state.nodes].sort((a,b)=>(a.order??0)-(b.order??0));
+    const allSorted = state.nodes.toSorted((a,b)=>(a.order??0)-(b.order??0));
     const orderPos = new Map(allSorted.map((n,i)=>[n.id,i]));
     // Build with array push+join instead of repeated += to avoid O(n^2) string copying for large matrices
     const parts: string[] = [];

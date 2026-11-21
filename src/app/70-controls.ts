@@ -163,10 +163,22 @@
   let _hotkeysCache = null;
   function getHotkeys(){
     if(_hotkeysCache) return _hotkeysCache;
+    _hotkeysCache = {...DEFAULT_HOTKEYS};
     try {
       const stored = localStorage.getItem(HOTKEYS_KEY);
-      _hotkeysCache = stored ? {...DEFAULT_HOTKEYS, ...JSON.parse(stored)} : {...DEFAULT_HOTKEYS};
-    } catch { _hotkeysCache = {...DEFAULT_HOTKEYS}; }
+      const saved = stored ? JSON.parse(stored) : null;
+      // Storage is user-writable and survives upgrades, so anything can be in
+      // there. Only a known action with a string code is adopted — a null, a
+      // number or an object in a slot used to reach prettyKeyCode and throw
+      // "code.startsWith is not a function" from the settings panel, which then
+      // failed to render at all. Unknown keys are ignored the same way.
+      if(saved && typeof saved === 'object' && !Array.isArray(saved)){
+        for(const name of Object.keys(DEFAULT_HOTKEYS)){
+          const code = saved[name];
+          if(typeof code === 'string') _hotkeysCache[name] = code;
+        }
+      }
+    } catch { /* unreadable storage: defaults stand */ }
     return _hotkeysCache;
   }
   function setHotkey(name, code){
@@ -181,7 +193,7 @@
     toast(I18N.t('hotkeys_reset'));
   }
   function prettyKeyCode(code){
-    if(!code) return '\u2014';
+    if(typeof code !== 'string' || !code) return '\u2014';
     if(code === 'Space') return 'Space';
     if(code === 'Delete') return 'Del';
     if(code === 'Escape') return 'Esc';
@@ -576,6 +588,7 @@
 
   // === Style presets ===
   let presetsReturnFocus: HTMLElement | null = null;
+  let presetsTrapCleanup: (() => void) | null = null;
   function renderPresetsGrid(){
     const grid = $('#presetsGrid'); if(!grid) return;
     const presets = state.settings.stylePresets || [];
@@ -720,23 +733,47 @@
     state.settings.stylePresets.splice(idx, 1);
     pushHistory('delete preset'); saveSoon(); renderPresetsGrid();
   }
-  function togglePresetsOverlay(force?: boolean){
-    const overlay = $('#presetsOverlay');
-    if(!overlay) return;
-    const isOpen = force == null ? !overlay.classList.contains('open') : force;
-    if(isOpen){
-      presetsReturnFocus = document.activeElement as HTMLElement;
-      overlay.classList.add('open');
-      overlay.setAttribute('aria-hidden', 'false');
+  const presetsDialog = $('#presetsOverlay') as HTMLDialogElement;
+  function presetsOpen(): boolean { return presetsDialog.open || presetsDialog.classList.contains('open'); }
+  function finishPresetsClose(){
+    if(presetsOpen()) return; // a queued native close event from a previous opening
+    presetsTrapCleanup?.(); // release containment before restoring the opener
+    presetsTrapCleanup = null;
+    const stack = $('#toastStack');
+    if(stack.parentElement === presetsDialog) document.body.appendChild(stack);
+    if(presetsReturnFocus?.isConnected) presetsReturnFocus.focus({preventScroll:true});
+    presetsReturnFocus = null;
+  }
+  function togglePresetsOverlay(open = !presetsOpen()){
+    if(open === presetsOpen()) return;
+    if(open){
+      // The toolbar button is the opener even on browsers where a pointer
+      // click doesn't focus a button first.
+      presetsReturnFocus = $('#btnPresets');
+      if(typeof presetsDialog.showModal === 'function') presetsDialog.showModal();
+      else {
+        presetsDialog.classList.add('open');
+        presetsDialog.setAttribute('role', 'dialog');
+        presetsDialog.setAttribute('aria-modal', 'true');
+        presetsDialog.setAttribute('aria-hidden', 'false');
+        presetsTrapCleanup = trapFallbackDialog(presetsDialog, () => !dialogEl, $('#btnPresetClose'),
+          () => togglePresetsOverlay(false));
+      }
+      // A body-level live region is inert and behind a native modal, no matter
+      // its z-index. Keep preset feedback in the same accessible top layer.
+      presetsDialog.appendChild($('#toastStack'));
       renderPresetsGrid();
-      setTimeout(() => $('#btnPresetClose').focus({preventScroll:true}), 0);
+      $('#btnPresetClose').focus({preventScroll:true});
     } else {
-      overlay.classList.remove('open');
-      overlay.setAttribute('aria-hidden', 'true');
-      if(presetsReturnFocus?.isConnected) presetsReturnFocus.focus({preventScroll:true});
-      presetsReturnFocus = null;
+      if(presetsDialog.open) presetsDialog.close();
+      else {
+        presetsDialog.classList.remove('open');
+        presetsDialog.setAttribute('aria-hidden', 'true');
+      }
+      finishPresetsClose();
     }
   }
+  presetsDialog.addEventListener('close', finishPresetsClose);
   const CUSTOM_ATTRIBUTE_TYPES = ['boolean','int','long','float','double','string'];
   // Graph-scope custom property values (document-wide). Node/edge values live in
   // the selection panel; graph values have no "selection", so they are edited

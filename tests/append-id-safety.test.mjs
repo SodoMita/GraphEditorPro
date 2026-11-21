@@ -83,8 +83,13 @@ test('appending a maximum-suffix graph twice uses bounded id allocation', async 
   assert.equal(graph.nodes.length, 6, 'both appends completed');
   assert.equal(graph.edges.length, 3);
   const ids = graph.nodes.map(n => n.id);
-  for(const id of ['n9007199254740991', 'n9007199254740990', 'n1', 'n2', 'n3', 'n4']){
-    assert.ok(ids.includes(id), `missing ${id}: ${ids.join(',')}`);
+  assert.equal(new Set(ids).size, ids.length, 'all host and appended nodes have unique ids');
+  for(const id of ['n9007199254740991', 'n9007199254740990']){
+    assert.ok(ids.includes(id), `host id ${id} survives`);
+  }
+  const idSet = new Set(ids);
+  for(const edge of graph.edges){
+    assert.ok(idSet.has(edge.from) && idSet.has(edge.to), 'every appended edge resolves');
   }
   assert.ok(Number.isSafeInteger(graph.nextNode) && graph.nextNode >= 1);
   assert.ok(Number.isSafeInteger(graph.nextEdge) && graph.nextEdge >= 1);

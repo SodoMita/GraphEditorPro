@@ -29,6 +29,10 @@ jobs:
       # typecheck → source contract invariants → clean build → static guarantees → test suites
       - run: npm run check
 
+      # jsdom does not implement the browser's default click/Tab focus traversal.
+      - name: Check dialog focus in headless Chrome
+        run: npm run test:browser
+
       # The committed deliverable must be exactly what the sources produce, so a
       # stale index.html cannot be merged.
       - name: Verify index.html is up to date

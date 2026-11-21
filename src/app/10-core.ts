@@ -22,6 +22,17 @@
   // is hidden *below* this cap; it can never raise the cap itself.
   const MATRIX_MAX_CELLS = 14400;
   const MATRIX_MAX_NODES = Math.floor(Math.sqrt(MATRIX_MAX_CELLS));  // 120
+  // Import ceilings. A pasted or dropped document is untrusted, and these bounds
+  // are what keep a hostile payload from locking the tab up. Truncation is
+  // reported by the importer rather than silently dropping entries.
+  const MAX_IMPORT_NODES = 3000;
+  const MAX_IMPORT_EDGES = 8000;
+  // Set by the most recent sanitizeState: how many nodes/edges its ceilings cut.
+  // Kept beside the caps rather than inside GraphState because it describes the
+  // *import that just happened*, not the document — nothing should persist it or
+  // undo it. sanitizeState is synchronous and its callers read this immediately.
+  let lastImportDropped = {nodes: 0, edges: 0};
+  function takeImportDropped(){ const dropped = lastImportDropped; lastImportDropped = {nodes: 0, edges: 0}; return dropped; }
   // Pair-interaction budget for the force layout (see layoutForce): bounds one
   // click to roughly a second on a mid-range machine instead of O(iter·n²).
   const FORCE_LAYOUT_PAIR_BUDGET = 17000000;
@@ -182,6 +193,131 @@
     syncRenderScaleForCamera(cam);
     return cam;
   }
+  // The box the *document* occupies: the union of every node's resolved shape,
+  // not the viewport.
+  //
+  // These are different things and only the second belongs in a file. The camera
+  // is where the user happens to be looking — zoom out and it grows without
+  // limit, pan and it moves — so writing it as a graph's extent made every
+  // export's bounds depend on the last scroll wheel, and a bounded graph could
+  // export as arbitrarily large. This is the answer a consumer of the file
+  // actually wants: where the content is, and how far it reaches.
+  //
+  // Size comes from the resolved visual so a node that inherits its width from
+  // the type/defaults is measured at the size it is drawn, exactly like every
+  // other exporter. An empty document has no extent; `w`/`h` are then 0 and
+  // `x`/`y` are 0 rather than Infinity, so the value is still JSON-clean.
+  function graphBounds(){
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for(const n of state.nodes){
+      // Every node, including the ones the current camera cannot paint.
+      //
+      // isRenderablePoint is a *painting* concern: it is bounded by renderScale,
+      // which the camera sets, so filtering on it made the exported extent depend
+      // on where the user was looking — zoom in far enough and a far node fell
+      // outside the safe window and vanished from the bounds, zoom back out and it
+      // reappeared. The file has to describe the document, so it uses the
+      // coordinates the document actually holds. They are finite by
+      // sanitizeState, so an unrenderable node still has a real position to
+      // include.
+      if(!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
+      const v = nodeVisual(n);
+      const hw = (v.width != null ? v.width : 50) / 2, hh = (v.height != null ? v.height : 50) / 2;
+      if(n.x - hw < minX) minX = n.x - hw;
+      if(n.y - hh < minY) minY = n.y - hh;
+      if(n.x + hw > maxX) maxX = n.x + hw;
+      if(n.y + hh > maxY) maxY = n.y + hh;
+    }
+    if(!(maxX >= minX) || !(maxY >= minY)) return { x: 0, y: 0, w: 0, h: 0 };
+    return boundedBox(minX, minY, maxX, maxY);
+  }
+  // A box that is safe to write into a file.
+  //
+  // `w` is `maxX - minX`, and two finite coordinates do not guarantee a finite
+  // difference: nodes at -1e308 and 1e308 differ by 2e308, which is Infinity, and an
+  // Infinity origin subtracted from a finite one is -Infinity. JSON writes those as
+  // `null`, so a viewBox that was documented as numbers became unreadable while
+  // every input was finite.
+  //
+  // The fix is confined to what is actually broken. A large-but-real extent is
+  // legitimate — a graph spanning 50,000,000 units is a graph the user made, and
+  // clamping it would repeat the original bug of describing something other than the
+  // document — so finite values are passed through untouched. Only a non-finite one
+  // is replaced: the box collapses to the part of the range that is representable,
+  // which keeps the result numeric and keeps it inside coordinates that exist.
+  function boundedBox(minX, minY, maxX, maxY){
+    const span = (lo, hi) => {
+      const w = hi - lo;
+      // A FINITE span is reported as computed, including zero. Two coordinates can
+      // be distinct in intent and equal in floating point — at x = 1e18 a 50-unit
+      // node's left and right edges are the same double — and that is a zero-width
+      // box, not an overflow. Conflating the two reported 1.7976931348623157e+308.
+      if(Number.isFinite(w)) return w > 0 ? w : 0;
+      // Only a non-finite span means the endpoints are beyond double precision of
+      // each other. Report the largest extent a finite origin can still subtract
+      // from, which is the full representable range.
+      return Number.isFinite(lo) && Number.isFinite(hi) ? Number.MAX_VALUE - Math.abs(lo) : 0;
+    };
+    const origin = (value) => Number.isFinite(value) ? value : 0;
+    return { x: origin(minX), y: origin(minY), w: span(minX, maxX), h: span(minY, maxY) };
+  }
+  // The visual value of every property, resolved from the element, its own type
+  // style, the default type's style, and the plain default — in that order.
+  //
+  // This lives in the core rather than beside the renderer because it is the
+  // definition of "what this element looks like", and more than one consumer needs
+  // it: the renderer draws it, and append has to materialise it onto an imported
+  // element before its own document's defaults disappear. Append resolving this
+  // itself is how it came to copy raw defaults — and then only the *default*
+  // type's style — while the renderer was doing something else.
+  // A ladder step only counts when it is a value the editor can DRAW.
+  //
+  // The ladder used to test truthiness, so an element carrying `color:
+  // 'not-a-color'` supplied its own colour and the renderer received a string that
+  // is not a colour. Sanitisation usually removes those before they reach here,
+  // which hid the problem — but the same resolver is what append calls to learn
+  // what a foreign document drew, and that document's elements are raw. Both
+  // callers must get the same answer to "what does this element look like", and
+  // that answer has to be drawable, so validity is enforced here, once.
+  const drawableColor = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : '';
+  function nodeVisual(n, settings = state.settings){
+    const s = settings || {};
+    const d = s.nodeDefaults || {};
+    const effectiveType = n.type || d.type || '';
+    const ts = getTypeStyle(s.nodeTypeStyles, n.type) || {};
+    const dts = getTypeStyle(s.nodeTypeStyles, d.type) || {};
+    return {
+      shape: n.shape || ts.shape || (d.type ? (dts.shape || d.shape) : d.shape),
+      color: drawableColor(n.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
+      type: effectiveType,
+      width: n.width != null ? n.width : (ts.width != null ? ts.width : (d.type && dts.width != null ? dts.width : d.width)),
+      height: n.height != null ? n.height : (ts.height != null ? ts.height : (d.type && dts.height != null ? dts.height : d.height)),
+      strokeColor: n.strokeColor || ts.strokeColor || (d.type ? (dts.strokeColor || d.strokeColor) : d.strokeColor),
+      strokeSize: n.strokeSize != null ? n.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+      strokeStyle: n.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+      labelColor: n.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+      labelSize: n.labelSize != null ? n.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+      labelPosition: n.labelPosition || ts.labelPosition || (d.type ? (dts.labelPosition || d.labelPosition) : d.labelPosition),
+      labelFont: n.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
+    };
+  }
+  function edgeVisual(e, settings = state.settings){
+    const s = settings || {};
+    const d = s.edgeDefaults || {};
+    const effectiveType = e.type || d.type || '';
+    const ts = getTypeStyle(s.edgeTypeStyles, e.type) || {};
+    const dts = getTypeStyle(s.edgeTypeStyles, d.type) || {};
+    return {
+      color: drawableColor(e.color) || drawableColor(ts.color) || (d.type ? (drawableColor(dts.color) || drawableColor(d.color)) : drawableColor(d.color)),
+      type: effectiveType,
+      strokeSize: e.strokeSize != null ? e.strokeSize : (ts.strokeSize != null ? ts.strokeSize : (d.type && dts.strokeSize != null ? dts.strokeSize : d.strokeSize)),
+      strokeStyle: e.strokeStyle || ts.strokeStyle || (d.type ? (dts.strokeStyle || d.strokeStyle) : d.strokeStyle),
+      arrowSize: e.arrowSize != null ? e.arrowSize : (ts.arrowSize != null ? ts.arrowSize : (d.type && dts.arrowSize != null ? dts.arrowSize : d.arrowSize ?? DEFAULT_ARROW_SIZE)),
+      labelColor: e.labelColor || ts.labelColor || (d.type ? (dts.labelColor || d.labelColor) : d.labelColor),
+      labelSize: e.labelSize != null ? e.labelSize : (ts.labelSize != null ? ts.labelSize : (d.type && dts.labelSize != null ? dts.labelSize : d.labelSize)),
+      labelFont: e.labelFont || ts.labelFont || (d.type ? (dts.labelFont || d.labelFont) : d.labelFont)
+    };
+  }
   // One floating origin for every surface inside the scene. It changes only
   // when the camera centre moves past a 1e6 snap boundary, so ordinary
   // pans/zooms are still a single matrix write; crossing one forces a geometry
@@ -224,12 +360,40 @@
   let dialogResolve: ((value: string | boolean | null) => void) | null = null;
   let dialogReturnFocus: HTMLElement | null = null;
   let dialogCleanup: (() => void) | null = null;
+  function cycleDialogTab(dialog: HTMLElement, ev: KeyboardEvent){
+    if(ev.key !== 'Tab') return;
+    // Read the current stops: preset cards and toast dismiss buttons can be
+    // added or removed while the dialog is open. The dialog itself isn't a stop.
+    const stops = $$('button,input,select,textarea,a[href],[tabindex]', dialog).filter(isKeyboardVisible);
+    const first = stops[0], last = stops[stops.length - 1];
+    const active = document.activeElement;
+    if(stops.includes(active) && active !== (ev.shiftKey ? first : last)) return;
+    ev.preventDefault();
+    (ev.shiftKey ? last : first)?.focus();
+  }
+  // A heading click can park focus on the dialog or body. Listen on the
+  // document until close, and yield to any modal stacked above this one.
+  function trapFallbackDialog(dialog: HTMLElement, isTop: () => boolean, primary: HTMLElement, cancel: () => void): () => void {
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if(!isTop()) return;
+      if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); cancel(); }
+      else cycleDialogTab(dialog, ev);
+    };
+    const onFocusIn = (ev: FocusEvent) => {
+      if(isTop() && !dialog.contains(ev.target as Node)) primary.focus({preventScroll:true});
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocusIn, true);
+    };
+  }
   // While a modal dialog is open it owns the keyboard: the global shortcut
   // handlers (undo/redo/clipboard/delete/mode keys) must stay inert, or a
   // Ctrl+Z landing mid-confirm would revert history under the dialog and the
   // pending confirm would then apply itself to the reverted document.
-  let dialogOpenCount = 0;
-  function uiDialogOpen(): boolean { return dialogOpenCount > 0; }
+  function uiDialogOpen(): boolean { return dialogEl !== null || presetsOpen(); }
   function closeDialog(result: string | boolean | null = null){
     if(!dialogEl) return;
     // Detach the document-level listeners *before* restoring focus: they pull
@@ -237,10 +401,12 @@
     dialogCleanup?.();
     dialogCleanup = null;
     const resolve = dialogResolve;
+    // A native modal must leave the top layer before its element is removed.
+    const active = dialogEl as HTMLDialogElement;
+    if(active.open && typeof active.close === 'function') active.close();
     dialogEl.remove();
     dialogEl = null;
     dialogResolve = null;
-    dialogOpenCount = Math.max(0, dialogOpenCount - 1);
     if(dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
     dialogReturnFocus = null;
     resolve?.(result);
@@ -251,10 +417,17 @@
       dialogResolve = resolve;
       dialogReturnFocus = document.activeElement as HTMLElement;
       const wantsInput = Boolean(options.input);
-      const dialog = document.createElement('div');
+      // Native <dialog> provides inert background, focus containment, top-layer
+      // rendering and platform dismissal. The div path is only a fallback for
+      // environments without showModal() (notably jsdom in our tests).
+      const nativeDialog = typeof (window as any).HTMLDialogElement === 'function'
+        && typeof (window as any).HTMLDialogElement.prototype.showModal === 'function';
+      const dialog = document.createElement(nativeDialog ? 'dialog' : 'div') as HTMLElement;
       dialog.className = 'app-dialog';
-      dialog.setAttribute('role', 'dialog');
-      dialog.setAttribute('aria-modal', 'true');
+      if(!nativeDialog){
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+      }
       dialog.setAttribute('aria-labelledby', 'appDialogTitle');
       if(options.message) dialog.setAttribute('aria-describedby', 'appDialogMessage');
       const inputId = 'appDialogInput';
@@ -270,56 +443,29 @@
         </form>`;
       document.body.appendChild(dialog);
       dialogEl = dialog;
-      dialogOpenCount++;
+      if(nativeDialog) (dialog as HTMLDialogElement).showModal();
       const input = dialog.querySelector<HTMLInputElement>('#' + inputId);
       const form = dialog.querySelector('form');
+      const primary: HTMLElement = input || $('[data-dialog-ok]', dialog);
       const finish = (result: string | boolean | null) => closeDialog(result);
+      const cancel = () => finish(wantsInput ? null : false);
       form?.addEventListener('submit', ev => {
         ev.preventDefault();
         finish(wantsInput ? (input?.value ?? '') : true);
       });
-      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', () => finish(wantsInput ? null : false));
-      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) finish(wantsInput ? null : false); });
-      // The handlers live on the document, not on the dialog element: clicking
-      // the dialog's own title or message moves focus to <body> in Chromium,
-      // and a dialog-scoped keydown never fires from there — Escape and the
-      // Tab trap went dead until focus wandered back inside.
-      const focusables = () => $$('button:not(:disabled),input:not(:disabled)', dialog).filter(isKeyboardVisible);
-      const focusInside = (target: EventTarget | null) => Boolean(target) && dialog.contains(target as Node);
-      const onKeyDown = (ev: KeyboardEvent) => {
-        if(!dialogEl) return;
-        if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); finish(wantsInput ? null : false); return; }
-        if(ev.key !== 'Tab') return;
-        const items = focusables();
-        if(!items.length) { ev.preventDefault(); return; }
-        const first = items[0], last = items[items.length - 1];
-        // Focus parked outside (title click, backdrop, or a stray programmatic
-        // focus) still gets trapped: the next Tab re-enters the dialog.
-        if(!focusInside(document.activeElement)){ ev.preventDefault(); (ev.shiftKey ? last : first).focus(); return; }
-        if(ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
-        else if(!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
-      };
-      // A modal keeps focus: anything that pulls it out is redirected to the
-      // dialog's primary control. The trigger's own focus is restored on close.
-      const onFocusIn = (ev: FocusEvent) => {
-        if(!dialogEl || focusInside(ev.target)) return;
-        const items = focusables();
-        (items[items.length - 1] || items[0])?.focus();
-      };
-      document.addEventListener('keydown', onKeyDown, true);
-      document.addEventListener('focusin', onFocusIn, true);
-      dialogCleanup = () => {
-        document.removeEventListener('keydown', onKeyDown, true);
-        document.removeEventListener('focusin', onFocusIn, true);
-      };
-      setTimeout(() => {
-        if(input){
-          input.focus();
-          input.select();
-        } else {
-          dialog.querySelector<HTMLButtonElement>('[data-dialog-ok]')?.focus();
-        }
-      }, 0);
+      dialog.querySelector('[data-dialog-cancel]')?.addEventListener('click', cancel);
+      dialog.addEventListener('pointerdown', ev => { if(ev.target === dialog) cancel(); });
+      if(nativeDialog){
+        // Esc and the platform's back gesture fire `cancel`; let the shared
+        // close path resolve the promise and restore focus exactly once.
+        dialog.addEventListener('cancel', ev => { ev.preventDefault(); cancel(); });
+      } else {
+        dialogCleanup = trapFallbackDialog(dialog, () => dialogEl === dialog, primary, cancel);
+      }
+      // The dialog is already open. A deferred focus could undo the user's
+      // first Tab (showModal may have focused the input synchronously).
+      primary.focus();
+      input?.select();
     });
   }
   /** Replace window.confirm with an in-app, translated, focus-trapped dialog. */
@@ -622,6 +768,9 @@
   });
   let state: GraphState = defaultState();
   let appHistory: string[] = [], appHistoryIndex = -1;
+  // Edit generation, not a history index: in-progress form/gesture edits and
+  // snapshot restores invalidate async work without creating an undo entry.
+  let documentRev = 0;
   let renderQueued = false, matrixTimer = null, saveTimer = null, edgeOffsetCache = null;
   let drag = null, pan = null, edgeDraft = null, pendingEdgeFrom = null, pendingNodeTap = null, pinch = null, selectDraft = null, spaceDown = false;
   const activePointers = new Map();
@@ -645,10 +794,18 @@
       selected:state.selected, selection:state.selection
     });
   }
+  // Invalidate at the document write, even if history waits for blur (e.g. a
+  // title or colour edit). DOM input and autosave also serve camera drafts and
+  // other UI state, so neither is itself evidence of an edit.
+  function saveLiveDocumentEdit(){
+    documentRev++;
+    saveSoon();
+  }
   function applySnapshot(raw){
     cancelZoomPreview();
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const data = isRecord(parsed) ? parsed : {};
+    documentRev++;
     const sane = sanitizeState(data);
     // Restore selection if it survives sanitization (nodes/edges still exist)
     const savedSel = data.selected, savedSelection = data.selection;
@@ -697,6 +854,7 @@
   function pushHistorySoon(label: string){
     // The newest label wins: only the state at flush time is captured, and the
     // label is documentation of what moved.
+    documentRev++; // the gesture is complete even if its snapshot is deferred
     pendingHistoryLabel = label;
     if(pendingHistoryIdle != null || pendingHistoryTimer != null) return;
     const flush = () => flushPendingHistory();
@@ -726,6 +884,7 @@
     // Never reorder history: a deferred entry from a gesture release belongs
     // before whatever the current caller is about to record.
     flushPendingHistory();
+    documentRev++; // an explicit edit supersedes a running layout even if it is a no-op
     const snap = snapshot();
     if(appHistory[appHistoryIndex] === snap) return;
     appHistory = appHistory.slice(0, appHistoryIndex + 1);
@@ -742,6 +901,7 @@
   }
   function resetHistory(){
     pendingHistoryLabel = null; // a fresh history invalidates any pending entry
+    documentRev++;
     appHistory = [snapshot()];
     appHistoryIndex = 0;
     historyBytes = snapshotBytes(appHistory[0]);
@@ -1475,8 +1635,56 @@
     renderSelectionPanel();
   }
 
-  function sanitizeState(input: unknown): GraphState {
+
+  // `externalNodeIds` lets a caller say "these ids exist even though they are not
+  // in this payload". Append needs it: an incoming edge may end on a node the host
+  // graph already has. They are treated as *known* endpoints only — never as an id
+  // to resolve a colliding node onto, which is what merging the host's nodes into
+  // the payload used to cause.
+  // The settings a document is read with, without reading the document.
+  //
+  // `sanitizeState` merges whatever the payload carries over the defaults, so a
+  // document that carries no `settings` at all is still drawn with them. Append
+  // resolves an incoming element against the defaults its source document was
+  // opened with; passing the payload's raw `settings` object instead (empty when it
+  // omits them) resolved against nothing, and the element arrived at whatever the
+  // HOST's defaults said — a visible restyle on an append that changed nothing.
+  function effectiveDefaults(inputSettings: unknown): AnyRecord {
     const base = defaultState();
+    const input = isRecord(inputSettings) ? inputSettings : {};
+    return {
+      nodeDefaults: { ...base.settings.nodeDefaults, ...(isRecord(input.nodeDefaults) ? input.nodeDefaults : {}) },
+      edgeDefaults: { ...base.settings.edgeDefaults, ...(isRecord(input.edgeDefaults) ? input.edgeDefaults : {}) },
+      nodeTypeStyles: isRecord(input.nodeTypeStyles) ? input.nodeTypeStyles : {},
+      edgeTypeStyles: isRecord(input.edgeTypeStyles) ? input.edgeTypeStyles : {},
+      inheritDefaults: input.inheritDefaults !== false
+    };
+  }
+  // `trace` is how a caller learns which payload entry each survivor came from.
+  //
+  // Positions in the inputs and positions in the output are different questions once
+  // entries can be rejected, and re-deriving the correspondence afterwards by
+  // comparing ids and endpoints is guesswork: an id that was normalised, omitted or
+  // collided compares wrong, and a parallel edge matches its twin. The sanitizer is
+  // the only place that knows, so it records it. Off by default — it allocates.
+  // A plan must be able to see EVERY incoming identity, or it is not a plan.
+  //
+  // The sanitizer is told a ceiling so it can stop reading; that is right for the
+  // authoritative pass, which only needs what fits. For the planning pass it is
+  // wrong: an entry past the ceiling is an id the plan never learned, and an id the
+  // plan never learned is indistinguishable from a host node of the same name — so an
+  // edge naming it re-points at the host's node. Rather than let that happen
+  // silently, `complete` says whether the ceiling was reached at all, and append
+  // refuses a payload it could not read whole instead of guessing about the rest.
+  type SanitizeTrace = { nodes: number[], edges: number[], complete?: boolean };
+  type SanitizeOptions = { externalNodeIds?: Set<string> | null, recordDropped?: boolean, limits?: {nodes: number, edges: number}, trace?: SanitizeTrace | null };
+  function sanitizeState(input: unknown, options: SanitizeOptions = {}): GraphState {
+    const externalNodeIds = options.externalNodeIds ?? null;
+    const recordDropped = options.recordDropped !== false;
+    const limits = options.limits ?? { nodes: MAX_IMPORT_NODES, edges: MAX_IMPORT_EDGES };
+    const trace = options.trace ?? null;
+    const base = defaultState();
+    lastImportDropped = {nodes: 0, edges: 0};
     if(!isRecord(input)) return base;
     const source = input;
     const validShape = (value: unknown) => NODE_SHAPES.includes(String(value)) ? String(value) : '';  // '' = unset, falls back to default at render
@@ -1526,12 +1734,48 @@
     const nodeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'node')));
     const edgeDefaultTypeById = customAttributeTypeMap(customAttributes.filter(a => defAppliesTo(a, 'edge')));
 
-    const usedNodeIds = new Set<string>();
+    // Ids that belong to the HOST start out reserved.
+    //
+    // `uniqueSafeId` only avoids ids already handed out, so an incoming entry
+    // whose normalised id happened to equal a host node's id took that id from
+    // the host's side of the namespace: host `a-2`, incoming `a!` and `a`, and the
+    // edge from `a!` to `a-2` attached to the incoming `a-2` — a node it has no
+    // relation to. Reserving the host's ids first makes the collision visible at
+    // allocation time, so the incoming node is named around them and the edge's
+    // `a-2` can only mean the host's node.
+    const usedNodeIds: UsedIds = new Set<string>();
+    if(externalNodeIds) for(const id of externalNodeIds) usedNodeIds.add(id);
     const nodeReferences = new Map<string, string>();
-    const rawNodes = Array.isArray(source.nodes) ? source.nodes.slice(0, MAX_GRAPH_NODES).filter(isRecord) : [];
+    // Which ids the PAYLOAD itself defines, as allocated — distinct from ids a
+    // host node happens to share. An endpoint naming a payload node maps through
+    // `nodeReferences`; an endpoint naming only an external id is the host's node.
+    const payloadNodeIds = new Set<string>();
+    // How many entries the ceilings cut, so an importer can tell the user instead
+    // of appearing to succeed. Counted against the raw list, before the record
+    // filter, because that filter is a per-entry concern and already silent.
+    const nodeOverflow = Array.isArray(source.nodes) ? Math.max(0, source.nodes.length - limits.nodes) : 0;
+    const edgeOverflow = Array.isArray(source.edges) ? Math.max(0, source.edges.length - limits.edges) : 0;
+    // A dry run answers "what ids would these entries get", not "what did this
+    // import lose" — the caller counts the loss itself.
+    if(recordDropped) lastImportDropped = {nodes: nodeOverflow, edges: edgeOverflow};
+    // Did the ceiling cut anything at all? See SanitizeTrace['complete'].
+    if(trace) trace.complete = nodeOverflow === 0 && edgeOverflow === 0;
+    // Valid entries first, THEN the ceiling. Slicing first let malformed entries spend
+    // the budget: 200,000 invalid records ahead of a real node filled the planning
+    // window, so the real node's id was unknown and an edge naming it resolved to a
+    // host node of the same name. A record that is not an object is not an entry, at
+    // any layer.
+    const validSourceNodes = (Array.isArray(source.nodes) ? source.nodes : []).filter(isRecord);
+    const rawNodes = validSourceNodes.slice(0, limits.nodes);
+    // The source position of each valid entry, so a trace can name the payload entry a
+    // survivor came from rather than its position among the survivors.
+    const rawNodeIndex = (Array.isArray(source.nodes) ? source.nodes : [])
+      .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const nodes: GraphNode[] = rawNodes.map((n, i) => {
       const rawId = String(n.id || ('n' + (i + 1)));
+      if(trace) trace.nodes.push(rawNodeIndex[i] ?? i);
       const id = uniqueSafeId(rawId, 'n', usedNodeIds);
+      payloadNodeIds.add(id);
       // Ambiguous duplicate source IDs deliberately resolve to the first node.
       if(!nodeReferences.has(rawId)) nodeReferences.set(rawId, id);
       const node: GraphNode = {
@@ -1560,11 +1804,30 @@
 
     const nodeIds = new Set(nodes.map(node => node.id));
     const usedEdgeIds = new Set<string>();
-    const rawEdges = Array.isArray(source.edges) ? source.edges.slice(0, MAX_GRAPH_EDGES).filter(isRecord) : [];
+    const validSourceEdges = (Array.isArray(source.edges) ? source.edges : []).filter(isRecord);
+    const rawEdges = validSourceEdges.slice(0, limits.edges);
+    const rawEdgeIndex = (Array.isArray(source.edges) ? source.edges : [])
+      .map((entry, index) => isRecord(entry) ? index : -1).filter(index => index >= 0);
     const edges: GraphEdge[] = [];
     rawEdges.forEach((e, i) => {
-      const from = nodeReferences.get(String(e.from)) || (nodeIds.has(String(e.from)) ? String(e.from) : '');
-      const to = nodeReferences.get(String(e.to)) || (nodeIds.has(String(e.to)) ? String(e.to) : '');
+      const resolveEndpoint = (raw: unknown): string => {
+        // Three questions, asked in this order and no other:
+        //   1. does the payload name this id? then it is the payload's node, whose
+        //      allocated id the mapping holds;
+        //   2. does a node THIS pass allocated carry the id? (an endpoint written in
+        //      the *allocated* namespace rather than the payload's);
+        //   3. otherwise is it the host's? The host is the last resort on purpose:
+        //      an id the payload defines must never fall through to a host node
+        //      that shares the name.
+        const key = String(raw);
+        const mapped = nodeReferences.get(key);
+        if(mapped) return mapped;
+        if(nodeIds.has(key)) return key;
+        if(externalNodeIds?.has(key)) return key;
+        return '';
+      };
+      const from = resolveEndpoint(e.from);
+      const to = resolveEndpoint(e.to);
       if(!from || !to) return; // Drop dangling edges before they reach render/algorithm code.
       const dir = normalizeDirection((e as any).direction ?? (e as any).directed);
       const edge: GraphEdge = {
@@ -1587,6 +1850,7 @@
       if(e.labelFont) edge.labelFont = String(e.labelFont).slice(0, 60);
       const customValues = sanitizeCustomValues(e.custom, edgeDefaultTypeById, allSurvivingTypeById);
       if(customValues) edge.custom = customValues;
+      if(trace) trace.edges.push(rawEdgeIndex[i] ?? i);
       edges.push(edge);
     });
     const inputSettings = isRecord(source.settings) ? source.settings : {};
@@ -1787,22 +2051,18 @@
     settings.nodeCustom = sanitizeCustomValues(inputSettings.nodeCustom, nodeDefaultTypeById) || Object.create(null);
     settings.edgeCustom = sanitizeCustomValues(inputSettings.edgeCustom, edgeDefaultTypeById) || Object.create(null);
     const vb = isRecord(source.viewBox) ? source.viewBox : base.viewBox;
-    const idSuffix = (entity: { id: string }) => {
-      const num = Number((entity.id.match(/\d+$/)||[0])[0]);
-      return Number.isSafeInteger(num) ? num : 0;
+    // Reduce instead of spreading potentially large import plans, while
+    // keeping every counter safe even for maximum-suffix identities.
+    const maxIdSuffix = (items: {id: string}[]) => {
+      let max = 0;
+      for(const item of items){
+        const num = Number((item.id.match(/\d+$/) || [0])[0]);
+        if(Number.isSafeInteger(num)) max = Math.max(max, num);
+      }
+      return max;
     };
-    const maxN = Math.min(Number.MAX_SAFE_INTEGER, Math.max(
-      ...nodes.map(idSuffix),
-      safeGraphCounter(source.nextNode,1)-1,
-      nodes.length
-    ));
-    const maxE = Math.min(Number.MAX_SAFE_INTEGER, Math.max(
-      ...edges.map(idSuffix),
-      safeGraphCounter(source.nextEdge,1)-1,
-      edges.length
-    ));
-    // maxN/maxE may legitimately be MAX_SAFE_INTEGER. Adding one there would
-    // produce an unsafe counter again, so wrap to a fresh safe range.
+    const maxN = Math.max(maxIdSuffix(nodes), safeGraphCounter(source.nextNode, 1) - 1, nodes.length);
+    const maxE = Math.max(maxIdSuffix(edges), safeGraphCounter(source.nextEdge, 1) - 1, edges.length);
     const nextCounter = (max: number) => max >= Number.MAX_SAFE_INTEGER ? 1 : max + 1;
     return {
       ...base,
@@ -1849,12 +2109,27 @@
     // name must survive, including one written in a non-Latin script.
     return id || (prefix + Math.random().toString(36).slice(2,8));
   }
-  function uniqueSafeId(value: unknown, prefix: string, used: Set<string>): string {
+  // `used` carries a resume hint per base name, so a run of duplicates costs one step
+  // each instead of rescanning from 2 every time.
+  //
+  // The suffix scan restarted at 2 for every entry, which is O(k) for the k-th
+  // duplicate and O(n²) for a payload where n entries share a name: 12,000 identically
+  // named nodes blocked the page for 35 seconds. Remembering where the last search
+  // stopped makes the whole run linear. The hint is stored on the set itself so the
+  // function stays a pure "give me an id not in here" and every caller benefits — the
+  // `Set` is only ever used for membership, so the extra property is invisible to it.
+  type UsedIds = Set<string> & { resume?: Map<string, number> };
+  function uniqueSafeId(value: unknown, prefix: string, used: UsedIds): string {
     const base = String(value ?? '').replace(/[\s"`'<>&\\/?#()[\]{}*+.,;:!@$%^=|~\u0000-\u001f\u007f]/g,'').slice(0,40) || prefix;
     let id = base;
-    for(let suffix = 2; used.has(id); suffix++){
-      const ending = `-${suffix}`;
-      id = base.slice(0, Math.max(1, 40 - ending.length)) + ending;
+    if(used.has(id)){
+      const resume = used.resume ?? (used.resume = new Map());
+      let suffix = Math.max(2, resume.get(base) ?? 2);
+      for(;; suffix++){
+        const ending = `-${suffix}`;
+        const candidate = base.slice(0, Math.max(1, 40 - ending.length)) + ending;
+        if(!used.has(candidate)){ id = candidate; resume.set(base, suffix); break; }
+      }
     }
     used.add(id);
     return id;

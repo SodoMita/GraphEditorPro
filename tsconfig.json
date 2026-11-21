@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "none",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "outFile": ".build/app.js",
     "noEmitOnError": true,
     // The codebase is a single concatenated program with a deliberately loose
@@ -29,6 +29,7 @@
   "files": [
     "src/app/types.d.ts",
     "src/core/graph-patch.ts",
+    "src/app/00-compat.ts",
     "src/app/00-i18n.ts",
     "src/app/10-core.ts",
     "src/app/20-rendering.ts",
