@@ -424,3 +424,31 @@ test('invalid server order is rejected atomically and does not consume the chang
   assert.equal(core.applyServerChange(target,good,{appliedIds:ids}).status,'applied');
   assert.deepEqual(target.nodes.map(n => n.id),['b','a']);
 });
+
+test('server custom values accept exactly the values preserved verbatim by the loader', () => {
+  const target = graph();
+  const definitions = [
+    {id:'i',scope:'node',type:'int'}, {id:'l',scope:'node',type:'long'},
+    {id:'f',scope:'node',type:'float'}, {id:'d',scope:'node',type:'double'},
+    {id:'b',scope:'node',type:'boolean'},
+  ];
+  target.customAttributes.push(...definitions);
+  const preserved = {i:'1.0000000000000001', l:'9223372036854775807', f:'', d:'not numeric', b:'maybe'};
+  const ids = new Set();
+  const result = core.applyServerChange(target,{id:'verbatim',revision:1,patch:{nodes:[{id:'a',custom:preserved}]}},{appliedIds:ids});
+  assert.equal(result.status,'applied');
+  for(const [key,value] of Object.entries(preserved)) assert.equal(target.nodes[0].custom[key],value);
+  for(const [key,value] of [['i','1'], ['l','42'], ['f','1.2'], ['d','3'], ['b','yes']]){
+    const before = JSON.stringify(target);
+    const rejected = core.applyServerChange(target,{id:'convert-'+key,revision:2,patch:{nodes:[{id:'a',custom:{[key]:value}}]}},{appliedIds:ids});
+    assert.equal(rejected.status,'invalid', `${key} would change on reload`);
+    assert.equal(JSON.stringify(target),before); assert.equal(ids.has('convert-'+key),false);
+  }
+  for(const [key,type] of [['i','int'],['l','long'],['f','float'],['d','double'],['b','boolean']]){
+    for(const value of ['', '  ', 'maybe']){
+      assert.equal(core.coerceCustomValue(value,type), value);
+      const accepted = core.applyServerChange(target,{id:`${key}-${JSON.stringify(value)}`,revision:3,patch:{nodes:[{id:'a',custom:{[key]:value}}]}},{appliedIds:ids});
+      assert.equal(accepted.status,'applied'); assert.equal(target.nodes[0].custom[key],value);
+    }
+  }
+});

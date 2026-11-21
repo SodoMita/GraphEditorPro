@@ -1166,7 +1166,7 @@
   // a live entity (and cannot overwrite it with a default either).
   function sanitizeClipboardEntity(raw: unknown, kind: 'node' | 'edge'): AnyRecord | null {
     if(!isRecord(raw)) return null;
-    const idText = clipboardText(raw.id, 200, true);
+    const idText = clipboardText(raw.id, Number.MAX_SAFE_INTEGER, false);
     if(!idText) return null;
     // Same identity normalization as the loader: a payload id that would be
     // rewritten on reload must not be used to address a live entity here.
@@ -1372,9 +1372,9 @@
       const nodes = (Array.isArray(src.nodes) ? src.nodes : []).filter(isRecord)
         .map((raw: AnyRecord) => {
           const node = sanitizeClipboardEntity(cloneClipboardNode(raw), 'node');
-          const rawId = clipboardText(raw.id, Number.MAX_SAFE_INTEGER, true);
+          const rawId = clipboardText(raw.id, Number.MAX_SAFE_INTEGER, false);
           if(!node || !rawId) return null;
-          node.id = uniqueSafeId(rawId.slice(0, 200), 'n', usedNodeIds);
+          node.id = uniqueSafeId(rawId, 'n', usedNodeIds);
           if(!nodeReferences.has(rawId)) nodeReferences.set(rawId, node.id);
           return node;
         }).filter((n): n is AnyRecord => n !== null);
@@ -1383,8 +1383,12 @@
           const edge = sanitizeClipboardEntity(cloneClipboardEdge(raw), 'edge');
           if(!edge) return null;
           for(const endpoint of ['from', 'to']){
-            const rawId = clipboardText(raw[endpoint], Number.MAX_SAFE_INTEGER, true);
-            if(rawId && nodeReferences.has(rawId)) edge[endpoint] = nodeReferences.get(rawId);
+            if(!clipboardHas(raw, endpoint)) continue;
+            const rawId = clipboardText(raw[endpoint], Number.MAX_SAFE_INTEGER, false);
+            // Never normalize a foreign endpoint into the host namespace.
+            // A supplied unresolved endpoint stays supplied and fails the
+            // fate check, even for an existing edge in exact-paste mode.
+            edge[endpoint] = rawId == null ? '' : nodeReferences.get(rawId) ?? rawId;
           }
           return edge;
         }).filter((e): e is AnyRecord => e !== null);

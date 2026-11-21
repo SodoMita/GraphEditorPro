@@ -960,7 +960,7 @@
   // always stored as plain string|number|boolean scalars with capped sizes, so a
   // hand-edited file cannot smuggle objects, prototype pollution or huge blobs
   // into the document.
-  const CUSTOM_VALUE_MAX = 1000;
+  const CUSTOM_VALUE_MAX = GraphPatchCore.CUSTOM_VALUE_MAX;
   const CUSTOM_VALUE_KEYS_MAX = CUSTOM_DEFINITIONS_MAX; // one value per definition, never more
   // Rendering every row of a 2000-definition section costs hundreds of
   // milliseconds and several hundred kilobytes of innerHTML parsing, every
@@ -973,84 +973,8 @@
     for(const attribute of definitions) map.set(attribute.id, attribute.type);
     return map;
   }
-  const INTEGER_TEXT_RE = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:[eE]([+-]?\d+))?$/;
-  const ABS_INT_MAX = '2147483647';        // 2^31 - 1
-  const ABS_INT_MIN = '2147483648';        // |−2^31| — one past the positive bound
-  const ABS_LONG_MAX = '9007199254740991'; // 2^53 - 1 (Number.MAX_SAFE_INTEGER)
-  // Magnitude comparison for decimal digit strings without leading zeros.
-  const cmpMagnitude = (a: string, b: string) => a.length !== b.length ? a.length - b.length : (a < b ? -1 : a > b ? 1 : 0);
-  // Exact integer handling for int/long custom values.
-  //
-  // `Number(text)` rounds to the nearest double BEFORE any integer check can
-  // run — '1.0000000000000001' becomes 1 and the stated value is silently
-  // destroyed. The text is therefore validated as a decimal integer literal
-  // first; the exact integer (when there is one) is assembled digit-by-digit
-  // and only then converted — never through a rounding conversion.
-  //   'number'   — exact integer text within the type's range → convert
-  //   'verbatim' — stated, but fraction-bearing or out of range → keep the exact text
-  //   'empty'    — whitespace-only (a stated empty)
-  //   'invalid'  — not a number at all
-  // This is the one policy every int/long path shares: editing, import,
-  // sanitization and type migration all convert exactly this set and preserve
-  // exactly this other set.
-  function parseIntegerText(text: string, type: 'int' | 'long'):
-      | { kind: 'number'; value: number }
-      | { kind: 'verbatim'; text: string }
-      | { kind: 'empty' }
-      | { kind: 'invalid' } {
-    const trimmed = text.trim();
-    if(trimmed === '') return { kind: 'empty' };
-    const m = INTEGER_TEXT_RE.exec(trimmed);
-    if(!m) return { kind: 'invalid' };
-    const [, sign, mantissa, expText] = m;
-    const dot = mantissa.indexOf('.');
-    const intPart = dot === -1 ? mantissa : mantissa.slice(0, dot);
-    const fracPart = dot === -1 ? '' : mantissa.slice(dot + 1);
-    let exp = 0;
-    if(expText){
-      exp = parseInt(expText, 10);
-      // Beyond this the magnitude is unusable in either direction anyway.
-      if(!Number.isFinite(exp) || Math.abs(exp) > 400) return { kind: 'verbatim', text: trimmed };
-    }
-    const digits = intPart + fracPart;
-    // Effective position of the decimal point within `digits`.
-    const point = intPart.length + exp;
-    // Integer iff everything at or after the point is '0'.
-    if([...digits.slice(Math.max(point, 0))].some(d => d !== '0')) return { kind: 'verbatim', text: trimmed };
-    const integerDigits = (point <= digits.length
-      ? digits.slice(0, Math.max(point, 0))
-      : digits + '0'.repeat(point - digits.length)).replace(/^0+(?=\d)/, '') || '0';
-    // int is asymmetric: −2147483648 is valid but 2147483648 is not.
-    const bound = type === 'int' ? (sign === '-' ? ABS_INT_MIN : ABS_INT_MAX) : ABS_LONG_MAX;
-    if(cmpMagnitude(integerDigits, bound) > 0) return { kind: 'verbatim', text: trimmed };
-    // In range: the conversion is exact (|value| <= 2^53 - 1). -0 normalises to 0.
-    const value = Number((sign === '-' ? '-' : '') + integerDigits);
-    return { kind: 'number', value: value === 0 ? 0 : value };
-  }
-  function coerceCustomValue(value: unknown, type: string): CustomAttributeValue {
-    const raw = typeof value === 'number' || typeof value === 'boolean' ? String(value) : String(value ?? '');
-    const text = raw.trim();
-    if(type === 'boolean'){
-      if(value === true || /^(true|1|yes|on)$/i.test(text)) return true;
-      if(value === false || /^(false|0|no|off)$/i.test(text)) return false;
-      return raw.slice(0, CUSTOM_VALUE_MAX); // unparseable: the exact text as written
-    }
-    if(type === 'int' || type === 'long'){
-      // Validate the TEXT as an integer literal before any numeric conversion
-      // — see parseIntegerText: '1.0000000000000001' must not collapse to 1.
-      const parsed = parseIntegerText(text, type);
-      if(parsed.kind === 'empty') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
-      if(parsed.kind === 'number') return parsed.value;
-      return raw.slice(0, CUSTOM_VALUE_MAX); // fractions, out-of-range, non-numeric: the exact text as written
-    }
-    if(type === 'float' || type === 'double'){
-      if(text === '') return raw.slice(0, CUSTOM_VALUE_MAX); // a stated empty is not 0
-      const numeric = Number(text);
-      if(Number.isFinite(numeric)) return numeric;
-      return raw.slice(0, CUSTOM_VALUE_MAX);
-    }
-    return raw.slice(0, CUSTOM_VALUE_MAX);
-  }
+  // Shared with server patch validation so reload and patch semantics agree.
+  const { parseIntegerText, coerceCustomValue } = GraphPatchCore;
   // Migrates stored values of one attribute to a new type. A stated empty is
   // a stated value for every target type and survives migration verbatim
   // (never becomes 0). Unlike coerceCustomValue (the import path, which keeps

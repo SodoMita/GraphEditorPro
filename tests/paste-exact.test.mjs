@@ -1625,3 +1625,54 @@ test('exact clipboard paste preserves the order of existing nodes', async () => 
   assert.deepEqual(graph.nodes.map(n => [n.id,n.order]), [['a',0],['b',1]]);
   assert.deepEqual(errors.map(e => e.message),[]); dom.window.close();
 });
+
+test('clipboard edges preserve whitespace-distinct raw node identities in both paste modes', async () => {
+  for(const exact of [true,false]){
+    const {dom,errors} = createEditorDom(baseGraph), {window} = dom; await settle(window,80);
+    setClipboard(window,{type:'graph-editor-clipboard',nodes:[
+      {id:'k',label:'First',x:0,y:0,order:0}, {id:' k',label:'Second',x:100,y:0,order:1},
+      {id:'k ',label:'Third',x:200,y:0,order:2},
+      {id:' '.repeat(205)+'four',label:'Fourth',x:300,y:0,order:3},
+    ],edges:[{id:'raw-edge',from:' k',to:'k ',label:'raw link'},
+      {id:'raw-edge2',from:' '.repeat(205)+'four',to:'k',label:'long whitespace link'}],externalEdges:[]});
+    hotkey(window,'v',{ctrlKey:true,...(exact?{altKey:true}:{})}); await settle(window,150);
+    const out=exportGraph(window.document), first=out.nodes.find(n=>n.label==='First');
+    const second=out.nodes.find(n=>n.label==='Second'), third=out.nodes.find(n=>n.label==='Third');
+    const edge=out.edges.find(e=>e.label==='raw link');
+    assert.ok(first && second && third && edge); assert.notEqual(first.id,second.id);
+    assert.notEqual(second.id,third.id); assert.equal(edge.from,second.id); assert.equal(edge.to,third.id);
+    const fourth=out.nodes.find(n=>n.label==='Fourth'), secondEdge=out.edges.find(e=>e.label==='long whitespace link');
+    assert.ok(fourth && secondEdge); assert.equal(fourth.id,'four'); assert.equal(secondEdge.from,fourth.id); assert.equal(secondEdge.to,first.id);
+    assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+  }
+});
+
+test('uncarried noncanonical endpoints do not snap to host nodes in either paste mode', async () => {
+  for(const exact of [true,false]){
+    const {dom,errors} = createEditorDom(baseGraph), {window} = dom; await settle(window,80);
+    setClipboard(window,{type:'graph-editor-clipboard',nodes:[{id:'new',label:'New',x:0,y:0}],
+      edges:[{id:'new-edge',from:'new',to:'a!',label:'bad internal'},
+        {id:'e1',from:'new',to:'a!',label:'must not overwrite'}],
+      externalEdges:[{id:'bad-external',from:'new',to:'a!',label:'bad external'}]});
+    hotkey(window,'v',{ctrlKey:true,...(exact?{altKey:true}:{})}); await settle(window,160);
+    const out=exportGraph(window.document);
+    assert.ok(out.nodes.some(n=>n.label==='New'));
+    assert.equal(out.edges.some(e=>e.label==='bad internal'||e.label==='bad external'||e.label==='must not overwrite'),false);
+    const original=out.edges.find(e=>e.id==='e1');
+    assert.equal(original.from,'a'); assert.equal(original.to,'b'); assert.equal(original.label,'link');
+    assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+  }
+});
+
+test('loader-preserved server custom values survive saving and reopening', async () => {
+  const target=structuredClone(baseGraph); target.nextNode=1; target.nextEdge=2;
+  target.customAttributes=[{id:'n',scope:'node',type:'int'},{id:'b',scope:'node',type:'boolean'},
+    {id:'f',scope:'node',type:'double'}];
+  const custom={n:'1.0000000000000001',b:'maybe',f:'  '};
+  const result=GraphPatchCore.applyServerChange(target,{id:'verbatim',revision:1,patch:{nodes:[{id:'a',custom}]}});
+  assert.equal(result.status,'applied');
+  const {dom,errors}=createEditorDom(target); await settle(dom.window,100);
+  const restored=exportGraph(dom.window.document).nodes.find(n=>n.id==='a');
+  assert.deepEqual(restored.custom,custom);
+  assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+});
