@@ -3018,6 +3018,7 @@ const I18N = {
         'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
         'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
         'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
+        'paste_invalid_fields': { en: 'Ignored {n} invalid clipboard field(s)', ru: 'Некорректные поля буфера обмена пропущены: {n}' },
         'nothing_to_import': { en: 'Nothing to import: {label} contains no nodes or edges', ru: 'Нечего импортировать: {label} не содержит узлов или рёбер' },
         'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
         'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
@@ -10302,23 +10303,47 @@ const clipboardText = (value, max, trim = false) => {
     const text = String(value);
     return (trim ? text.trim() : text).slice(0, max);
 };
-const clipboardNumber = (value, min, max, integer = false) => {
+const clipboardFiniteNumber = (value) => {
+    if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim()))
+        return undefined;
     const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+};
+const clipboardNumber = (value, min, max, integer = false) => {
+    const n = clipboardFiniteNumber(value);
+    if (n === undefined)
+        return undefined;
     if (!Number.isFinite(n))
         return undefined;
     return clamp(integer ? Math.trunc(n) : n, min, max);
 };
 const clipboardColor = (value) => {
-    const text = String(value ?? '');
+    if (typeof value !== 'string')
+        return undefined;
+    const text = value;
     // '' is the editor's stored value for "unset", not a bad payload value.
     if (text === '')
         return '';
     return /^#[0-9a-f]{6}$/i.test(text) ? text : undefined;
 };
 const clipboardChoice = (value, allowed) => {
-    const text = String(value ?? '');
+    if (typeof value !== 'string')
+        return undefined;
+    const text = value;
     return text === '' || allowed.includes(text) ? text : undefined;
 };
+const clipboardDirection = (value) => {
+    if (typeof value === 'boolean' || value === 0 || value === 1)
+        return normalizeDirection(value);
+    if (typeof value !== 'string')
+        return undefined;
+    const text = value.trim().toLowerCase();
+    const aliases = ['directed', 'forward', 'true', '1', 'directed (one end)',
+        'mutual', 'both', 'bidirected', 'bidirectional', 'mutual (both ends)',
+        'undirected', 'none', 'false', '0', 'undirected (no ends)'];
+    return aliases.includes(text) ? normalizeDirection(text) : undefined;
+};
+let skippedClipboardFields = 0;
 // Clipboard is foreign input. Only fields the app itself writes are copied,
 // and each supplied field is normalized exactly as load/sanitize would.
 // Invalid values are treated as omitted so an in-place merge cannot corrupt
@@ -10339,11 +10364,10 @@ function sanitizeClipboardEntity(raw, kind) {
         const value = normalize(raw[key]);
         if (value !== undefined)
             out[key] = value;
+        else
+            skippedClipboardFields++;
     };
-    const finiteCoordinate = (value) => {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : undefined;
-    };
+    const finiteCoordinate = clipboardFiniteNumber;
     const endpointId = (value) => {
         const text = clipboardText(value, 200, true);
         return text ? uniqueSafeId(text, 'n', new Set()) : undefined;
@@ -10370,8 +10394,8 @@ function sanitizeClipboardEntity(raw, kind) {
         take('from', endpointId);
         take('to', endpointId);
         take('label', v => clipboardText(v, 80));
-        take('direction', v => normalizeDirection(v));
-        take('directed', v => normalizeDirection(v));
+        take('direction', clipboardDirection);
+        take('directed', clipboardDirection);
         take('type', v => clipboardText(v, 40));
         take('weight', v => clipboardText(v, 50));
         take('color', clipboardColor);
@@ -10533,6 +10557,7 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
     // carried ids that already exist update the entity in place instead of
     // creating a second copy of it.
     const exactPaste = options?.exact === true;
+    skippedClipboardFields = 0;
     // Clone the clipboard entities — the definition resolution below may
     // remap or coerce their custom values, which must never leak back into
     // the clipboard (a second paste has to start from the copied originals).
@@ -10548,6 +10573,9 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
             c.type = sanitizeEntityType(c.type);
         return c;
     };
+    // Keep endpoint provenance separate from normalized IDs: a foreign host
+    // ID can equal the normalized ID allocated to a different carried node.
+    const carriedEndpoints = new WeakMap();
     const cloneClipboardData = (src) => {
         // Keep the raw namespace until all node identities are allocated. Two
         // different raw ids can normalize to the same base; like the loader,
@@ -10570,6 +10598,8 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
             const edge = sanitizeClipboardEntity(cloneClipboardEdge(raw), 'edge');
             if (!edge)
                 return null;
+            const carried = new Set();
+            carriedEndpoints.set(edge, carried);
             for (const endpoint of ['from', 'to']) {
                 if (!clipboardHas(raw, endpoint))
                     continue;
@@ -10577,6 +10607,8 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
                 // Never normalize a foreign endpoint into the host namespace.
                 // A supplied unresolved endpoint stays supplied and fails the
                 // fate check, even for an existing edge in exact-paste mode.
+                if (rawId != null && nodeReferences.has(rawId))
+                    carried.add(endpoint);
                 edge[endpoint] = rawId == null ? '' : nodeReferences.get(rawId) ?? rawId;
             }
             return edge;
@@ -10596,6 +10628,8 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
     else if (clipboardData) {
         data = cloneClipboardData(clipboardData);
     }
+    if (skippedClipboardFields)
+        toast(I18N.t('paste_invalid_fields', { n: skippedClipboardFields }));
     if (!data || (!data.nodes.length && !data.edges.length && !data.externalEdges.length)) {
         toast(I18N.t('clipboard_empty'));
         return false;
@@ -10649,11 +10683,14 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
     // that will actually materialize — a dropped edge must not leave a
     // phantom definition (and its values) behind.
     const carriedNodeIds = new Set(data.nodes.map(n => String(n?.id)));
-    const endpointFate = (id) => {
-        const key = String(id ?? '');
-        if (rejectedNodeIds.has(key))
-            return 'absent';
-        return carriedNodeIds.has(key) ? 'pasted' : originalExistingNodeIds.has(key) ? 'existing' : 'absent';
+    const endpointFate = (edge, endpoint) => {
+        const key = String(edge?.[endpoint] ?? '');
+        if (carriedEndpoints.get(edge)?.has(endpoint)) {
+            if (rejectedNodeIds.has(key))
+                return 'absent';
+            return carriedNodeIds.has(key) ? 'pasted' : 'absent';
+        }
+        return originalExistingNodeIds.has(key) ? 'existing' : 'absent';
     };
     const edgeMaterializes = (orig, isExternal) => {
         if (isExternal && !preserveExternal)
@@ -10661,13 +10698,13 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
         // An omitted endpoint stays as it is on an existing edge; only a
         // supplied endpoint has to name a node that will exist after the paste.
         if (exactPaste && originalExistingEdgeIds.has(String(orig?.id ?? ''))) {
-            if (clipboardHas(orig, 'from') && endpointFate(orig.from) === 'absent')
+            if (clipboardHas(orig, 'from') && endpointFate(orig, 'from') === 'absent')
                 return false;
-            if (clipboardHas(orig, 'to') && endpointFate(orig.to) === 'absent')
+            if (clipboardHas(orig, 'to') && endpointFate(orig, 'to') === 'absent')
                 return false;
             return true;
         }
-        const fs = endpointFate(orig?.from), ts = endpointFate(orig?.to);
+        const fs = endpointFate(orig, 'from'), ts = endpointFate(orig, 'to');
         if (fs === 'pasted' && ts === 'pasted')
             return true;
         if (fs === 'absent' || ts === 'absent')
@@ -11080,8 +11117,9 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
             const from = String(orig.from ?? ''), to = String(orig.to ?? '');
             // A node dropped by the node cap has no clone; an edge pointing at it
             // would be dangling after reload, so it is dropped here as well.
-            if ((carriedNodeIds.has(from) && !idMap.has(from)) ||
-                (carriedNodeIds.has(to) && !idMap.has(to))) {
+            const carried = carriedEndpoints.get(orig);
+            if ((carried?.has('from') && !idMap.has(from)) ||
+                (carried?.has('to') && !idMap.has(to))) {
                 droppedEdges++;
                 continue;
             }
@@ -11089,7 +11127,8 @@ function pasteClipboardInternal(fromSystemClipboard, options) {
                 droppedEdges++;
                 continue;
             }
-            const nf = idMap.get(orig.from), nt = idMap.get(orig.to);
+            const nf = carried?.has('from') ? idMap.get(from) : undefined;
+            const nt = carried?.has('to') ? idMap.get(to) : undefined;
             addEdgeWithNewId(orig, nf ?? orig.from, nt ?? orig.to);
         }
         if (newNodes.length)
@@ -11222,6 +11261,9 @@ async function pasteFromClipboardSource(exact) {
             toast(I18N.t(systemIssue.key, systemIssue.params));
         else if (systemRejectedByStamp)
             toast(I18N.t('clipboard_empty'));
+    }
+    catch (error) {
+        toast(I18N.t('paste_failed', { msg: error?.message || 'Invalid clipboard data' }));
     }
     finally {
         if (pendingSystemRead === pending)

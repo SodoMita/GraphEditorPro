@@ -1676,3 +1676,116 @@ test('loader-preserved server custom values survive saving and reopening', async
   assert.deepEqual(restored.custom,custom);
   assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
 });
+
+test('uncarried host endpoints are not captured by normalized clipboard node IDs', async () => {
+  for(const exact of [true,false]){
+    for(const preserveExternal of [true,false]){
+      const graph = structuredClone(baseGraph);
+      graph.settings = {...graph.settings, copyPreserveExternal:preserveExternal};
+      const {dom,errors} = createEditorDom(graph), {window} = dom; await settle(window,80);
+      setClipboard(window,{type:'graph-editor-clipboard',nodes:[{id:'a!',label:'Incoming',x:100,y:0}],
+        edges:[{id:'collision',from:'a!',to:'a',label:'host link'},
+          {id:'reverse',from:'a',to:'a!',label:'reverse host link'}],externalEdges:[]});
+      hotkey(window,'v',{ctrlKey:true,...(exact?{altKey:true}:{})}); await settle(window,160);
+      const out=exportGraph(window.document), incoming=out.nodes.find(n=>n.label==='Incoming');
+      assert.ok(incoming);
+      for(const [label,from,to] of [['host link',incoming.id,'a'],['reverse host link','a',incoming.id]]){
+        const edge=out.edges.find(e=>e.label===label);
+        if(preserveExternal){ assert.ok(edge); assert.equal(edge.from,from); assert.equal(edge.to,to); }
+        else assert.equal(edge,undefined);
+      }
+      if(!exact) assert.notEqual(incoming.id,'a');
+      assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+    }
+  }
+});
+
+test('an uncarried endpoint cannot resolve to a normalized clipboard node when the host is absent', async () => {
+  for(const exact of [true,false]){
+    const {dom,errors} = createEditorDom(baseGraph), {window} = dom; await settle(window,80);
+    setClipboard(window,{type:'graph-editor-clipboard',nodes:[{id:'z!',label:'Incoming Z',x:100,y:0}],
+      edges:[{id:'missing-host',from:'z!',to:'z',label:'missing host'},
+        {id:'e1',from:'z!',to:'z',label:'bad update'}],
+      externalEdges:[{id:'missing-external',from:'z',to:'z!',label:'missing external'}]});
+    hotkey(window,'v',{ctrlKey:true,...(exact?{altKey:true}:{})}); await settle(window,160);
+    const out=exportGraph(window.document);
+    assert.ok(out.nodes.some(n=>n.label==='Incoming Z'));
+    assert.equal(out.edges.some(e=>['missing host','bad update','missing external'].includes(e.label)),false);
+    assert.equal(out.edges.find(e=>e.id==='e1').label,'link');
+    assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+  }
+});
+
+test('generated clipboard suffixes cannot capture external endpoints', async () => {
+  for(const exact of [true,false]){
+    for(const hostExists of [true,false]){
+      for(const preserveExternal of [true,false]){
+        const graph = structuredClone(baseGraph);
+        graph.settings = {...graph.settings, copyPreserveExternal:preserveExternal};
+        if(hostExists) graph.nodes.push({id:'a-2',label:'Host suffix',x:300,y:0,order:2});
+        const {dom,errors} = createEditorDom(graph), {window} = dom; await settle(window,80);
+        setClipboard(window,{type:'graph-editor-clipboard',nodes:[
+          {id:'a!',label:'First incoming',x:100,y:0,order:0},
+          {id:'a',label:'Second incoming',x:200,y:0,order:1},
+        ],edges:[
+          {id:'to-host',from:'a!',to:'a-2',label:'to host suffix'},
+          {id:'from-host',from:'a-2',to:'a!',label:'from host suffix'},
+          {id:'internal',from:'a!',to:'a',label:'internal collision'},
+        ],externalEdges:[{id:'external',from:'a-2',to:'a',label:'explicit external'}]});
+        hotkey(window,'v',{ctrlKey:true,...(exact?{altKey:true}:{})}); await settle(window,160);
+        const out=exportGraph(window.document);
+        const first=out.nodes.find(n=>n.label==='First incoming');
+        const second=out.nodes.find(n=>n.label==='Second incoming');
+        assert.ok(first && second); assert.notEqual(first.id,second.id);
+        const internal=out.edges.find(e=>e.label==='internal collision');
+        assert.ok(internal); assert.equal(internal.from,first.id); assert.equal(internal.to,second.id);
+        for(const [label,from,to] of [['to host suffix',first.id,'a-2'],
+          ['from host suffix','a-2',first.id],['explicit external','a-2',second.id]]){
+          const edge=out.edges.find(e=>e.label===label);
+          if(hostExists && preserveExternal){ assert.ok(edge); assert.equal(edge.from,from); assert.equal(edge.to,to); }
+          else assert.equal(edge,undefined);
+        }
+        // Exact paste deliberately updates the existing node with the generated ID;
+        // offset paste creates a separate clone and must still point at the host.
+        if(hostExists && !exact) assert.notEqual(second.id,'a-2');
+        assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+      }
+    }
+  }
+});
+
+test('invalid clipboard fields are ignored without aborting valid siblings', async () => {
+  for(const exact of [true,false]){
+    const source=structuredClone(baseGraph);
+    source.edges[0].direction='undirected'; source.edges[0].directed=false;
+    source.nodes[0].height=70; source.nodes[0].strokeSize=4;
+    const {dom,errors}=createEditorDom(source), {window}=dom; await settle(window,80);
+    const hostile={valueOf:null,toString:null};
+    setClipboard(window,{type:'graph-editor-clipboard',nodes:[
+      {id:'a',x:null,y:hostile,width:null,height:hostile,strokeSize:null,shape:hostile,color:hostile},
+      {id:'c',label:'Valid sibling',x:120,y:70,width:80},
+    ],edges:[{id:'e1',direction:'sideways',directed:hostile,arrowSize:hostile,label:'edge survived'}],externalEdges:[]});
+    hotkey(window,'v',{ctrlKey:true,...(exact?{altKey:true}:{})}); await settle(window,180);
+    const out=exportGraph(window.document), a=out.nodes.find(n=>n.id==='a');
+    assert.equal(a.x,-200); assert.equal(a.y,0); assert.equal(a.width,80);
+    assert.equal(a.height,70); assert.equal(a.strokeSize,4);
+    assert.ok(out.nodes.some(n=>n.label==='Valid sibling'));
+    if(exact){ const e=out.edges.find(e=>e.id==='e1'); assert.equal(e.direction,'undirected'); assert.equal(e.directed,false); assert.equal(e.label,'edge survived'); }
+    assert.match(window.document.querySelector('.toast-stack').textContent,/invalid clipboard field/i);
+    assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+  }
+});
+
+test('clipboard accepts supported direction aliases and ignores invalid canonical fields', async () => {
+  for(const [fields,expected] of [[{direction:'sideways'},'undirected'],[{direction:null},'undirected'],
+    [{directed:'sideways'},'undirected'],[{direction:'sideways',directed:true},'directed'],
+    [{direction:'both'},'mutual'],[{directed:false},'undirected']]){
+    const graph=structuredClone(baseGraph); graph.edges[0].direction='undirected'; graph.edges[0].directed=false;
+    const {dom,errors}=createEditorDom(graph), {window}=dom; await settle(window,80);
+    setClipboard(window,{type:'graph-editor-clipboard',nodes:[],edges:[{id:'e1',...fields}],externalEdges:[]});
+    hotkey(window,'v',{ctrlKey:true,altKey:true}); await settle(window,140);
+    const edge=exportGraph(window.document).edges.find(e=>e.id==='e1');
+    assert.equal(edge.direction,expected); assert.equal(edge.directed,expected!=='undirected');
+    assert.deepEqual(errors.map(e=>e.message),[]); dom.window.close();
+  }
+});

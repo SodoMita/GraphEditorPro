@@ -606,6 +606,7 @@ const I18N: I18nService = {
     'csv_ids_renamed': { en: '{n} imported edge id(s) were already taken and got a new id', ru: '{n} id рёбер из файла уже заняты — выданы новые' },
     'clipboard_empty': { en: 'Clipboard is empty', ru: 'Буфер обмена пуст' },
     'paste_failed': { en: 'Paste failed: {msg}', ru: 'Ошибка вставки: {msg}' },
+    'paste_invalid_fields': { en: 'Ignored {n} invalid clipboard field(s)', ru: 'Некорректные поля буфера обмена пропущены: {n}' },
     'nothing_to_import': { en: 'Nothing to import: {label} contains no nodes or edges', ru: 'Нечего импортировать: {label} не содержит узлов или рёбер' },
     'import_failed': { en: 'Import failed: {msg}', ru: 'Ошибка импорта: {msg}' },
     'import_too_large': { en: 'Import is too large (maximum {mb} MB)', ru: 'Файл импорта слишком большой (максимум {mb} МБ)' },
