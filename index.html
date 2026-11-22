@@ -443,11 +443,31 @@
 
     /* ---------- Tables ---------- */
     table{border-collapse:separate; border-spacing:0; width:100%; font-size:0.75rem; color:#dbeafe}
+    #matrixHost table{width:max-content; min-width:100%}
     th,td{border:1px solid rgba(51,65,85,.55); padding:5px 7px; background:rgba(2,6,23,.3); white-space:nowrap; text-align:center}
-    th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
-    .row-head{position:sticky; left:0; z-index:3; text-align:left}
+    /* Column headers: sticky at top only */
+    thead th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
+    /* Row headers: sticky at left only — they must NOT also be sticky-top or
+       they collapse to the top of the scroll container and row labels detach
+       from their rows. */
+    .row-head{position:sticky; left:0; z-index:3; text-align:left; background:rgba(15,23,42,.96)}
+    /* Frozen corner cell: sticky in both directions (like Excel) */
+    .matrix-corner{position:sticky; top:0; left:0; z-index:5; background:rgba(15,23,42,.96)}
     .table-scroll{overflow:auto; max-height:none; border-radius:0; contain:layout; -webkit-overflow-scrolling:touch}
-    table thead th{position:sticky; top:0}
+    /* Lightweight empty matrix cells — no input, just a clickable <td> */
+    td.mc{cursor:pointer; min-width:44px; max-width:120px; padding:5px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+    td.mc.matrix-selected{outline:2px solid var(--accent); outline-offset:-2px}
+    /* Placeholder "0" shown via CSS when the cell has no text content —
+       keeps the actual textContent empty so promoteCellToInput can distinguish
+       "no data" (empty) from "weight is 0" (actual "0" text). */
+    td.mc:empty::before{content:'0'; color:var(--muted,#94a3b8); pointer-events:none}
+    /* Edge-list column widths (moved from inline styles to save ~200 bytes/row) */
+    .el-reorder{white-space:nowrap}
+    .el-reorder .btn{min-height:28px;width:28px;padding:0}
+    .el-id{width:60px}.el-from{width:64px}.el-to{width:64px}
+    .el-weight{width:52px}.el-elabel{width:72px}.el-type{width:64px}
+    .el-color{width:32px;height:26px;padding:2px}
+    .el-stroke{width:68px}
 
     /* ---------- Results / output ---------- */
     .result-box{
@@ -8767,6 +8787,19 @@ function matrixCellEdgeIds(from, to) {
         .map(e => e.id);
 }
 const emptyCell = [];
+// Resolve the from/to node IDs for a matrix cell element.
+// The source (from) lives on the parent <tr data-r>, the target (to) on
+// the cell itself as data-c. Works for both <td class="mc"> and promoted
+// <input class="matrix-input"> cells.
+function cellFromTo(el) {
+    const tr = el.closest('tr[data-r]');
+    const ht = el;
+    return { from: tr?.dataset?.r || '', to: ht.dataset?.c || '' };
+}
+// Read edge IDs from a cell element (data-e attribute).
+function cellEdgeIds(el) {
+    return el.dataset?.e || '';
+}
 function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const { values, edgeIds } = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
@@ -8776,16 +8809,15 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const orderPos = new Map(allSorted.map((n, i) => [n.id, i]));
     // Pre-cache i18n strings used in every cell/header to avoid repeated lookups.
     const iLabel = I18N.t('label'), iMatrixHint = I18N.t('matrix_node_hint');
+    const iCellHint = I18N.t('matrix_cell_hint');
     const iMoveLeft = I18N.t('move_left'), iMoveRight = I18N.t('move_right');
     const iMoveUp = I18N.t('move_up'), iMoveDown = I18N.t('move_down');
     const iOrder = I18N.t('order'), iCorner = I18N.t('matrix_corner');
-    const iColFrom = I18N.t('col_from'), iColTo = I18N.t('col_to');
-    const iCellHint = I18N.t('matrix_cell_hint');
+    const escCellHint = esc(iCellHint);
     const escLabel = esc(iLabel), escMatrixHint = esc(iMatrixHint);
     const escMoveLeft = esc(iMoveLeft), escMoveRight = esc(iMoveRight);
     const escMoveUp = esc(iMoveUp), escMoveDown = esc(iMoveDown);
     const escOrder = esc(iOrder), escCorner = esc(iCorner);
-    const escColFrom = esc(iColFrom), escColTo = esc(iColTo), escCellHint = esc(iCellHint);
     // Pre-escape node ids and labels — used in both header and rows.
     const n = nodes.length;
     const nodeEsc = new Array(n);
@@ -8812,7 +8844,7 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
         const nlbl = nodeLabelEsc[idx];
         hdrParts.push('<th><div class="matrix-header-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveLeft + '" aria-label="' + escMoveLeft + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="' + escOrder + '">' + (nodes[idx].order ?? 0) + '</span><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveRight + '" aria-label="' + escMoveRight + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>');
     }
-    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + escCorner + '</span></th>', hdrParts.join(''), '</tr></thead><tbody>');
+    parts.push('<table><thead><tr><th class="matrix-corner" scope="col"><span class="visually-hidden">' + escCorner + '</span></th>', hdrParts.join(''), '</tr></thead><tbody>');
     for (let i = 0; i < n; i++) {
         const pos = nodePositions[i];
         const upDis = pos === 0 ? ' disabled' : '';
@@ -8820,9 +8852,15 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
         const selCls = nodeSelected[i] ? ' matrix-selected' : '';
         const nid = nodeEsc[i];
         const nlbl = nodeLabelEsc[i];
-        parts.push('<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
-        // Rows are sparse (see adjacencyMatrixData): cells without an edge are
-        // rendered from the same empty shape on demand, in column order.
+        // Row node ID lives on the <tr> as data-r — shared by every cell in
+        // the row instead of repeated in data-cell-from on each <td>. Saves
+        // ~30-50 bytes/cell for the from-ID alone.
+        parts.push('<tr data-r="' + nid + '"><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
+        // ALL cells render as lightweight <td> with text content instead of
+        // <input>. Click-to-edit promotes a <td> to an <input> on demand;
+        // blurring reverts it back to <td>.
+        // Per-cell attributes are short: data-c (column target ID) and
+        // data-e (edge IDs). The row source ID is on the parent <tr>.
         const rowVals = values[i] || emptyCell;
         const rowEdgeIds = edgeIds[i] || emptyCell;
         for (let j = 0; j < n; j++) {
@@ -8831,9 +8869,14 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
             const selected = ids.length > 0 && ids.some(id => edgeSel.has(id));
             const toId = nodeEsc[j];
             const selClass = selected ? ' matrix-selected' : '';
-            const cellVal = cell.length > 0 ? esc(cell.join(';')) : '';
             const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
-            parts.push('<td><input class="matrix-input' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" value="' + cellVal + '" placeholder="0" readonly aria-label="' + escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId + '" title="' + escCellHint + '"></td>');
+            const cellText = cell.length > 0 ? esc(cell.join(';')) : '';
+            // Compact aria-label for screen readers: "from→to" format.
+            // Shorter than "Source from, Target to" but still identifies endpoints.
+            const fromRaw = nodes[i].id;
+            const toRaw = nodes[j].id;
+            const ariaLabel = esc(fromRaw + ' → ' + toRaw);
+            parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
         }
         parts.push('</tr>');
     }
@@ -8911,9 +8954,22 @@ function edgeListHtml() {
             colorVal = edgeVisual(e).color;
         const fromLabel = esc(a?.label || e.from);
         const toLabel = esc(b?.label || e.to);
+        // Per-edge endpoint tooltips that include the actual node ID so users
+        // can identify endpoints when labels differ from IDs or are duplicated.
         const fromHint = esc(I18N.t('edge_from_hint', { node: e.from }));
         const toHint = esc(I18N.t('edge_to_hint', { node: e.to }));
-        parts.push('<tr><td style="white-space:nowrap"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + eid + '" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + eid + '" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i + 1) + '</td><td><input class="matrix-input edge-id" data-edge-id="' + eid + '" value="' + eid + '" aria-label="' + escColId + ': ' + eid + '" title="' + escEdgeIdHint + '" style="width:60px"></td><td><input class="matrix-input edge-from" data-edge-id="' + eid + '" value="' + fromLabel + '" aria-label="' + escColFrom + ': ' + eid + '" title="' + fromHint + '" style="width:64px"></td><td><input class="matrix-input edge-to" data-edge-id="' + eid + '" value="' + toLabel + '" aria-label="' + escColTo + ': ' + eid + '" title="' + toHint + '" style="width:64px"></td><td><input class="matrix-input edge-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" aria-label="' + escWeight + ': ' + eid + '" title="' + escEditWeight + '" style="width:52px"></td><td><input class="matrix-input edge-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" aria-label="' + escLabel + ': ' + eid + '" title="' + escEditLabel + '" style="width:72px"></td><td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" aria-label="' + escType + ': ' + eid + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" title="' + escEditType + '" style="width:64px"></td><td><select class="edge-directed" data-edge-id="' + eid + '" aria-label="' + escDirected + ': ' + eid + '" title="' + escDirected + '"><option value="directed"' + (dir === 'directed' ? ' selected' : '') + '>→</option><option value="mutual"' + (dir === 'mutual' ? ' selected' : '') + '>↔</option><option value="undirected"' + (dir === 'undirected' ? ' selected' : '') + '>—</option></select></td><td><input type="color" class="edge-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" aria-label="' + escColor + ': ' + eid + '" title="' + escEdgeColor + '" style="width:32px;height:26px;padding:2px"></td><td><select class="matrix-input edge-stroke-style" data-edge-id="' + eid + '" aria-label="' + escStrokeStyle + ': ' + eid + '" title="' + escStrokeStyle + '" style="width:68px">' + strokeOpts + '</select></td></tr>');
+        // Compact per-control aria-label: "Field, edgeId" — identifies both
+        // the field type and which edge it belongs to (P2 accessibility fix).
+        const alId = escWeight + ', ' + eid;
+        const alFrom = escColFrom + ', ' + eid;
+        const alTo = escColTo + ', ' + eid;
+        const alLabel = escLabel + ', ' + eid;
+        const alType = escType + ', ' + eid;
+        const alDir = escDirected + ', ' + eid;
+        const alColor = escColor + ', ' + eid;
+        const alStroke = escStrokeStyle + ', ' + eid;
+        const alEdgeId = escColId + ', ' + eid;
+        parts.push('<tr><td class="el-reorder"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + ', ' + eid + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + ', ' + eid + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i + 1) + '</td><td><input class="matrix-input edge-id el-id" data-edge-id="' + eid + '" value="' + eid + '" aria-label="' + alEdgeId + '" title="' + escEdgeIdHint + '"></td><td><input class="matrix-input edge-from el-from" data-edge-id="' + eid + '" value="' + fromLabel + '" aria-label="' + alFrom + '" title="' + fromHint + '"></td><td><input class="matrix-input edge-to el-to" data-edge-id="' + eid + '" value="' + toLabel + '" aria-label="' + alTo + '" title="' + toHint + '"></td><td><input class="matrix-input edge-weight el-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" aria-label="' + alId + '" title="' + escEditWeight + '"></td><td><input class="matrix-input edge-elabel el-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" aria-label="' + alLabel + '" title="' + escEditLabel + '"></td><td><input class="matrix-input edge-type el-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" aria-label="' + alType + '" title="' + escEditType + '"></td><td><select class="edge-directed" data-edge-id="' + eid + '" aria-label="' + alDir + '" title="' + escDirected + '"><option value="directed"' + (dir === 'directed' ? ' selected' : '') + '>→</option><option value="mutual"' + (dir === 'mutual' ? ' selected' : '') + '>↔</option><option value="undirected"' + (dir === 'undirected' ? ' selected' : '') + '>—</option></select></td><td><input type="color" class="edge-color el-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" aria-label="' + alColor + '" title="' + escEdgeColor + '"></td><td><select class="matrix-input edge-stroke-style el-stroke" data-edge-id="' + eid + '" aria-label="' + alStroke + '" title="' + escStrokeStyle + '">' + strokeOpts + '</select></td></tr>');
     }
     parts.push('</tbody></table>');
     if (renderedEdges.length < filteredEdges.length) {
@@ -9215,8 +9271,8 @@ function updateMatrixSelectionDom(changedNodes = null, changedEdges = null) {
         if (!changedEdges.length)
             return;
         const changedEdgeSet = new Set(changedEdges);
-        for (const input of host.querySelectorAll('[data-cell-from][data-cell-to]')) {
-            const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+        for (const input of host.querySelectorAll('[data-c]')) {
+            const ids = (input.dataset.e || '').split(',').filter(Boolean);
             if (!ids.some(id => changedEdgeSet.has(id)))
                 continue;
             let selected = false;
@@ -9233,8 +9289,8 @@ function updateMatrixSelectionDom(changedNodes = null, changedEdges = null) {
     for (const input of host.querySelectorAll('[data-node-label]')) {
         toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
     }
-    for (const input of host.querySelectorAll('[data-cell-from][data-cell-to]')) {
-        const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+    for (const input of host.querySelectorAll('[data-c]')) {
+        const ids = (input.dataset.e || '').split(',').filter(Boolean);
         let selected = false;
         for (let i = 0; i < ids.length; i++) {
             if (es.has(ids[i])) {
@@ -18142,6 +18198,67 @@ function lockAllMatrixInputs() {
 function unlockMatrixInput(el) {
     el.readOnly = false;
 }
+// Promote a lightweight <td class="mc"> to an editable <input>.
+// Returns the new input element so the caller can focus/unlock it.
+// The from-ID lives on the parent <tr data-r> so the input only needs
+// data-c (column target) and data-e (edge IDs).
+function promoteCellToInput(td) {
+    const input = document.createElement('input');
+    input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
+    input.dataset.c = td.dataset.c || '';
+    input.dataset.e = td.dataset.e || '';
+    // The cell textContent is either empty (no edge, or edge with empty
+    // weight — CSS shows a "0" placeholder via :empty::before) or the
+    // actual weight text (including "0" for a real zero-weight edge).
+    // Starting from the actual textContent means typing replaces cleanly
+    // instead of appending to a placeholder.
+    const raw = td.textContent || '';
+    input.value = raw;
+    input.placeholder = '0';
+    input.readOnly = true;
+    // Set accessible name immediately — pointer clicks prevent default focus
+    // so the lazy focusin handler would never fire for mouse users.
+    const from = td.closest('tr[data-r]')?.dataset?.r || '';
+    const to = td.dataset.c || '';
+    if (from && to)
+        input.setAttribute('aria-label', from + ' → ' + to);
+    if (td.getAttribute('aria-label'))
+        input.setAttribute('aria-label', td.getAttribute('aria-label'));
+    input.title = td.title || '';
+    input.style.width = '52px';
+    td.replaceWith(input);
+    return input;
+}
+// Demote an <input> back to a lightweight <td>.
+// Called on blur/focusout — all matrix cells default to <td>; the <input>
+// is only present while a cell is being actively edited.
+// Guarded against inputs that are already detached (e.g. replaced by a
+// queued full re-render).
+function demoteInputToCell(input) {
+    if (!input.parentNode)
+        return; // already detached — re-render handled it
+    const td = document.createElement('td');
+    td.className = 'mc' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
+    td.dataset.c = input.dataset.c || '';
+    td.dataset.e = input.dataset.e || '';
+    td.tabIndex = 0;
+    // Set accessible name and editing tooltip immediately — mouse users
+    // don't trigger focus, so the focusin handler alone is insufficient.
+    const from = (td.closest && input.closest('tr[data-r]'))?.dataset?.r || '';
+    const to = input.dataset.c || '';
+    if (from && to)
+        td.setAttribute('aria-label', from + ' → ' + to);
+    // Copy title from the input if it has one (editing instruction).
+    if (input.title)
+        td.title = input.title;
+    td.setAttribute('role', 'gridcell');
+    // Use the input's value as the display text. Empty values become empty
+    // textContent — CSS :empty::before shows a "0" placeholder visually.
+    // Actual "0" weights stay as "0" textContent so re-editing preserves them.
+    const val = input.value;
+    td.textContent = val;
+    input.replaceWith(td);
+}
 // === Style tab: populate + sync default controls ===
 function populateStyleSelects() {
     const shapeSel = $('#defNodeShape');
@@ -19739,15 +19856,29 @@ function wireUi() {
             }
             return;
         }
-        if (t.matches('[data-cell-from][data-cell-to]')) {
-            const from = t.dataset.cellFrom, to = t.dataset.cellTo;
-            const isEditing = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
+        if (t.matches && t.matches('[data-c]')) {
+            const { from, to } = cellFromTo(t);
+            const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
             lockAllMatrixInputs();
-            if (isEditing) {
+            if (t.tagName === 'INPUT') {
+                // Click on a promoted <input> — unlock for editing
                 unlockMatrixInput(t);
                 matrixEditCell = { type: 'cell', from, to };
             }
+            else if (isSameCell) {
+                // Second click on the same <td> — promote to <input> and unlock
+                // for editing immediately (2-click edit, matching the main branch
+                // behaviour where the input already existed in the DOM).
+                // preventDefault suppresses the compatibility mousedown/mouseup/click
+                // that would otherwise race with the focus call in Chromium.
+                ev.preventDefault();
+                const input = promoteCellToInput(t);
+                input.readOnly = false;
+                input.focus();
+                matrixEditCell = { type: 'cell', from, to };
+            }
             else {
+                // First click on a cell — select only
                 ev.preventDefault();
                 selectMatrixCell(from, to, ev.shiftKey);
                 matrixEditCell = { type: 'cell', from, to };
@@ -19759,15 +19890,44 @@ function wireUi() {
         const t = ev.target;
         if (t.matches('[data-node-label]'))
             setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-        if (t.matches('[data-cell-from][data-cell-to]'))
-            setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
-        // Re-lock after edit commit
+        if (t.matches && t.matches('[data-c]')) {
+            const { from, to } = cellFromTo(t);
+            setMatrixCell(from, to, t.value);
+        }
+        // Re-lock after edit commit — a full matrix re-render (queued by
+        // setMatrixCell) will rebuild all cells as lightweight <td>.
         t.readOnly = true;
         matrixEditCell = null;
     });
+    // On focus, set the editing instruction tooltip. The aria-label is
+    // already present in the HTML (compact "from → to" format) so we only
+    // need to add the title explaining the two-click edit interaction.
+    $('#matrixHost').addEventListener('focusin', ev => {
+        const t = ev.target;
+        if (t.matches && t.matches('td.mc[data-c]') && !t.title) {
+            t.title = I18N.t('matrix_cell_hint');
+            t.setAttribute('role', 'gridcell');
+        }
+    });
     $('#matrixHost').addEventListener('focusout', ev => {
         const t = ev.target;
-        if (t.matches && t.matches('input')) {
+        if (t.matches && t.matches('input.matrix-input[data-c]')) {
+            // Defer demotion to the next microtask. Chromium fires a follow-up
+            // mousedown after pointerdown that can move focus away and then back;
+            // the synchronous demotion would destroy the input before the browser
+            // finishes its focus chain.  If the input has already been detached
+            // by a queued full re-render the demote is a no-op.
+            const inp = t;
+            queueMicrotask(() => {
+                if (!inp.parentNode)
+                    return; // re-render already replaced it
+                // If focus returned to this input (Chromium mousedown cycle), skip.
+                if (inp.ownerDocument.activeElement === inp)
+                    return;
+                demoteInputToCell(inp);
+            });
+        }
+        else if (t.matches && t.matches('input')) {
             t.readOnly = true;
         }
     });

@@ -2490,6 +2490,19 @@
       .map(e => e.id);
   }
   const emptyCell: any[] = [];
+  // Resolve the from/to node IDs for a matrix cell element.
+  // The source (from) lives on the parent <tr data-r>, the target (to) on
+  // the cell itself as data-c. Works for both <td class="mc"> and promoted
+  // <input class="matrix-input"> cells.
+  function cellFromTo(el: Element): {from: string, to: string} {
+    const tr = el.closest('tr[data-r]') as HTMLElement | null;
+    const ht = el as HTMLElement;
+    return { from: tr?.dataset?.r || '', to: ht.dataset?.c || '' };
+  }
+  // Read edge IDs from a cell element (data-e attribute).
+  function cellEdgeIds(el: Element): string {
+    return (el as HTMLElement).dataset?.e || '';
+  }
   function adjacencyMatrixHtml(nodes=matrixNodes()){
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
@@ -2499,16 +2512,15 @@
     const orderPos = new Map(allSorted.map((n,i)=>[n.id,i]));
     // Pre-cache i18n strings used in every cell/header to avoid repeated lookups.
     const iLabel = I18N.t('label'), iMatrixHint = I18N.t('matrix_node_hint');
+    const iCellHint = I18N.t('matrix_cell_hint');
     const iMoveLeft = I18N.t('move_left'), iMoveRight = I18N.t('move_right');
     const iMoveUp = I18N.t('move_up'), iMoveDown = I18N.t('move_down');
     const iOrder = I18N.t('order'), iCorner = I18N.t('matrix_corner');
-    const iColFrom = I18N.t('col_from'), iColTo = I18N.t('col_to');
-    const iCellHint = I18N.t('matrix_cell_hint');
+    const escCellHint = esc(iCellHint);
     const escLabel = esc(iLabel), escMatrixHint = esc(iMatrixHint);
     const escMoveLeft = esc(iMoveLeft), escMoveRight = esc(iMoveRight);
     const escMoveUp = esc(iMoveUp), escMoveDown = esc(iMoveDown);
     const escOrder = esc(iOrder), escCorner = esc(iCorner);
-    const escColFrom = esc(iColFrom), escColTo = esc(iColTo), escCellHint = esc(iCellHint);
     // Pre-escape node ids and labels — used in both header and rows.
     const n = nodes.length;
     const nodeEsc = new Array(n);
@@ -2535,7 +2547,7 @@
       const nlbl = nodeLabelEsc[idx];
       hdrParts.push('<th><div class="matrix-header-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveLeft + '" aria-label="' + escMoveLeft + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="' + escOrder + '">' + (nodes[idx].order??0) + '</span><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveRight + '" aria-label="' + escMoveRight + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>');
     }
-    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + escCorner + '</span></th>', hdrParts.join(''), '</tr></thead><tbody>');
+    parts.push('<table><thead><tr><th class="matrix-corner" scope="col"><span class="visually-hidden">' + escCorner + '</span></th>', hdrParts.join(''), '</tr></thead><tbody>');
     for(let i=0;i<n;i++){
       const pos = nodePositions[i];
       const upDis = pos === 0 ? ' disabled' : '';
@@ -2543,9 +2555,15 @@
       const selCls = nodeSelected[i] ? ' matrix-selected' : '';
       const nid = nodeEsc[i];
       const nlbl = nodeLabelEsc[i];
-      parts.push('<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
-      // Rows are sparse (see adjacencyMatrixData): cells without an edge are
-      // rendered from the same empty shape on demand, in column order.
+      // Row node ID lives on the <tr> as data-r — shared by every cell in
+      // the row instead of repeated in data-cell-from on each <td>. Saves
+      // ~30-50 bytes/cell for the from-ID alone.
+      parts.push('<tr data-r="' + nid + '"><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
+      // ALL cells render as lightweight <td> with text content instead of
+      // <input>. Click-to-edit promotes a <td> to an <input> on demand;
+      // blurring reverts it back to <td>.
+      // Per-cell attributes are short: data-c (column target ID) and
+      // data-e (edge IDs). The row source ID is on the parent <tr>.
       const rowVals = values[i] || emptyCell;
       const rowEdgeIds = edgeIds[i] || emptyCell;
       for(let j=0;j<n;j++){
@@ -2554,9 +2572,14 @@
         const selected = ids.length > 0 && ids.some(id => edgeSel.has(id));
         const toId = nodeEsc[j];
         const selClass = selected ? ' matrix-selected' : '';
-        const cellVal = cell.length > 0 ? esc(cell.join(';')) : '';
         const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
-        parts.push('<td><input class="matrix-input' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" value="' + cellVal + '" placeholder="0" readonly aria-label="' + escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId + '" title="' + escCellHint + '"></td>');
+        const cellText = cell.length > 0 ? esc(cell.join(';')) : '';
+        // Compact aria-label for screen readers: "from→to" format.
+        // Shorter than "Source from, Target to" but still identifies endpoints.
+        const fromRaw = nodes[i].id;
+        const toRaw = nodes[j].id;
+        const ariaLabel = esc(fromRaw + ' → ' + toRaw);
+        parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
       }
       parts.push('</tr>');
     }
@@ -2628,9 +2651,22 @@
       if(!colorVal) colorVal = edgeVisual(e).color;
       const fromLabel = esc(a?.label || e.from);
       const toLabel = esc(b?.label || e.to);
+      // Per-edge endpoint tooltips that include the actual node ID so users
+      // can identify endpoints when labels differ from IDs or are duplicated.
       const fromHint = esc(I18N.t('edge_from_hint', {node: e.from}));
       const toHint = esc(I18N.t('edge_to_hint', {node: e.to}));
-      parts.push('<tr><td style="white-space:nowrap"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + eid + '" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + eid + '" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i+1) + '</td><td><input class="matrix-input edge-id" data-edge-id="' + eid + '" value="' + eid + '" aria-label="' + escColId + ': ' + eid + '" title="' + escEdgeIdHint + '" style="width:60px"></td><td><input class="matrix-input edge-from" data-edge-id="' + eid + '" value="' + fromLabel + '" aria-label="' + escColFrom + ': ' + eid + '" title="' + fromHint + '" style="width:64px"></td><td><input class="matrix-input edge-to" data-edge-id="' + eid + '" value="' + toLabel + '" aria-label="' + escColTo + ': ' + eid + '" title="' + toHint + '" style="width:64px"></td><td><input class="matrix-input edge-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" aria-label="' + escWeight + ': ' + eid + '" title="' + escEditWeight + '" style="width:52px"></td><td><input class="matrix-input edge-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" aria-label="' + escLabel + ': ' + eid + '" title="' + escEditLabel + '" style="width:72px"></td><td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" aria-label="' + escType + ': ' + eid + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" title="' + escEditType + '" style="width:64px"></td><td><select class="edge-directed" data-edge-id="' + eid + '" aria-label="' + escDirected + ': ' + eid + '" title="' + escDirected + '"><option value="directed"' + (dir==='directed'?' selected':'') + '>→</option><option value="mutual"' + (dir==='mutual'?' selected':'') + '>↔</option><option value="undirected"' + (dir==='undirected'?' selected':'') + '>—</option></select></td><td><input type="color" class="edge-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" aria-label="' + escColor + ': ' + eid + '" title="' + escEdgeColor + '" style="width:32px;height:26px;padding:2px"></td><td><select class="matrix-input edge-stroke-style" data-edge-id="' + eid + '" aria-label="' + escStrokeStyle + ': ' + eid + '" title="' + escStrokeStyle + '" style="width:68px">' + strokeOpts + '</select></td></tr>');
+      // Compact per-control aria-label: "Field, edgeId" — identifies both
+      // the field type and which edge it belongs to (P2 accessibility fix).
+      const alId = escWeight + ', ' + eid;
+      const alFrom = escColFrom + ', ' + eid;
+      const alTo = escColTo + ', ' + eid;
+      const alLabel = escLabel + ', ' + eid;
+      const alType = escType + ', ' + eid;
+      const alDir = escDirected + ', ' + eid;
+      const alColor = escColor + ', ' + eid;
+      const alStroke = escStrokeStyle + ', ' + eid;
+      const alEdgeId = escColId + ', ' + eid;
+      parts.push('<tr><td class="el-reorder"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + ', ' + eid + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + ', ' + eid + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i+1) + '</td><td><input class="matrix-input edge-id el-id" data-edge-id="' + eid + '" value="' + eid + '" aria-label="' + alEdgeId + '" title="' + escEdgeIdHint + '"></td><td><input class="matrix-input edge-from el-from" data-edge-id="' + eid + '" value="' + fromLabel + '" aria-label="' + alFrom + '" title="' + fromHint + '"></td><td><input class="matrix-input edge-to el-to" data-edge-id="' + eid + '" value="' + toLabel + '" aria-label="' + alTo + '" title="' + toHint + '"></td><td><input class="matrix-input edge-weight el-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" aria-label="' + alId + '" title="' + escEditWeight + '"></td><td><input class="matrix-input edge-elabel el-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" aria-label="' + alLabel + '" title="' + escEditLabel + '"></td><td><input class="matrix-input edge-type el-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" aria-label="' + alType + '" title="' + escEditType + '"></td><td><select class="edge-directed" data-edge-id="' + eid + '" aria-label="' + alDir + '" title="' + escDirected + '"><option value="directed"' + (dir==='directed'?' selected':'') + '>→</option><option value="mutual"' + (dir==='mutual'?' selected':'') + '>↔</option><option value="undirected"' + (dir==='undirected'?' selected':'') + '>—</option></select></td><td><input type="color" class="edge-color el-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" aria-label="' + alColor + '" title="' + escEdgeColor + '"></td><td><select class="matrix-input edge-stroke-style el-stroke" data-edge-id="' + eid + '" aria-label="' + alStroke + '" title="' + escStrokeStyle + '">' + strokeOpts + '</select></td></tr>');
     }
     parts.push('</tbody></table>');
     if(renderedEdges.length < filteredEdges.length){

@@ -256,6 +256,62 @@
   function unlockMatrixInput(el){
     el.readOnly = false;
   }
+  // Promote a lightweight <td class="mc"> to an editable <input>.
+  // Returns the new input element so the caller can focus/unlock it.
+  // The from-ID lives on the parent <tr data-r> so the input only needs
+  // data-c (column target) and data-e (edge IDs).
+  function promoteCellToInput(td: HTMLElement): HTMLInputElement {
+    const input = document.createElement('input');
+    input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
+    input.dataset.c = td.dataset.c || '';
+    input.dataset.e = td.dataset.e || '';
+    // The cell textContent is either empty (no edge, or edge with empty
+    // weight — CSS shows a "0" placeholder via :empty::before) or the
+    // actual weight text (including "0" for a real zero-weight edge).
+    // Starting from the actual textContent means typing replaces cleanly
+    // instead of appending to a placeholder.
+    const raw = td.textContent || '';
+    input.value = raw;
+    input.placeholder = '0';
+    input.readOnly = true;
+    // Set accessible name immediately — pointer clicks prevent default focus
+    // so the lazy focusin handler would never fire for mouse users.
+    const from = (td.closest('tr[data-r]') as HTMLElement | null)?.dataset?.r || '';
+    const to = td.dataset.c || '';
+    if(from && to) input.setAttribute('aria-label', from + ' → ' + to);
+    if(td.getAttribute('aria-label')) input.setAttribute('aria-label', td.getAttribute('aria-label')!);
+    input.title = td.title || '';
+    input.style.width = '52px';
+    td.replaceWith(input);
+    return input;
+  }
+  // Demote an <input> back to a lightweight <td>.
+  // Called on blur/focusout — all matrix cells default to <td>; the <input>
+  // is only present while a cell is being actively edited.
+  // Guarded against inputs that are already detached (e.g. replaced by a
+  // queued full re-render).
+  function demoteInputToCell(input: HTMLInputElement){
+    if(!input.parentNode) return; // already detached — re-render handled it
+    const td = document.createElement('td');
+    td.className = 'mc' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
+    td.dataset.c = input.dataset.c || '';
+    td.dataset.e = input.dataset.e || '';
+    td.tabIndex = 0;
+    // Set accessible name and editing tooltip immediately — mouse users
+    // don't trigger focus, so the focusin handler alone is insufficient.
+    const from = (td.closest && (input.closest('tr[data-r]') as HTMLElement | null))?.dataset?.r || '';
+    const to = input.dataset.c || '';
+    if(from && to) td.setAttribute('aria-label', from + ' → ' + to);
+    // Copy title from the input if it has one (editing instruction).
+    if(input.title) td.title = input.title;
+    td.setAttribute('role', 'gridcell');
+    // Use the input's value as the display text. Empty values become empty
+    // textContent — CSS :empty::before shows a "0" placeholder visually.
+    // Actual "0" weights stay as "0" textContent so re-editing preserves them.
+    const val = input.value;
+    td.textContent = val;
+    input.replaceWith(td);
+  }
 
   // === Style tab: populate + sync default controls ===
   function populateStyleSelects(){

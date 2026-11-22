@@ -1302,11 +1302,15 @@ test('matrix-created edges clone custom values (parallel edge and pending defaul
   await nextFrame(window); await settle(window, 90);
 
   // Cell (a→b) holds the existing edge; typing "1;2" adds a parallel edge.
-  const cell = document.querySelector('[data-cell-from="a"][data-cell-to="b"]');
+  // All cells render as lightweight <td>; the second pointerdown promotes
+  // the cell to an <input>, so re-query before calling changeValue.
+  const cell = document.querySelector('tr[data-r="a"] td[data-c="b"]');
   assert.ok(cell);
   dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
   dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
-  changeValue(window, cell, '1;2');
+  const cellInput = document.querySelector('tr[data-r="a"] [data-c="b"]');
+  assert.ok(cellInput, 'cell was promoted to an input');
+  changeValue(window, cellInput, '1;2');
   await nextFrame(window); await settle(window, 40);
 
   let exported = exportGraph(document);
@@ -1319,11 +1323,15 @@ test('matrix-created edges clone custom values (parallel edge and pending defaul
 
   // Cell (b→a) is empty; typing a weight creates a brand-new edge with the
   // pending edge defaults applied (as the canvas path does).
-  const cellBA = document.querySelector('[data-cell-from="b"][data-cell-to="a"]');
+  const cellBA = document.querySelector('tr[data-r="b"] td[data-c="a"]');
   assert.ok(cellBA);
   dispatchPointer(window, cellBA, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
   dispatchPointer(window, cellBA, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
-  changeValue(window, cellBA, '5');
+  // The second pointerdown promotes the lightweight <td> to an <input>;
+  // re-query to get the live element in the DOM.
+  const cellBAInput = document.querySelector('tr[data-r="b"] [data-c="a"]');
+  assert.ok(cellBAInput, 'the empty cell was promoted to an input');
+  changeValue(window, cellBAInput, '5');
   await nextFrame(window); await settle(window, 40);
 
   exported = exportGraph(document);

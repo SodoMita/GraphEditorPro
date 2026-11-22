@@ -507,14 +507,27 @@
         }
         return;
       }
-      if(t.matches('[data-cell-from][data-cell-to]')){
-        const from = t.dataset.cellFrom, to = t.dataset.cellTo;
-        const isEditing = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
+      if(t.matches && t.matches('[data-c]')){
+        const {from, to} = cellFromTo(t as Element);
+        const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
         lockAllMatrixInputs();
-        if(isEditing){
+        if(t.tagName === 'INPUT'){
+          // Click on a promoted <input> — unlock for editing
           unlockMatrixInput(t);
           matrixEditCell = {type:'cell', from, to};
+        } else if(isSameCell){
+          // Second click on the same <td> — promote to <input> and unlock
+          // for editing immediately (2-click edit, matching the main branch
+          // behaviour where the input already existed in the DOM).
+          // preventDefault suppresses the compatibility mousedown/mouseup/click
+          // that would otherwise race with the focus call in Chromium.
+          ev.preventDefault();
+          const input = promoteCellToInput(t as HTMLElement);
+          input.readOnly = false;
+          input.focus();
+          matrixEditCell = {type:'cell', from, to};
         } else {
+          // First click on a cell — select only
           ev.preventDefault();
           selectMatrixCell(from, to, ev.shiftKey);
           matrixEditCell = {type:'cell', from, to};
@@ -525,14 +538,43 @@
     $('#matrixHost').addEventListener('change', ev => {
       const t = ev.target;
       if(t.matches('[data-node-label]')) setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-      if(t.matches('[data-cell-from][data-cell-to]')) setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
-      // Re-lock after edit commit
+      if(t.matches && t.matches('[data-c]')){
+        const {from, to} = cellFromTo(t as Element);
+        setMatrixCell(from, to, t.value);
+      }
+      // Re-lock after edit commit — a full matrix re-render (queued by
+      // setMatrixCell) will rebuild all cells as lightweight <td>.
       t.readOnly = true;
       matrixEditCell = null;
     });
+    // On focus, set the editing instruction tooltip. The aria-label is
+    // already present in the HTML (compact "from → to" format) so we only
+    // need to add the title explaining the two-click edit interaction.
+    $('#matrixHost').addEventListener('focusin', ev => {
+      const t = ev.target;
+      if(t.matches && t.matches('td.mc[data-c]') && !t.title){
+        t.title = I18N.t('matrix_cell_hint');
+        t.setAttribute('role', 'gridcell');
+      }
+    });
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
-      if(t.matches && t.matches('input')){ t.readOnly = true; }
+      if(t.matches && t.matches('input.matrix-input[data-c]')){
+        // Defer demotion to the next microtask. Chromium fires a follow-up
+        // mousedown after pointerdown that can move focus away and then back;
+        // the synchronous demotion would destroy the input before the browser
+        // finishes its focus chain.  If the input has already been detached
+        // by a queued full re-render the demote is a no-op.
+        const inp = t as HTMLInputElement;
+        queueMicrotask(() => {
+          if(!inp.parentNode) return; // re-render already replaced it
+          // If focus returned to this input (Chromium mousedown cycle), skip.
+          if(inp.ownerDocument.activeElement === inp) return;
+          demoteInputToCell(inp);
+        });
+      } else if(t.matches && t.matches('input')){
+        t.readOnly = true;
+      }
     });
     // Matrix per-node order controls (left/right for columns, up/down for rows)
     $('#matrixHost').addEventListener('click', ev => {
