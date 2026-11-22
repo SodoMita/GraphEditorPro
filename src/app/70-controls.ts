@@ -265,12 +265,19 @@
     input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     input.dataset.c = td.dataset.c || '';
     input.dataset.e = td.dataset.e || '';
-    // Use the text content as the initial value. "0" is a valid weight so
-    // keep it — only an actually empty cell gets an empty input value.
+    // If the cell has no edges (data-e empty), start with an empty input so
+    // typing replaces rather than appends to the displayed "0" placeholder.
+    // If the cell has real edge data, use its actual weight text as the value.
+    const hasEdges = !!(td.dataset.e);
     const raw = td.textContent || '';
-    input.value = raw;
+    input.value = hasEdges ? raw : '';
     input.placeholder = '0';
     input.readOnly = true;
+    // Set accessible name immediately — pointer clicks prevent default focus
+    // so the lazy focusin handler would never fire for mouse users.
+    const from = (td.closest('tr[data-r]') as HTMLElement | null)?.dataset?.r || '';
+    const to = td.dataset.c || '';
+    if(from && to) input.setAttribute('aria-label', from + ' → ' + to);
     if(td.getAttribute('aria-label')) input.setAttribute('aria-label', td.getAttribute('aria-label')!);
     input.title = td.title || '';
     input.style.width = '52px';

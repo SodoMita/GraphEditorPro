@@ -2572,7 +2572,12 @@
         const selClass = selected ? ' matrix-selected' : '';
         const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
         const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
-        parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0">' + cellText + '</td>');
+        // Compact aria-label for screen readers: "from→to" format.
+        // Shorter than "Source from, Target to" but still identifies endpoints.
+        const fromRaw = nodes[i].id;
+        const toRaw = nodes[j].id;
+        const ariaLabel = esc(fromRaw + ' → ' + toRaw);
+        parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0" aria-label="' + ariaLabel + '">' + cellText + '</td>');
       }
       parts.push('</tr>');
     }
@@ -2616,8 +2621,9 @@
     const iEdgeColor = I18N.t('edge_color'), iNonePlaceholder = I18N.t('none_placeholder');
     const iStrokeStyle = I18N.t('stroke_style');
     const escMoveUp = esc(iMoveUp), escMoveDown = esc(iMoveDown);
-    const escColFrom = esc(iColFrom), escColTo = esc(iColTo);
-    const escDirected = esc(iDirected);
+    const escColId = esc(iColId), escColFrom = esc(iColFrom), escColTo = esc(iColTo);
+    const escWeight = esc(iWeight), escLabel = esc(iLabel), escType = esc(iType);
+    const escDirected = esc(iDirected), escColor = esc(iColor);
     const escEdgeIdHint = esc(iEdgeIdHint), escEditWeight = esc(iEditWeight);
     const escEditLabel = esc(iEditLabel), escEditType = esc(iEditType);
     const escEdgeColor = esc(iEdgeColor), escNonePlaceholder = esc(iNonePlaceholder);
@@ -2643,7 +2649,18 @@
       if(!colorVal) colorVal = edgeVisual(e).color;
       const fromLabel = esc(a?.label || e.from);
       const toLabel = esc(b?.label || e.to);
-      parts.push('<tr><td class="el-reorder"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i+1) + '</td><td><input class="matrix-input edge-id el-id" data-edge-id="' + eid + '" value="' + eid + '" title="' + escEdgeIdHint + '"></td><td><input class="matrix-input edge-from el-from" data-edge-id="' + eid + '" value="' + fromLabel + '" title="' + escColFrom + '"></td><td><input class="matrix-input edge-to el-to" data-edge-id="' + eid + '" value="' + toLabel + '" title="' + escColTo + '"></td><td><input class="matrix-input edge-weight el-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" title="' + escEditWeight + '"></td><td><input class="matrix-input edge-elabel el-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" title="' + escEditLabel + '"></td><td><input class="matrix-input edge-type el-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" title="' + escEditType + '"></td><td><select class="edge-directed" data-edge-id="' + eid + '" title="' + escDirected + '"><option value="directed"' + (dir==='directed'?' selected':'') + '>→</option><option value="mutual"' + (dir==='mutual'?' selected':'') + '>↔</option><option value="undirected"' + (dir==='undirected'?' selected':'') + '>—</option></select></td><td><input type="color" class="edge-color el-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" title="' + escEdgeColor + '"></td><td><select class="matrix-input edge-stroke-style el-stroke" data-edge-id="' + eid + '" title="' + escStrokeStyle + '">' + strokeOpts + '</select></td></tr>');
+      // Compact per-control aria-label: "Field, edgeId" — identifies both
+      // the field type and which edge it belongs to (P2 accessibility fix).
+      const alId = escWeight + ', ' + eid;
+      const alFrom = escColFrom + ', ' + eid;
+      const alTo = escColTo + ', ' + eid;
+      const alLabel = escLabel + ', ' + eid;
+      const alType = escType + ', ' + eid;
+      const alDir = escDirected + ', ' + eid;
+      const alColor = escColor + ', ' + eid;
+      const alStroke = escStrokeStyle + ', ' + eid;
+      const alEdgeId = escColId + ', ' + eid;
+      parts.push('<tr><td class="el-reorder"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + ', ' + eid + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + ', ' + eid + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i+1) + '</td><td><input class="matrix-input edge-id el-id" data-edge-id="' + eid + '" value="' + eid + '" aria-label="' + alEdgeId + '" title="' + escEdgeIdHint + '"></td><td><input class="matrix-input edge-from el-from" data-edge-id="' + eid + '" value="' + fromLabel + '" aria-label="' + alFrom + '" title="' + escColFrom + '"></td><td><input class="matrix-input edge-to el-to" data-edge-id="' + eid + '" value="' + toLabel + '" aria-label="' + alTo + '" title="' + escColTo + '"></td><td><input class="matrix-input edge-weight el-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" aria-label="' + alId + '" title="' + escEditWeight + '"></td><td><input class="matrix-input edge-elabel el-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" aria-label="' + alLabel + '" title="' + escEditLabel + '"></td><td><input class="matrix-input edge-type el-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" aria-label="' + alType + '" title="' + escEditType + '"></td><td><select class="edge-directed" data-edge-id="' + eid + '" aria-label="' + alDir + '" title="' + escDirected + '"><option value="directed"' + (dir==='directed'?' selected':'') + '>→</option><option value="mutual"' + (dir==='mutual'?' selected':'') + '>↔</option><option value="undirected"' + (dir==='undirected'?' selected':'') + '>—</option></select></td><td><input type="color" class="edge-color el-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" aria-label="' + alColor + '" title="' + escEdgeColor + '"></td><td><select class="matrix-input edge-stroke-style el-stroke" data-edge-id="' + eid + '" aria-label="' + alStroke + '" title="' + escStrokeStyle + '">' + strokeOpts + '</select></td></tr>');
     }
     parts.push('</tbody></table>');
     if(renderedEdges.length < filteredEdges.length){
