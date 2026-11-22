@@ -265,12 +265,13 @@
     input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     input.dataset.c = td.dataset.c || '';
     input.dataset.e = td.dataset.e || '';
-    // If the cell has no edges (data-e empty), start with an empty input so
-    // typing replaces rather than appends to the displayed "0" placeholder.
-    // If the cell has real edge data, use its actual weight text as the value.
-    const hasEdges = !!(td.dataset.e);
+    // The cell textContent is either empty (no edge, or edge with empty
+    // weight — CSS shows a "0" placeholder via :empty::before) or the
+    // actual weight text (including "0" for a real zero-weight edge).
+    // Starting from the actual textContent means typing replaces cleanly
+    // instead of appending to a placeholder.
     const raw = td.textContent || '';
-    input.value = hasEdges ? raw : '';
+    input.value = raw;
     input.placeholder = '0';
     input.readOnly = true;
     // Set accessible name immediately — pointer clicks prevent default focus
@@ -296,11 +297,19 @@
     td.dataset.c = input.dataset.c || '';
     td.dataset.e = input.dataset.e || '';
     td.tabIndex = 0;
-    // aria-label, title, role are set lazily on focus (see 80-ui.ts focusin)
-    // Use the input's value as the display text. Keep "0" as-is — it's a
-    // valid weight for an existing edge.
+    // Set accessible name and editing tooltip immediately — mouse users
+    // don't trigger focus, so the focusin handler alone is insufficient.
+    const from = (td.closest && (input.closest('tr[data-r]') as HTMLElement | null))?.dataset?.r || '';
+    const to = input.dataset.c || '';
+    if(from && to) td.setAttribute('aria-label', from + ' → ' + to);
+    // Copy title from the input if it has one (editing instruction).
+    if(input.title) td.title = input.title;
+    td.setAttribute('role', 'gridcell');
+    // Use the input's value as the display text. Empty values become empty
+    // textContent — CSS :empty::before shows a "0" placeholder visually.
+    // Actual "0" weights stay as "0" textContent so re-editing preserves them.
     const val = input.value;
-    td.textContent = val !== '' ? val : '0';
+    td.textContent = val;
     input.replaceWith(td);
   }
 

@@ -2512,9 +2512,11 @@
     const orderPos = new Map(allSorted.map((n,i)=>[n.id,i]));
     // Pre-cache i18n strings used in every cell/header to avoid repeated lookups.
     const iLabel = I18N.t('label'), iMatrixHint = I18N.t('matrix_node_hint');
+    const iCellHint = I18N.t('matrix_cell_hint');
     const iMoveLeft = I18N.t('move_left'), iMoveRight = I18N.t('move_right');
     const iMoveUp = I18N.t('move_up'), iMoveDown = I18N.t('move_down');
     const iOrder = I18N.t('order'), iCorner = I18N.t('matrix_corner');
+    const escCellHint = esc(iCellHint);
     const escLabel = esc(iLabel), escMatrixHint = esc(iMatrixHint);
     const escMoveLeft = esc(iMoveLeft), escMoveRight = esc(iMoveRight);
     const escMoveUp = esc(iMoveUp), escMoveDown = esc(iMoveDown);
@@ -2571,13 +2573,13 @@
         const toId = nodeEsc[j];
         const selClass = selected ? ' matrix-selected' : '';
         const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
-        const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
+        const cellText = cell.length > 0 ? esc(cell.join(';')) : '';
         // Compact aria-label for screen readers: "from→to" format.
         // Shorter than "Source from, Target to" but still identifies endpoints.
         const fromRaw = nodes[i].id;
         const toRaw = nodes[j].id;
         const ariaLabel = esc(fromRaw + ' → ' + toRaw);
-        parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0" aria-label="' + ariaLabel + '">' + cellText + '</td>');
+        parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
       }
       parts.push('</tr>');
     }

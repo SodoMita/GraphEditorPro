@@ -457,6 +457,10 @@
     /* Lightweight empty matrix cells — no input, just a clickable <td> */
     td.mc{cursor:pointer; min-width:44px; max-width:120px; padding:5px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
     td.mc.matrix-selected{outline:2px solid var(--accent); outline-offset:-2px}
+    /* Placeholder "0" shown via CSS when the cell has no text content —
+       keeps the actual textContent empty so promoteCellToInput can distinguish
+       "no data" (empty) from "weight is 0" (actual "0" text). */
+    td.mc:empty::before{content:'0'; color:var(--muted,#94a3b8); pointer-events:none}
     /* Edge-list column widths (moved from inline styles to save ~200 bytes/row) */
     .el-reorder{white-space:nowrap}
     .el-reorder .btn{min-height:28px;width:28px;padding:0}
@@ -8805,9 +8809,11 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const orderPos = new Map(allSorted.map((n, i) => [n.id, i]));
     // Pre-cache i18n strings used in every cell/header to avoid repeated lookups.
     const iLabel = I18N.t('label'), iMatrixHint = I18N.t('matrix_node_hint');
+    const iCellHint = I18N.t('matrix_cell_hint');
     const iMoveLeft = I18N.t('move_left'), iMoveRight = I18N.t('move_right');
     const iMoveUp = I18N.t('move_up'), iMoveDown = I18N.t('move_down');
     const iOrder = I18N.t('order'), iCorner = I18N.t('matrix_corner');
+    const escCellHint = esc(iCellHint);
     const escLabel = esc(iLabel), escMatrixHint = esc(iMatrixHint);
     const escMoveLeft = esc(iMoveLeft), escMoveRight = esc(iMoveRight);
     const escMoveUp = esc(iMoveUp), escMoveDown = esc(iMoveDown);
@@ -8864,13 +8870,13 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
             const toId = nodeEsc[j];
             const selClass = selected ? ' matrix-selected' : '';
             const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
-            const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
+            const cellText = cell.length > 0 ? esc(cell.join(';')) : '';
             // Compact aria-label for screen readers: "from→to" format.
             // Shorter than "Source from, Target to" but still identifies endpoints.
             const fromRaw = nodes[i].id;
             const toRaw = nodes[j].id;
             const ariaLabel = esc(fromRaw + ' → ' + toRaw);
-            parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0" aria-label="' + ariaLabel + '">' + cellText + '</td>');
+            parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
         }
         parts.push('</tr>');
     }
@@ -18201,12 +18207,13 @@ function promoteCellToInput(td) {
     input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     input.dataset.c = td.dataset.c || '';
     input.dataset.e = td.dataset.e || '';
-    // If the cell has no edges (data-e empty), start with an empty input so
-    // typing replaces rather than appends to the displayed "0" placeholder.
-    // If the cell has real edge data, use its actual weight text as the value.
-    const hasEdges = !!(td.dataset.e);
+    // The cell textContent is either empty (no edge, or edge with empty
+    // weight — CSS shows a "0" placeholder via :empty::before) or the
+    // actual weight text (including "0" for a real zero-weight edge).
+    // Starting from the actual textContent means typing replaces cleanly
+    // instead of appending to a placeholder.
     const raw = td.textContent || '';
-    input.value = hasEdges ? raw : '';
+    input.value = raw;
     input.placeholder = '0';
     input.readOnly = true;
     // Set accessible name immediately — pointer clicks prevent default focus
@@ -18235,11 +18242,21 @@ function demoteInputToCell(input) {
     td.dataset.c = input.dataset.c || '';
     td.dataset.e = input.dataset.e || '';
     td.tabIndex = 0;
-    // aria-label, title, role are set lazily on focus (see 80-ui.ts focusin)
-    // Use the input's value as the display text. Keep "0" as-is — it's a
-    // valid weight for an existing edge.
+    // Set accessible name and editing tooltip immediately — mouse users
+    // don't trigger focus, so the focusin handler alone is insufficient.
+    const from = (td.closest && input.closest('tr[data-r]'))?.dataset?.r || '';
+    const to = input.dataset.c || '';
+    if (from && to)
+        td.setAttribute('aria-label', from + ' → ' + to);
+    // Copy title from the input if it has one (editing instruction).
+    if (input.title)
+        td.title = input.title;
+    td.setAttribute('role', 'gridcell');
+    // Use the input's value as the display text. Empty values become empty
+    // textContent — CSS :empty::before shows a "0" placeholder visually.
+    // Actual "0" weights stay as "0" textContent so re-editing preserves them.
     const val = input.value;
-    td.textContent = val !== '' ? val : '0';
+    td.textContent = val;
     input.replaceWith(td);
 }
 // === Style tab: populate + sync default controls ===
