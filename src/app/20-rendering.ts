@@ -2490,6 +2490,19 @@
       .map(e => e.id);
   }
   const emptyCell: any[] = [];
+  // Resolve the from/to node IDs for a matrix cell element.
+  // The source (from) lives on the parent <tr data-r>, the target (to) on
+  // the cell itself as data-c. Works for both <td class="mc"> and promoted
+  // <input class="matrix-input"> cells.
+  function cellFromTo(el: Element): {from: string, to: string} {
+    const tr = el.closest('tr[data-r]') as HTMLElement | null;
+    const ht = el as HTMLElement;
+    return { from: tr?.dataset?.r || '', to: ht.dataset?.c || '' };
+  }
+  // Read edge IDs from a cell element (data-e attribute).
+  function cellEdgeIds(el: Element): string {
+    return (el as HTMLElement).dataset?.e || '';
+  }
   function adjacencyMatrixHtml(nodes=matrixNodes()){
     const {values, edgeIds} = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
@@ -2540,13 +2553,15 @@
       const selCls = nodeSelected[i] ? ' matrix-selected' : '';
       const nid = nodeEsc[i];
       const nlbl = nodeLabelEsc[i];
-      parts.push('<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
+      // Row node ID lives on the <tr> as data-r — shared by every cell in
+      // the row instead of repeated in data-cell-from on each <td>. Saves
+      // ~30-50 bytes/cell for the from-ID alone.
+      parts.push('<tr data-r="' + nid + '"><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
       // ALL cells render as lightweight <td> with text content instead of
-      // <input>. This keeps the DOM cheap even for dense 100×100 matrices
-      // (10,000 cells). Click-to-edit promotes a <td> to an <input> on
-      // demand; blurring an edited input reverts it back to <td>.
-      // Accessibility attributes (aria-label, title, role) are omitted from
-      // the HTML to save ~70 bytes/cell — they are set lazily on focus.
+      // <input>. Click-to-edit promotes a <td> to an <input> on demand;
+      // blurring reverts it back to <td>.
+      // Per-cell attributes are short: data-c (column target ID) and
+      // data-e (edge IDs). The row source ID is on the parent <tr>.
       const rowVals = values[i] || emptyCell;
       const rowEdgeIds = edgeIds[i] || emptyCell;
       for(let j=0;j<n;j++){
@@ -2557,7 +2572,7 @@
         const selClass = selected ? ' matrix-selected' : '';
         const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
         const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
-        parts.push('<td class="mc' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" tabindex="0">' + cellText + '</td>');
+        parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0">' + cellText + '</td>');
       }
       parts.push('</tr>');
     }

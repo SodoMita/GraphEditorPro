@@ -8783,6 +8783,19 @@ function matrixCellEdgeIds(from, to) {
         .map(e => e.id);
 }
 const emptyCell = [];
+// Resolve the from/to node IDs for a matrix cell element.
+// The source (from) lives on the parent <tr data-r>, the target (to) on
+// the cell itself as data-c. Works for both <td class="mc"> and promoted
+// <input class="matrix-input"> cells.
+function cellFromTo(el) {
+    const tr = el.closest('tr[data-r]');
+    const ht = el;
+    return { from: tr?.dataset?.r || '', to: ht.dataset?.c || '' };
+}
+// Read edge IDs from a cell element (data-e attribute).
+function cellEdgeIds(el) {
+    return el.dataset?.e || '';
+}
 function adjacencyMatrixHtml(nodes = matrixNodes()) {
     const { values, edgeIds } = adjacencyMatrixData(nodes);
     const edgeSel = selectedEdgeIds();
@@ -8833,13 +8846,15 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
         const selCls = nodeSelected[i] ? ' matrix-selected' : '';
         const nid = nodeEsc[i];
         const nlbl = nodeLabelEsc[i];
-        parts.push('<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
+        // Row node ID lives on the <tr> as data-r — shared by every cell in
+        // the row instead of repeated in data-cell-from on each <td>. Saves
+        // ~30-50 bytes/cell for the from-ID alone.
+        parts.push('<tr data-r="' + nid + '"><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
         // ALL cells render as lightweight <td> with text content instead of
-        // <input>. This keeps the DOM cheap even for dense 100×100 matrices
-        // (10,000 cells). Click-to-edit promotes a <td> to an <input> on
-        // demand; blurring an edited input reverts it back to <td>.
-        // Accessibility attributes (aria-label, title, role) are omitted from
-        // the HTML to save ~70 bytes/cell — they are set lazily on focus.
+        // <input>. Click-to-edit promotes a <td> to an <input> on demand;
+        // blurring reverts it back to <td>.
+        // Per-cell attributes are short: data-c (column target ID) and
+        // data-e (edge IDs). The row source ID is on the parent <tr>.
         const rowVals = values[i] || emptyCell;
         const rowEdgeIds = edgeIds[i] || emptyCell;
         for (let j = 0; j < n; j++) {
@@ -8850,7 +8865,7 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
             const selClass = selected ? ' matrix-selected' : '';
             const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
             const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
-            parts.push('<td class="mc' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" tabindex="0">' + cellText + '</td>');
+            parts.push('<td class="mc' + selClass + '" data-c="' + toId + '" data-e="' + cellEdges + '" tabindex="0">' + cellText + '</td>');
         }
         parts.push('</tr>');
     }
@@ -9229,8 +9244,8 @@ function updateMatrixSelectionDom(changedNodes = null, changedEdges = null) {
         if (!changedEdges.length)
             return;
         const changedEdgeSet = new Set(changedEdges);
-        for (const input of host.querySelectorAll('[data-cell-from][data-cell-to]')) {
-            const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+        for (const input of host.querySelectorAll('[data-c]')) {
+            const ids = (input.dataset.e || '').split(',').filter(Boolean);
             if (!ids.some(id => changedEdgeSet.has(id)))
                 continue;
             let selected = false;
@@ -9247,8 +9262,8 @@ function updateMatrixSelectionDom(changedNodes = null, changedEdges = null) {
     for (const input of host.querySelectorAll('[data-node-label]')) {
         toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
     }
-    for (const input of host.querySelectorAll('[data-cell-from][data-cell-to]')) {
-        const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+    for (const input of host.querySelectorAll('[data-c]')) {
+        const ids = (input.dataset.e || '').split(',').filter(Boolean);
         let selected = false;
         for (let i = 0; i < ids.length; i++) {
             if (es.has(ids[i])) {
@@ -18158,19 +18173,21 @@ function unlockMatrixInput(el) {
 }
 // Promote a lightweight <td class="mc"> to an editable <input>.
 // Returns the new input element so the caller can focus/unlock it.
+// The from-ID lives on the parent <tr data-r> so the input only needs
+// data-c (column target) and data-e (edge IDs).
 function promoteCellToInput(td) {
     const input = document.createElement('input');
     input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    input.dataset.cellFrom = td.dataset.cellFrom || '';
-    input.dataset.cellTo = td.dataset.cellTo || '';
-    input.dataset.cellEdges = td.dataset.cellEdges || '';
+    input.dataset.c = td.dataset.c || '';
+    input.dataset.e = td.dataset.e || '';
     // Use the text content as the initial value. "0" is a valid weight so
     // keep it — only an actually empty cell gets an empty input value.
     const raw = td.textContent || '';
-    input.value = raw === '0' ? raw : raw;
+    input.value = raw;
     input.placeholder = '0';
     input.readOnly = true;
-    input.setAttribute('aria-label', td.getAttribute('aria-label') || '');
+    if (td.getAttribute('aria-label'))
+        input.setAttribute('aria-label', td.getAttribute('aria-label'));
     input.title = td.title || '';
     input.style.width = '52px';
     td.replaceWith(input);
@@ -18186,9 +18203,8 @@ function demoteInputToCell(input) {
         return; // already detached — re-render handled it
     const td = document.createElement('td');
     td.className = 'mc' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    td.dataset.cellFrom = input.dataset.cellFrom || '';
-    td.dataset.cellTo = input.dataset.cellTo || '';
-    td.dataset.cellEdges = input.dataset.cellEdges || '';
+    td.dataset.c = input.dataset.c || '';
+    td.dataset.e = input.dataset.e || '';
     td.tabIndex = 0;
     // aria-label, title, role are set lazily on focus (see 80-ui.ts focusin)
     // Use the input's value as the display text. Keep "0" as-is — it's a
@@ -19794,8 +19810,8 @@ function wireUi() {
             }
             return;
         }
-        if (t.matches('[data-cell-from][data-cell-to]')) {
-            const from = t.dataset.cellFrom, to = t.dataset.cellTo;
+        if (t.matches && t.matches('[data-c]')) {
+            const { from, to } = cellFromTo(t);
             const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
             lockAllMatrixInputs();
             if (t.tagName === 'INPUT') {
@@ -19828,8 +19844,9 @@ function wireUi() {
         const t = ev.target;
         if (t.matches('[data-node-label]'))
             setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-        if (t.matches('[data-cell-from][data-cell-to]')) {
-            setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
+        if (t.matches && t.matches('[data-c]')) {
+            const { from, to } = cellFromTo(t);
+            setMatrixCell(from, to, t.value);
         }
         // Re-lock after edit commit — a full matrix re-render (queued by
         // setMatrixCell) will rebuild all cells as lightweight <td>.
@@ -19840,9 +19857,8 @@ function wireUi() {
     // not on all 10,000+ cells in the HTML. This saves ~70 bytes/cell.
     $('#matrixHost').addEventListener('focusin', ev => {
         const t = ev.target;
-        if (t.matches && t.matches('td.mc[data-cell-from]') && !t.getAttribute('aria-label')) {
-            const from = t.dataset.cellFrom || '';
-            const to = t.dataset.cellTo || '';
+        if (t.matches && t.matches('td.mc[data-c]') && !t.getAttribute('aria-label')) {
+            const { from, to } = cellFromTo(t);
             t.setAttribute('aria-label', I18N.t('col_from') + ' ' + from + ', ' + I18N.t('col_to') + ' ' + to);
             t.title = I18N.t('matrix_cell_hint');
             t.setAttribute('role', 'gridcell');
@@ -19850,7 +19866,7 @@ function wireUi() {
     });
     $('#matrixHost').addEventListener('focusout', ev => {
         const t = ev.target;
-        if (t.matches && t.matches('input.matrix-input[data-cell-from]')) {
+        if (t.matches && t.matches('input.matrix-input[data-c]')) {
             // Defer demotion to the next microtask. Chromium fires a follow-up
             // mousedown after pointerdown that can move focus away and then back;
             // the synchronous demotion would destroy the input before the browser

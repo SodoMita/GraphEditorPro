@@ -507,8 +507,8 @@
         }
         return;
       }
-      if(t.matches('[data-cell-from][data-cell-to]')){
-        const from = t.dataset.cellFrom, to = t.dataset.cellTo;
+      if(t.matches && t.matches('[data-c]')){
+        const {from, to} = cellFromTo(t as Element);
         const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
         lockAllMatrixInputs();
         if(t.tagName === 'INPUT'){
@@ -538,8 +538,9 @@
     $('#matrixHost').addEventListener('change', ev => {
       const t = ev.target;
       if(t.matches('[data-node-label]')) setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-      if(t.matches('[data-cell-from][data-cell-to]')){
-        setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
+      if(t.matches && t.matches('[data-c]')){
+        const {from, to} = cellFromTo(t as Element);
+        setMatrixCell(from, to, t.value);
       }
       // Re-lock after edit commit — a full matrix re-render (queued by
       // setMatrixCell) will rebuild all cells as lightweight <td>.
@@ -550,9 +551,8 @@
     // not on all 10,000+ cells in the HTML. This saves ~70 bytes/cell.
     $('#matrixHost').addEventListener('focusin', ev => {
       const t = ev.target;
-      if(t.matches && t.matches('td.mc[data-cell-from]') && !t.getAttribute('aria-label')){
-        const from = t.dataset.cellFrom || '';
-        const to = t.dataset.cellTo || '';
+      if(t.matches && t.matches('td.mc[data-c]') && !t.getAttribute('aria-label')){
+        const {from, to} = cellFromTo(t as Element);
         t.setAttribute('aria-label', I18N.t('col_from') + ' ' + from + ', ' + I18N.t('col_to') + ' ' + to);
         t.title = I18N.t('matrix_cell_hint');
         t.setAttribute('role', 'gridcell');
@@ -560,7 +560,7 @@
     });
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
-      if(t.matches && t.matches('input.matrix-input[data-cell-from]')){
+      if(t.matches && t.matches('input.matrix-input[data-c]')){
         // Defer demotion to the next microtask. Chromium fires a follow-up
         // mousedown after pointerdown that can move focus away and then back;
         // the synchronous demotion would destroy the input before the browser

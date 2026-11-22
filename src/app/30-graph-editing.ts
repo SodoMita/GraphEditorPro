@@ -250,8 +250,8 @@
       }
       if(!changedEdges.length) return;
       const changedEdgeSet = new Set(changedEdges);
-      for(const input of host.querySelectorAll('[data-cell-from][data-cell-to]')){
-        const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+      for(const input of host.querySelectorAll('[data-c]')){
+        const ids = (input.dataset.e || '').split(',').filter(Boolean);
         if(!ids.some(id => changedEdgeSet.has(id))) continue;
         let selected = false;
         for(let i = 0; i < ids.length; i++){ if(es.has(ids[i])){ selected = true; break; } }
@@ -262,8 +262,8 @@
     for(const input of host.querySelectorAll('[data-node-label]')){
       toggleClass(input, 'matrix-selected', ns.has(input.dataset.nodeLabel));
     }
-    for(const input of host.querySelectorAll('[data-cell-from][data-cell-to]')){
-      const ids = (input.dataset.cellEdges || '').split(',').filter(Boolean);
+    for(const input of host.querySelectorAll('[data-c]')){
+      const ids = (input.dataset.e || '').split(',').filter(Boolean);
       let selected = false;
       for(let i = 0; i < ids.length; i++){ if(es.has(ids[i])){ selected = true; break; } }
       toggleClass(input, 'matrix-selected', selected);

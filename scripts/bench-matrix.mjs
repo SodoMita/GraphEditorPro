@@ -148,8 +148,8 @@ for (const cfg of configs) {
   });
 
   // Measure querySelectorAll costs (used by selection updates and lockAll)
-  bench('querySelectorAll [data-cell-from]', () => {
-    matrixHost.querySelectorAll('[data-cell-from][data-cell-to]');
+  bench('querySelectorAll [data-c]', () => {
+    matrixHost.querySelectorAll('[data-c]');
   });
   bench('querySelectorAll input (lockAll)', () => {
     matrixHost.querySelectorAll('input');

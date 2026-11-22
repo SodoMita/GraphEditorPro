@@ -258,19 +258,20 @@
   }
   // Promote a lightweight <td class="mc"> to an editable <input>.
   // Returns the new input element so the caller can focus/unlock it.
+  // The from-ID lives on the parent <tr data-r> so the input only needs
+  // data-c (column target) and data-e (edge IDs).
   function promoteCellToInput(td: HTMLElement): HTMLInputElement {
     const input = document.createElement('input');
     input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    input.dataset.cellFrom = td.dataset.cellFrom || '';
-    input.dataset.cellTo = td.dataset.cellTo || '';
-    input.dataset.cellEdges = td.dataset.cellEdges || '';
+    input.dataset.c = td.dataset.c || '';
+    input.dataset.e = td.dataset.e || '';
     // Use the text content as the initial value. "0" is a valid weight so
     // keep it — only an actually empty cell gets an empty input value.
     const raw = td.textContent || '';
-    input.value = raw === '0' ? raw : raw;
+    input.value = raw;
     input.placeholder = '0';
     input.readOnly = true;
-    input.setAttribute('aria-label', td.getAttribute('aria-label') || '');
+    if(td.getAttribute('aria-label')) input.setAttribute('aria-label', td.getAttribute('aria-label')!);
     input.title = td.title || '';
     input.style.width = '52px';
     td.replaceWith(input);
@@ -285,9 +286,8 @@
     if(!input.parentNode) return; // already detached — re-render handled it
     const td = document.createElement('td');
     td.className = 'mc' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    td.dataset.cellFrom = input.dataset.cellFrom || '';
-    td.dataset.cellTo = input.dataset.cellTo || '';
-    td.dataset.cellEdges = input.dataset.cellEdges || '';
+    td.dataset.c = input.dataset.c || '';
+    td.dataset.e = input.dataset.e || '';
     td.tabIndex = 0;
     // aria-label, title, role are set lazily on focus (see 80-ui.ts focusin)
     // Use the input's value as the display text. Keep "0" as-is — it's a
