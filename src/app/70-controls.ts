@@ -256,7 +256,7 @@
   function unlockMatrixInput(el){
     el.readOnly = false;
   }
-  // Promote a lightweight <td class="matrix-cell"> to an editable <input>.
+  // Promote a lightweight <td class="mc"> to an editable <input>.
   // Returns the new input element so the caller can focus/unlock it.
   function promoteCellToInput(td: HTMLElement): HTMLInputElement {
     const input = document.createElement('input');
@@ -284,14 +284,12 @@
   function demoteInputToCell(input: HTMLInputElement){
     if(!input.parentNode) return; // already detached — re-render handled it
     const td = document.createElement('td');
-    td.className = 'matrix-cell' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
+    td.className = 'mc' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     td.dataset.cellFrom = input.dataset.cellFrom || '';
     td.dataset.cellTo = input.dataset.cellTo || '';
     td.dataset.cellEdges = input.dataset.cellEdges || '';
-    td.setAttribute('role', 'gridcell');
     td.tabIndex = 0;
-    td.setAttribute('aria-label', input.getAttribute('aria-label') || '');
-    td.title = input.title || '';
+    // aria-label, title, role are set lazily on focus (see 80-ui.ts focusin)
     // Use the input's value as the display text. Keep "0" as-is — it's a
     // valid weight for an existing edge.
     const val = input.value;

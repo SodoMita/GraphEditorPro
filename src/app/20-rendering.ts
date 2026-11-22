@@ -2502,13 +2502,10 @@
     const iMoveLeft = I18N.t('move_left'), iMoveRight = I18N.t('move_right');
     const iMoveUp = I18N.t('move_up'), iMoveDown = I18N.t('move_down');
     const iOrder = I18N.t('order'), iCorner = I18N.t('matrix_corner');
-    const iColFrom = I18N.t('col_from'), iColTo = I18N.t('col_to');
-    const iCellHint = I18N.t('matrix_cell_hint');
     const escLabel = esc(iLabel), escMatrixHint = esc(iMatrixHint);
     const escMoveLeft = esc(iMoveLeft), escMoveRight = esc(iMoveRight);
     const escMoveUp = esc(iMoveUp), escMoveDown = esc(iMoveDown);
     const escOrder = esc(iOrder), escCorner = esc(iCorner);
-    const escColFrom = esc(iColFrom), escColTo = esc(iColTo), escCellHint = esc(iCellHint);
     // Pre-escape node ids and labels — used in both header and rows.
     const n = nodes.length;
     const nodeEsc = new Array(n);
@@ -2548,6 +2545,8 @@
       // <input>. This keeps the DOM cheap even for dense 100×100 matrices
       // (10,000 cells). Click-to-edit promotes a <td> to an <input> on
       // demand; blurring an edited input reverts it back to <td>.
+      // Accessibility attributes (aria-label, title, role) are omitted from
+      // the HTML to save ~70 bytes/cell — they are set lazily on focus.
       const rowVals = values[i] || emptyCell;
       const rowEdgeIds = edgeIds[i] || emptyCell;
       for(let j=0;j<n;j++){
@@ -2558,8 +2557,7 @@
         const selClass = selected ? ' matrix-selected' : '';
         const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
         const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
-        const ariaLabel = escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId;
-        parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" role="gridcell" tabindex="0" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
+        parts.push('<td class="mc' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" tabindex="0">' + cellText + '</td>');
       }
       parts.push('</tr>');
     }
@@ -2603,9 +2601,8 @@
     const iEdgeColor = I18N.t('edge_color'), iNonePlaceholder = I18N.t('none_placeholder');
     const iStrokeStyle = I18N.t('stroke_style');
     const escMoveUp = esc(iMoveUp), escMoveDown = esc(iMoveDown);
-    const escColId = esc(iColId), escColFrom = esc(iColFrom), escColTo = esc(iColTo);
-    const escWeight = esc(iWeight), escLabel = esc(iLabel), escType = esc(iType);
-    const escDirected = esc(iDirected), escColor = esc(iColor);
+    const escColFrom = esc(iColFrom), escColTo = esc(iColTo);
+    const escDirected = esc(iDirected);
     const escEdgeIdHint = esc(iEdgeIdHint), escEditWeight = esc(iEditWeight);
     const escEditLabel = esc(iEditLabel), escEditType = esc(iEditType);
     const escEdgeColor = esc(iEdgeColor), escNonePlaceholder = esc(iNonePlaceholder);
@@ -2631,9 +2628,7 @@
       if(!colorVal) colorVal = edgeVisual(e).color;
       const fromLabel = esc(a?.label || e.from);
       const toLabel = esc(b?.label || e.to);
-      const fromHint = esc(I18N.t('edge_from_hint', {node: e.from}));
-      const toHint = esc(I18N.t('edge_to_hint', {node: e.to}));
-      parts.push('<tr><td style="white-space:nowrap"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + eid + '" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + eid + '" style="min-height:28px;width:28px;padding:0"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i+1) + '</td><td><input class="matrix-input edge-id" data-edge-id="' + eid + '" value="' + eid + '" aria-label="' + escColId + ': ' + eid + '" title="' + escEdgeIdHint + '" style="width:60px"></td><td><input class="matrix-input edge-from" data-edge-id="' + eid + '" value="' + fromLabel + '" aria-label="' + escColFrom + ': ' + eid + '" title="' + fromHint + '" style="width:64px"></td><td><input class="matrix-input edge-to" data-edge-id="' + eid + '" value="' + toLabel + '" aria-label="' + escColTo + ': ' + eid + '" title="' + toHint + '" style="width:64px"></td><td><input class="matrix-input edge-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" aria-label="' + escWeight + ': ' + eid + '" title="' + escEditWeight + '" style="width:52px"></td><td><input class="matrix-input edge-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" aria-label="' + escLabel + ': ' + eid + '" title="' + escEditLabel + '" style="width:72px"></td><td><input class="matrix-input edge-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" aria-label="' + escType + ': ' + eid + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" title="' + escEditType + '" style="width:64px"></td><td><select class="edge-directed" data-edge-id="' + eid + '" aria-label="' + escDirected + ': ' + eid + '" title="' + escDirected + '"><option value="directed"' + (dir==='directed'?' selected':'') + '>→</option><option value="mutual"' + (dir==='mutual'?' selected':'') + '>↔</option><option value="undirected"' + (dir==='undirected'?' selected':'') + '>—</option></select></td><td><input type="color" class="edge-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" aria-label="' + escColor + ': ' + eid + '" title="' + escEdgeColor + '" style="width:32px;height:26px;padding:2px"></td><td><select class="matrix-input edge-stroke-style" data-edge-id="' + eid + '" aria-label="' + escStrokeStyle + ': ' + eid + '" title="' + escStrokeStyle + '" style="width:68px">' + strokeOpts + '</select></td></tr>');
+      parts.push('<tr><td class="el-reorder"><button class="btn small icon edge-up" data-edge-id="' + eid + '" title="' + escMoveUp + '" aria-label="' + escMoveUp + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon edge-down" data-edge-id="' + eid + '" title="' + escMoveDown + '" aria-label="' + escMoveDown + '"><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></td><td>' + (i+1) + '</td><td><input class="matrix-input edge-id el-id" data-edge-id="' + eid + '" value="' + eid + '" title="' + escEdgeIdHint + '"></td><td><input class="matrix-input edge-from el-from" data-edge-id="' + eid + '" value="' + fromLabel + '" title="' + escColFrom + '"></td><td><input class="matrix-input edge-to el-to" data-edge-id="' + eid + '" value="' + toLabel + '" title="' + escColTo + '"></td><td><input class="matrix-input edge-weight el-weight' + sel + '" data-edge-id="' + eid + '" value="' + esc(e.weight) + '" title="' + escEditWeight + '"></td><td><input class="matrix-input edge-elabel el-elabel" data-edge-id="' + eid + '" value="' + esc(e.label) + '" title="' + escEditLabel + '"></td><td><input class="matrix-input edge-type el-type" list="edgeTypeListEdit" data-edge-id="' + eid + '" value="' + esc(e.type) + '" placeholder="' + escNonePlaceholder + '" data-i18n-placeholder="none_placeholder" title="' + escEditType + '"></td><td><select class="edge-directed" data-edge-id="' + eid + '" title="' + escDirected + '"><option value="directed"' + (dir==='directed'?' selected':'') + '>→</option><option value="mutual"' + (dir==='mutual'?' selected':'') + '>↔</option><option value="undirected"' + (dir==='undirected'?' selected':'') + '>—</option></select></td><td><input type="color" class="edge-color el-color" data-edge-id="' + eid + '" value="' + esc(colorVal) + '" title="' + escEdgeColor + '"></td><td><select class="matrix-input edge-stroke-style el-stroke" data-edge-id="' + eid + '" title="' + escStrokeStyle + '">' + strokeOpts + '</select></td></tr>');
     }
     parts.push('</tbody></table>');
     if(renderedEdges.length < filteredEdges.length){

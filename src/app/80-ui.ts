@@ -546,6 +546,18 @@
       t.readOnly = true;
       matrixEditCell = null;
     });
+    // Lazy accessibility: set aria-label and title only on the focused cell,
+    // not on all 10,000+ cells in the HTML. This saves ~70 bytes/cell.
+    $('#matrixHost').addEventListener('focusin', ev => {
+      const t = ev.target;
+      if(t.matches && t.matches('td.mc[data-cell-from]') && !t.getAttribute('aria-label')){
+        const from = t.dataset.cellFrom || '';
+        const to = t.dataset.cellTo || '';
+        t.setAttribute('aria-label', I18N.t('col_from') + ' ' + from + ', ' + I18N.t('col_to') + ' ' + to);
+        t.title = I18N.t('matrix_cell_hint');
+        t.setAttribute('role', 'gridcell');
+      }
+    });
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
       if(t.matches && t.matches('input.matrix-input[data-cell-from]')){
