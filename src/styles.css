@@ -435,11 +435,20 @@
 
     /* ---------- Tables ---------- */
     table{border-collapse:separate; border-spacing:0; width:100%; font-size:0.75rem; color:#dbeafe}
+    #matrixHost table{width:max-content; min-width:100%}
     th,td{border:1px solid rgba(51,65,85,.55); padding:5px 7px; background:rgba(2,6,23,.3); white-space:nowrap; text-align:center}
-    th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
-    .row-head{position:sticky; left:0; z-index:3; text-align:left}
+    /* Column headers: sticky at top only */
+    thead th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
+    /* Row headers: sticky at left only — they must NOT also be sticky-top or
+       they collapse to the top of the scroll container and row labels detach
+       from their rows. */
+    .row-head{position:sticky; left:0; z-index:3; text-align:left; background:rgba(15,23,42,.96)}
+    /* Frozen corner cell: sticky in both directions (like Excel) */
+    .matrix-corner{position:sticky; top:0; left:0; z-index:5; background:rgba(15,23,42,.96)}
     .table-scroll{overflow:auto; max-height:none; border-radius:0; contain:layout; -webkit-overflow-scrolling:touch}
-    table thead th{position:sticky; top:0}
+    /* Lightweight empty matrix cells — no input, just a clickable <td> */
+    td.matrix-cell{cursor:pointer; min-width:44px; padding:5px 7px}
+    td.matrix-cell.matrix-selected{outline:2px solid var(--accent); outline-offset:-2px}
 
     /* ---------- Results / output ---------- */
     .result-box{

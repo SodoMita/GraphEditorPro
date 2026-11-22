@@ -256,6 +256,40 @@
   function unlockMatrixInput(el){
     el.readOnly = false;
   }
+  // Promote a lightweight <td class="matrix-cell"> to an editable <input>.
+  // Returns the new input element so the caller can focus/unlock it.
+  function promoteCellToInput(td: HTMLElement): HTMLInputElement {
+    const input = document.createElement('input');
+    input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
+    input.dataset.cellFrom = td.dataset.cellFrom || '';
+    input.dataset.cellTo = td.dataset.cellTo || '';
+    input.dataset.cellEdges = td.dataset.cellEdges || '';
+    input.value = td.textContent === '0' ? '' : (td.textContent || '');
+    input.placeholder = '0';
+    input.readOnly = true;
+    input.setAttribute('aria-label', td.getAttribute('aria-label') || '');
+    input.title = td.title || '';
+    input.style.width = '52px';
+    td.replaceWith(input);
+    return input;
+  }
+  // Demote an <input> back to a lightweight <td> if its value is empty/zero.
+  // Called on blur/focusout so we don't keep inputs in the DOM for empty cells.
+  function demoteInputToCellIfEmpty(input: HTMLInputElement){
+    const val = input.value.trim();
+    if(val !== '' && val !== '0') return; // keep input — cell has data
+    const td = document.createElement('td');
+    td.className = 'matrix-cell' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
+    td.dataset.cellFrom = input.dataset.cellFrom || '';
+    td.dataset.cellTo = input.dataset.cellTo || '';
+    td.dataset.cellEdges = '';
+    td.setAttribute('role', 'gridcell');
+    td.tabIndex = -1;
+    td.setAttribute('aria-label', input.getAttribute('aria-label') || '');
+    td.title = input.title || '';
+    td.textContent = '0';
+    input.replaceWith(td);
+  }
 
   // === Style tab: populate + sync default controls ===
   function populateStyleSelects(){

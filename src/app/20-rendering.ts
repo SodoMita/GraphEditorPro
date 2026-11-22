@@ -2535,7 +2535,7 @@
       const nlbl = nodeLabelEsc[idx];
       hdrParts.push('<th><div class="matrix-header-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveLeft + '" aria-label="' + escMoveLeft + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-left"></use></svg></button><span class="matrix-order-badge" title="' + escOrder + '">' + (nodes[idx].order??0) + '</span><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveRight + '" aria-label="' + escMoveRight + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-right"></use></svg></button></div></div></th>');
     }
-    parts.push('<table><thead><tr><th scope="col"><span class="visually-hidden">' + escCorner + '</span></th>', hdrParts.join(''), '</tr></thead><tbody>');
+    parts.push('<table><thead><tr><th class="matrix-corner" scope="col"><span class="visually-hidden">' + escCorner + '</span></th>', hdrParts.join(''), '</tr></thead><tbody>');
     for(let i=0;i<n;i++){
       const pos = nodePositions[i];
       const upDis = pos === 0 ? ' disabled' : '';
@@ -2545,7 +2545,8 @@
       const nlbl = nodeLabelEsc[i];
       parts.push('<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
       // Rows are sparse (see adjacencyMatrixData): cells without an edge are
-      // rendered from the same empty shape on demand, in column order.
+      // rendered as lightweight <td> instead of <input> to keep the DOM small
+      // even for large matrices (100+ nodes).
       const rowVals = values[i] || emptyCell;
       const rowEdgeIds = edgeIds[i] || emptyCell;
       for(let j=0;j<n;j++){
@@ -2554,9 +2555,17 @@
         const selected = ids.length > 0 && ids.some(id => edgeSel.has(id));
         const toId = nodeEsc[j];
         const selClass = selected ? ' matrix-selected' : '';
-        const cellVal = cell.length > 0 ? esc(cell.join(';')) : '';
         const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
-        parts.push('<td><input class="matrix-input' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" value="' + cellVal + '" placeholder="0" readonly aria-label="' + escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId + '" title="' + escCellHint + '"></td>');
+        if(cell.length > 0){
+          // Non-empty cell: render as editable <input>
+          const cellVal = esc(cell.join(';'));
+          parts.push('<td><input class="matrix-input' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" value="' + cellVal + '" placeholder="0" readonly aria-label="' + escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId + '" title="' + escCellHint + '"></td>');
+        } else {
+          // Empty cell: render as lightweight <td> — click-to-edit is handled
+          // by the pointerdown handler in 80-ui.ts
+          const ariaLabel = escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId;
+          parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="" role="gridcell" tabindex="-1" aria-label="' + ariaLabel + '" title="' + escCellHint + '">0</td>');
+        }
       }
       parts.push('</tr>');
     }

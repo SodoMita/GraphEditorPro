@@ -511,8 +511,15 @@
         const from = t.dataset.cellFrom, to = t.dataset.cellTo;
         const isEditing = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
         lockAllMatrixInputs();
-        if(isEditing){
+        if(isEditing && t.tagName === 'INPUT'){
+          // Second click on an existing input — allow editing
           unlockMatrixInput(t);
+          matrixEditCell = {type:'cell', from, to};
+        } else if(isEditing && t.tagName !== 'INPUT'){
+          // Second click on a lightweight <td> — promote to <input> for editing
+          const input = promoteCellToInput(t as HTMLElement);
+          unlockMatrixInput(input);
+          input.focus();
           matrixEditCell = {type:'cell', from, to};
         } else {
           ev.preventDefault();
@@ -525,14 +532,23 @@
     $('#matrixHost').addEventListener('change', ev => {
       const t = ev.target;
       if(t.matches('[data-node-label]')) setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-      if(t.matches('[data-cell-from][data-cell-to]')) setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
-      // Re-lock after edit commit
+      if(t.matches('[data-cell-from][data-cell-to]')){
+        setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
+      }
+      // Re-lock after edit commit — a full matrix re-render (queued by
+      // setMatrixCell) will demote empty cells back to lightweight <td>.
       t.readOnly = true;
       matrixEditCell = null;
     });
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
-      if(t.matches && t.matches('input')){ t.readOnly = true; }
+      if(t.matches && t.matches('input.matrix-input[data-cell-from]')){
+        t.readOnly = true;
+        // Demote back to lightweight <td> if the cell is now empty
+        demoteInputToCellIfEmpty(t as HTMLInputElement);
+      } else if(t.matches && t.matches('input')){
+        t.readOnly = true;
+      }
     });
     // Matrix per-node order controls (left/right for columns, up/down for rows)
     $('#matrixHost').addEventListener('click', ev => {

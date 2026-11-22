@@ -1323,7 +1323,11 @@ test('matrix-created edges clone custom values (parallel edge and pending defaul
   assert.ok(cellBA);
   dispatchPointer(window, cellBA, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
   dispatchPointer(window, cellBA, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
-  changeValue(window, cellBA, '5');
+  // The second pointerdown promotes the lightweight <td> to an <input>;
+  // re-query to get the live element in the DOM.
+  const cellBAInput = document.querySelector('[data-cell-from="b"][data-cell-to="a"]');
+  assert.ok(cellBAInput, 'the empty cell was promoted to an input');
+  changeValue(window, cellBAInput, '5');
   await nextFrame(window); await settle(window, 40);
 
   exported = exportGraph(document);
