@@ -509,19 +509,20 @@
       }
       if(t.matches('[data-cell-from][data-cell-to]')){
         const from = t.dataset.cellFrom, to = t.dataset.cellTo;
-        const isEditing = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
+        const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
         lockAllMatrixInputs();
-        if(isEditing && t.tagName === 'INPUT'){
-          // Second click on an existing input — allow editing
+        if(t.tagName === 'INPUT'){
+          // Click on a promoted <input> — unlock for editing
           unlockMatrixInput(t);
           matrixEditCell = {type:'cell', from, to};
-        } else if(isEditing && t.tagName !== 'INPUT'){
-          // Second click on a lightweight <td> — promote to <input> for editing
+        } else if(isSameCell){
+          // Second click on the same <td> — promote to <input> for editing
           const input = promoteCellToInput(t as HTMLElement);
           unlockMatrixInput(input);
           input.focus();
           matrixEditCell = {type:'cell', from, to};
         } else {
+          // First click on a cell — select only
           ev.preventDefault();
           selectMatrixCell(from, to, ev.shiftKey);
           matrixEditCell = {type:'cell', from, to};
@@ -536,16 +537,17 @@
         setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
       }
       // Re-lock after edit commit — a full matrix re-render (queued by
-      // setMatrixCell) will demote empty cells back to lightweight <td>.
+      // setMatrixCell) will rebuild all cells as lightweight <td>.
       t.readOnly = true;
       matrixEditCell = null;
     });
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
       if(t.matches && t.matches('input.matrix-input[data-cell-from]')){
-        t.readOnly = true;
-        // Demote back to lightweight <td> if the cell is now empty
-        demoteInputToCellIfEmpty(t as HTMLInputElement);
+        // Always demote cell inputs back to lightweight <td> — the cell is
+        // no longer being actively edited. A queued full re-render (from
+        // change handler) will overwrite this if the data actually changed.
+        demoteInputToCell(t as HTMLInputElement);
       } else if(t.matches && t.matches('input')){
         t.readOnly = true;
       }

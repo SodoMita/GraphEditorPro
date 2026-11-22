@@ -1302,11 +1302,15 @@ test('matrix-created edges clone custom values (parallel edge and pending defaul
   await nextFrame(window); await settle(window, 90);
 
   // Cell (a→b) holds the existing edge; typing "1;2" adds a parallel edge.
+  // All cells render as lightweight <td>; the second pointerdown promotes
+  // the cell to an <input>, so re-query before calling changeValue.
   const cell = document.querySelector('[data-cell-from="a"][data-cell-to="b"]');
   assert.ok(cell);
   dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
   dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
-  changeValue(window, cell, '1;2');
+  const cellInput = document.querySelector('[data-cell-from="a"][data-cell-to="b"]');
+  assert.ok(cellInput, 'cell was promoted to an input');
+  changeValue(window, cellInput, '1;2');
   await nextFrame(window); await settle(window, 40);
 
   let exported = exportGraph(document);

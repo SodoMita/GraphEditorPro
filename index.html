@@ -8830,9 +8830,10 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
         const nid = nodeEsc[i];
         const nlbl = nodeLabelEsc[i];
         parts.push('<tr><th class="row-head"><div class="matrix-header-cell row-head-cell"><input class="matrix-label-input' + selCls + '" data-node-label="' + nid + '" value="' + nlbl + '" readonly aria-label="' + escLabel + ': ' + nid + '" title="' + escMatrixHint + '"><div class="matrix-node-controls"><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="-1" title="' + escMoveUp + '" aria-label="' + escMoveUp + ': ' + nid + '"' + upDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-up"></use></svg></button><button class="btn small icon matrix-node-move" data-node-move="' + nid + '" data-dir="1" title="' + escMoveDown + '" aria-label="' + escMoveDown + ': ' + nid + '"' + downDis + '><svg class="ui-icon" aria-hidden="true"><use href="#icon-down"></use></svg></button></div></div></th>');
-        // Rows are sparse (see adjacencyMatrixData): cells without an edge are
-        // rendered as lightweight <td> instead of <input> to keep the DOM small
-        // even for large matrices (100+ nodes).
+        // ALL cells render as lightweight <td> with text content instead of
+        // <input>. This keeps the DOM cheap even for dense 100×100 matrices
+        // (10,000 cells). Click-to-edit promotes a <td> to an <input> on
+        // demand; blurring an edited input reverts it back to <td>.
         const rowVals = values[i] || emptyCell;
         const rowEdgeIds = edgeIds[i] || emptyCell;
         for (let j = 0; j < n; j++) {
@@ -8842,17 +8843,9 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
             const toId = nodeEsc[j];
             const selClass = selected ? ' matrix-selected' : '';
             const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
-            if (cell.length > 0) {
-                // Non-empty cell: render as editable <input>
-                const cellVal = esc(cell.join(';'));
-                parts.push('<td><input class="matrix-input' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" value="' + cellVal + '" placeholder="0" readonly aria-label="' + escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId + '" title="' + escCellHint + '"></td>');
-            }
-            else {
-                // Empty cell: render as lightweight <td> — click-to-edit is handled
-                // by the pointerdown handler in 80-ui.ts
-                const ariaLabel = escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId;
-                parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="" role="gridcell" tabindex="-1" aria-label="' + ariaLabel + '" title="' + escCellHint + '">0</td>');
-            }
+            const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
+            const ariaLabel = escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId;
+            parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" role="gridcell" tabindex="-1" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
         }
         parts.push('</tr>');
     }
@@ -18178,22 +18171,21 @@ function promoteCellToInput(td) {
     td.replaceWith(input);
     return input;
 }
-// Demote an <input> back to a lightweight <td> if its value is empty/zero.
-// Called on blur/focusout so we don't keep inputs in the DOM for empty cells.
-function demoteInputToCellIfEmpty(input) {
-    const val = input.value.trim();
-    if (val !== '' && val !== '0')
-        return; // keep input — cell has data
+// Demote an <input> back to a lightweight <td>.
+// Called on blur/focusout — all matrix cells default to <td>; the <input>
+// is only present while a cell is being actively edited.
+function demoteInputToCell(input) {
     const td = document.createElement('td');
     td.className = 'matrix-cell' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     td.dataset.cellFrom = input.dataset.cellFrom || '';
     td.dataset.cellTo = input.dataset.cellTo || '';
-    td.dataset.cellEdges = '';
+    td.dataset.cellEdges = input.dataset.cellEdges || '';
     td.setAttribute('role', 'gridcell');
     td.tabIndex = -1;
     td.setAttribute('aria-label', input.getAttribute('aria-label') || '');
     td.title = input.title || '';
-    td.textContent = '0';
+    const val = input.value.trim();
+    td.textContent = (val !== '' && val !== '0') ? val : '0';
     input.replaceWith(td);
 }
 // === Style tab: populate + sync default controls ===
@@ -19795,21 +19787,22 @@ function wireUi() {
         }
         if (t.matches('[data-cell-from][data-cell-to]')) {
             const from = t.dataset.cellFrom, to = t.dataset.cellTo;
-            const isEditing = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
+            const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
             lockAllMatrixInputs();
-            if (isEditing && t.tagName === 'INPUT') {
-                // Second click on an existing input — allow editing
+            if (t.tagName === 'INPUT') {
+                // Click on a promoted <input> — unlock for editing
                 unlockMatrixInput(t);
                 matrixEditCell = { type: 'cell', from, to };
             }
-            else if (isEditing && t.tagName !== 'INPUT') {
-                // Second click on a lightweight <td> — promote to <input> for editing
+            else if (isSameCell) {
+                // Second click on the same <td> — promote to <input> for editing
                 const input = promoteCellToInput(t);
                 unlockMatrixInput(input);
                 input.focus();
                 matrixEditCell = { type: 'cell', from, to };
             }
             else {
+                // First click on a cell — select only
                 ev.preventDefault();
                 selectMatrixCell(from, to, ev.shiftKey);
                 matrixEditCell = { type: 'cell', from, to };
@@ -19825,16 +19818,17 @@ function wireUi() {
             setMatrixCell(t.dataset.cellFrom, t.dataset.cellTo, t.value);
         }
         // Re-lock after edit commit — a full matrix re-render (queued by
-        // setMatrixCell) will demote empty cells back to lightweight <td>.
+        // setMatrixCell) will rebuild all cells as lightweight <td>.
         t.readOnly = true;
         matrixEditCell = null;
     });
     $('#matrixHost').addEventListener('focusout', ev => {
         const t = ev.target;
         if (t.matches && t.matches('input.matrix-input[data-cell-from]')) {
-            t.readOnly = true;
-            // Demote back to lightweight <td> if the cell is now empty
-            demoteInputToCellIfEmpty(t);
+            // Always demote cell inputs back to lightweight <td> — the cell is
+            // no longer being actively edited. A queued full re-render (from
+            // change handler) will overwrite this if the data actually changed.
+            demoteInputToCell(t);
         }
         else if (t.matches && t.matches('input')) {
             t.readOnly = true;

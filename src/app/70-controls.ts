@@ -273,21 +273,21 @@
     td.replaceWith(input);
     return input;
   }
-  // Demote an <input> back to a lightweight <td> if its value is empty/zero.
-  // Called on blur/focusout so we don't keep inputs in the DOM for empty cells.
-  function demoteInputToCellIfEmpty(input: HTMLInputElement){
-    const val = input.value.trim();
-    if(val !== '' && val !== '0') return; // keep input — cell has data
+  // Demote an <input> back to a lightweight <td>.
+  // Called on blur/focusout — all matrix cells default to <td>; the <input>
+  // is only present while a cell is being actively edited.
+  function demoteInputToCell(input: HTMLInputElement){
     const td = document.createElement('td');
     td.className = 'matrix-cell' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     td.dataset.cellFrom = input.dataset.cellFrom || '';
     td.dataset.cellTo = input.dataset.cellTo || '';
-    td.dataset.cellEdges = '';
+    td.dataset.cellEdges = input.dataset.cellEdges || '';
     td.setAttribute('role', 'gridcell');
     td.tabIndex = -1;
     td.setAttribute('aria-label', input.getAttribute('aria-label') || '');
     td.title = input.title || '';
-    td.textContent = '0';
+    const val = input.value.trim();
+    td.textContent = (val !== '' && val !== '0') ? val : '0';
     input.replaceWith(td);
   }
 
