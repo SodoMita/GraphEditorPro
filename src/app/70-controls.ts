@@ -264,7 +264,10 @@
     input.dataset.cellFrom = td.dataset.cellFrom || '';
     input.dataset.cellTo = td.dataset.cellTo || '';
     input.dataset.cellEdges = td.dataset.cellEdges || '';
-    input.value = td.textContent === '0' ? '' : (td.textContent || '');
+    // Use the text content as the initial value. "0" is a valid weight so
+    // keep it — only an actually empty cell gets an empty input value.
+    const raw = td.textContent || '';
+    input.value = raw === '0' ? raw : raw;
     input.placeholder = '0';
     input.readOnly = true;
     input.setAttribute('aria-label', td.getAttribute('aria-label') || '');
@@ -276,18 +279,23 @@
   // Demote an <input> back to a lightweight <td>.
   // Called on blur/focusout — all matrix cells default to <td>; the <input>
   // is only present while a cell is being actively edited.
+  // Guarded against inputs that are already detached (e.g. replaced by a
+  // queued full re-render).
   function demoteInputToCell(input: HTMLInputElement){
+    if(!input.parentNode) return; // already detached — re-render handled it
     const td = document.createElement('td');
     td.className = 'matrix-cell' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     td.dataset.cellFrom = input.dataset.cellFrom || '';
     td.dataset.cellTo = input.dataset.cellTo || '';
     td.dataset.cellEdges = input.dataset.cellEdges || '';
     td.setAttribute('role', 'gridcell');
-    td.tabIndex = -1;
+    td.tabIndex = 0;
     td.setAttribute('aria-label', input.getAttribute('aria-label') || '');
     td.title = input.title || '';
-    const val = input.value.trim();
-    td.textContent = (val !== '' && val !== '0') ? val : '0';
+    // Use the input's value as the display text. Keep "0" as-is — it's a
+    // valid weight for an existing edge.
+    const val = input.value;
+    td.textContent = val !== '' ? val : '0';
     input.replaceWith(td);
   }
 

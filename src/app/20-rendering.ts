@@ -2559,7 +2559,7 @@
         const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
         const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
         const ariaLabel = escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId;
-        parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" role="gridcell" tabindex="-1" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
+        parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" role="gridcell" tabindex="0" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
       }
       parts.push('</tr>');
     }

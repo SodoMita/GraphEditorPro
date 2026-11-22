@@ -8845,7 +8845,7 @@ function adjacencyMatrixHtml(nodes = matrixNodes()) {
             const cellEdges = ids.length > 0 ? esc(ids.join(',')) : '';
             const cellText = cell.length > 0 ? esc(cell.join(';')) : '0';
             const ariaLabel = escColFrom + ' ' + nid + ', ' + escColTo + ' ' + toId;
-            parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" role="gridcell" tabindex="-1" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
+            parts.push('<td class="matrix-cell' + selClass + '" data-cell-from="' + nid + '" data-cell-to="' + toId + '" data-cell-edges="' + cellEdges + '" role="gridcell" tabindex="0" aria-label="' + ariaLabel + '" title="' + escCellHint + '">' + cellText + '</td>');
         }
         parts.push('</tr>');
     }
@@ -18162,7 +18162,10 @@ function promoteCellToInput(td) {
     input.dataset.cellFrom = td.dataset.cellFrom || '';
     input.dataset.cellTo = td.dataset.cellTo || '';
     input.dataset.cellEdges = td.dataset.cellEdges || '';
-    input.value = td.textContent === '0' ? '' : (td.textContent || '');
+    // Use the text content as the initial value. "0" is a valid weight so
+    // keep it — only an actually empty cell gets an empty input value.
+    const raw = td.textContent || '';
+    input.value = raw === '0' ? raw : raw;
     input.placeholder = '0';
     input.readOnly = true;
     input.setAttribute('aria-label', td.getAttribute('aria-label') || '');
@@ -18174,18 +18177,24 @@ function promoteCellToInput(td) {
 // Demote an <input> back to a lightweight <td>.
 // Called on blur/focusout — all matrix cells default to <td>; the <input>
 // is only present while a cell is being actively edited.
+// Guarded against inputs that are already detached (e.g. replaced by a
+// queued full re-render).
 function demoteInputToCell(input) {
+    if (!input.parentNode)
+        return; // already detached — re-render handled it
     const td = document.createElement('td');
     td.className = 'matrix-cell' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
     td.dataset.cellFrom = input.dataset.cellFrom || '';
     td.dataset.cellTo = input.dataset.cellTo || '';
     td.dataset.cellEdges = input.dataset.cellEdges || '';
     td.setAttribute('role', 'gridcell');
-    td.tabIndex = -1;
+    td.tabIndex = 0;
     td.setAttribute('aria-label', input.getAttribute('aria-label') || '');
     td.title = input.title || '';
-    const val = input.value.trim();
-    td.textContent = (val !== '' && val !== '0') ? val : '0';
+    // Use the input's value as the display text. Keep "0" as-is — it's a
+    // valid weight for an existing edge.
+    const val = input.value;
+    td.textContent = val !== '' ? val : '0';
     input.replaceWith(td);
 }
 // === Style tab: populate + sync default controls ===
@@ -19795,9 +19804,14 @@ function wireUi() {
                 matrixEditCell = { type: 'cell', from, to };
             }
             else if (isSameCell) {
-                // Second click on the same <td> — promote to <input> for editing
+                // Second click on the same <td> — promote to <input> and unlock
+                // for editing immediately (2-click edit, matching the main branch
+                // behaviour where the input already existed in the DOM).
+                // preventDefault suppresses the compatibility mousedown/mouseup/click
+                // that would otherwise race with the focus call in Chromium.
+                ev.preventDefault();
                 const input = promoteCellToInput(t);
-                unlockMatrixInput(input);
+                input.readOnly = false;
                 input.focus();
                 matrixEditCell = { type: 'cell', from, to };
             }
@@ -19825,10 +19839,20 @@ function wireUi() {
     $('#matrixHost').addEventListener('focusout', ev => {
         const t = ev.target;
         if (t.matches && t.matches('input.matrix-input[data-cell-from]')) {
-            // Always demote cell inputs back to lightweight <td> — the cell is
-            // no longer being actively edited. A queued full re-render (from
-            // change handler) will overwrite this if the data actually changed.
-            demoteInputToCell(t);
+            // Defer demotion to the next microtask. Chromium fires a follow-up
+            // mousedown after pointerdown that can move focus away and then back;
+            // the synchronous demotion would destroy the input before the browser
+            // finishes its focus chain.  If the input has already been detached
+            // by a queued full re-render the demote is a no-op.
+            const inp = t;
+            queueMicrotask(() => {
+                if (!inp.parentNode)
+                    return; // re-render already replaced it
+                // If focus returned to this input (Chromium mousedown cycle), skip.
+                if (inp.ownerDocument.activeElement === inp)
+                    return;
+                demoteInputToCell(inp);
+            });
         }
         else if (t.matches && t.matches('input')) {
             t.readOnly = true;

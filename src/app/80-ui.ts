@@ -516,9 +516,14 @@
           unlockMatrixInput(t);
           matrixEditCell = {type:'cell', from, to};
         } else if(isSameCell){
-          // Second click on the same <td> — promote to <input> for editing
+          // Second click on the same <td> — promote to <input> and unlock
+          // for editing immediately (2-click edit, matching the main branch
+          // behaviour where the input already existed in the DOM).
+          // preventDefault suppresses the compatibility mousedown/mouseup/click
+          // that would otherwise race with the focus call in Chromium.
+          ev.preventDefault();
           const input = promoteCellToInput(t as HTMLElement);
-          unlockMatrixInput(input);
+          input.readOnly = false;
           input.focus();
           matrixEditCell = {type:'cell', from, to};
         } else {
@@ -544,10 +549,18 @@
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
       if(t.matches && t.matches('input.matrix-input[data-cell-from]')){
-        // Always demote cell inputs back to lightweight <td> — the cell is
-        // no longer being actively edited. A queued full re-render (from
-        // change handler) will overwrite this if the data actually changed.
-        demoteInputToCell(t as HTMLInputElement);
+        // Defer demotion to the next microtask. Chromium fires a follow-up
+        // mousedown after pointerdown that can move focus away and then back;
+        // the synchronous demotion would destroy the input before the browser
+        // finishes its focus chain.  If the input has already been detached
+        // by a queued full re-render the demote is a no-op.
+        const inp = t as HTMLInputElement;
+        queueMicrotask(() => {
+          if(!inp.parentNode) return; // re-render already replaced it
+          // If focus returned to this input (Chromium mousedown cycle), skip.
+          if(inp.ownerDocument.activeElement === inp) return;
+          demoteInputToCell(inp);
+        });
       } else if(t.matches && t.matches('input')){
         t.readOnly = true;
       }
