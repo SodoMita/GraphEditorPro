@@ -547,13 +547,12 @@
       t.readOnly = true;
       matrixEditCell = null;
     });
-    // Lazy accessibility: set aria-label and title only on the focused cell,
-    // not on all 10,000+ cells in the HTML. This saves ~70 bytes/cell.
+    // On focus, set the editing instruction tooltip. The aria-label is
+    // already present in the HTML (compact "from → to" format) so we only
+    // need to add the title explaining the two-click edit interaction.
     $('#matrixHost').addEventListener('focusin', ev => {
       const t = ev.target;
-      if(t.matches && t.matches('td.mc[data-c]') && !t.getAttribute('aria-label')){
-        const {from, to} = cellFromTo(t as Element);
-        t.setAttribute('aria-label', I18N.t('col_from') + ' ' + from + ', ' + I18N.t('col_to') + ' ' + to);
+      if(t.matches && t.matches('td.mc[data-c]') && !t.title){
         t.title = I18N.t('matrix_cell_hint');
         t.setAttribute('role', 'gridcell');
       }

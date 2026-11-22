@@ -115,18 +115,9 @@ for (const cfg of configs) {
   console.log(`    DOM matrix: ${matrixEls} elements (${matrixInputs} inputs, ${matrixTds} td, ${matrixThs} th)`);
   console.log(`    DOM edge list: ${edgeEls} elements`);
 
-  // Measure full render by toggling view away and back (triggers renderMatrixAndList).
-  // This actually rebuilds the matrix HTML from state and sets innerHTML.
-  bench('Full render (toggle view)', () => {
-    main.classList.remove('v-matrix', 'v-edges');
-    main.classList.add('v-matrix', 'v-edges');
-    // Force the render cycle by toggling a setting that triggers queueRender(true)
-    const s = window.state.settings;
-    s.matrixLimit = (s.matrixLimit || 200) + 0; // no-op value change
-    // Dispatch a custom event the app listens for — or just wait for rAF
-  }, 3);
-
-  // Measure innerHTML re-parse (DOM parsing cost only, no HTML generation)
+  // Measure innerHTML re-parse (DOM parsing cost only, no HTML generation).
+  // The HTML string was already generated during the initial app render;
+  // this captures the DOM parsing/element-creation cost of innerHTML.
   const matrixHtml = matrixHost.innerHTML;
   console.log(`    Matrix HTML size: ${(matrixHtml.length / 1024).toFixed(0)} KB`);
   bench('innerHTML re-parse (matrix)', () => {
