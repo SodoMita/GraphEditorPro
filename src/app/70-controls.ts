@@ -257,8 +257,18 @@
     el.readOnly = false;
   }
   // Promote a lightweight <td class="mc"> to editable by inserting an
-  // <input> INSIDE the <td> (table layout is preserved — the <td> stays
-  // in the table row). Returns the input so the caller can focus/unlock it.
+  // <input> INSIDE the <td> (the <td> stays in the table row). Returns the
+  // input so the caller can focus/unlock it.
+  //
+  // The input is taken OUT OF FLOW (CSS absolutely positions it over the
+  // cell) and the cell's own text is kept as a hidden width placeholder
+  // (`span.mc-ghost`). An in-flow <input> carries an intrinsic preferred
+  // width of its own (~20ch), so promoting used to widen the column and
+  // reflow the whole table: the cell being edited visibly jumped to the
+  // left and every neighbour column shifted under the pointer — which also
+  // made the second press of a double-click land on a different cell.
+  // With an out-of-flow input and a same-text placeholder, promotion and
+  // demotion are layout-neutral: the grid never moves while editing.
   function promoteCellToInput(td: HTMLElement): HTMLInputElement {
     // The cell textContent is either empty (no edge, or edge with empty
     // weight — CSS :empty::before shows a "0" placeholder) or the actual
@@ -272,14 +282,23 @@
     // Copy accessible name from the <td> to the <input>.
     if(td.getAttribute('aria-label')) input.setAttribute('aria-label', td.getAttribute('aria-label')!);
     input.title = td.title || '';
-    // Replace text content with the input — the <td> stays in the table.
+    // Width placeholder: same text as the cell had, hidden but still laid
+    // out, so the column keeps exactly the width it had before promotion.
+    // For an empty cell the placeholder mirrors the CSS "0" glyph that
+    // :empty::before would otherwise contribute.
+    const ghost = document.createElement('span');
+    ghost.className = 'mc-ghost';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.textContent = raw === '' ? '0' : raw;
     td.textContent = '';
+    td.appendChild(ghost);
     td.appendChild(input);
     return input;
   }
-  // Demote: remove the <input> from inside its <td> and restore text content.
-  // Called on blur/focusout — all matrix cells default to <td> with text;
-  // the <input> is only present while a cell is being actively edited.
+  // Demote: remove the <input> (and its width placeholder) from inside its
+  // <td> and restore the plain text content. Called on blur/focusout — all
+  // matrix cells default to <td> with text; the <input> is only present
+  // while a cell is being actively edited.
   function demoteInputToCell(input: HTMLInputElement){
     const td = input.parentElement;
     if(!td || !td.parentNode) return; // already detached — re-render handled it
@@ -287,6 +306,8 @@
     // textContent — CSS :empty::before shows a "0" placeholder visually.
     const val = input.value;
     td.removeChild(input);
+    const ghost = td.querySelector('span.mc-ghost');
+    if(ghost) td.removeChild(ghost);
     td.textContent = val;
   }
 

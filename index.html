@@ -445,19 +445,31 @@
     table{border-collapse:separate; border-spacing:0; width:100%; font-size:0.75rem; color:#dbeafe}
     #matrixHost table{width:max-content; min-width:100%}
     th,td{border:1px solid rgba(51,65,85,.55); padding:5px 7px; background:rgba(2,6,23,.3); white-space:nowrap; text-align:center}
-    /* Column headers: sticky at top only */
-    thead th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
+    /* Column headers: sticky at top only. Every frozen surface (headers,
+       row heads, corner) is FULLY OPAQUE: a translucent background lets the
+       cells sliding underneath bleed through the frozen frame while
+       scrolling, which reads as the top-left corner "not covering" content. */
+    thead th{background:rgb(15,23,42); color:#bfdbfe; position:sticky; top:0; z-index:2}
     /* Row headers: sticky at left only — they must NOT also be sticky-top or
        they collapse to the top of the scroll container and row labels detach
        from their rows. */
-    .row-head{position:sticky; left:0; z-index:3; text-align:left; background:rgba(15,23,42,.96)}
-    /* Frozen corner cell: sticky in both directions (like Excel) */
+    .row-head{position:sticky; left:0; z-index:3; text-align:left; background:rgb(15,23,42)}
+    /* Frozen corner cell: sticky in both directions (like Excel). Opaque and
+       above both header axes so nothing ever shows through or over it. */
     .matrix-corner{position:sticky; top:0; left:0; z-index:5; background:rgb(15,23,42)}
-    /* Editing input fills the parent <td> so the cell doesn't shift */
-    td.mc > input.matrix-input{width:100%; box-sizing:border-box; margin:0; text-align:center}
+    /* The editing input is taken out of flow and stretched over its cell:
+       an in-flow input contributes its own intrinsic width to the column
+       and would reflow the whole table (the edited cell jumping sideways).
+       Opaque background so the hidden width placeholder under it never
+       ghosts through. */
+    td.mc > input.matrix-input{position:absolute; inset:0; width:auto; height:auto; min-width:0; min-height:0; box-sizing:border-box; margin:0; text-align:center; background:rgb(2,6,23)}
+    /* Width placeholder left behind by promoteCellToInput: laid out (keeps
+       the column width identical to the plain-text cell) but invisible. */
+    td.mc > span.mc-ghost{visibility:hidden}
     .table-scroll{overflow:auto; max-height:none; border-radius:0; contain:layout; -webkit-overflow-scrolling:touch}
-    /* Lightweight empty matrix cells — no input, just a clickable <td> */
-    td.mc{cursor:pointer; min-width:44px; max-width:120px; padding:5px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+    /* Lightweight empty matrix cells — no input, just a clickable <td>.
+       position:relative is the containing block for the editing input. */
+    td.mc{cursor:pointer; min-width:44px; max-width:120px; padding:5px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; position:relative}
     td.mc.matrix-selected{outline:2px solid var(--accent); outline-offset:-2px}
     /* Placeholder "0" shown via CSS when the cell has no text content —
        keeps the actual textContent empty so promoteCellToInput can distinguish
@@ -18201,8 +18213,18 @@ function unlockMatrixInput(el) {
     el.readOnly = false;
 }
 // Promote a lightweight <td class="mc"> to editable by inserting an
-// <input> INSIDE the <td> (table layout is preserved — the <td> stays
-// in the table row). Returns the input so the caller can focus/unlock it.
+// <input> INSIDE the <td> (the <td> stays in the table row). Returns the
+// input so the caller can focus/unlock it.
+//
+// The input is taken OUT OF FLOW (CSS absolutely positions it over the
+// cell) and the cell's own text is kept as a hidden width placeholder
+// (`span.mc-ghost`). An in-flow <input> carries an intrinsic preferred
+// width of its own (~20ch), so promoting used to widen the column and
+// reflow the whole table: the cell being edited visibly jumped to the
+// left and every neighbour column shifted under the pointer — which also
+// made the second press of a double-click land on a different cell.
+// With an out-of-flow input and a same-text placeholder, promotion and
+// demotion are layout-neutral: the grid never moves while editing.
 function promoteCellToInput(td) {
     // The cell textContent is either empty (no edge, or edge with empty
     // weight — CSS :empty::before shows a "0" placeholder) or the actual
@@ -18217,14 +18239,23 @@ function promoteCellToInput(td) {
     if (td.getAttribute('aria-label'))
         input.setAttribute('aria-label', td.getAttribute('aria-label'));
     input.title = td.title || '';
-    // Replace text content with the input — the <td> stays in the table.
+    // Width placeholder: same text as the cell had, hidden but still laid
+    // out, so the column keeps exactly the width it had before promotion.
+    // For an empty cell the placeholder mirrors the CSS "0" glyph that
+    // :empty::before would otherwise contribute.
+    const ghost = document.createElement('span');
+    ghost.className = 'mc-ghost';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.textContent = raw === '' ? '0' : raw;
     td.textContent = '';
+    td.appendChild(ghost);
     td.appendChild(input);
     return input;
 }
-// Demote: remove the <input> from inside its <td> and restore text content.
-// Called on blur/focusout — all matrix cells default to <td> with text;
-// the <input> is only present while a cell is being actively edited.
+// Demote: remove the <input> (and its width placeholder) from inside its
+// <td> and restore the plain text content. Called on blur/focusout — all
+// matrix cells default to <td> with text; the <input> is only present
+// while a cell is being actively edited.
 function demoteInputToCell(input) {
     const td = input.parentElement;
     if (!td || !td.parentNode)
@@ -18233,6 +18264,9 @@ function demoteInputToCell(input) {
     // textContent — CSS :empty::before shows a "0" placeholder visually.
     const val = input.value;
     td.removeChild(input);
+    const ghost = td.querySelector('span.mc-ghost');
+    if (ghost)
+        td.removeChild(ghost);
     td.textContent = val;
 }
 // === Style tab: populate + sync default controls ===
@@ -19812,17 +19846,45 @@ function wireUi() {
             }
         });
     }
+    // Open the editor for one matrix weight cell: promote the <td> to an
+    // <input> when it is still a lightweight cell, unlock it and focus it.
+    // Shared by the second press of the select-then-edit gesture and by the
+    // dblclick fallback below, so a double-click always opens the editor
+    // even when a matrix re-render between the two presses rebuilt the <td>
+    // and dropped the promoted input.
+    function beginCellEdit(cell, from, to) {
+        let input = cell.querySelector('input.matrix-input');
+        if (!input)
+            input = promoteCellToInput(cell);
+        input.readOnly = false;
+        // preventScroll: the pressed cell is already in view; letting focus()
+        // scroll the grid would move the table under the pointer mid-gesture.
+        input.focus({ preventScroll: true });
+        matrixEditCell = { type: 'cell', from, to };
+        return input;
+    }
+    // Open the editor for one node-label field (row/column header input).
+    function beginLabelEdit(el, id) {
+        unlockMatrixInput(el);
+        el.focus({ preventScroll: true });
+        matrixEditCell = { type: 'label', id };
+    }
     $('#matrixHost').addEventListener('pointerdown', ev => {
         const t = ev.target;
+        // A press anywhere else in the matrix first closes the field under
+        // edit: blurring it fires `change` (commit) and the focusout demotion,
+        // so exactly one matrix field is ever open and the grid cannot keep a
+        // stale unlocked input from an earlier edit session.
+        const open = document.activeElement;
+        if (open && open !== t && open.matches && open.matches('#matrixHost input'))
+            open.blur();
         if (t.matches('[data-node-label]')) {
             const id = t.dataset.nodeLabel;
             const isEditing = matrixEditCell?.type === 'label' && matrixEditCell?.id === id;
             lockAllMatrixInputs();
             if (isEditing) {
                 // Second click on same label — allow editing
-                unlockMatrixInput(t);
-                matrixEditCell = { type: 'label', id };
-                // Don't preventDefault — let it focus
+                beginLabelEdit(t, id);
             }
             else {
                 // First click — select only, block keyboard
@@ -19838,24 +19900,13 @@ function wireUi() {
         if (cell) {
             const { from, to } = cellFromTo(cell);
             const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
-            const existingInput = cell.querySelector('input.matrix-input');
             lockAllMatrixInputs();
-            if (existingInput) {
-                // Click on a cell that already has an <input> — unlock for editing
-                unlockMatrixInput(existingInput);
-                existingInput.focus();
-                matrixEditCell = { type: 'cell', from, to };
-            }
-            else if (isSameCell) {
-                // Second click on the same <td> — promote to <input> (inserted
-                // inside the <td>) and unlock for editing immediately.
+            if (isSameCell) {
+                // Second press on the armed cell — open the editor.
                 // preventDefault suppresses the compatibility mousedown/mouseup/click
                 // that would otherwise race with the focus call in Chromium.
                 ev.preventDefault();
-                const input = promoteCellToInput(cell);
-                input.readOnly = false;
-                input.focus();
-                matrixEditCell = { type: 'cell', from, to };
+                beginCellEdit(cell, from, to);
             }
             else {
                 // First click on a cell — select only
@@ -19866,10 +19917,43 @@ function wireUi() {
             return;
         }
     });
+    // A double-click always opens the editor for the cell or label under the
+    // pointer. The two-press state machine alone could miss it: a matrix
+    // re-render between the presses rebuilds the <td> (dropping the promoted
+    // input and the armed-cell match), and before the layout-neutral
+    // promotion the table reflow moved the cell away from the second press,
+    // which left the gesture selecting random neighbours instead of editing.
+    $('#matrixHost').addEventListener('dblclick', ev => {
+        const t = ev.target;
+        if (t.matches && t.matches('[data-node-label]')) {
+            ev.preventDefault();
+            lockAllMatrixInputs();
+            beginLabelEdit(t, t.dataset.nodeLabel);
+            return;
+        }
+        const cell = t.closest?.('td.mc[data-c]');
+        if (!cell)
+            return;
+        const input = cell.querySelector('input.matrix-input');
+        if (input && !input.readOnly && cell.ownerDocument.activeElement === input)
+            return; // already editing
+        ev.preventDefault();
+        lockAllMatrixInputs();
+        const { from, to } = cellFromTo(cell);
+        beginCellEdit(cell, from, to);
+    });
     $('#matrixHost').addEventListener('change', ev => {
         const t = ev.target;
-        if (t.matches('[data-node-label]'))
+        if (t.matches('[data-node-label]')) {
             setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
+            // A label commit closes the edit session exactly like a weight
+            // commit: re-lock every matrix field and drop the armed-cell state.
+            // Without the reset a later SINGLE click on the same label reopened
+            // the editor while a canvas selection made in between stayed in
+            // force, so selection-based actions could hit the wrong node.
+            lockAllMatrixInputs();
+            matrixEditCell = null;
+        }
         // The <input> is inside a <td> — find the parent cell for from/to.
         if (t.matches && t.matches('input.matrix-input')) {
             const cell = t.closest?.('td.mc[data-c]');

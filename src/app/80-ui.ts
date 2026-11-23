@@ -488,17 +488,43 @@
         if(t.matches('.edge-color')){ e.color = t.value; queueRender(false); saveLiveDocumentEdit(); }
       });
     }
+    // Open the editor for one matrix weight cell: promote the <td> to an
+    // <input> when it is still a lightweight cell, unlock it and focus it.
+    // Shared by the second press of the select-then-edit gesture and by the
+    // dblclick fallback below, so a double-click always opens the editor
+    // even when a matrix re-render between the two presses rebuilt the <td>
+    // and dropped the promoted input.
+    function beginCellEdit(cell: Element, from: string, to: string){
+      let input = cell.querySelector('input.matrix-input') as HTMLInputElement | null;
+      if(!input) input = promoteCellToInput(cell as HTMLElement);
+      input.readOnly = false;
+      // preventScroll: the pressed cell is already in view; letting focus()
+      // scroll the grid would move the table under the pointer mid-gesture.
+      input.focus({ preventScroll: true });
+      matrixEditCell = {type:'cell', from, to};
+      return input;
+    }
+    // Open the editor for one node-label field (row/column header input).
+    function beginLabelEdit(el: HTMLElement, id: string){
+      unlockMatrixInput(el);
+      el.focus({ preventScroll: true });
+      matrixEditCell = {type:'label', id};
+    }
     $('#matrixHost').addEventListener('pointerdown', ev => {
       const t = ev.target;
+      // A press anywhere else in the matrix first closes the field under
+      // edit: blurring it fires `change` (commit) and the focusout demotion,
+      // so exactly one matrix field is ever open and the grid cannot keep a
+      // stale unlocked input from an earlier edit session.
+      const open = document.activeElement as HTMLElement | null;
+      if(open && open !== t && open.matches && open.matches('#matrixHost input')) open.blur();
       if(t.matches('[data-node-label]')){
         const id = t.dataset.nodeLabel;
         const isEditing = matrixEditCell?.type === 'label' && matrixEditCell?.id === id;
         lockAllMatrixInputs();
         if(isEditing){
           // Second click on same label — allow editing
-          unlockMatrixInput(t);
-          matrixEditCell = {type:'label', id};
-          // Don't preventDefault — let it focus
+          beginLabelEdit(t as HTMLElement, id);
         } else {
           // First click — select only, block keyboard
           ev.preventDefault();
@@ -513,23 +539,13 @@
       if(cell){
         const {from, to} = cellFromTo(cell);
         const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
-        const existingInput = cell.querySelector('input.matrix-input') as HTMLInputElement | null;
         lockAllMatrixInputs();
-        if(existingInput){
-          // Click on a cell that already has an <input> — unlock for editing
-          unlockMatrixInput(existingInput);
-          existingInput.focus();
-          matrixEditCell = {type:'cell', from, to};
-        } else if(isSameCell){
-          // Second click on the same <td> — promote to <input> (inserted
-          // inside the <td>) and unlock for editing immediately.
+        if(isSameCell){
+          // Second press on the armed cell — open the editor.
           // preventDefault suppresses the compatibility mousedown/mouseup/click
           // that would otherwise race with the focus call in Chromium.
           ev.preventDefault();
-          const input = promoteCellToInput(cell as HTMLElement);
-          input.readOnly = false;
-          input.focus();
-          matrixEditCell = {type:'cell', from, to};
+          beginCellEdit(cell, from, to);
         } else {
           // First click on a cell — select only
           ev.preventDefault();
@@ -539,9 +555,41 @@
         return;
       }
     });
+    // A double-click always opens the editor for the cell or label under the
+    // pointer. The two-press state machine alone could miss it: a matrix
+    // re-render between the presses rebuilds the <td> (dropping the promoted
+    // input and the armed-cell match), and before the layout-neutral
+    // promotion the table reflow moved the cell away from the second press,
+    // which left the gesture selecting random neighbours instead of editing.
+    $('#matrixHost').addEventListener('dblclick', ev => {
+      const t = ev.target as HTMLElement;
+      if(t.matches && t.matches('[data-node-label]')){
+        ev.preventDefault();
+        lockAllMatrixInputs();
+        beginLabelEdit(t, t.dataset.nodeLabel);
+        return;
+      }
+      const cell = (t as Element).closest?.('td.mc[data-c]');
+      if(!cell) return;
+      const input = cell.querySelector('input.matrix-input') as HTMLInputElement | null;
+      if(input && !input.readOnly && cell.ownerDocument.activeElement === input) return; // already editing
+      ev.preventDefault();
+      lockAllMatrixInputs();
+      const {from, to} = cellFromTo(cell);
+      beginCellEdit(cell, from, to);
+    });
     $('#matrixHost').addEventListener('change', ev => {
       const t = ev.target;
-      if(t.matches('[data-node-label]')) setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
+      if(t.matches('[data-node-label]')){
+        setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
+        // A label commit closes the edit session exactly like a weight
+        // commit: re-lock every matrix field and drop the armed-cell state.
+        // Without the reset a later SINGLE click on the same label reopened
+        // the editor while a canvas selection made in between stayed in
+        // force, so selection-based actions could hit the wrong node.
+        lockAllMatrixInputs();
+        matrixEditCell = null;
+      }
       // The <input> is inside a <td> — find the parent cell for from/to.
       if(t.matches && t.matches('input.matrix-input')){
         const cell = (t as Element).closest?.('td.mc[data-c]');
