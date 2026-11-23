@@ -130,6 +130,82 @@ test('double-click edits a cell without moving the grid', async t => {
   assert.equal(committed, '712', 'the typed weight commits on click-away');
 });
 
+test('clicks reposition the caret and drags select in an open editor', async t => {
+  const page = await openMatrix(t);
+  const SEL = 'tr[data-r="n2"] td[data-c="n3"]';
+  const at = await centre(page, SEL);
+  await page.mouse.dblclick(at.x, at.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('123456789');
+
+  const box = await page.evaluate(s => {
+    const b = document.querySelector(s + ' input').getBoundingClientRect();
+    return { left: b.left, right: b.right, y: b.top + b.height / 2 };
+  }, SEL);
+  // A click at the end of the text must move the caret there (a prevented
+  // pointerdown used to leave it where focus() had put it).
+  await page.mouse.click(box.right - 3, box.y);
+  const caret = await page.evaluate(s => {
+    const i = document.querySelector(s + ' input');
+    return { start: i.selectionStart, end: i.selectionEnd, focused: document.activeElement === i, ro: i.readOnly, v: i.value };
+  }, SEL);
+  assert.equal(caret.v, '123456789', 'the click did not commit or alter the text');
+  assert.equal(caret.focused, true, 'the editor keeps the focus');
+  assert.equal(caret.ro, false, 'the editor stays unlocked');
+  assert.equal(caret.start, 9, 'a click at the end of the text moves the caret there');
+  assert.equal(caret.end, 9, 'a plain click collapses the selection at the new caret');
+
+  // Dragging inside the editor selects text.
+  await page.mouse.move(box.left + 10, box.y);
+  await page.mouse.down();
+  await page.mouse.move(box.right - 4, box.y, { steps: 4 });
+  await page.mouse.up();
+  const drag = await page.evaluate(s => {
+    const i = document.querySelector(s + ' input');
+    return { start: i.selectionStart, end: i.selectionEnd };
+  }, SEL);
+  assert.ok(drag.end > drag.start, `dragging selects text (got ${drag.start}..${drag.end})`);
+
+  // Enter commits through implicit submission (change while connected), and
+  // the committed cell demotes back to a lightweight <td>.
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => {
+    const td = document.querySelector('tr[data-r="n2"] td[data-c="n3"]');
+    return !td.querySelector('input') && td.textContent === '123456789';
+  }, null, { timeout: 5000 });
+});
+
+test('a fast double-click elsewhere cannot destroy the next editor (render race)', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n2"] td[data-c="n3"]';
+  const Y = 'tr[data-r="n5"] td[data-c="n6"]';
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('42');
+
+  // Committing X by double-clicking Y with a 10 ms interval: the blur fires
+  // X's change (which queues a matrix rebuild ~60 ms later) while the second
+  // press has just opened Y's editor. The rebuild used to replace that
+  // editor and drop focus back to the page.
+  const ya = await centre(page, Y);
+  await page.mouse.dblclick(ya.x, ya.y, { delay: 10 });
+  await page.keyboard.type('77');
+  const read = s => page.evaluate(sel => {
+    const i = document.querySelector(sel + ' input');
+    return i ? { v: i.value, st: i.selectionStart, en: i.selectionEnd, focused: document.activeElement === i, ro: i.readOnly } : null;
+  }, s);
+  const pre = await read(Y);
+  assert.ok(pre, 'the second editor opened');
+  assert.equal(pre.ro, false, 'the second editor is unlocked');
+  await page.waitForTimeout(400); // let the queued rebuild land
+  const post = await read(Y);
+  assert.deepEqual(post, pre, 'the pending rebuild did not destroy the open editor');
+  assert.equal(post.focused, true, 'focus stayed in the editor, not the page');
+  const xText = await page.evaluate(s => document.querySelector(s).textContent, X);
+  assert.equal(xText, '42', 'the first edit committed');
+});
+
 test('a label commit closes the edit session so the next click selects', async t => {
   const page = await openMatrix(t);
   const LABEL = 'tr[data-r="n1"] th.row-head input[data-node-label]';
@@ -144,8 +220,15 @@ test('a label commit closes the edit session so the next click selects', async t
 
   await page.keyboard.press('Control+A');
   await page.keyboard.type('Alpha');
-  await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.querySelector('tr[data-r="n1"] th.row-head input[data-node-label]').value === 'Alpha');
+  // Commit by pressing another label: blur fires `change` while the field is
+  // still in the document. Wait for the COMMITTED state (re-locked and
+  // re-rendered with the new label), not for the open editor's live value.
+  const other = await centre(page, 'tr[data-r="n2"] th.row-head input[data-node-label]');
+  await page.mouse.click(other.x, other.y);
+  await page.waitForFunction(() => {
+    const i = document.querySelector('tr[data-r="n1"] th.row-head input[data-node-label]');
+    return i.readOnly && i.value === 'Alpha';
+  }, null, { timeout: 5000 });
 
   // Select another node ON THE CANVAS while nothing is being edited — a
   // canvas press never touches the matrix edit session, which is exactly

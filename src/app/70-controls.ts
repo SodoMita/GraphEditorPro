@@ -310,6 +310,58 @@
     if(ghost) td.removeChild(ghost);
     td.textContent = val;
   }
+  // --- Edit sessions that survive a matrix rebuild -------------------------
+  // A matrix re-render replaces #matrixHost wholesale, destroying whatever
+  // editor is open in it — together with the text already typed there. The
+  // rebuild queued by committing one cell lands ~60ms later, which is exactly
+  // when a fast double-click has just opened the NEXT editor: that editor
+  // used to vanish and focus fell back to the page. renderMatrixAndList()
+  // therefore captures the open session before swapping the HTML and
+  // re-applies it afterwards (value and caret included).
+  let matrixEditSession: {kind:'cell'|'label', from:string, to:string, id:string, row:boolean, value:string, start:number, end:number} | null = null;
+  function captureMatrixEditSession(){
+    matrixEditSession = null;
+    const edit = matrixEditCell;
+    if(!edit) return;
+    const active = document.activeElement as HTMLInputElement | null;
+    if(!active || active.readOnly || !active.matches || !active.matches('#matrixHost input')) return;
+    const start = active.selectionStart ?? 0, end = active.selectionEnd ?? 0;
+    if(edit.type === 'cell'){
+      const cell = (active as Element).closest('td.mc[data-c]');
+      if(!cell) return;
+      const {from, to} = cellFromTo(cell);
+      if(from !== edit.from || to !== edit.to) return;
+      matrixEditSession = {kind:'cell', from, to, id:'', row:false, value: active.value, start, end};
+    } else {
+      const id = (active as HTMLElement).dataset?.nodeLabel || '';
+      if(!id || id !== edit.id) return;
+      // Every node label exists twice (column header and row head): remember
+      // which instance was open so the restore re-opens exactly that one.
+      const row = !!(active as Element).closest('th.row-head');
+      matrixEditSession = {kind:'label', from:'', to:'', id, row, value: active.value, start, end};
+    }
+  }
+  function restoreMatrixEditSession(){
+    const s = matrixEditSession;
+    matrixEditSession = null;
+    if(!s) return;
+    let input: HTMLInputElement | null = null;
+    if(s.kind === 'cell'){
+      const cell = document.querySelector('#matrixHost tr[data-r="' + matrixAttrValue(s.from) + '"] td[data-c="' + matrixAttrValue(s.to) + '"]');
+      if(!cell) return; // the cell is gone (node removed/filtered) — nothing to restore
+      input = promoteCellToInput(cell as HTMLElement);
+    } else {
+      // Re-open the same instance (row head vs column header) that was open.
+      const scope = s.row ? '#matrixHost tbody th.row-head' : '#matrixHost thead th';
+      input = document.querySelector(scope + ' input[data-node-label="' + matrixAttrValue(s.id) + '"]') as HTMLInputElement | null;
+      if(!input) return;
+    }
+    input.value = s.value;
+    input.readOnly = false;
+    input.focus({ preventScroll: true });
+    try{ input.setSelectionRange(s.start, s.end); }catch{ /* selection unsupported */ }
+    // matrixEditCell already describes this field; the session stays armed.
+  }
 
   // === Style tab: populate + sync default controls ===
   function populateStyleSelects(){

@@ -137,6 +137,60 @@ test('committing a weight edit closes the edit session', async () => {
   dom.window.close();
 });
 
+test('a press inside an open editor keeps native caret behaviour', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  assert.equal(input.readOnly, false, 'the editor is open');
+
+  // A press on the field that is already open belongs to the text editor:
+  // the handler must not preventDefault it (that froze the caret and blocked
+  // drag-selection) and must not commit/demote the editor.
+  const event = new window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 5, clientY: 5 });
+  Object.defineProperties(event, { pointerId: { value: 2 }, pointerType: { value: 'mouse' } });
+  input.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, false, 'a press inside the open editor is not preventDefault-ed');
+  assert.equal(document.activeElement, input, 'the editor keeps the focus');
+  assert.equal(input.readOnly, false, 'the editor stays unlocked');
+  assert.equal(cellOf(document, 'a', 'b').querySelector('input.matrix-input'), input, 'the press did not commit or demote the editor');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an open editor survives a matrix rebuild with value and caret', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  input.value = '77';
+  input.setSelectionRange(1, 2);
+
+  // A rebuild unrelated to the editor (adding a node queues a matrix
+  // re-render) must not destroy it: the session is captured and re-opened on
+  // the fresh DOM, value and caret included.
+  document.querySelector('#btnMatrixAddNode').click();
+  await nextFrame(window); await settle(window, 120);
+
+  const after = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(after, 'the editor was re-opened on the rebuilt matrix');
+  assert.equal(after.value, '77', 'the typed value survived the rebuild');
+  assert.equal(after.selectionStart, 1, 'the caret start survived the rebuild');
+  assert.equal(after.selectionEnd, 2, 'the caret end survived the rebuild');
+  assert.equal(after.readOnly, false, 'the re-opened editor is unlocked');
+  assert.equal(document.activeElement, after, 'the re-opened editor owns the focus');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
 test('committing a node label edit closes the edit session (stale selection P2)', async () => {
   const { dom, errors } = createEditorDom(matrixGraph());
   const { window } = dom; const { document } = window;

@@ -8741,10 +8741,14 @@ function renderMatrixAndList() {
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || { start: -1, end: -1 };
     const rangeActive = vr.start >= 0 || vr.end >= 0;
+    // The rebuild replaces #matrixHost: remember an editor the user has open
+    // (value and caret) so it can be re-opened on the fresh DOM below.
+    captureMatrixEditSession();
     if (total === 0) {
         $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>';
         $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>';
         note.textContent = '';
+        restoreMatrixEditSession();
         return;
     }
     if (n === 0) {
@@ -8764,6 +8768,9 @@ function renderMatrixAndList() {
             ? I18N.t('matrix_note_range', { n, start: vr.start >= 0 ? vr.start : 0, end: vr.end >= 0 ? vr.end : I18N.t('matrix_note_end'), total })
             : n === total ? `${n}×${n}` : I18N.t('matrix_note_view', { n, total });
     }
+    // Re-open an editor the rebuild just destroyed (value and caret intact).
+    // No-ops when nothing was captured or the cell no longer exists.
+    restoreMatrixEditSession();
     $('#edgeListHost').innerHTML = edgeListHtml();
 }
 function adjacencyMatrixData(nodes = state.nodes, includeEdgeIds = true) {
@@ -18269,6 +18276,71 @@ function demoteInputToCell(input) {
         td.removeChild(ghost);
     td.textContent = val;
 }
+// --- Edit sessions that survive a matrix rebuild -------------------------
+// A matrix re-render replaces #matrixHost wholesale, destroying whatever
+// editor is open in it — together with the text already typed there. The
+// rebuild queued by committing one cell lands ~60ms later, which is exactly
+// when a fast double-click has just opened the NEXT editor: that editor
+// used to vanish and focus fell back to the page. renderMatrixAndList()
+// therefore captures the open session before swapping the HTML and
+// re-applies it afterwards (value and caret included).
+let matrixEditSession = null;
+function captureMatrixEditSession() {
+    matrixEditSession = null;
+    const edit = matrixEditCell;
+    if (!edit)
+        return;
+    const active = document.activeElement;
+    if (!active || active.readOnly || !active.matches || !active.matches('#matrixHost input'))
+        return;
+    const start = active.selectionStart ?? 0, end = active.selectionEnd ?? 0;
+    if (edit.type === 'cell') {
+        const cell = active.closest('td.mc[data-c]');
+        if (!cell)
+            return;
+        const { from, to } = cellFromTo(cell);
+        if (from !== edit.from || to !== edit.to)
+            return;
+        matrixEditSession = { kind: 'cell', from, to, id: '', row: false, value: active.value, start, end };
+    }
+    else {
+        const id = active.dataset?.nodeLabel || '';
+        if (!id || id !== edit.id)
+            return;
+        // Every node label exists twice (column header and row head): remember
+        // which instance was open so the restore re-opens exactly that one.
+        const row = !!active.closest('th.row-head');
+        matrixEditSession = { kind: 'label', from: '', to: '', id, row, value: active.value, start, end };
+    }
+}
+function restoreMatrixEditSession() {
+    const s = matrixEditSession;
+    matrixEditSession = null;
+    if (!s)
+        return;
+    let input = null;
+    if (s.kind === 'cell') {
+        const cell = document.querySelector('#matrixHost tr[data-r="' + matrixAttrValue(s.from) + '"] td[data-c="' + matrixAttrValue(s.to) + '"]');
+        if (!cell)
+            return; // the cell is gone (node removed/filtered) — nothing to restore
+        input = promoteCellToInput(cell);
+    }
+    else {
+        // Re-open the same instance (row head vs column header) that was open.
+        const scope = s.row ? '#matrixHost tbody th.row-head' : '#matrixHost thead th';
+        input = document.querySelector(scope + ' input[data-node-label="' + matrixAttrValue(s.id) + '"]');
+        if (!input)
+            return;
+    }
+    input.value = s.value;
+    input.readOnly = false;
+    input.focus({ preventScroll: true });
+    try {
+        input.setSelectionRange(s.start, s.end);
+    }
+    catch { /* selection unsupported */ }
+    // matrixEditCell already describes this field; the session stays armed.
+}
 // === Style tab: populate + sync default controls ===
 function populateStyleSelects() {
     const shapeSel = $('#defNodeShape');
@@ -19871,13 +19943,25 @@ function wireUi() {
     }
     $('#matrixHost').addEventListener('pointerdown', ev => {
         const t = ev.target;
-        // A press anywhere else in the matrix first closes the field under
-        // edit: blurring it fires `change` (commit) and the focusout demotion,
+        // A press INSIDE the field that is already open for editing belongs to
+        // the text editor, not to the select-then-edit state machine: the
+        // browser must run its native pointer behaviour so a click repositions
+        // the caret and a drag selects text. preventDefault() here (or blurring
+        // the field) froze the caret at its old position and killed drag
+        // selection. A press anywhere else in the matrix first closes the open
+        // field: blurring it fires `change` (commit) and the focusout demotion,
         // so exactly one matrix field is ever open and the grid cannot keep a
         // stale unlocked input from an earlier edit session.
         const open = document.activeElement;
-        if (open && open !== t && open.matches && open.matches('#matrixHost input'))
+        const openIsEditor = !!open && !!open.matches && open.matches('#matrixHost input') && !open.readOnly;
+        if (openIsEditor) {
+            // The open weight editor's own <td> counts as "inside" it (the input
+            // covers the cell's padding box; only its 1px border is the <td>).
+            const box = open.closest('td.mc[data-c]') || open;
+            if (box === t || box.contains(t))
+                return;
             open.blur();
+        }
         if (t.matches('[data-node-label]')) {
             const id = t.dataset.nodeLabel;
             const isEditing = matrixEditCell?.type === 'label' && matrixEditCell?.id === id;
@@ -19944,28 +20028,42 @@ function wireUi() {
     });
     $('#matrixHost').addEventListener('change', ev => {
         const t = ev.target;
-        if (t.matches('[data-node-label]')) {
-            setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-            // A label commit closes the edit session exactly like a weight
-            // commit: re-lock every matrix field and drop the armed-cell state.
-            // Without the reset a later SINGLE click on the same label reopened
-            // the editor while a canvas selection made in between stayed in
-            // force, so selection-based actions could hit the wrong node.
-            lockAllMatrixInputs();
-            matrixEditCell = null;
-        }
-        // The <input> is inside a <td> — find the parent cell for from/to.
-        if (t.matches && t.matches('input.matrix-input')) {
-            const cell = t.closest?.('td.mc[data-c]');
-            if (cell) {
-                const { from, to } = cellFromTo(cell);
-                setMatrixCell(from, to, t.value);
+        // Chromium fires `change` on a focused text input when a re-render
+        // removes it from the DOM — and while that event is dispatched the
+        // element still reports isConnected, so the check has to be deferred.
+        // Re-check in a microtask: a real commit (blur, Enter) leaves the field
+        // in the document; a removal-commit does not, and the session
+        // capture/restore around the rebuild owns that in-progress text.
+        // Treating a removal-commit as a user commit wrote half-typed text into
+        // the graph, cleared the armed-cell state (defeating the restore) and
+        // queued a second rebuild that destroyed the editor a fast double-click
+        // had just opened somewhere else.
+        queueMicrotask(() => {
+            if (!t.isConnected)
+                return;
+            if (t.matches('[data-node-label]')) {
+                setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
+                // A label commit closes the edit session exactly like a weight
+                // commit: re-lock every matrix field and drop the armed-cell state.
+                // Without the reset a later SINGLE click on the same label reopened
+                // the editor while a canvas selection made in between stayed in
+                // force, so selection-based actions could hit the wrong node.
+                lockAllMatrixInputs();
+                matrixEditCell = null;
             }
-            // Re-lock after edit commit — a full matrix re-render (queued by
-            // setMatrixCell) will rebuild all cells as lightweight <td>.
-            t.readOnly = true;
-            matrixEditCell = null;
-        }
+            // The <input> is inside a <td> — find the parent cell for from/to.
+            if (t.matches && t.matches('input.matrix-input')) {
+                const cell = t.closest?.('td.mc[data-c]');
+                if (cell) {
+                    const { from, to } = cellFromTo(cell);
+                    setMatrixCell(from, to, t.value);
+                }
+                // Re-lock after edit commit — a full matrix re-render (queued by
+                // setMatrixCell) will rebuild all cells as lightweight <td>.
+                t.readOnly = true;
+                matrixEditCell = null;
+            }
+        });
     });
     // On focus, set the editing instruction tooltip on the parent <td>.
     // The aria-label is already present in the HTML (compact "from → to"
