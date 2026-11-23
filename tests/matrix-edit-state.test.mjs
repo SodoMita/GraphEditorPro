@@ -431,3 +431,38 @@ test('a deferred commit keeps the cell the blurring press armed', async () => {
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('a label restored after a rebuild commits on blur without a change event', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  // Open node A's label editor (two presses) and type in it.
+  let label = labelOf(document, 'a');
+  dispatchPointer(window, label, 'pointerdown');
+  dispatchPointer(window, label, 'pointerdown');
+  label = labelOf(document, 'a');
+  assert.equal(label.readOnly, false, 'the second press unlocks the label');
+  typeInto(window, label, 'Beta');
+
+  // A rebuild lands before the blur, so the session is re-opened on the fresh
+  // DOM with its text assigned programmatically: no `change` will ever report
+  // it, exactly like the weight-cell case.
+  document.querySelector('#btnMatrixAddNode').click();
+  await nextFrame(window); await settle(window, 120);
+  const restored = labelOf(document, 'a');
+  assert.equal(restored.value, 'Beta', 'the typed label survived the rebuild');
+  assert.equal(restored.readOnly, false, 'the re-opened label is unlocked');
+  assert.equal(document.activeElement, restored, 'the re-opened label owns the focus');
+
+  restored.blur();
+  await nextFrame(window); await settle(window, 150);
+  const after = labelOf(document, 'a');
+  assert.equal(after.value, 'Beta', 'the unreported label reached the graph');
+  assert.equal(after.readOnly, true, 'the label commit re-locks the field');
+  // Both label instances (column header and row head) render the model.
+  const header = document.querySelector('#matrixHost thead th input[data-node-label="a"]');
+  assert.equal(header.value, 'Beta', 'the column header shows the committed label');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
