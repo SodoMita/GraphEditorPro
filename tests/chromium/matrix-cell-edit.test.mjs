@@ -391,7 +391,9 @@ test('blurring a re-opened editor does not undo an Undo', async t => {
   );
   const restored = await editorOf(page, X);
   assert.ok(restored, 'the open editor survived the Undo re-render');
-  assert.equal(restored.v, '42', 'the restore brought the old text back');
+  // The session holds no draft, so the restore re-reads the MODEL instead of
+  // replaying the captured text — the focused editor shows the undone value.
+  assert.equal(restored.v, '3', 'the restored editor shows the undone value, not the stale one');
 
   const away = await centre(page, 'tr[data-r="n4"] td[data-c="n5"]');
   await page.mouse.click(away.x, away.y);
@@ -460,4 +462,98 @@ test('switching to another cell takes two clicks, not three', async t => {
   assert.equal(ed.ro, false, 'the editor is unlocked');
   assert.equal(ed.focused, true, 'the editor owns the focus');
   assert.equal(ed.v, '7', 'the editor is pre-filled with the cell weight');
+});
+
+// The label of node n5 (fixture label "E") as the EDGE LIST renders it — an
+// honest model read, unlike a matrix label input which may be an open editor.
+const nodeLabelInGraph = (page, edgeId) => page.evaluate(eid => {
+  const w = document.querySelector(`#edgeListHost input.edge-weight[data-edge-id="${eid}"]`);
+  const tr = w && w.closest('tr');
+  return tr ? tr.querySelector('.el-from').value : null;
+}, edgeId);
+
+test('clicking the other label instance commits the restored row-label draft', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n1"] td[data-c="n2"]'; // edge e1
+  const ROW = 'tr[data-r="n5"] th.row-head input[data-node-label="n5"]';
+  const COL = '#matrixHost thead th input[data-node-label="n5"]';
+
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('42');
+  // Open n5's ROW label before X's queued rebuild lands and type into it: the
+  // rebuild then re-opens the label with its text assigned programmatically, so
+  // no `change` will ever report the draft.
+  const rl = await centre(page, ROW);
+  await page.mouse.dblclick(rl.x, rl.y, { delay: 10 });
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('Alpha');
+  await page.waitForTimeout(400); // the rebuild lands and restores the label
+  const restored = await page.evaluate(s => {
+    const i = document.querySelector(s);
+    return { v: i.value, ro: i.readOnly, focused: document.activeElement === i };
+  }, ROW);
+  assert.equal(restored.v, 'Alpha', 'the row-label draft survived the rebuild');
+  assert.equal(restored.ro, false, 'the restored label is unlocked');
+  assert.equal(restored.focused, true, 'the restored label owns the focus');
+
+  // Click the SAME node's COLUMN label. That opens the other instance while the
+  // row label's deferred blur is still pending; the draft belongs to the field
+  // that was typed in, so opening a new one must not throw it away.
+  const cl = await centre(page, COL);
+  await page.mouse.click(cl.x, cl.y);
+  // Wait for the COMMITTED model (the edge list re-renders from the graph), not
+  // for a matrix label input: the open editor shows the typed text whether or
+  // not anything committed, so waiting on it proves nothing.
+  await page.waitForFunction(
+    () => {
+      const w = document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e4"]');
+      return !!w && w.closest('tr').querySelector('.el-from').value === 'Alpha';
+    }, null, { timeout: 5000 },
+  ).catch(() => {}); // fall through to the assertions for a readable failure
+
+  assert.equal(await nodeLabelInGraph(page, 'e4'), 'Alpha', 'the restored label draft reached the graph');
+  assert.equal(await page.evaluate(s => document.querySelector(s).value, ROW), 'Alpha', 'the row head shows the commit');
+  assert.equal(await page.evaluate(s => document.querySelector(s).value, COL), 'Alpha', 'the column head shows the commit');
+  const col = await page.evaluate(s => {
+    const i = document.querySelector(s);
+    return { ro: i.readOnly, focused: document.activeElement === i };
+  }, COL);
+  assert.equal(col.ro, false, 'the column editor the click opened is still unlocked');
+  assert.equal(col.focused, true, 'the column editor kept the focus');
+});
+
+test('a keystroke after Undo edits the undone value, not the stale one', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n1"] td[data-c="n2"]'; // edge e1, weight 3
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('42');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    () => document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]')?.value === '42',
+    null, { timeout: 5000 },
+  );
+
+  // Re-open the cell without typing, Undo, then keep typing: the editor is
+  // focused the whole time, so what it shows is what the next key appends to.
+  await page.mouse.click(xa.x, xa.y);
+  await page.mouse.click(xa.x, xa.y);
+  await page.keyboard.press('Control+Z');
+  await page.waitForFunction(
+    () => document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]')?.value === '3',
+    null, { timeout: 5000 },
+  );
+  const shown = await editorOf(page, X);
+  assert.ok(shown && shown.focused, 'the editor is still open after the Undo');
+  assert.equal(shown.v, '3', 'the open editor shows the undone value');
+
+  await page.keyboard.type('0');
+  assert.equal((await editorOf(page, X)).v, '30', 'the keystroke edited the undone value');
+  const away = await centre(page, 'tr[data-r="n4"] td[data-c="n5"]');
+  await page.mouse.click(away.x, away.y);
+  await page.waitForTimeout(300);
+  assert.equal(await edgeWeight(page, 'e1'), '30', 'the commit is 30, not 420');
 });

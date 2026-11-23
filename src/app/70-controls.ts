@@ -250,17 +250,37 @@
 
   // === Matrix editing state: must click once to select before editing ===
   let matrixEditCell = null; // {type:'cell'|'label', from, to, id}
-  // Did the USER change the text of the field that is open right now? The
-  // browser's own dirty flag cannot answer that across a matrix rebuild: the
-  // session restore assigns the value programmatically, which clears it. Blur
-  // commits unreported text only while this is set — inferring "uncommitted"
-  // from the graph alone wrote a re-opened editor's stale text back over a
-  // graph that Undo (or an algorithm, or an import) had just changed. Set by
-  // the `input` event, cleared when a session opens and when it commits; it
-  // lives outside the DOM, so capture/restore across a rebuild preserves it.
-  let matrixEditDirty = false;
+  // Did the USER change the text of THIS field? The browser's own dirty flag
+  // cannot answer that across a matrix rebuild: the session restore assigns the
+  // value programmatically, which clears it. Blur commits unreported text only
+  // for a field that carries this mark — inferring "uncommitted" from the graph
+  // alone wrote a re-opened editor's stale text back over a graph that Undo (or
+  // an algorithm, or an import) had just changed.
+  //
+  // Per FIELD, not one shared boolean: clicking a node's column label while its
+  // row label is open runs beginLabelEdit for the new field BEFORE the old
+  // field's deferred blur, and a shared flag let the new session erase the old
+  // one's draft — the typed label was discarded. A WeakSet needs no cleanup
+  // when a rebuild throws the elements away, and capture/restore carries the
+  // mark onto the fresh instance.
+  const matrixDraftFields = new WeakSet<HTMLElement>();
+  function markMatrixFieldDirty(el: HTMLElement | null){ if(el) matrixDraftFields.add(el); }
+  function clearMatrixFieldDirty(el: HTMLElement | null){ if(el) matrixDraftFields.delete(el); }
+  function isMatrixFieldDirty(el: HTMLElement | null): boolean { return !!el && matrixDraftFields.has(el); }
   function lockAllMatrixInputs(){
     $$('#matrixHost input').forEach(el => { el.readOnly = true; });
+  }
+  // Re-lock every matrix field after a commit, EXCEPT a different editor that
+  // the gesture causing this commit has just opened (clicking a node's column
+  // label while its row label editor commits): that field is focused, unlocked
+  // and armed, and locking it would destroy the session the user just started —
+  // the queued rebuild would then find nothing to capture.
+  function lockAllMatrixInputsExcept(committed: HTMLElement | null){
+    const active = document.activeElement as HTMLInputElement | null;
+    const keep = active && active !== committed && !active.readOnly
+      && active.matches && active.matches('#matrixHost input') ? active : null;
+    lockAllMatrixInputs();
+    if(keep) keep.readOnly = false;
   }
   function unlockMatrixInput(el){
     el.readOnly = false;
@@ -327,7 +347,9 @@
   // used to vanish and focus fell back to the page. renderMatrixAndList()
   // therefore captures the open session before swapping the HTML and
   // re-applies it afterwards (value and caret included).
-  let matrixEditSession: {kind:'cell'|'label', from:string, to:string, id:string, row:boolean, value:string, start:number, end:number} | null = null;
+  // `dirty` travels with the session: the restored field is a NEW element, so
+  // the per-field draft mark has to be carried across the rebuild explicitly.
+  let matrixEditSession: {kind:'cell'|'label', from:string, to:string, id:string, row:boolean, value:string, start:number, end:number, dirty:boolean} | null = null;
   function captureMatrixEditSession(){
     matrixEditSession = null;
     const edit = matrixEditCell;
@@ -340,14 +362,14 @@
       if(!cell) return;
       const {from, to} = cellFromTo(cell);
       if(from !== edit.from || to !== edit.to) return;
-      matrixEditSession = {kind:'cell', from, to, id:'', row:false, value: active.value, start, end};
+      matrixEditSession = {kind:'cell', from, to, id:'', row:false, value: active.value, start, end, dirty: isMatrixFieldDirty(active)};
     } else {
       const id = (active as HTMLElement).dataset?.nodeLabel || '';
       if(!id || id !== edit.id) return;
       // Every node label exists twice (column header and row head): remember
       // which instance was open so the restore re-opens exactly that one.
       const row = !!(active as Element).closest('th.row-head');
-      matrixEditSession = {kind:'label', from:'', to:'', id, row, value: active.value, start, end};
+      matrixEditSession = {kind:'label', from:'', to:'', id, row, value: active.value, start, end, dirty: isMatrixFieldDirty(active)};
     }
   }
   function restoreMatrixEditSession(){
@@ -365,10 +387,27 @@
       input = document.querySelector(scope + ' input[data-node-label="' + matrixAttrValue(s.id) + '"]') as HTMLInputElement | null;
       if(!input) return;
     }
-    input.value = s.value;
+    // A session WITH a draft keeps its text. A session without one is only an
+    // open editor, so re-read the model instead of replaying the captured text:
+    // the graph may have moved while it was open (Undo, an algorithm, an
+    // import), and restoring the stale text left the focused editor showing a
+    // value the graph no longer had — after committing 42 over 3, re-opening
+    // the cell and pressing Ctrl+Z showed 42 again, so typing "0" committed
+    // "420" instead of editing the undone "3".
+    let text = s.value;
+    if(!s.dirty){
+      const model = s.kind === 'cell'
+        ? currentMatrixCellText(s.from, s.to)
+        : (nodeById(s.id)?.label || s.id);
+      if(model != null) text = model;
+    }
+    input.value = text;
+    // The draft mark has to move onto the fresh element with the text.
+    if(s.dirty) markMatrixFieldDirty(input); else clearMatrixFieldDirty(input);
     input.readOnly = false;
     input.focus({ preventScroll: true });
-    try{ input.setSelectionRange(s.start, s.end); }catch{ /* selection unsupported */ }
+    // The model text can be shorter than the draft the caret was captured with.
+    try{ input.setSelectionRange(Math.min(s.start, text.length), Math.min(s.end, text.length)); }catch{ /* selection unsupported */ }
     // matrixEditCell already describes this field; the session stays armed.
   }
 

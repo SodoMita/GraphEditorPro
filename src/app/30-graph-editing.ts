@@ -659,12 +659,16 @@
   }
   // Display-level normalisation for the blur-time comparison: fold every
   // separator an editor accepts onto ';' and drop surrounding whitespace, but
-  // KEEP the empty entries. A cell holding a parallel unweighted edge renders
-  // ";7"; filtering the empties away made the edited text "7" compare equal to
-  // it, so blur skipped a commit that a plain `change` does perform (one value
-  // for two edges drops the extra edge) and both edges stayed in the graph.
+  // KEEP the empty entries — one entry per edge is what the cell renders, and
+  // how many values an editor holds decides how many edges a commit keeps.
+  // Filtering the empties away made ";7" and "7" compare equal, so blur skipped
+  // a commit that a plain `change` does perform (one value for two edges drops
+  // the extra edge) and both edges stayed in the graph. Splitting on a SINGLE
+  // separator character matters just as much: `/[;,\n\r]+/` collapses runs, so
+  // "7;;" (three parallel edges) and "7;" (drop two of them) normalised to the
+  // same "7" and the restored edit was dropped again.
   function normalizeMatrixCellText(raw: unknown): string {
-    return String(raw ?? '').split(/[;,\n\r]+/).map(v => v.trim()).join(';');
+    return String(raw ?? '').split(/[;,\n\r]/).map(v => v.trim()).join(';');
   }
   // Does `raw` (the text an editor holds) say exactly what the cell already
   // says? True means committing it could not change the graph, so a purely

@@ -178,7 +178,10 @@ test('an open editor survives a matrix rebuild with value and caret', async () =
   dispatchPointer(window, cell, 'pointerdown');
   dispatchPointer(window, cell, 'pointerdown');
   const input = cell.querySelector('input.matrix-input');
-  input.value = '77';
+  // Type, as a user does: the `input` event is what marks the session as having
+  // a draft. A session WITHOUT one only re-reads the model on restore, so a
+  // graph that moved while the editor was open is not masked by stale text.
+  typeInto(window, input, '77');
   input.setSelectionRange(1, 2);
 
   // A rebuild unrelated to the editor (adding a node queues a matrix
@@ -356,7 +359,9 @@ test('blurring a re-opened editor does not undo an Undo', async () => {
   assert.equal(edgeWeightOf(document, 'e1'), '2', 'Undo restored the previous weight');
   const restored = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
   assert.ok(restored, 'the open editor survived the Undo re-render');
-  assert.equal(restored.value, '42', 'the restore brought the old text back');
+  // The session holds no draft, so the restore re-reads the MODEL instead of
+  // replaying the captured text — the focused editor shows the undone value.
+  assert.equal(restored.value, '2', 'the restored editor shows the undone value, not the stale one');
 
   // Blurring must not treat that stale text as an uncommitted edit: nobody
   // typed in this session, so the graph keeps the undone value.
@@ -497,7 +502,9 @@ test('blurring a re-opened label editor does not undo an Undo', async () => {
   assert.equal(headerLabel().value, 'A', 'Undo restored the previous label');
   const restored = labelOf(document, 'a');
   assert.equal(restored.readOnly, false, 'the open label survived the Undo re-render');
-  assert.equal(restored.value, 'Alpha', 'the restore brought the old text back');
+  // No draft in this session, so the restore re-reads the model: the focused
+  // label shows the undone value instead of the stale text.
+  assert.equal(restored.value, 'A', 'the restored label shows the undone value');
 
   // Nobody typed in this session, so the blur must not write the stale label
   // back over the Undo — it mirrors the model into the field instead.
@@ -506,6 +513,136 @@ test('blurring a re-opened label editor does not undo an Undo', async () => {
   assert.equal(headerLabel().value, 'A', 'the graph kept the undone label');
   assert.equal(labelOf(document, 'a').value, 'A', 'the field shows what the graph holds');
   assert.equal(labelOf(document, 'a').readOnly, true, 'the label re-locks');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// Three parallel edges a->b weighted "7", "", "" — the cell renders "7;;".
+function parallel3Graph() {
+  const g = matrixGraph();
+  g.edges = [
+    { id: 'p1', from: 'a', to: 'b', directed: true, weight: '7', label: '', type: '' },
+    { id: 'p2', from: 'a', to: 'b', directed: true, weight: '', label: '', type: '' },
+    { id: 'p3', from: 'a', to: 'b', directed: true, weight: '', label: '', type: '' },
+    { id: 'e2', from: 'b', to: 'c', directed: true, weight: '5', label: '', type: '' },
+  ];
+  g.nextEdge = 4;
+  return g;
+}
+
+// Node A's label as the EDGE LIST renders it — a model read that cannot be an
+// open matrix editor showing its own draft.
+const nodeALabelInGraph = document => {
+  const w = document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]');
+  const tr = w && w.closest('tr');
+  return tr ? tr.querySelector('.el-from').value : null;
+};
+const headerLabelOf = (document, id) => document.querySelector(`#matrixHost thead th input[data-node-label="${id}"]`);
+
+test('clicking the other label instance commits the restored row-label draft', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  // Commit a cell edit — that queues a matrix rebuild ~60ms out.
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const cellInput = cell.querySelector('input.matrix-input');
+  typeInto(window, cellInput, '11');
+  cellInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+  // Open node A's ROW label before that rebuild lands, and type into it: the
+  // rebuild re-opens the label with its text assigned programmatically, so no
+  // `change` will ever report the draft.
+  let row = labelOf(document, 'a');
+  dispatchPointer(window, row, 'pointerdown');
+  dispatchPointer(window, row, 'pointerdown');
+  row = labelOf(document, 'a');
+  typeInto(window, row, 'Alpha');
+  await nextFrame(window); await settle(window, 150);
+  const restored = labelOf(document, 'a');
+  assert.equal(restored.value, 'Alpha', 'the row-label draft survived the rebuild');
+  assert.equal(restored.readOnly, false, 'the restored label is unlocked');
+  assert.equal(document.activeElement, restored, 'the restored label owns the focus');
+
+  // Click the SAME node's COLUMN label: that opens the other instance while the
+  // row label's deferred blur is still pending. The draft belongs to the field
+  // that was typed in, so a new session must not throw it away.
+  dispatchPointer(window, headerLabelOf(document, 'a'), 'pointerdown');
+  await nextFrame(window); await settle(window, 150);
+
+  assert.equal(nodeALabelInGraph(document), 'Alpha', 'the restored draft reached the graph');
+  assert.equal(labelOf(document, 'a').value, 'Alpha', 'the row head shows the commit');
+  const col = headerLabelOf(document, 'a');
+  assert.equal(col.value, 'Alpha', 'the column head shows the commit');
+  assert.equal(col.readOnly, false, 'the column editor the click opened is still unlocked');
+  assert.equal(document.activeElement, col, 'the column editor kept the focus');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('consecutive empty values survive normalisation, so the blur commit lands', async () => {
+  const { dom, errors } = createEditorDom(parallel3Graph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const cell = cellOf(document, 'a', 'b');
+  assert.equal(cell.textContent, '7;;', 'three parallel edges render two empty values');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  // One value for three edges: a commit keeps a single edge.
+  typeInto(window, input, '7;');
+
+  // A rebuild lands before the blur, so the text is restored programmatically
+  // and only the blur fallback can commit it.
+  document.querySelector('#btnMatrixAddNode').click();
+  await nextFrame(window); await settle(window, 150);
+  const restored = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(restored, 'the editor was re-opened on the rebuilt matrix');
+  assert.equal(restored.value, '7;', 'the draft survived the rebuild');
+
+  restored.blur();
+  await nextFrame(window); await settle(window, 150);
+  const rows = abEdgeRows(document);
+  assert.equal(rows.length, 1, 'the blur dropped the two extra parallel edges');
+  assert.equal(rows[0].querySelector('.el-weight').value, '7', 'the surviving edge keeps the weight');
+  assert.equal(cellOf(document, 'a', 'b').textContent, '7');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a keystroke after Undo edits the undone value, not the stale one', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  typeInto(window, input, '42');
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window); await settle(window, 150);
+  assert.equal(edgeWeightOf(document, 'e1'), '42', 'the edit committed');
+
+  // Re-open without typing, Undo, then keep typing in the focused editor.
+  const reopened = cellOf(document, 'a', 'b');
+  dispatchPointer(window, reopened, 'pointerdown');
+  dispatchPointer(window, reopened, 'pointerdown');
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 150);
+  assert.equal(edgeWeightOf(document, 'e1'), '2', 'Undo restored the previous weight');
+  const restored = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(restored, 'the editor is still open after the Undo');
+  assert.equal(document.activeElement, restored, 'the editor owns the focus');
+  assert.equal(restored.value, '2', 'the open editor shows the undone value');
+
+  typeInto(window, restored, restored.value + '0');
+  restored.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window); await settle(window, 150);
+  assert.equal(edgeWeightOf(document, 'e1'), '20', 'the keystroke edited the undone value, not 420');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
