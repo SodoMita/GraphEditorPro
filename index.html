@@ -452,7 +452,9 @@
        from their rows. */
     .row-head{position:sticky; left:0; z-index:3; text-align:left; background:rgba(15,23,42,.96)}
     /* Frozen corner cell: sticky in both directions (like Excel) */
-    .matrix-corner{position:sticky; top:0; left:0; z-index:5; background:rgba(15,23,42,.96)}
+    .matrix-corner{position:sticky; top:0; left:0; z-index:5; background:rgb(15,23,42)}
+    /* Editing input fills the parent <td> so the cell doesn't shift */
+    td.mc > input.matrix-input{width:100%; box-sizing:border-box; margin:0; text-align:center}
     .table-scroll{overflow:auto; max-height:none; border-radius:0; contain:layout; -webkit-overflow-scrolling:touch}
     /* Lightweight empty matrix cells — no input, just a clickable <td> */
     td.mc{cursor:pointer; min-width:44px; max-width:120px; padding:5px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
@@ -18198,66 +18200,40 @@ function lockAllMatrixInputs() {
 function unlockMatrixInput(el) {
     el.readOnly = false;
 }
-// Promote a lightweight <td class="mc"> to an editable <input>.
-// Returns the new input element so the caller can focus/unlock it.
-// The from-ID lives on the parent <tr data-r> so the input only needs
-// data-c (column target) and data-e (edge IDs).
+// Promote a lightweight <td class="mc"> to editable by inserting an
+// <input> INSIDE the <td> (table layout is preserved — the <td> stays
+// in the table row). Returns the input so the caller can focus/unlock it.
 function promoteCellToInput(td) {
-    const input = document.createElement('input');
-    input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    input.dataset.c = td.dataset.c || '';
-    input.dataset.e = td.dataset.e || '';
     // The cell textContent is either empty (no edge, or edge with empty
-    // weight — CSS shows a "0" placeholder via :empty::before) or the
-    // actual weight text (including "0" for a real zero-weight edge).
-    // Starting from the actual textContent means typing replaces cleanly
-    // instead of appending to a placeholder.
+    // weight — CSS :empty::before shows a "0" placeholder) or the actual
+    // weight text (including "0" for a real zero-weight edge).
     const raw = td.textContent || '';
+    const input = document.createElement('input');
+    input.className = 'matrix-input';
     input.value = raw;
     input.placeholder = '0';
     input.readOnly = true;
-    // Set accessible name immediately — pointer clicks prevent default focus
-    // so the lazy focusin handler would never fire for mouse users.
-    const from = td.closest('tr[data-r]')?.dataset?.r || '';
-    const to = td.dataset.c || '';
-    if (from && to)
-        input.setAttribute('aria-label', from + ' → ' + to);
+    // Copy accessible name from the <td> to the <input>.
     if (td.getAttribute('aria-label'))
         input.setAttribute('aria-label', td.getAttribute('aria-label'));
     input.title = td.title || '';
-    input.style.width = '52px';
-    td.replaceWith(input);
+    // Replace text content with the input — the <td> stays in the table.
+    td.textContent = '';
+    td.appendChild(input);
     return input;
 }
-// Demote an <input> back to a lightweight <td>.
-// Called on blur/focusout — all matrix cells default to <td>; the <input>
-// is only present while a cell is being actively edited.
-// Guarded against inputs that are already detached (e.g. replaced by a
-// queued full re-render).
+// Demote: remove the <input> from inside its <td> and restore text content.
+// Called on blur/focusout — all matrix cells default to <td> with text;
+// the <input> is only present while a cell is being actively edited.
 function demoteInputToCell(input) {
-    if (!input.parentNode)
+    const td = input.parentElement;
+    if (!td || !td.parentNode)
         return; // already detached — re-render handled it
-    const td = document.createElement('td');
-    td.className = 'mc' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    td.dataset.c = input.dataset.c || '';
-    td.dataset.e = input.dataset.e || '';
-    td.tabIndex = 0;
-    // Set accessible name and editing tooltip immediately — mouse users
-    // don't trigger focus, so the focusin handler alone is insufficient.
-    const from = (td.closest && input.closest('tr[data-r]'))?.dataset?.r || '';
-    const to = input.dataset.c || '';
-    if (from && to)
-        td.setAttribute('aria-label', from + ' → ' + to);
-    // Copy title from the input if it has one (editing instruction).
-    if (input.title)
-        td.title = input.title;
-    td.setAttribute('role', 'gridcell');
-    // Use the input's value as the display text. Empty values become empty
+    // Restore text content from the input value. Empty values become empty
     // textContent — CSS :empty::before shows a "0" placeholder visually.
-    // Actual "0" weights stay as "0" textContent so re-editing preserves them.
     const val = input.value;
+    td.removeChild(input);
     td.textContent = val;
-    input.replaceWith(td);
 }
 // === Style tab: populate + sync default controls ===
 function populateStyleSelects() {
@@ -19856,23 +19832,27 @@ function wireUi() {
             }
             return;
         }
-        if (t.matches && t.matches('[data-c]')) {
-            const { from, to } = cellFromTo(t);
+        // Find the matrix cell <td> — the target may be the <td> itself or
+        // an <input> inside it (after promotion for editing).
+        const cell = t.closest?.('td.mc[data-c]');
+        if (cell) {
+            const { from, to } = cellFromTo(cell);
             const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
+            const existingInput = cell.querySelector('input.matrix-input');
             lockAllMatrixInputs();
-            if (t.tagName === 'INPUT') {
-                // Click on a promoted <input> — unlock for editing
-                unlockMatrixInput(t);
+            if (existingInput) {
+                // Click on a cell that already has an <input> — unlock for editing
+                unlockMatrixInput(existingInput);
+                existingInput.focus();
                 matrixEditCell = { type: 'cell', from, to };
             }
             else if (isSameCell) {
-                // Second click on the same <td> — promote to <input> and unlock
-                // for editing immediately (2-click edit, matching the main branch
-                // behaviour where the input already existed in the DOM).
+                // Second click on the same <td> — promote to <input> (inserted
+                // inside the <td>) and unlock for editing immediately.
                 // preventDefault suppresses the compatibility mousedown/mouseup/click
                 // that would otherwise race with the focus call in Chromium.
                 ev.preventDefault();
-                const input = promoteCellToInput(t);
+                const input = promoteCellToInput(cell);
                 input.readOnly = false;
                 input.focus();
                 matrixEditCell = { type: 'cell', from, to };
@@ -19890,37 +19870,45 @@ function wireUi() {
         const t = ev.target;
         if (t.matches('[data-node-label]'))
             setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-        if (t.matches && t.matches('[data-c]')) {
-            const { from, to } = cellFromTo(t);
-            setMatrixCell(from, to, t.value);
+        // The <input> is inside a <td> — find the parent cell for from/to.
+        if (t.matches && t.matches('input.matrix-input')) {
+            const cell = t.closest?.('td.mc[data-c]');
+            if (cell) {
+                const { from, to } = cellFromTo(cell);
+                setMatrixCell(from, to, t.value);
+            }
+            // Re-lock after edit commit — a full matrix re-render (queued by
+            // setMatrixCell) will rebuild all cells as lightweight <td>.
+            t.readOnly = true;
+            matrixEditCell = null;
         }
-        // Re-lock after edit commit — a full matrix re-render (queued by
-        // setMatrixCell) will rebuild all cells as lightweight <td>.
-        t.readOnly = true;
-        matrixEditCell = null;
     });
-    // On focus, set the editing instruction tooltip. The aria-label is
-    // already present in the HTML (compact "from → to" format) so we only
-    // need to add the title explaining the two-click edit interaction.
+    // On focus, set the editing instruction tooltip on the parent <td>.
+    // The aria-label is already present in the HTML (compact "from → to"
+    // format) so we only need to add the title explaining the two-click
+    // edit interaction.
     $('#matrixHost').addEventListener('focusin', ev => {
         const t = ev.target;
-        if (t.matches && t.matches('td.mc[data-c]') && !t.title) {
-            t.title = I18N.t('matrix_cell_hint');
-            t.setAttribute('role', 'gridcell');
+        const cell = t.closest?.('td.mc[data-c]');
+        if (cell && !cell.title) {
+            cell.title = I18N.t('matrix_cell_hint');
         }
     });
     $('#matrixHost').addEventListener('focusout', ev => {
         const t = ev.target;
-        if (t.matches && t.matches('input.matrix-input[data-c]')) {
+        // Demote when an <input> inside a matrix cell loses focus.
+        if (t.matches && t.matches('input.matrix-input')) {
+            const cell = t.closest?.('td.mc[data-c]');
+            if (!cell)
+                return; // input not inside a matrix cell
             // Defer demotion to the next microtask. Chromium fires a follow-up
             // mousedown after pointerdown that can move focus away and then back;
             // the synchronous demotion would destroy the input before the browser
-            // finishes its focus chain.  If the input has already been detached
-            // by a queued full re-render the demote is a no-op.
+            // finishes its focus chain.
             const inp = t;
             queueMicrotask(() => {
                 if (!inp.parentNode)
-                    return; // re-render already replaced it
+                    return; // already removed by re-render
                 // If focus returned to this input (Chromium mousedown cycle), skip.
                 if (inp.ownerDocument.activeElement === inp)
                     return;
