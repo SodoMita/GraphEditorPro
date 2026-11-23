@@ -466,3 +466,46 @@ test('a label restored after a rebuild commits on blur without a change event', 
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('blurring a re-opened label editor does not undo an Undo', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+  const headerLabel = () => document.querySelector('#matrixHost thead th input[data-node-label="a"]');
+
+  // Commit the label Alpha for node A.
+  let label = labelOf(document, 'a');
+  dispatchPointer(window, label, 'pointerdown');
+  dispatchPointer(window, label, 'pointerdown');
+  label = labelOf(document, 'a');
+  typeInto(window, label, 'Alpha');
+  label.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window); await settle(window, 150);
+  assert.equal(labelOf(document, 'a').value, 'Alpha', 'the label commit renamed the node');
+
+  // Re-open the SAME label without typing, then Undo underneath it. Only the
+  // row-head instance is restored, so the column header keeps rendering the
+  // model and is an honest read of the graph.
+  const reopened = labelOf(document, 'a');
+  dispatchPointer(window, reopened, 'pointerdown');
+  dispatchPointer(window, reopened, 'pointerdown');
+  const open = labelOf(document, 'a');
+  assert.equal(open.readOnly, false, 'the label is being edited again');
+  assert.equal(open.value, 'Alpha');
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 150);
+  assert.equal(headerLabel().value, 'A', 'Undo restored the previous label');
+  const restored = labelOf(document, 'a');
+  assert.equal(restored.readOnly, false, 'the open label survived the Undo re-render');
+  assert.equal(restored.value, 'Alpha', 'the restore brought the old text back');
+
+  // Nobody typed in this session, so the blur must not write the stale label
+  // back over the Undo — it mirrors the model into the field instead.
+  restored.blur();
+  await nextFrame(window); await settle(window, 120);
+  assert.equal(headerLabel().value, 'A', 'the graph kept the undone label');
+  assert.equal(labelOf(document, 'a').value, 'A', 'the field shows what the graph holds');
+  assert.equal(labelOf(document, 'a').readOnly, true, 'the label re-locks');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
