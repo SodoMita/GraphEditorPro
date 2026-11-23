@@ -30,7 +30,7 @@ const GRAPH = {
   settings: {},
 };
 
-async function openMatrix(t) {
+async function openMatrix(t, graph = GRAPH) {
   // Use installed Chrome on developer machines and CI, or the existing
   // scripts/browser-setup.sh Chromium rig in the offline Linux sandbox.
   const dir = process.env.BROWSER_DIR;
@@ -48,7 +48,7 @@ async function openMatrix(t) {
     input.dataset.format = 'json';
     Object.defineProperty(input, 'files', { value: dt.files, configurable: true });
     input.dispatchEvent(new Event('change', { bubbles: true }));
-  }, GRAPH);
+  }, graph);
   // Matrix-only view: the grid fills the screen, as when a user edits cells.
   await page.click('[data-view-btn="graph"]');
   await page.click('[data-view-btn="edges"]');
@@ -341,4 +341,123 @@ test('an edit restored after a rebuild commits when blurred without typing', asy
   assert.equal(await edgeWeight(page, 'e4'), '99', 'the unreported edit reaches the graph');
   assert.equal(await page.evaluate(s => document.querySelector(s).textContent, Y), '99', 'grid and graph agree');
   assert.equal(await edgeWeight(page, 'e2'), '42', 'the earlier edit is still there');
+});
+
+// Cell (n3,n4) holds two parallel edges — e3 undirected with weight 1 and e5
+// directed with NO weight — so the cell renders "1;" and an editor that reduces
+// it to "1" must drop the extra edge.
+const PARALLEL_GRAPH = {
+  ...GRAPH,
+  nextEdge: 6,
+  edges: [
+    ...GRAPH.edges.slice(0, 3),
+    { id: 'e5', from: 'n3', to: 'n4', directed: true, weight: '', label: '', type: '' },
+    ...GRAPH.edges.slice(3),
+  ],
+};
+
+const editorOf = (page, sel) => page.evaluate(s => {
+  const i = document.querySelector(s + ' input.matrix-input');
+  return i ? { v: i.value, ro: i.readOnly, focused: document.activeElement === i } : null;
+}, sel);
+
+test('blurring a re-opened editor does not undo an Undo', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n1"] td[data-c="n2"]'; // edge e1, weight 3
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('42');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    () => document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]')?.value === '42',
+    null, { timeout: 5000 },
+  );
+
+  // Re-open the SAME cell and type nothing.
+  await page.mouse.click(xa.x, xa.y);
+  await page.mouse.click(xa.x, xa.y);
+  const opened = await editorOf(page, X);
+  assert.ok(opened && opened.ro === false && opened.focused, 'the cell is being edited again');
+  assert.equal(opened.v, '42', 'the editor is pre-filled with the committed weight');
+
+  // Undo underneath the open editor: Ctrl+Z is handled while a matrix field has
+  // focus, so the editor stays open (the rebuild re-opens it with its old
+  // text), then blur without typing a single key.
+  await page.keyboard.press('Control+Z');
+  await page.waitForFunction(
+    () => document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]')?.value === '3',
+    null, { timeout: 5000 },
+  );
+  const restored = await editorOf(page, X);
+  assert.ok(restored, 'the open editor survived the Undo re-render');
+  assert.equal(restored.v, '42', 'the restore brought the old text back');
+
+  const away = await centre(page, 'tr[data-r="n4"] td[data-c="n5"]');
+  await page.mouse.click(away.x, away.y);
+  await page.waitForTimeout(300);
+  assert.equal(await edgeWeight(page, 'e1'), '3', 'the blur did not write 42 back over the Undo');
+  assert.equal(await page.evaluate(s => document.querySelector(s).textContent, X), '3', 'the cell shows what the graph holds');
+});
+
+test('a blur commits parallel-edge text that changes how many values the cell has', async t => {
+  const page = await openMatrix(t, PARALLEL_GRAPH);
+  const X = 'tr[data-r="n2"] td[data-c="n3"]';   // edge e2
+  const PAR = 'tr[data-r="n3"] td[data-c="n4"]'; // "1;" — e3 + e5
+  assert.equal(await page.evaluate(s => document.querySelector(s).textContent, PAR), '1;',
+    'the parallel unweighted edge renders as an empty value');
+
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('42');
+  // Open the parallel cell before X's queued rebuild lands and reduce "1;" to
+  // "1": one value for two edges drops the extra edge on a normal commit.
+  const ya = await centre(page, PAR);
+  await page.mouse.dblclick(ya.x, ya.y, { delay: 10 });
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('1');
+  await page.waitForTimeout(400); // the rebuild lands and restores the editor
+  const restored = await editorOf(page, PAR);
+  assert.ok(restored, 'the editor was re-opened on the rebuilt grid');
+  assert.equal(restored.v, '1', 'the typed text survived the rebuild');
+
+  // Blur without typing: no `change` will ever report this text.
+  const away = await centre(page, 'tr[data-r="n4"] td[data-c="n5"]');
+  await page.mouse.click(away.x, away.y);
+  await page.waitForTimeout(400);
+  const e5 = await page.evaluate(() => !!document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e5"]'));
+  assert.equal(e5, false, 'the blur removed the parallel edge (empty values are significant)');
+  assert.equal(await edgeWeight(page, 'e3'), '1', 'the surviving edge keeps its weight');
+  assert.equal(await page.evaluate(s => document.querySelector(s).textContent, PAR), '1');
+});
+
+test('switching to another cell takes two clicks, not three', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n1"] td[data-c="n2"]'; // edge e1
+  const Y = 'tr[data-r="n2"] td[data-c="n3"]'; // edge e2
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('11');
+
+  // Press 1 on Y closes X's editor and arms Y — the deferred commit must not
+  // clear that armed state, or press 2 only selects and the editor needs a
+  // third click.
+  const ya = await centre(page, Y);
+  await page.mouse.click(ya.x, ya.y);
+  await page.waitForFunction(
+    () => document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]')?.value === '11',
+    null, { timeout: 5000 },
+  );
+  await page.waitForTimeout(200);
+  assert.equal(await editorOf(page, Y), null, 'one press selects without opening an editor');
+
+  await page.mouse.click(ya.x, ya.y);
+  await page.waitForTimeout(200);
+  const ed = await editorOf(page, Y);
+  assert.ok(ed, 'the second press opened the editor');
+  assert.equal(ed.ro, false, 'the editor is unlocked');
+  assert.equal(ed.focused, true, 'the editor owns the focus');
+  assert.equal(ed.v, '7', 'the editor is pre-filled with the cell weight');
 });

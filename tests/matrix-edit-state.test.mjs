@@ -56,6 +56,13 @@ const changeValue = (window, element, value) => {
   element.value = value;
   element.dispatchEvent(new window.Event('change', { bubbles: true }));
 };
+// Typing, as the browser reports it: `input` fires for user edits only. A
+// programmatic assignment (the session restore after a rebuild, an Undo
+// re-render) never fires it — that is how the app tells them apart.
+const typeInto = (window, element, value) => {
+  element.value = value;
+  element.dispatchEvent(new window.Event('input', { bubbles: true }));
+};
 
 function matrixGraph() {
   return {
@@ -250,12 +257,20 @@ test('a blur with text the browser never reports still commits the edit', async 
   const input = cell.querySelector('input.matrix-input');
   assert.equal(input.readOnly, false, 'the editor is open');
 
-  // Assign the value the way a session restore does after a matrix rebuild:
-  // programmatically. That clears the dirty flag, so NO `change` event follows
-  // — only the blur. The matrix used to keep displaying the restored text
-  // while the graph held the old weight, and a reload revealed the loss.
-  input.value = '77';
-  input.blur();
+  typeInto(window, input, '77');
+  // A rebuild lands before the blur (adding a node queues a matrix re-render),
+  // so the session is re-opened on the fresh DOM with its text assigned
+  // PROGRAMMATICALLY. That clears the browser's dirty flag: no `change` event
+  // will ever follow, only the blur. The matrix used to keep displaying the
+  // restored text while the graph held the old weight, and a reload revealed
+  // the loss.
+  document.querySelector('#btnMatrixAddNode').click();
+  await nextFrame(window); await settle(window, 120);
+  const restored = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(restored, 'the editor was re-opened on the rebuilt matrix');
+  assert.equal(restored.value, '77', 'the typed text survived the rebuild');
+
+  restored.blur();
   await nextFrame(window); await settle(window, 120);
 
   assert.equal(edgeWeightOf(document, 'e1'), '77', 'the unreported text reached the graph');
@@ -293,6 +308,126 @@ test('a deferred commit does not overwrite a selection made while it waited', as
   assert.deepEqual(selectedEdgeIds(document), ['e2'], 'the pressed cell keeps the selection');
   assert.ok(cellOf(document, 'b', 'c').classList.contains('matrix-selected'), 'the matrix marks the pressed cell');
   assert.ok(!cellOf(document, 'a', 'b').classList.contains('matrix-selected'), 'the matrix dropped the edited cell');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// A cell holding two parallel edges where one has no weight renders ";7".
+function parallelEdgeGraph() {
+  const g = matrixGraph();
+  g.edges = [
+    { id: 'e3', from: 'a', to: 'b', directed: true, weight: '', label: '', type: '' },
+    { id: 'e1', from: 'a', to: 'b', directed: true, weight: '7', label: '', type: '' },
+    { id: 'e2', from: 'b', to: 'c', directed: true, weight: '5', label: '', type: '' },
+  ];
+  g.nextEdge = 4;
+  return g;
+}
+
+const abEdgeRows = document => [...document.querySelectorAll('#edgeListHost tbody tr')]
+  .filter(tr => tr.querySelector('.el-from')?.value === 'A' && tr.querySelector('.el-to')?.value === 'B');
+
+test('blurring a re-opened editor does not undo an Undo', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  // Commit 42 over the weight 2.
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  typeInto(window, input, '42');
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window); await settle(window, 120);
+  assert.equal(edgeWeightOf(document, 'e1'), '42', 'the edit committed');
+
+  // Re-open the same cell WITHOUT typing, then Undo underneath it. Ctrl+Z is
+  // handled while a matrix field has focus, so the editor stays open and the
+  // rebuild re-opens it on the fresh DOM with its old text.
+  const reopened = cellOf(document, 'a', 'b');
+  dispatchPointer(window, reopened, 'pointerdown');
+  dispatchPointer(window, reopened, 'pointerdown');
+  const open = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(open, 'the cell is being edited again');
+  assert.equal(open.value, '42');
+  document.querySelector('#btnUndo').click();
+  await nextFrame(window); await settle(window, 120);
+  assert.equal(edgeWeightOf(document, 'e1'), '2', 'Undo restored the previous weight');
+  const restored = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(restored, 'the open editor survived the Undo re-render');
+  assert.equal(restored.value, '42', 'the restore brought the old text back');
+
+  // Blurring must not treat that stale text as an uncommitted edit: nobody
+  // typed in this session, so the graph keeps the undone value.
+  restored.blur();
+  await nextFrame(window); await settle(window, 120);
+  assert.equal(edgeWeightOf(document, 'e1'), '2', 'the blur did not write 42 back over the Undo');
+  assert.equal(cellOf(document, 'a', 'b').textContent, '2', 'the cell shows what the graph holds');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a blur commits parallel-edge text that changes how many values the cell has', async () => {
+  const { dom, errors } = createEditorDom(parallelEdgeGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const cell = cellOf(document, 'a', 'b');
+  assert.equal(cell.textContent, ';7', 'the parallel unweighted edge renders as an empty value');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  // One value for two edges: a plain `change` commit drops the extra edge.
+  typeInto(window, input, '7');
+
+  // A rebuild lands before the blur, so the text is restored programmatically
+  // and no `change` will ever report it.
+  document.querySelector('#btnMatrixAddNode').click();
+  await nextFrame(window); await settle(window, 120);
+  const restored = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(restored, 'the editor was re-opened on the rebuilt matrix');
+  assert.equal(restored.value, '7', 'the typed text survived the rebuild');
+
+  restored.blur();
+  await nextFrame(window); await settle(window, 120);
+  const rows = abEdgeRows(document);
+  assert.equal(rows.length, 1, 'the blur removed the parallel edge (empty values are significant)');
+  assert.equal(rows[0].querySelector('.el-weight').value, '7', 'the surviving edge keeps the weight');
+  assert.equal(cellOf(document, 'a', 'b').textContent, '7');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a deferred commit keeps the cell the blurring press armed', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const x = cellOf(document, 'a', 'b'); // edge e1
+  dispatchPointer(window, x, 'pointerdown');
+  dispatchPointer(window, x, 'pointerdown');
+  const input = x.querySelector('input.matrix-input');
+  assert.equal(input.readOnly, false, 'the editor for e1 is open');
+
+  // One gesture: the press on the other cell blurs this editor (its `change`
+  // commit is deferred) and arms the cell it pressed.
+  changeValue(window, input, '11');
+  const y = cellOf(document, 'b', 'c'); // edge e2
+  dispatchPointer(window, y, 'pointerdown');
+  await nextFrame(window); await settle(window, 120);
+  assert.equal(edgeWeightOf(document, 'e1'), '11', 'the edit committed');
+
+  // The armed cell must still be armed: ONE more press opens its editor. With
+  // the armed state cleared by the deferred commit this press only selected,
+  // and switching cells took a third click.
+  const y2 = cellOf(document, 'b', 'c');
+  dispatchPointer(window, y2, 'pointerdown');
+  await settle(window, 40);
+  const yInput = cellOf(document, 'b', 'c').querySelector('input.matrix-input');
+  assert.ok(yInput, 'the second press on the armed cell opens its editor');
+  assert.equal(yInput.readOnly, false, 'the editor is unlocked');
+  assert.equal(yInput.value, '5', 'the editor is pre-filled with the cell weight');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

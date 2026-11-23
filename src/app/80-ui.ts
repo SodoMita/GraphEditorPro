@@ -502,6 +502,7 @@
       // scroll the grid would move the table under the pointer mid-gesture.
       input.focus({ preventScroll: true });
       matrixEditCell = {type:'cell', from, to};
+      matrixEditDirty = false; // a fresh session has not been typed in yet
       return input;
     }
     // Open the editor for one node-label field (row/column header input).
@@ -509,7 +510,17 @@
       unlockMatrixInput(el);
       el.focus({ preventScroll: true });
       matrixEditCell = {type:'label', id};
+      matrixEditDirty = false; // a fresh session has not been typed in yet
     }
+    // Real user edits (keystrokes, paste, cut, IME) in an open matrix field.
+    // Programmatic assignment — the session restore after a rebuild, or an
+    // Undo re-render — never fires `input`, which is exactly the distinction
+    // the blur fallback needs to tell "text the user typed but the browser
+    // will not report" from "stale text the graph has already moved past".
+    $('#matrixHost').addEventListener('input', ev => {
+      const t = ev.target as HTMLInputElement;
+      if(t.matches && t.matches('input') && !t.readOnly) matrixEditDirty = true;
+    });
     $('#matrixHost').addEventListener('pointerdown', ev => {
       const t = ev.target;
       // A press INSIDE the field that is already open for editing belongs to
@@ -616,7 +627,13 @@
           // the editor while a canvas selection made in between stayed in
           // force, so selection-based actions could hit the wrong node.
           lockAllMatrixInputs();
-          matrixEditCell = null;
+          matrixEditDirty = false;
+          // Drop the armed state only while it still describes THIS label: the
+          // press that blurred the editor arms the field it clicked, and this
+          // commit is deferred until after that press ran.
+          if(matrixEditCell?.type === 'label' && matrixEditCell.id === t.dataset.nodeLabel){
+            matrixEditCell = null;
+          }
         }
         // The <input> is inside a <td> — find the parent cell for from/to.
         if(t.matches && t.matches('input.matrix-input')){
@@ -624,11 +641,20 @@
           if(cell){
             const {from, to} = cellFromTo(cell);
             setMatrixCell(from, to, (t as HTMLInputElement).value, !selectionStampChanged(selAtChange));
+            // A commit closes the session, so the next single press on this cell
+            // selects instead of reopening the editor — but only THIS cell's
+            // armed state may go. The press that blurred the editor arms the
+            // cell it clicked before this deferred commit runs; clearing
+            // unconditionally made switching cells take a third click (select,
+            // select again, then finally edit).
+            if(matrixEditCell?.type === 'cell' && matrixEditCell.from === from && matrixEditCell.to === to){
+              matrixEditCell = null;
+            }
           }
           // Re-lock after edit commit — a full matrix re-render (queued by
           // setMatrixCell) will rebuild all cells as lightweight <td>.
           (t as HTMLInputElement).readOnly = true;
-          matrixEditCell = null;
+          matrixEditDirty = false;
         }
       });
     });
@@ -670,7 +696,7 @@
           // by the session restore.
           if(inp.isConnected){
             const {from, to} = cellFromTo(cell);
-            if(!matrixCellMatchesText(from, to, inp.value)){
+            if(matrixEditDirty && !matrixCellMatchesText(from, to, inp.value)){
               setMatrixCell(from, to, inp.value, !selectionStampChanged(selAtBlur));
               lockAllMatrixInputs();
               // A commit closes the session, exactly like the `change` path
@@ -681,7 +707,15 @@
               if(matrixEditCell?.type === 'cell' && matrixEditCell.from === from && matrixEditCell.to === to){
                 matrixEditCell = null;
               }
+            } else {
+              // Nothing to commit: the session was never typed in, or its text
+              // already describes the live values. The graph may well have
+              // moved underneath the open editor (Undo, an algorithm, an
+              // import) — mirror the model back into the field so the demoted
+              // cell cannot keep displaying a weight the graph does not have.
+              inp.value = currentMatrixCellText(from, to);
             }
+            matrixEditDirty = false; // the session ends with this demotion
           }
           demoteInputToCell(inp);
         });
@@ -697,10 +731,22 @@
             if(inp.ownerDocument.activeElement === inp) return;
             const n = nodeById(id);
             const current = n ? (n.label || n.id) : null;
-            if(current !== null && inp.value !== current){
-              setNodeLabelFromMatrix(id, inp.value);
-              lockAllMatrixInputs();
-              matrixEditCell = null;
+            if(current !== null){
+              if(matrixEditDirty && inp.value !== current){
+                setNodeLabelFromMatrix(id, inp.value);
+                lockAllMatrixInputs();
+                // Only this label's armed state may go — see the weight-cell
+                // branch: the blurring press arms the field it clicked.
+                if(matrixEditCell?.type === 'label' && matrixEditCell.id === id){
+                  matrixEditCell = null;
+                }
+              } else if(inp.value !== current){
+                // The graph moved under an editor nobody typed in (Undo, an
+                // import): show the model instead of writing the stale label
+                // back over it.
+                inp.value = current;
+              }
+              matrixEditDirty = false;
             }
           });
         }

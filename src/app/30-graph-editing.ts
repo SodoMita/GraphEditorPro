@@ -652,20 +652,25 @@
     }
     return vals.join(';');
   }
-  // One editor row per edge: `setMatrixCell` parses the field this way, so the
-  // blur-time comparison below has to parse the live cell the same way or a
-  // purely cosmetic difference ("3 " vs "3") would commit the same values
-  // twice (two history steps, two rebuilds).
+  // How `setMatrixCell` turns editor text into one value per edge.
   function parseMatrixCellValues(raw: unknown): string[] {
     // `|| ''` (not `?? ''`) keeps the historical behaviour for a numeric 0.
     return String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
   }
-  // Does `raw` (the text an editor holds) describe the values the cell already
-  // has? True means committing it would not change the graph.
+  // Display-level normalisation for the blur-time comparison: fold every
+  // separator an editor accepts onto ';' and drop surrounding whitespace, but
+  // KEEP the empty entries. A cell holding a parallel unweighted edge renders
+  // ";7"; filtering the empties away made the edited text "7" compare equal to
+  // it, so blur skipped a commit that a plain `change` does perform (one value
+  // for two edges drops the extra edge) and both edges stayed in the graph.
+  function normalizeMatrixCellText(raw: unknown): string {
+    return String(raw ?? '').split(/[;,\n\r]+/).map(v => v.trim()).join(';');
+  }
+  // Does `raw` (the text an editor holds) say exactly what the cell already
+  // says? True means committing it could not change the graph, so a purely
+  // cosmetic edit ("3 " vs "3") cannot cost a second history step and rebuild.
   function matrixCellMatchesText(from: string, to: string, raw: unknown): boolean {
-    const mine = parseMatrixCellValues(raw);
-    const live = parseMatrixCellValues(currentMatrixCellText(from, to));
-    return mine.length === live.length && mine.every((v, i) => v === live[i]);
+    return normalizeMatrixCellText(raw) === normalizeMatrixCellText(currentMatrixCellText(from, to));
   }
   // `reselect`: whether the commit may move the selection onto the edited
   // cell's edges. Deferred commits (change/focusout microtasks) run AFTER the

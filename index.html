@@ -9808,20 +9808,25 @@ function currentMatrixCellText(from, to) {
     }
     return vals.join(';');
 }
-// One editor row per edge: `setMatrixCell` parses the field this way, so the
-// blur-time comparison below has to parse the live cell the same way or a
-// purely cosmetic difference ("3 " vs "3") would commit the same values
-// twice (two history steps, two rebuilds).
+// How `setMatrixCell` turns editor text into one value per edge.
 function parseMatrixCellValues(raw) {
     // `|| ''` (not `?? ''`) keeps the historical behaviour for a numeric 0.
     return String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
 }
-// Does `raw` (the text an editor holds) describe the values the cell already
-// has? True means committing it would not change the graph.
+// Display-level normalisation for the blur-time comparison: fold every
+// separator an editor accepts onto ';' and drop surrounding whitespace, but
+// KEEP the empty entries. A cell holding a parallel unweighted edge renders
+// ";7"; filtering the empties away made the edited text "7" compare equal to
+// it, so blur skipped a commit that a plain `change` does perform (one value
+// for two edges drops the extra edge) and both edges stayed in the graph.
+function normalizeMatrixCellText(raw) {
+    return String(raw ?? '').split(/[;,\n\r]+/).map(v => v.trim()).join(';');
+}
+// Does `raw` (the text an editor holds) say exactly what the cell already
+// says? True means committing it could not change the graph, so a purely
+// cosmetic edit ("3 " vs "3") cannot cost a second history step and rebuild.
 function matrixCellMatchesText(from, to, raw) {
-    const mine = parseMatrixCellValues(raw);
-    const live = parseMatrixCellValues(currentMatrixCellText(from, to));
-    return mine.length === live.length && mine.every((v, i) => v === live[i]);
+    return normalizeMatrixCellText(raw) === normalizeMatrixCellText(currentMatrixCellText(from, to));
 }
 // `reselect`: whether the commit may move the selection onto the edited
 // cell's edges. Deferred commits (change/focusout microtasks) run AFTER the
@@ -18268,6 +18273,15 @@ function matchesHotkey(ev, name) {
 }
 // === Matrix editing state: must click once to select before editing ===
 let matrixEditCell = null; // {type:'cell'|'label', from, to, id}
+// Did the USER change the text of the field that is open right now? The
+// browser's own dirty flag cannot answer that across a matrix rebuild: the
+// session restore assigns the value programmatically, which clears it. Blur
+// commits unreported text only while this is set — inferring "uncommitted"
+// from the graph alone wrote a re-opened editor's stale text back over a
+// graph that Undo (or an algorithm, or an import) had just changed. Set by
+// the `input` event, cleared when a session opens and when it commits; it
+// lives outside the DOM, so capture/restore across a rebuild preserves it.
+let matrixEditDirty = false;
 function lockAllMatrixInputs() {
     $$('#matrixHost input').forEach(el => { el.readOnly = true; });
 }
@@ -19988,6 +20002,7 @@ function wireUi() {
         // scroll the grid would move the table under the pointer mid-gesture.
         input.focus({ preventScroll: true });
         matrixEditCell = { type: 'cell', from, to };
+        matrixEditDirty = false; // a fresh session has not been typed in yet
         return input;
     }
     // Open the editor for one node-label field (row/column header input).
@@ -19995,7 +20010,18 @@ function wireUi() {
         unlockMatrixInput(el);
         el.focus({ preventScroll: true });
         matrixEditCell = { type: 'label', id };
+        matrixEditDirty = false; // a fresh session has not been typed in yet
     }
+    // Real user edits (keystrokes, paste, cut, IME) in an open matrix field.
+    // Programmatic assignment — the session restore after a rebuild, or an
+    // Undo re-render — never fires `input`, which is exactly the distinction
+    // the blur fallback needs to tell "text the user typed but the browser
+    // will not report" from "stale text the graph has already moved past".
+    $('#matrixHost').addEventListener('input', ev => {
+        const t = ev.target;
+        if (t.matches && t.matches('input') && !t.readOnly)
+            matrixEditDirty = true;
+    });
     $('#matrixHost').addEventListener('pointerdown', ev => {
         const t = ev.target;
         // A press INSIDE the field that is already open for editing belongs to
@@ -20108,7 +20134,13 @@ function wireUi() {
                 // the editor while a canvas selection made in between stayed in
                 // force, so selection-based actions could hit the wrong node.
                 lockAllMatrixInputs();
-                matrixEditCell = null;
+                matrixEditDirty = false;
+                // Drop the armed state only while it still describes THIS label: the
+                // press that blurred the editor arms the field it clicked, and this
+                // commit is deferred until after that press ran.
+                if (matrixEditCell?.type === 'label' && matrixEditCell.id === t.dataset.nodeLabel) {
+                    matrixEditCell = null;
+                }
             }
             // The <input> is inside a <td> — find the parent cell for from/to.
             if (t.matches && t.matches('input.matrix-input')) {
@@ -20116,11 +20148,20 @@ function wireUi() {
                 if (cell) {
                     const { from, to } = cellFromTo(cell);
                     setMatrixCell(from, to, t.value, !selectionStampChanged(selAtChange));
+                    // A commit closes the session, so the next single press on this cell
+                    // selects instead of reopening the editor — but only THIS cell's
+                    // armed state may go. The press that blurred the editor arms the
+                    // cell it clicked before this deferred commit runs; clearing
+                    // unconditionally made switching cells take a third click (select,
+                    // select again, then finally edit).
+                    if (matrixEditCell?.type === 'cell' && matrixEditCell.from === from && matrixEditCell.to === to) {
+                        matrixEditCell = null;
+                    }
                 }
                 // Re-lock after edit commit — a full matrix re-render (queued by
                 // setMatrixCell) will rebuild all cells as lightweight <td>.
                 t.readOnly = true;
-                matrixEditCell = null;
+                matrixEditDirty = false;
             }
         });
     });
@@ -20165,7 +20206,7 @@ function wireUi() {
                 // by the session restore.
                 if (inp.isConnected) {
                     const { from, to } = cellFromTo(cell);
-                    if (!matrixCellMatchesText(from, to, inp.value)) {
+                    if (matrixEditDirty && !matrixCellMatchesText(from, to, inp.value)) {
                         setMatrixCell(from, to, inp.value, !selectionStampChanged(selAtBlur));
                         lockAllMatrixInputs();
                         // A commit closes the session, exactly like the `change` path
@@ -20177,6 +20218,15 @@ function wireUi() {
                             matrixEditCell = null;
                         }
                     }
+                    else {
+                        // Nothing to commit: the session was never typed in, or its text
+                        // already describes the live values. The graph may well have
+                        // moved underneath the open editor (Undo, an algorithm, an
+                        // import) — mirror the model back into the field so the demoted
+                        // cell cannot keep displaying a weight the graph does not have.
+                        inp.value = currentMatrixCellText(from, to);
+                    }
+                    matrixEditDirty = false; // the session ends with this demotion
                 }
                 demoteInputToCell(inp);
             });
@@ -20195,10 +20245,23 @@ function wireUi() {
                         return;
                     const n = nodeById(id);
                     const current = n ? (n.label || n.id) : null;
-                    if (current !== null && inp.value !== current) {
-                        setNodeLabelFromMatrix(id, inp.value);
-                        lockAllMatrixInputs();
-                        matrixEditCell = null;
+                    if (current !== null) {
+                        if (matrixEditDirty && inp.value !== current) {
+                            setNodeLabelFromMatrix(id, inp.value);
+                            lockAllMatrixInputs();
+                            // Only this label's armed state may go — see the weight-cell
+                            // branch: the blurring press arms the field it clicked.
+                            if (matrixEditCell?.type === 'label' && matrixEditCell.id === id) {
+                                matrixEditCell = null;
+                            }
+                        }
+                        else if (inp.value !== current) {
+                            // The graph moved under an editor nobody typed in (Undo, an
+                            // import): show the model instead of writing the stale label
+                            // back over it.
+                            inp.value = current;
+                        }
+                        matrixEditDirty = false;
                     }
                 });
             }

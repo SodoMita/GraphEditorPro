@@ -250,6 +250,15 @@
 
   // === Matrix editing state: must click once to select before editing ===
   let matrixEditCell = null; // {type:'cell'|'label', from, to, id}
+  // Did the USER change the text of the field that is open right now? The
+  // browser's own dirty flag cannot answer that across a matrix rebuild: the
+  // session restore assigns the value programmatically, which clears it. Blur
+  // commits unreported text only while this is set — inferring "uncommitted"
+  // from the graph alone wrote a re-opened editor's stale text back over a
+  // graph that Undo (or an algorithm, or an import) had just changed. Set by
+  // the `input` event, cleared when a session opens and when it commits; it
+  // lives outside the DOM, so capture/restore across a rebuild preserves it.
+  let matrixEditDirty = false;
   function lockAllMatrixInputs(){
     $$('#matrixHost input').forEach(el => { el.readOnly = true; });
   }
