@@ -557,3 +557,88 @@ test('a keystroke after Undo edits the undone value, not the stale one', async t
   await page.waitForTimeout(300);
   assert.equal(await edgeWeight(page, 'e1'), '30', 'the commit is 30, not 420');
 });
+
+test('double-clicking inside a restored label editor keeps its draft', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n1"] td[data-c="n2"]'; // edge e1
+  const ROW = 'tr[data-r="n5"] th.row-head input[data-node-label="n5"]'; // label "E"
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('42');
+  // Open n5's row label before the cell commit's rebuild lands and type: the
+  // rebuild re-opens the label with its text assigned programmatically, so no
+  // `change` will ever report the draft — only the blur fallback can.
+  const rl = await centre(page, ROW);
+  await page.mouse.dblclick(rl.x, rl.y, { delay: 10 });
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('Alpha');
+  await page.waitForTimeout(400); // the rebuild lands and restores the draft
+  const restored = await page.evaluate(s => {
+    const i = document.querySelector(s);
+    return { v: i.value, ro: i.readOnly, f: document.activeElement === i };
+  }, ROW);
+  assert.equal(restored.v, 'Alpha', 'the label draft survived the rebuild');
+  assert.equal(restored.ro, false, 'the restored label is unlocked');
+
+  // Double-click INSIDE that editor — a user selecting the word or moving the
+  // caret. Re-opening an editor that is already open used to clear its draft
+  // mark, and the following blur then discarded the label.
+  await page.mouse.dblclick(rl.x, rl.y);
+  const after = await page.evaluate(s => {
+    const i = document.querySelector(s);
+    return { v: i.value, ro: i.readOnly, f: document.activeElement === i, start: i.selectionStart, end: i.selectionEnd };
+  }, ROW);
+  assert.equal(after.v, 'Alpha', 'the double-click left the text alone');
+  assert.equal(after.ro, false, 'the editor is still unlocked');
+  assert.equal(after.f, true, 'the editor still owns the focus');
+  assert.equal(after.start, 0, 'the native double-click selected the word…');
+  assert.equal(after.end, 5, '…instead of being prevented');
+
+  const away = await centre(page, 'tr[data-r="n4"] td[data-c="n5"]');
+  await page.mouse.click(away.x, away.y);
+  await page.waitForFunction(
+    () => {
+      const w = document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e4"]');
+      return !!w && w.closest('tr').querySelector('.el-from').value === 'Alpha';
+    }, null, { timeout: 5000 },
+  ).catch(() => {}); // fall through to the assertion for a readable failure
+  assert.equal(await nodeLabelInGraph(page, 'e4'), 'Alpha', 'the draft still committed on blur');
+});
+
+test('typing after switching label instances appends to the committed label', async t => {
+  const page = await openMatrix(t);
+  const ROW = 'tr[data-r="n1"] th.row-head input[data-node-label="n1"]'; // label "A"
+  const COL = '#matrixHost thead th input[data-node-label="n1"]';
+  const rl = await centre(page, ROW);
+  await page.mouse.dblclick(rl.x, rl.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('Alpha');
+
+  // Click the SAME node's column label and immediately type. The row commit is
+  // deferred, so the new editor used to be pre-filled from a DOM that still
+  // showed "A" — the keystroke anchored that stale text as a draft ("AX") which
+  // the restore then replayed over the committed "Alpha".
+  const cl = await centre(page, COL);
+  await page.mouse.click(cl.x, cl.y);
+  await page.keyboard.press('End'); // the click positioned the caret natively
+  await page.keyboard.type('X');
+  const ed = await page.evaluate(s => {
+    const i = document.querySelector(s);
+    return { v: i.value, ro: i.readOnly, f: document.activeElement === i };
+  }, COL);
+  assert.equal(ed.v, 'AlphaX', 'the new editor was pre-filled from the committed label');
+  assert.equal(ed.ro, false, 'the column editor is open');
+  assert.equal(ed.f, true, 'the column editor owns the focus');
+
+  await page.waitForTimeout(400); // the rebuild lands and restores the draft
+  const away = await centre(page, 'tr[data-r="n4"] td[data-c="n5"]');
+  await page.mouse.click(away.x, away.y);
+  await page.waitForFunction(
+    () => {
+      const w = document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]');
+      return !!w && w.closest('tr').querySelector('.el-from').value === 'AlphaX';
+    }, null, { timeout: 5000 },
+  ).catch(() => {});
+  assert.equal(await nodeLabelInGraph(page, 'e1'), 'AlphaX', 'the appended keystroke did not overwrite the commit');
+});

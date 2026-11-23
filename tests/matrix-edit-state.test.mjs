@@ -646,3 +646,66 @@ test('a keystroke after Undo edits the undone value, not the stale one', async (
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+test('a label editor opened over a pending commit is pre-filled from the model', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  let row = labelOf(document, 'a');
+  dispatchPointer(window, row, 'pointerdown');
+  dispatchPointer(window, row, 'pointerdown');
+  row = labelOf(document, 'a');
+  typeInto(window, row, 'Alpha');
+
+  // Click the SAME node's column label and type straight away. The row commit is
+  // deferred to the end of the gesture, so the DOM still shows "A": the new
+  // editor has to be pre-filled from the MODEL, otherwise the keystroke anchors
+  // stale text as a draft and the restore replays it over the commit.
+  dispatchPointer(window, headerLabelOf(document, 'a'), 'pointerdown');
+  const col = headerLabelOf(document, 'a');
+  assert.equal(col.value, 'Alpha', 'the new editor shows the committed label');
+  assert.equal(col.readOnly, false, 'the column editor is open');
+  assert.equal(document.activeElement, col, 'the column editor owns the focus');
+  typeInto(window, col, `${col.value}X`);
+  await nextFrame(window); await settle(window, 150);
+
+  dispatchPointer(window, cellOf(document, 'b', 'c'), 'pointerdown');
+  await nextFrame(window); await settle(window, 150);
+  assert.equal(nodeALabelInGraph(document), 'AlphaX', 'the keystroke appended instead of overwriting');
+  assert.equal(labelOf(document, 'a').value, 'AlphaX', 'the row head agrees');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a cell editor opened before an Undo rebuild shows the undone value', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  typeInto(window, input, '42');
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window); await settle(window, 120);
+  assert.equal(edgeWeightOf(document, 'e1'), '42', 'the edit committed');
+
+  // Undo reverts the model but the matrix rebuild is debounced ~60ms out, so the
+  // DOM still reads 42. Opening the cell in that window must show the MODEL.
+  document.querySelector('#btnUndo').click();
+  const stale = cellOf(document, 'a', 'b');
+  assert.equal(stale.textContent.trim(), '42', 'the cell text is still the pre-Undo DOM');
+  dispatchPointer(window, stale, 'pointerdown');
+  dispatchPointer(window, stale, 'pointerdown');
+  const open = cellOf(document, 'a', 'b').querySelector('input.matrix-input');
+  assert.ok(open, 'the cell is being edited');
+  assert.equal(open.value, '2', 'the editor shows the undone value, not the stale one');
+  const ghost = cellOf(document, 'a', 'b').querySelector('span.mc-ghost');
+  assert.equal(ghost.textContent, '2', 'the hidden placeholder matches the shown text');
+  await nextFrame(window); await settle(window, 150);
+  assert.equal(edgeWeightOf(document, 'e1'), '2', 'opening the editor changed nothing');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
