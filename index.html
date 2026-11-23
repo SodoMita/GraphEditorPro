@@ -9130,6 +9130,20 @@ function isNodeSelected(id) { return getSelectionCache().nodes.has(id); }
 function isEdgeSelected(id) { return getSelectionCache().edges.has(id); }
 // Shared selection-merge core: computes state.selection/state.selected from
 // the requested ids and combine mode. Callers decide how much DOM to update.
+// A cheap, comparable snapshot of "which selection is in force right now".
+// It tracks both signals the selection cache above uses: the revision counter
+// (bumped by mergeSelection/delete/undo/import) and the array identities
+// (clear/sample/import assign state.selection directly and never bump it).
+// Deferred matrix commits use it to notice that the gesture which blurred the
+// editor already moved the selection — see setMatrixCell's `reselect`.
+function selectionStamp() {
+    return { rev: selCacheRev, nodes: state.selection?.nodes || null, edges: state.selection?.edges || null };
+}
+function selectionStampChanged(stamp) {
+    return stamp.rev !== selCacheRev
+        || stamp.nodes !== (state.selection?.nodes || null)
+        || stamp.edges !== (state.selection?.edges || null);
+}
 function mergeSelection(nodes = [], edges = [], primary = null, combine = 'replace') {
     const selectionMode = combine === true ? 'add' :
         (combine === false || combine == null ? 'replace' : combine);
@@ -9775,10 +9789,50 @@ function setNodeLabelFromMatrix(id, label) {
     pushHistory('edit node label');
     queueRender(true);
 }
-function setMatrixCell(from, to, raw) {
+// The text the matrix cell for (from,to) renders from LIVE graph state —
+// the mirror of adjacencyMatrixData's cell values. Used on blur to detect
+// editor text the browser will never report through `change`: a session
+// restored after a rebuild assigns its value programmatically, which clears
+// the input's dirty flag, so blurring it without typing again fires no
+// change event and the edit would be lost.
+function currentMatrixCellText(from, to) {
+    const vals = [];
+    for (const e of state.edges) {
+        // Same self-loop guard adjacencyMatrixData needs: `&&` binds tighter
+        // than `||`, so an undirected self-loop matched both halves and the
+        // mirror reported its weight twice (7;7).
+        const hit = (e.from === from && e.to === to)
+            || ((edgeIsUndirected(e) || edgeDirection(e) === 'mutual') && from !== to && e.from === to && e.to === from);
+        if (hit)
+            vals.push(e.weight != null && e.weight !== '' ? e.weight : '');
+    }
+    return vals.join(';');
+}
+// One editor row per edge: `setMatrixCell` parses the field this way, so the
+// blur-time comparison below has to parse the live cell the same way or a
+// purely cosmetic difference ("3 " vs "3") would commit the same values
+// twice (two history steps, two rebuilds).
+function parseMatrixCellValues(raw) {
+    // `|| ''` (not `?? ''`) keeps the historical behaviour for a numeric 0.
+    return String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
+}
+// Does `raw` (the text an editor holds) describe the values the cell already
+// has? True means committing it would not change the graph.
+function matrixCellMatchesText(from, to, raw) {
+    const mine = parseMatrixCellValues(raw);
+    const live = parseMatrixCellValues(currentMatrixCellText(from, to));
+    return mine.length === live.length && mine.every((v, i) => v === live[i]);
+}
+// `reselect`: whether the commit may move the selection onto the edited
+// cell's edges. Deferred commits (change/focusout microtasks) run AFTER the
+// gesture that blurred the editor has already selected something else, and
+// re-selecting there left the wrong edge selected — editing E1 and clicking
+// E2 kept E1 selected, so selection-based actions hit the wrong edge. They
+// pass `!selectionStampChanged(stampTakenWhenTheEventFired)`.
+function setMatrixCell(from, to, raw, reselect = true) {
     if (!nodeById(from) || !nodeById(to))
         return;
-    const values = String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
+    const values = parseMatrixCellValues(raw);
     // Find existing edges for this cell (directed: from→to; undirected/mutual: either direction)
     const existing = state.edges.filter(e => (e.from === from && e.to === to) || ((edgeIsUndirected(e) || edgeDirection(e) === 'mutual') && e.from === to && e.to === from));
     const s = state.settings;
@@ -9871,7 +9925,8 @@ function setMatrixCell(from, to, raw) {
             state.edges.push(e);
         }
     }
-    setSelection([], matrixCellEdgeIds(from, to), null, false);
+    if (reselect)
+        setSelection([], matrixCellEdgeIds(from, to), null, false);
     pushHistory('edit matrix edge');
     queueRender(true);
 }
@@ -20028,6 +20083,10 @@ function wireUi() {
     });
     $('#matrixHost').addEventListener('change', ev => {
         const t = ev.target;
+        // The blurring gesture (if any) moves the selection right after this
+        // event, before the deferred commit runs: snapshot it so the commit does
+        // not steal a selection made in between.
+        const selAtChange = selectionStamp();
         // Chromium fires `change` on a focused text input when a re-render
         // removes it from the DOM — and while that event is dispatched the
         // element still reports isConnected, so the check has to be deferred.
@@ -20056,7 +20115,7 @@ function wireUi() {
                 const cell = t.closest?.('td.mc[data-c]');
                 if (cell) {
                     const { from, to } = cellFromTo(cell);
-                    setMatrixCell(from, to, t.value);
+                    setMatrixCell(from, to, t.value, !selectionStampChanged(selAtChange));
                 }
                 // Re-lock after edit commit — a full matrix re-render (queued by
                 // setMatrixCell) will rebuild all cells as lightweight <td>.
@@ -20078,6 +20137,7 @@ function wireUi() {
     });
     $('#matrixHost').addEventListener('focusout', ev => {
         const t = ev.target;
+        const selAtBlur = selectionStamp();
         // Demote when an <input> inside a matrix cell loses focus.
         if (t.matches && t.matches('input.matrix-input')) {
             const cell = t.closest?.('td.mc[data-c]');
@@ -20094,10 +20154,54 @@ function wireUi() {
                 // If focus returned to this input (Chromium mousedown cycle), skip.
                 if (inp.ownerDocument.activeElement === inp)
                     return;
+                // Commit text the browser will never report. A session restored
+                // after a rebuild assigns its value programmatically, which clears
+                // the input's dirty flag: blurring it without typing again fires no
+                // `change`, so the matrix kept showing the restored text while the
+                // graph held the old weight (the edit only surfaced as a loss after
+                // a reload). Compare against the live graph values instead; when
+                // `change` does fire it commits first and this becomes a no-op. A
+                // field removed by a rebuild is disconnected here and stays owned
+                // by the session restore.
+                if (inp.isConnected) {
+                    const { from, to } = cellFromTo(cell);
+                    if (!matrixCellMatchesText(from, to, inp.value)) {
+                        setMatrixCell(from, to, inp.value, !selectionStampChanged(selAtBlur));
+                        lockAllMatrixInputs();
+                        // A commit closes the session, exactly like the `change` path
+                        // does: leaving the cell armed meant the next single click
+                        // reopened the editor instead of selecting. Only drop the armed
+                        // state when it still points at THIS cell — the blurring gesture
+                        // may have armed the cell it clicked.
+                        if (matrixEditCell?.type === 'cell' && matrixEditCell.from === from && matrixEditCell.to === to) {
+                            matrixEditCell = null;
+                        }
+                    }
+                }
                 demoteInputToCell(inp);
             });
         }
         else if (t.matches && t.matches('input')) {
+            // Node-label fields: same unreported-text trap as weight cells — a
+            // label re-opened by the session restore is not dirty, so blur alone
+            // fires no `change` and the typed label would silently vanish.
+            const id = t.dataset?.nodeLabel;
+            if (id) {
+                const inp = t;
+                queueMicrotask(() => {
+                    if (!inp.isConnected)
+                        return; // a rebuild owns this field
+                    if (inp.ownerDocument.activeElement === inp)
+                        return;
+                    const n = nodeById(id);
+                    const current = n ? (n.label || n.id) : null;
+                    if (current !== null && inp.value !== current) {
+                        setNodeLabelFromMatrix(id, inp.value);
+                        lockAllMatrixInputs();
+                        matrixEditCell = null;
+                    }
+                });
+            }
             t.readOnly = true;
         }
     });

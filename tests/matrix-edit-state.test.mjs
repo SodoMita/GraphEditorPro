@@ -232,3 +232,67 @@ test('committing a node label edit closes the edit session (stale selection P2)'
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+const edgeWeightOf = (document, id) => {
+  const i = document.querySelector(`#edgeListHost input.edge-weight[data-edge-id="${id}"]`);
+  return i ? i.value : null;
+};
+const selectedEdgeIds = document => [...document.querySelectorAll('#edgeListHost input.edge-weight.matrix-selected')].map(i => i.dataset.edgeId);
+
+test('a blur with text the browser never reports still commits the edit', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  assert.equal(input.readOnly, false, 'the editor is open');
+
+  // Assign the value the way a session restore does after a matrix rebuild:
+  // programmatically. That clears the dirty flag, so NO `change` event follows
+  // — only the blur. The matrix used to keep displaying the restored text
+  // while the graph held the old weight, and a reload revealed the loss.
+  input.value = '77';
+  input.blur();
+  await nextFrame(window); await settle(window, 120);
+
+  assert.equal(edgeWeightOf(document, 'e1'), '77', 'the unreported text reached the graph');
+  assert.equal(cellOf(document, 'a', 'b').textContent, '77', 'the grid shows the committed weight');
+
+  // The commit closes the session: one press selects, it does not re-open.
+  const after = cellOf(document, 'a', 'b');
+  dispatchPointer(window, after, 'pointerdown');
+  await settle(window, 40);
+  assert.equal(cellOf(document, 'a', 'b').querySelector('input'), null, 'one press after the commit only selects');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('a deferred commit does not overwrite a selection made while it waited', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const x = cellOf(document, 'a', 'b'); // edge e1
+  const y = cellOf(document, 'b', 'c'); // edge e2
+  dispatchPointer(window, x, 'pointerdown');
+  dispatchPointer(window, x, 'pointerdown');
+  const input = x.querySelector('input.matrix-input');
+  assert.equal(input.readOnly, false, 'the editor for e1 is open');
+
+  // One gesture, in browser order: the press on Y first blurs X (firing its
+  // `change`, whose commit is deferred to a microtask) and then selects Y. The
+  // deferred commit must not re-select X on top of that newer selection.
+  changeValue(window, input, '11');
+  dispatchPointer(window, y, 'pointerdown');
+  await nextFrame(window); await settle(window, 120);
+
+  assert.equal(edgeWeightOf(document, 'e1'), '11', 'the edit committed');
+  assert.deepEqual(selectedEdgeIds(document), ['e2'], 'the pressed cell keeps the selection');
+  assert.ok(cellOf(document, 'b', 'c').classList.contains('matrix-selected'), 'the matrix marks the pressed cell');
+  assert.ok(!cellOf(document, 'a', 'b').classList.contains('matrix-selected'), 'the matrix dropped the edited cell');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

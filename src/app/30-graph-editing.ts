@@ -104,6 +104,20 @@
   function isEdgeSelected(id){ return getSelectionCache().edges.has(id); }
   // Shared selection-merge core: computes state.selection/state.selected from
   // the requested ids and combine mode. Callers decide how much DOM to update.
+  // A cheap, comparable snapshot of "which selection is in force right now".
+  // It tracks both signals the selection cache above uses: the revision counter
+  // (bumped by mergeSelection/delete/undo/import) and the array identities
+  // (clear/sample/import assign state.selection directly and never bump it).
+  // Deferred matrix commits use it to notice that the gesture which blurred the
+  // editor already moved the selection — see setMatrixCell's `reselect`.
+  function selectionStamp(){
+    return {rev: selCacheRev, nodes: state.selection?.nodes || null, edges: state.selection?.edges || null};
+  }
+  function selectionStampChanged(stamp: ReturnType<typeof selectionStamp>){
+    return stamp.rev !== selCacheRev
+      || stamp.nodes !== (state.selection?.nodes || null)
+      || stamp.edges !== (state.selection?.edges || null);
+  }
   function mergeSelection(
     nodes: string[] = [],
     edges: string[] = [],
@@ -620,9 +634,48 @@
     pushHistory('edit node label');
     queueRender(true);
   }
-  function setMatrixCell(from, to, raw){
+  // The text the matrix cell for (from,to) renders from LIVE graph state —
+  // the mirror of adjacencyMatrixData's cell values. Used on blur to detect
+  // editor text the browser will never report through `change`: a session
+  // restored after a rebuild assigns its value programmatically, which clears
+  // the input's dirty flag, so blurring it without typing again fires no
+  // change event and the edit would be lost.
+  function currentMatrixCellText(from: string, to: string): string {
+    const vals: string[] = [];
+    for(const e of state.edges){
+      // Same self-loop guard adjacencyMatrixData needs: `&&` binds tighter
+      // than `||`, so an undirected self-loop matched both halves and the
+      // mirror reported its weight twice (7;7).
+      const hit = (e.from === from && e.to === to)
+        || ((edgeIsUndirected(e) || edgeDirection(e) === 'mutual') && from !== to && e.from === to && e.to === from);
+      if(hit) vals.push(e.weight != null && e.weight !== '' ? e.weight : '');
+    }
+    return vals.join(';');
+  }
+  // One editor row per edge: `setMatrixCell` parses the field this way, so the
+  // blur-time comparison below has to parse the live cell the same way or a
+  // purely cosmetic difference ("3 " vs "3") would commit the same values
+  // twice (two history steps, two rebuilds).
+  function parseMatrixCellValues(raw: unknown): string[] {
+    // `|| ''` (not `?? ''`) keeps the historical behaviour for a numeric 0.
+    return String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
+  }
+  // Does `raw` (the text an editor holds) describe the values the cell already
+  // has? True means committing it would not change the graph.
+  function matrixCellMatchesText(from: string, to: string, raw: unknown): boolean {
+    const mine = parseMatrixCellValues(raw);
+    const live = parseMatrixCellValues(currentMatrixCellText(from, to));
+    return mine.length === live.length && mine.every((v, i) => v === live[i]);
+  }
+  // `reselect`: whether the commit may move the selection onto the edited
+  // cell's edges. Deferred commits (change/focusout microtasks) run AFTER the
+  // gesture that blurred the editor has already selected something else, and
+  // re-selecting there left the wrong edge selected — editing E1 and clicking
+  // E2 kept E1 selected, so selection-based actions hit the wrong edge. They
+  // pass `!selectionStampChanged(stampTakenWhenTheEventFired)`.
+  function setMatrixCell(from, to, raw, reselect = true){
     if(!nodeById(from) || !nodeById(to)) return;
-    const values = String(raw || '').split(/[;,\n\r]+/).map(v => v.trim()).filter(v => v !== '');
+    const values = parseMatrixCellValues(raw);
     // Find existing edges for this cell (directed: from→to; undirected/mutual: either direction)
     const existing = state.edges.filter(e => (e.from === from && e.to === to) || ((edgeIsUndirected(e) || edgeDirection(e)==='mutual') && e.from === to && e.to === from));
     const s = state.settings;
@@ -690,7 +743,7 @@
         state.edges.push(e);
       }
     }
-    setSelection([], matrixCellEdgeIds(from, to), null, false);
+    if(reselect) setSelection([], matrixCellEdgeIds(from, to), null, false);
     pushHistory('edit matrix edge');
     queueRender(true);
   }

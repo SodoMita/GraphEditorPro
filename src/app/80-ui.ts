@@ -592,6 +592,10 @@
     });
     $('#matrixHost').addEventListener('change', ev => {
       const t = ev.target;
+      // The blurring gesture (if any) moves the selection right after this
+      // event, before the deferred commit runs: snapshot it so the commit does
+      // not steal a selection made in between.
+      const selAtChange = selectionStamp();
       // Chromium fires `change` on a focused text input when a re-render
       // removes it from the DOM — and while that event is dispatched the
       // element still reports isConnected, so the check has to be deferred.
@@ -619,7 +623,7 @@
           const cell = (t as Element).closest?.('td.mc[data-c]');
           if(cell){
             const {from, to} = cellFromTo(cell);
-            setMatrixCell(from, to, (t as HTMLInputElement).value);
+            setMatrixCell(from, to, (t as HTMLInputElement).value, !selectionStampChanged(selAtChange));
           }
           // Re-lock after edit commit — a full matrix re-render (queued by
           // setMatrixCell) will rebuild all cells as lightweight <td>.
@@ -641,6 +645,7 @@
     });
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
+      const selAtBlur = selectionStamp();
       // Demote when an <input> inside a matrix cell loses focus.
       if(t.matches && t.matches('input.matrix-input')){
         const cell = (t as Element).closest?.('td.mc[data-c]');
@@ -654,9 +659,51 @@
           if(!inp.parentNode) return; // already removed by re-render
           // If focus returned to this input (Chromium mousedown cycle), skip.
           if(inp.ownerDocument.activeElement === inp) return;
+          // Commit text the browser will never report. A session restored
+          // after a rebuild assigns its value programmatically, which clears
+          // the input's dirty flag: blurring it without typing again fires no
+          // `change`, so the matrix kept showing the restored text while the
+          // graph held the old weight (the edit only surfaced as a loss after
+          // a reload). Compare against the live graph values instead; when
+          // `change` does fire it commits first and this becomes a no-op. A
+          // field removed by a rebuild is disconnected here and stays owned
+          // by the session restore.
+          if(inp.isConnected){
+            const {from, to} = cellFromTo(cell);
+            if(!matrixCellMatchesText(from, to, inp.value)){
+              setMatrixCell(from, to, inp.value, !selectionStampChanged(selAtBlur));
+              lockAllMatrixInputs();
+              // A commit closes the session, exactly like the `change` path
+              // does: leaving the cell armed meant the next single click
+              // reopened the editor instead of selecting. Only drop the armed
+              // state when it still points at THIS cell — the blurring gesture
+              // may have armed the cell it clicked.
+              if(matrixEditCell?.type === 'cell' && matrixEditCell.from === from && matrixEditCell.to === to){
+                matrixEditCell = null;
+              }
+            }
+          }
           demoteInputToCell(inp);
         });
       } else if(t.matches && t.matches('input')){
+        // Node-label fields: same unreported-text trap as weight cells — a
+        // label re-opened by the session restore is not dirty, so blur alone
+        // fires no `change` and the typed label would silently vanish.
+        const id = (t as HTMLElement).dataset?.nodeLabel;
+        if(id){
+          const inp = t as HTMLInputElement;
+          queueMicrotask(() => {
+            if(!inp.isConnected) return; // a rebuild owns this field
+            if(inp.ownerDocument.activeElement === inp) return;
+            const n = nodeById(id);
+            const current = n ? (n.label || n.id) : null;
+            if(current !== null && inp.value !== current){
+              setNodeLabelFromMatrix(id, inp.value);
+              lockAllMatrixInputs();
+              matrixEditCell = null;
+            }
+          });
+        }
         t.readOnly = true;
       }
     });

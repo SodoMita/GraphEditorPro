@@ -257,3 +257,88 @@ test('a label commit closes the edit session so the next click selects', async t
   assert.ok(state.selected.includes('n1'), 'the press selected the labelled node');
   assert.ok(!state.selected.includes('n2'), 'the stale selection was replaced');
 });
+
+// The graph weight/selection assertions below read #edgeListHost, which is
+// rendered from the graph model. The matrix cell text cannot be trusted for
+// this: demoting an editor writes the field's value back into the <td>, so the
+// grid can display a weight the graph never received.
+const edgeWeight = (page, id) => page.evaluate(eid => {
+  const i = document.querySelector(`#edgeListHost input.edge-weight[data-edge-id="${eid}"]`);
+  return i ? i.value : null;
+}, id);
+
+const selectedEdges = page => page.evaluate(
+  () => [...document.querySelectorAll('#edgeListHost input.edge-weight.matrix-selected')].map(i => i.dataset.edgeId),
+);
+
+test('a deferred commit does not steal the selection made by the click that closed it', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n1"] td[data-c="n2"]'; // edge e1
+  const Y = 'tr[data-r="n2"] td[data-c="n3"]'; // edge e2
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('11');
+
+  // One click on Y closes X's editor (blur → change) and selects Y. The change
+  // handler defers its commit to a microtask, so the commit used to run after
+  // Y was already selected and re-select X — leaving the wrong edge selected
+  // for every selection-based action.
+  const ya = await centre(page, Y);
+  await page.mouse.click(ya.x, ya.y);
+  await page.waitForFunction(
+    () => document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e1"]')?.value === '11',
+    null, { timeout: 5000 },
+  );
+  await page.waitForTimeout(150); // let any stray re-selection land
+
+  assert.equal(await edgeWeight(page, 'e1'), '11', 'the edit committed');
+  assert.deepEqual(await selectedEdges(page), ['e2'], 'the clicked cell keeps the selection');
+  const cells = await page.evaluate(([x, y]) => ({
+    x: document.querySelector(x).className,
+    y: document.querySelector(y).className,
+  }), [X, Y]);
+  assert.ok(cells.y.includes('matrix-selected'), 'the matrix marks the clicked cell');
+  assert.ok(!cells.x.includes('matrix-selected'), 'the matrix no longer marks the edited cell');
+});
+
+test('an edit restored after a rebuild commits when blurred without typing', async t => {
+  const page = await openMatrix(t);
+  const X = 'tr[data-r="n2"] td[data-c="n3"]'; // edge e2
+  const Y = 'tr[data-r="n5"] td[data-c="n6"]'; // edge e4 (weight 9)
+  const xa = await centre(page, X);
+  await page.mouse.dblclick(xa.x, xa.y);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('42');
+
+  // Double-click Y before X's queued rebuild lands: the rebuild replaces the
+  // grid, so the edit session is re-opened on the fresh DOM with its value
+  // assigned PROGRAMMATICALLY. That clears the field's dirty flag — Chromium
+  // fires no `change` when it is blurred, so the typed weight used to be
+  // dropped (the grid showed 99, the graph kept 9 until a reload exposed it).
+  const ya = await centre(page, Y);
+  await page.mouse.dblclick(ya.x, ya.y, { delay: 10 });
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('99');
+  await page.waitForTimeout(400); // let the rebuild land and restore the editor
+  const restored = await page.evaluate(s => {
+    const i = document.querySelector(s + ' input');
+    return i ? { v: i.value, ro: i.readOnly, focused: document.activeElement === i } : null;
+  }, Y);
+  assert.ok(restored, 'the editor was re-opened on the rebuilt grid');
+  assert.equal(restored.v, '99', 'the restored editor holds the typed weight');
+  assert.equal(restored.ro, false, 'the restored editor is unlocked');
+  assert.equal(restored.focused, true, 'the restored editor owns the focus');
+
+  // Blur WITHOUT typing another key: no change event will ever fire for it.
+  const away = await centre(page, 'tr[data-r="n4"] td[data-c="n5"]');
+  await page.mouse.click(away.x, away.y);
+  await page.waitForFunction(
+    () => document.querySelector('#edgeListHost input.edge-weight[data-edge-id="e4"]')?.value === '99',
+    null, { timeout: 3000 },
+  ).catch(() => {}); // fall through to the assertion for a readable failure
+
+  assert.equal(await edgeWeight(page, 'e4'), '99', 'the unreported edit reaches the graph');
+  assert.equal(await page.evaluate(s => document.querySelector(s).textContent, Y), '99', 'grid and graph agree');
+  assert.equal(await edgeWeight(page, 'e2'), '42', 'the earlier edit is still there');
+});
