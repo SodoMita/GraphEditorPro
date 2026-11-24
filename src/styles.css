@@ -647,7 +647,9 @@
     .edge-sel{fill:none; stroke:var(--accent); stroke-linejoin:miter; stroke-linecap:butt; pointer-events:none}
     .edge-sel-arrow{fill:var(--accent); stroke:none; pointer-events:none}
     .edge-label{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
-    .edge-weight{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
+    /* Scoped to the SVG <text>: the edge-list weight <input> carries the
+       same class, and pointer-events:none there made the cell unclickable. */
+    text.edge-weight{paint-order:stroke; stroke-linejoin:round; pointer-events:none}
     /* Background plate behind a label ("Background plate" outline mode) */
     .label-plate{pointer-events:none}
     .drag-line{stroke:var(--accent); stroke-width:calc(2px * var(--render-scale, 1)); stroke-dasharray:calc(6px * var(--render-scale, 1)) calc(6px * var(--render-scale, 1)); opacity:.82; pointer-events:none}
@@ -862,7 +864,7 @@
       .canvas-wrap.select-mode .empty-hint,
       .canvas-wrap.edge-mode .empty-hint{bottom:136px}
       /* Default: canvas + both panels visible (all three v-* classes) */
-      .main.v-matrix,.main.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) minmax(0,26vh)); grid-template-areas:"canvas" "bottom"}
+      .main.v-matrix,.main.v-edges{grid-template-rows:var(--canvas-y, minmax(0,1fr) minmax(0,34vh)); grid-template-areas:"canvas" "bottom"}
       .main:not(.v-matrix):not(.v-edges){grid-template-rows:minmax(0,1fr); grid-template-areas:"canvas"}
       .main:not(.v-canvas).v-matrix,.main:not(.v-canvas).v-edges{grid-template-rows:minmax(0,1fr); grid-template-areas:"bottom"}
       .main.v-matrix.v-edges .bottom{grid-template-rows:minmax(0,1fr); grid-template-columns:var(--data-x, minmax(0,1.05fr) minmax(0,.95fr))}
@@ -879,7 +881,7 @@
       .main[data-orient="h"]:not(.v-canvas){grid-template-columns:minmax(0,1fr); grid-template-areas:"bottom"}
       .main[data-orient="h"] .table-scroll{max-height:none}
       .main:not(.v-canvas) .table-scroll{max-height:none}
-      .table-scroll{flex:1 1 auto; min-height:0; max-height:calc(26vh - 58px)}
+      .table-scroll{flex:1 1 auto; min-height:0}
     }
 
     /* Compact desktop: the badge is enough branding beside symbolic commands. */

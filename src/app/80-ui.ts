@@ -457,9 +457,13 @@
         const t = ev.target;
         if(!t.dataset || !t.dataset.edgeId) return;
         const e = edgeById(t.dataset.edgeId); if(!e) return;
-        // Use queueRender(false) — canvas only — so the edge list inputs aren't rebuilt
-        // (rebuilding would destroy the next input the user taps on mobile)
-        if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(false); saveSoon(); }
+        // Edits that DON'T change the matrix stay queueRender(false) — canvas
+        // only — so the list isn't re-rendered under the user's finger. Edits
+        // that DO change a matrix cell (weight, endpoints) use queueRender(true)
+        // so the cell stays in sync; that is safe now because renderMatrixAndList
+        // patches the list row in place and never writes over the focused field
+        // (see patchListRow), instead of rebuilding #edgeListHost wholesale.
+        if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(true); saveSoon(); } // matrix cell text follows the weight
         else if(t.matches('.edge-elabel')){ e.label = t.value.slice(0,80); pushHistory('edit edge label'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); syncEditTypeLists(); pushHistory('edit edge type'); queueRender(false, true); saveSoon(); }
         else if(t.matches('.edge-directed')){ const v = (t as any).value || (t as any).checked; const dir = normalizeDirection(v); (e as any).direction = dir; (e as any).directed = dir !== 'undirected'; pushHistory('edit edge directed'); queueRender(true); saveSoon(); }
@@ -477,7 +481,7 @@
           if(target){
             if(t.matches('.edge-from')) e.from = target.id; else e.to = target.id;
             invalidateGraphIndex();
-            pushHistory('edit edge endpoint'); queueRender(false); saveSoon();
+            pushHistory('edit edge endpoint'); queueRender(true); saveSoon(); // the cell moves in the matrix
           }
         }
       });

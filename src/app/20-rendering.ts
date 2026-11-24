@@ -2434,6 +2434,189 @@
   function configuredEdgeListPageSize(){
     return positiveInteger(state.settings.edgeListPageSize, 250);
   }
+  // === Rebuild avoidance for the two tables ================================
+  // Rebuilding the adjacency matrix or the edge list is a megabyte-scale
+  // innerHTML write on a dense graph, yet every canvas selection click,
+  // settings toggle or commit used to trigger both — the freeze users hit on
+  // a few hundred nodes. Each table is therefore rebuilt only when its
+  // per-row content signature actually changes. Selection is NOT part of the
+  // signature (it changes on every canvas click) and is synced in place as a
+  // class; a commit that alters a few rows patches exactly those rows — cell
+  // texts, header labels, order badges, edge-list inputs — instead of
+  // reparsing the whole table. Anything structural (rows added/removed,
+  // reordering, a different page, range or language) falls back to a rebuild.
+  // Distinct control-character separators (never present in printable ids,
+  // labels or weights) so a signature can't be forged by user data.
+  const SIG_SEP = '\u0002', SIG_JOIN = '\u0001', SIG_CELL = '\u0003', SIG_KV = '\u0005';
+  let lastMatrixHead = '', lastMatrixRows: string[] | null = null;
+  let lastListHead = '', lastListRows: string[] | null = null;
+  function matrixHeadSignature(nodes: any[]): string {
+    const s = state.settings;
+    const vr = s.visibleRange || {start:-1, end:-1};
+    return [I18N.current, s.matrixLimit, s.matrixDimension, vr.start, vr.end, nodes.length].join(SIG_SEP);
+  }
+  function matrixRowSignatures(nodes: any[], values: any[][], edgeIds: (any[][] | null)): string[] {
+    const rows = new Array(nodes.length);
+    for(let i = 0; i < nodes.length; i++){
+      const nd = nodes[i];
+      const rv = values[i] || emptyCell;
+      const ri = (edgeIds && edgeIds[i]) || emptyCell;
+      const cells = new Array(nodes.length);
+      for(let j = 0; j < nodes.length; j++){
+        const cv = rv[j] || emptyCell, ci = ri[j] || emptyCell;
+        // Key each cell on its edge IDs *and* weights. IDs are unique, so an
+        // empty-weight edge (id + '' ) is distinct from an absent cell (''),
+        // and a weight that happens to contain a separator can't masquerade as
+        // two weights. A weight EDIT keeps the id but changes cv[k], so the
+        // signature still moves and the cell gets patched.
+        let cs = '';
+        for(let k = 0; k < ci.length; k++){ if(k) cs += SIG_JOIN; cs += ci[k] + SIG_KV + (cv[k] ?? ''); }
+        cells[j] = cs;
+      }
+      rows[i] = [nd.id, nd.label || '', nd.order ?? 0, cells.join(SIG_CELL)].join(SIG_SEP);
+    }
+    return rows;
+  }
+  function renderedEdgeRows(): any[] {
+    const vr = state.settings.visibleRange || {start:-1, end:-1};
+    const rangeActive = vr.start >= 0 || vr.end >= 0;
+    const edges = rangeActive
+      ? (() => { const vis = visibleNodeIds(); return state.edges.filter(e => vis.has(e.from) && vis.has(e.to)); })()
+      : state.edges;
+    return edges.slice(0, edgeListRenderLimit);
+  }
+  function listHeadSignature(rows: any[]): string {
+    const s = state.settings;
+    const vr = s.visibleRange || {start:-1, end:-1};
+    return [I18N.current, edgeListRenderLimit, vr.start, vr.end, state.edges.length, rows.length].join(SIG_SEP);
+  }
+  function listRowSignatures(rows: any[]): string[] {
+    const label = new Map(state.nodes.map((nd: any) => [nd.id, nd.label || nd.id]));
+    const sigs = new Array(rows.length);
+    for(let i = 0; i < rows.length; i++){
+      const e = rows[i];
+      let color = (typeof e.color === 'string' && /^#[0-9a-f]{6}$/i.test(e.color)) ? e.color : '';
+      if(!color) color = edgeVisual(e).color;
+      sigs[i] = [e.id, e.from, e.to, label.get(e.from) ?? e.from, label.get(e.to) ?? e.to,
+        e.weight ?? '', e.label ?? '', e.type ?? '', edgeDirection(e), e.strokeStyle ?? '', color].join(SIG_SEP);
+    }
+    return sigs;
+  }
+  // Indices whose signature changed; null when a rebuild is the only option.
+  function diffRows(prev: string[] | null, next: string[]): number[] | null {
+    if(!prev || prev.length !== next.length) return null;
+    const changed: number[] = [];
+    for(let i = 0; i < next.length; i++){
+      if(prev[i] !== next[i]){ changed.push(i); if(changed.length > 24) return null; }
+    }
+    return changed;
+  }
+  // Rewrite one matrix row (and its mirror cells) from live graph state.
+  // Returns false when the DOM does not match expectations — the caller then
+  // rebuilds, so a wrong guess can never leave stale cells behind.
+  // Restore one cell to its lightweight <td> form straight from the
+  // precomputed adjacency data. patchMatrixRow only runs when no editor is
+  // open, so any <input> still inside a cell is the remnant of a just-committed
+  // edit and has to be demoted — the old full rebuild did this implicitly by
+  // re-rendering every cell. Reading text/ids from `values`/`edgeIds` (built
+  // once per render in O(E)) keeps this O(1) per cell instead of re-scanning
+  // all edges the way currentMatrixCellText would.
+  function demoteMatrixCell(td: HTMLElement, vals: any[], ids: any[]): boolean {
+    const inp = td.querySelector('input.matrix-input');
+    if(inp){
+      if(inp === document.activeElement) return false; // defensive: never touch a focused field
+      inp.remove();
+      const ghost = td.querySelector('span.mc-ghost'); if(ghost) ghost.remove();
+    }
+    td.textContent = vals.length ? vals.join(';') : '';
+    td.dataset.e = ids.length ? ids.join(',') : '';
+    return true;
+  }
+  function patchMatrixRow(idx: number, nodes: any[], values: any[][], edgeIds: (any[][] | null)): boolean {
+    const table = $('#matrixHost table'); if(!table) return false;
+    const nd = nodes[idx]; if(!nd) return false;
+    const id = nd.id, shown = nd.label || nd.id;
+    const body = table.tBodies[0]; if(!body) return false;
+    const row = body.rows[idx] as HTMLTableRowElement | null;
+    const headCell = table.tHead?.rows[0]?.cells[idx + 1] as HTMLElement | null;
+    const headInput = headCell?.querySelector('input[data-node-label]') as HTMLInputElement | null;
+    const rowHeadInput = row?.querySelector('th.row-head input[data-node-label]') as HTMLInputElement | null;
+    if(!row || row.dataset.r !== id || !headInput || headInput.dataset.nodeLabel !== id ||
+       !rowHeadInput || rowHeadInput.dataset.nodeLabel !== id) return false;
+    headInput.value = shown;
+    rowHeadInput.value = shown;
+    const badge = headCell?.querySelector('.matrix-order-badge');
+    if(badge) badge.textContent = String(nd.order ?? 0);
+    const rowVals = values[idx] || emptyCell;
+    const rowIds = (edgeIds && edgeIds[idx]) || emptyCell;
+    for(let j = 0; j < nodes.length; j++){
+      const jid = nodes[j].id;
+      const td = row.cells[j + 1] as HTMLElement | null;
+      if(!td || td.dataset.c !== jid) return false;
+      if(!demoteMatrixCell(td, rowVals[j] || emptyCell, rowIds[j] || emptyCell)) return false;
+      if(j !== idx){
+        const mtd = (body.rows[j] as HTMLTableRowElement | null)?.cells[idx + 1] as HTMLElement | null;
+        if(!mtd || mtd.dataset.c !== id) return false;
+        const mVals = values[j] || emptyCell, mIds = (edgeIds && edgeIds[j]) || emptyCell;
+        if(!demoteMatrixCell(mtd, mVals[idx] || emptyCell, mIds[idx] || emptyCell)) return false;
+      }
+    }
+    return true;
+  }
+  // Rewrite one edge-list row's controls from live graph state.
+  function patchListRow(idx: number, rows: any[]): boolean {
+    const e = rows[idx]; if(!e) return false;
+    const row = $('#edgeListHost').querySelectorAll('tbody tr')[idx] as HTMLElement | null;
+    const weight = row?.querySelector('input.el-weight') as HTMLInputElement | null;
+    if(!row || !weight || weight.dataset.edgeId !== e.id) return false;
+    const a = nodeById(e.from), b = nodeById(e.to);
+    // Never write over the field the user is currently focused in: its DOM
+    // value is the freshest copy (it was just committed to the model), and
+    // assigning .value would yank the caret — the reason the old handler used
+    // queueRender(false) to avoid rebuilding the list under a mobile tap.
+    const active = document.activeElement;
+    const set = (sel: string, val: string) => { const el = row.querySelector(sel) as HTMLInputElement | null; if(el && el !== active) el.value = val; };
+    set('input.el-id', e.id);
+    set('input.el-from', a ? (a.label || a.id) : e.from);
+    set('input.el-to', b ? (b.label || b.id) : e.to);
+    set('input.el-weight', e.weight ?? '');
+    set('input.el-elabel', e.label ?? '');
+    set('input.el-type', e.type ?? '');
+    const dirSel = row.querySelector('select.edge-directed') as HTMLSelectElement | null;
+    if(dirSel && dirSel !== active) dirSel.value = edgeDirection(e);
+    const colorInput = row.querySelector('input.el-color') as HTMLInputElement | null;
+    if(colorInput && colorInput !== active){
+      let cv = (typeof e.color === 'string' && /^#[0-9a-f]{6}$/i.test(e.color)) ? e.color : '';
+      if(!cv) cv = edgeVisual(e).color;
+      colorInput.value = cv;
+    }
+    const strokeSel = row.querySelector('select.el-stroke') as HTMLSelectElement | null;
+    if(strokeSel && strokeSel !== active) strokeSel.value = e.strokeStyle ?? '';
+    return true;
+  }
+  // Selection moves on every canvas click but only ever touches classes.
+  // Keyed lookup instead of per-cell edge scans: a dense matrix has n^2 cells
+  // and scanning state.edges for each would cost more than the rebuild this
+  // layer exists to avoid.
+  function syncTableSelection(){
+    const selEdges = selectedEdgeIds();
+    const keys = new Set<string>();
+    for(const id of selEdges){
+      const e = edgeById(id); if(!e) continue;
+      keys.add(e.from + '\u0000' + e.to);
+      if(edgeIsUndirected(e) || edgeDirection(e) === 'mutual') keys.add(e.to + '\u0000' + e.from);
+    }
+    for(const el of $$('#matrixHost input[data-node-label]')){
+      el.classList.toggle('matrix-selected', isNodeSelected(el.getAttribute('data-node-label') || ''));
+    }
+    for(const td of $$('#matrixHost td.mc')){
+      const {from, to} = cellFromTo(td);
+      td.classList.toggle('matrix-selected', keys.has(from + '\u0000' + to) || keys.has(to + '\u0000' + from));
+    }
+    for(const w of $$('#edgeListHost input.el-weight')){
+      w.classList.toggle('matrix-selected', selEdges.has(w.getAttribute('data-edge-id') || ''));
+    }
+  }
   function renderMatrixAndList(){
     edgeListRenderLimit = configuredEdgeListPageSize();
     const visNodes = matrixNodes();
@@ -2442,28 +2625,72 @@
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
-    // The rebuild replaces #matrixHost: remember an editor the user has open
-    // (value and caret) so it can be re-opened on the fresh DOM below.
-    captureMatrixEditSession();
-    if(total === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>'; $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; note.textContent=''; restoreMatrixEditSession(); return; }
-    if(n === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>'; note.textContent = `0 / ${total}`; }
+    if(total === 0){
+      lastMatrixRows = null; lastListRows = null; lastMatrixHead = ''; lastListHead = '';
+      $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>';
+      $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>';
+      note.textContent=''; return;
+    }
+    if(n === 0){ lastMatrixRows = null; lastMatrixHead = ''; $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>'; note.textContent = `0 / ${total}`; }
     else if(n > limit){
       // Report the real graph size and the render ceiling, not the already
       // clamped slice: "300 nodes" for a 350-node graph (with advice to raise a
       // limit that could not help) was misleading.
+      lastMatrixRows = null; lastMatrixHead = '';
       $('#matrixHost').innerHTML = '<div class="tiny muted">' + esc(I18N.t('matrix_hidden_limit', {total, limit, cap: MATRIX_MAX_NODES})) + '</div>';
       note.textContent = I18N.t('matrix_note_hidden', {n, total});
     }
     else {
-      $('#matrixHost').innerHTML = adjacencyMatrixHtml(visNodes);
+      const data = adjacencyMatrixData(visNodes);
+      const headSig = matrixHeadSignature(visNodes);
+      const rowSigs = matrixRowSignatures(visNodes, data.values, data.edgeIds);
+      // A matrix editor that is OPEN must always go through the full
+      // rebuild + capture/restore path: only that reconciles the focused
+      // field with the model (an Undo/algorithm/import can move the graph
+      // under an open editor, and a draft that has not committed yet lives
+      // only in the DOM). The signature fast-path is for interactions with
+      // no editor open — pan, zoom, selection, canvas edits — which is
+      // exactly the dense-graph case that used to rebuild a ~1.5 MB table
+      // on every frame.
+      const editorOpen = !!matrixEditCell;
+      const changed = !editorOpen && headSig === lastMatrixHead ? diffRows(lastMatrixRows, rowSigs) : null;
+      let patched = true;
+      if(changed){ for(const i of changed){ if(!patchMatrixRow(i, visNodes, data.values, data.edgeIds)){ patched = false; break; } } }
+      if(!changed || !patched){
+        // The rebuild replaces #matrixHost: remember an editor the user has
+        // open (value and caret) so it can be re-opened on the fresh DOM.
+        captureMatrixEditSession();
+        $('#matrixHost').innerHTML = adjacencyMatrixHtml(visNodes);
+        // Re-open an editor the rebuild just destroyed (value and caret
+        // intact). No-ops when nothing was captured or the cell no longer
+        // exists.
+        restoreMatrixEditSession();
+      }
+      lastMatrixHead = headSig; lastMatrixRows = rowSigs;
       note.textContent = rangeActive
         ? I18N.t('matrix_note_range', {n, start: vr.start >= 0 ? vr.start : 0, end: vr.end >= 0 ? vr.end : I18N.t('matrix_note_end'), total})
         : n === total ? `${n}×${n}` : I18N.t('matrix_note_view', {n, total});
     }
-    // Re-open an editor the rebuild just destroyed (value and caret intact).
-    // No-ops when nothing was captured or the cell no longer exists.
-    restoreMatrixEditSession();
-    $('#edgeListHost').innerHTML = edgeListHtml();
+    const rows = renderedEdgeRows();
+    if(!rows.length){
+      lastListRows = null; lastListHead = '';
+      $('#edgeListHost').innerHTML = '<div class="tiny muted">' + (state.edges.length ? I18N.t('no_edges_range') : I18N.t('no_edges_yet')) + '</div>';
+      const emptyNote = $('#edgeListNote'); if(emptyNote) emptyNote.textContent = '';
+    } else {
+      const headSig = listHeadSignature(rows);
+      const rowSigs = listRowSignatures(rows);
+      const changed = headSig === lastListHead ? diffRows(lastListRows, rowSigs) : null;
+      let patched = true;
+      if(changed){ for(const i of changed){ if(!patchListRow(i, rows)){ patched = false; break; } } }
+      if(!changed || !patched) $('#edgeListHost').innerHTML = edgeListHtml();
+      lastListHead = headSig; lastListRows = rowSigs;
+    }
+    syncTableSelection();
+    const listNote = $('#edgeListNote');
+    if(listNote && rows.length){
+      const shown = rangeActive ? state.edges.filter(e => { const vis = visibleNodeIds(); return vis.has(e.from) && vis.has(e.to); }).length : state.edges.length;
+      listNote.textContent = (rangeActive ? I18N.t('n_edges_filtered', {n: shown, m: state.edges.length}) : I18N.t('n_edges', {n: state.edges.length})) + (rows.length < shown ? I18N.t('edge_list_showing', {n: rows.length}) : '');
+    }
   }
   function adjacencyMatrixData(nodes=state.nodes, includeEdgeIds=true){
     const index = new Map(nodes.map((node,i) => [node.id,i]));
