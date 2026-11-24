@@ -250,67 +250,165 @@
 
   // === Matrix editing state: must click once to select before editing ===
   let matrixEditCell = null; // {type:'cell'|'label', from, to, id}
+  // Did the USER change the text of THIS field? The browser's own dirty flag
+  // cannot answer that across a matrix rebuild: the session restore assigns the
+  // value programmatically, which clears it. Blur commits unreported text only
+  // for a field that carries this mark — inferring "uncommitted" from the graph
+  // alone wrote a re-opened editor's stale text back over a graph that Undo (or
+  // an algorithm, or an import) had just changed.
+  //
+  // Per FIELD, not one shared boolean: clicking a node's column label while its
+  // row label is open runs beginLabelEdit for the new field BEFORE the old
+  // field's deferred blur, and a shared flag let the new session erase the old
+  // one's draft — the typed label was discarded. A WeakSet needs no cleanup
+  // when a rebuild throws the elements away, and capture/restore carries the
+  // mark onto the fresh instance.
+  const matrixDraftFields = new WeakSet<HTMLElement>();
+  function markMatrixFieldDirty(el: HTMLElement | null){ if(el) matrixDraftFields.add(el); }
+  function clearMatrixFieldDirty(el: HTMLElement | null){ if(el) matrixDraftFields.delete(el); }
+  function isMatrixFieldDirty(el: HTMLElement | null): boolean { return !!el && matrixDraftFields.has(el); }
   function lockAllMatrixInputs(){
     $$('#matrixHost input').forEach(el => { el.readOnly = true; });
+  }
+  // Re-lock every matrix field after a commit, EXCEPT a different editor that
+  // the gesture causing this commit has just opened (clicking a node's column
+  // label while its row label editor commits): that field is focused, unlocked
+  // and armed, and locking it would destroy the session the user just started —
+  // the queued rebuild would then find nothing to capture.
+  function lockAllMatrixInputsExcept(committed: HTMLElement | null){
+    const active = document.activeElement as HTMLInputElement | null;
+    const keep = active && active !== committed && !active.readOnly
+      && active.matches && active.matches('#matrixHost input') ? active : null;
+    lockAllMatrixInputs();
+    if(keep) keep.readOnly = false;
   }
   function unlockMatrixInput(el){
     el.readOnly = false;
   }
-  // Promote a lightweight <td class="mc"> to an editable <input>.
-  // Returns the new input element so the caller can focus/unlock it.
-  // The from-ID lives on the parent <tr data-r> so the input only needs
-  // data-c (column target) and data-e (edge IDs).
+  // Promote a lightweight <td class="mc"> to editable by inserting an
+  // <input> INSIDE the <td> (the <td> stays in the table row). Returns the
+  // input so the caller can focus/unlock it.
+  //
+  // The input is taken OUT OF FLOW (CSS absolutely positions it over the
+  // cell) and the cell's own text is kept as a hidden width placeholder
+  // (`span.mc-ghost`). An in-flow <input> carries an intrinsic preferred
+  // width of its own (~20ch), so promoting used to widen the column and
+  // reflow the whole table: the cell being edited visibly jumped to the
+  // left and every neighbour column shifted under the pointer — which also
+  // made the second press of a double-click land on a different cell.
+  // With an out-of-flow input and a same-text placeholder, promotion and
+  // demotion are layout-neutral: the grid never moves while editing.
   function promoteCellToInput(td: HTMLElement): HTMLInputElement {
-    const input = document.createElement('input');
-    input.className = 'matrix-input' + (td.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    input.dataset.c = td.dataset.c || '';
-    input.dataset.e = td.dataset.e || '';
     // The cell textContent is either empty (no edge, or edge with empty
-    // weight — CSS shows a "0" placeholder via :empty::before) or the
-    // actual weight text (including "0" for a real zero-weight edge).
-    // Starting from the actual textContent means typing replaces cleanly
-    // instead of appending to a placeholder.
+    // weight — CSS :empty::before shows a "0" placeholder) or the actual
+    // weight text (including "0" for a real zero-weight edge).
     const raw = td.textContent || '';
+    const input = document.createElement('input');
+    input.className = 'matrix-input';
     input.value = raw;
     input.placeholder = '0';
     input.readOnly = true;
-    // Set accessible name immediately — pointer clicks prevent default focus
-    // so the lazy focusin handler would never fire for mouse users.
-    const from = (td.closest('tr[data-r]') as HTMLElement | null)?.dataset?.r || '';
-    const to = td.dataset.c || '';
-    if(from && to) input.setAttribute('aria-label', from + ' → ' + to);
+    // Copy accessible name from the <td> to the <input>.
     if(td.getAttribute('aria-label')) input.setAttribute('aria-label', td.getAttribute('aria-label')!);
     input.title = td.title || '';
-    input.style.width = '52px';
-    td.replaceWith(input);
+    // Width placeholder: same text as the cell had, hidden but still laid
+    // out, so the column keeps exactly the width it had before promotion.
+    // For an empty cell the placeholder mirrors the CSS "0" glyph that
+    // :empty::before would otherwise contribute.
+    const ghost = document.createElement('span');
+    ghost.className = 'mc-ghost';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.textContent = raw === '' ? '0' : raw;
+    td.textContent = '';
+    td.appendChild(ghost);
+    td.appendChild(input);
     return input;
   }
-  // Demote an <input> back to a lightweight <td>.
-  // Called on blur/focusout — all matrix cells default to <td>; the <input>
-  // is only present while a cell is being actively edited.
-  // Guarded against inputs that are already detached (e.g. replaced by a
-  // queued full re-render).
+  // Demote: remove the <input> (and its width placeholder) from inside its
+  // <td> and restore the plain text content. Called on blur/focusout — all
+  // matrix cells default to <td> with text; the <input> is only present
+  // while a cell is being actively edited.
   function demoteInputToCell(input: HTMLInputElement){
-    if(!input.parentNode) return; // already detached — re-render handled it
-    const td = document.createElement('td');
-    td.className = 'mc' + (input.classList.contains('matrix-selected') ? ' matrix-selected' : '');
-    td.dataset.c = input.dataset.c || '';
-    td.dataset.e = input.dataset.e || '';
-    td.tabIndex = 0;
-    // Set accessible name and editing tooltip immediately — mouse users
-    // don't trigger focus, so the focusin handler alone is insufficient.
-    const from = (td.closest && (input.closest('tr[data-r]') as HTMLElement | null))?.dataset?.r || '';
-    const to = input.dataset.c || '';
-    if(from && to) td.setAttribute('aria-label', from + ' → ' + to);
-    // Copy title from the input if it has one (editing instruction).
-    if(input.title) td.title = input.title;
-    td.setAttribute('role', 'gridcell');
-    // Use the input's value as the display text. Empty values become empty
+    const td = input.parentElement;
+    if(!td || !td.parentNode) return; // already detached — re-render handled it
+    // Restore text content from the input value. Empty values become empty
     // textContent — CSS :empty::before shows a "0" placeholder visually.
-    // Actual "0" weights stay as "0" textContent so re-editing preserves them.
     const val = input.value;
+    td.removeChild(input);
+    const ghost = td.querySelector('span.mc-ghost');
+    if(ghost) td.removeChild(ghost);
     td.textContent = val;
-    input.replaceWith(td);
+  }
+  // --- Edit sessions that survive a matrix rebuild -------------------------
+  // A matrix re-render replaces #matrixHost wholesale, destroying whatever
+  // editor is open in it — together with the text already typed there. The
+  // rebuild queued by committing one cell lands ~60ms later, which is exactly
+  // when a fast double-click has just opened the NEXT editor: that editor
+  // used to vanish and focus fell back to the page. renderMatrixAndList()
+  // therefore captures the open session before swapping the HTML and
+  // re-applies it afterwards (value and caret included).
+  // `dirty` travels with the session: the restored field is a NEW element, so
+  // the per-field draft mark has to be carried across the rebuild explicitly.
+  let matrixEditSession: {kind:'cell'|'label', from:string, to:string, id:string, row:boolean, value:string, start:number, end:number, dirty:boolean} | null = null;
+  function captureMatrixEditSession(){
+    matrixEditSession = null;
+    const edit = matrixEditCell;
+    if(!edit) return;
+    const active = document.activeElement as HTMLInputElement | null;
+    if(!active || active.readOnly || !active.matches || !active.matches('#matrixHost input')) return;
+    const start = active.selectionStart ?? 0, end = active.selectionEnd ?? 0;
+    if(edit.type === 'cell'){
+      const cell = (active as Element).closest('td.mc[data-c]');
+      if(!cell) return;
+      const {from, to} = cellFromTo(cell);
+      if(from !== edit.from || to !== edit.to) return;
+      matrixEditSession = {kind:'cell', from, to, id:'', row:false, value: active.value, start, end, dirty: isMatrixFieldDirty(active)};
+    } else {
+      const id = (active as HTMLElement).dataset?.nodeLabel || '';
+      if(!id || id !== edit.id) return;
+      // Every node label exists twice (column header and row head): remember
+      // which instance was open so the restore re-opens exactly that one.
+      const row = !!(active as Element).closest('th.row-head');
+      matrixEditSession = {kind:'label', from:'', to:'', id, row, value: active.value, start, end, dirty: isMatrixFieldDirty(active)};
+    }
+  }
+  function restoreMatrixEditSession(){
+    const s = matrixEditSession;
+    matrixEditSession = null;
+    if(!s) return;
+    let input: HTMLInputElement | null = null;
+    if(s.kind === 'cell'){
+      const cell = document.querySelector('#matrixHost tr[data-r="' + matrixAttrValue(s.from) + '"] td[data-c="' + matrixAttrValue(s.to) + '"]');
+      if(!cell) return; // the cell is gone (node removed/filtered) — nothing to restore
+      input = promoteCellToInput(cell as HTMLElement);
+    } else {
+      // Re-open the same instance (row head vs column header) that was open.
+      const scope = s.row ? '#matrixHost tbody th.row-head' : '#matrixHost thead th';
+      input = document.querySelector(scope + ' input[data-node-label="' + matrixAttrValue(s.id) + '"]') as HTMLInputElement | null;
+      if(!input) return;
+    }
+    // A session WITH a draft keeps its text. A session without one is only an
+    // open editor, so re-read the model instead of replaying the captured text:
+    // the graph may have moved while it was open (Undo, an algorithm, an
+    // import), and restoring the stale text left the focused editor showing a
+    // value the graph no longer had — after committing 42 over 3, re-opening
+    // the cell and pressing Ctrl+Z showed 42 again, so typing "0" committed
+    // "420" instead of editing the undone "3".
+    let text = s.value;
+    if(!s.dirty){
+      const model = s.kind === 'cell'
+        ? currentMatrixCellText(s.from, s.to)
+        : (nodeById(s.id)?.label || s.id);
+      if(model != null) text = model;
+    }
+    input.value = text;
+    // The draft mark has to move onto the fresh element with the text.
+    if(s.dirty) markMatrixFieldDirty(input); else clearMatrixFieldDirty(input);
+    input.readOnly = false;
+    input.focus({ preventScroll: true });
+    // The model text can be shorter than the draft the caret was captured with.
+    try{ input.setSelectionRange(Math.min(s.start, text.length), Math.min(s.end, text.length)); }catch{ /* selection unsupported */ }
+    // matrixEditCell already describes this field; the session stays armed.
   }
 
   // === Style tab: populate + sync default controls ===

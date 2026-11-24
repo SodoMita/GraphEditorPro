@@ -2442,7 +2442,10 @@
     const note = $('#matrixNote');
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
-    if(total === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>'; $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; note.textContent=''; return; }
+    // The rebuild replaces #matrixHost: remember an editor the user has open
+    // (value and caret) so it can be re-opened on the fresh DOM below.
+    captureMatrixEditSession();
+    if(total === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_yet') + '</div>'; $('#edgeListHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_edges_yet') + '</div>'; note.textContent=''; restoreMatrixEditSession(); return; }
     if(n === 0){ $('#matrixHost').innerHTML = '<div class="tiny muted">' + I18N.t('no_nodes_range') + '</div>'; note.textContent = `0 / ${total}`; }
     else if(n > limit){
       // Report the real graph size and the render ceiling, not the already
@@ -2457,6 +2460,9 @@
         ? I18N.t('matrix_note_range', {n, start: vr.start >= 0 ? vr.start : 0, end: vr.end >= 0 ? vr.end : I18N.t('matrix_note_end'), total})
         : n === total ? `${n}×${n}` : I18N.t('matrix_note_view', {n, total});
     }
+    // Re-open an editor the rebuild just destroyed (value and caret intact).
+    // No-ops when nothing was captured or the cell no longer exists.
+    restoreMatrixEditSession();
     $('#edgeListHost').innerHTML = edgeListHtml();
   }
   function adjacencyMatrixData(nodes=state.nodes, includeEdgeIds=true){

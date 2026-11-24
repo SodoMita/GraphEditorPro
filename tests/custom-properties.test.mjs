@@ -1308,7 +1308,7 @@ test('matrix-created edges clone custom values (parallel edge and pending defaul
   assert.ok(cell);
   dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
   dispatchPointer(window, cell, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
-  const cellInput = document.querySelector('tr[data-r="a"] [data-c="b"]');
+  const cellInput = document.querySelector('tr[data-r="a"] td[data-c="b"] input.matrix-input');
   assert.ok(cellInput, 'cell was promoted to an input');
   changeValue(window, cellInput, '1;2');
   await nextFrame(window); await settle(window, 40);
@@ -1329,7 +1329,7 @@ test('matrix-created edges clone custom values (parallel edge and pending defaul
   dispatchPointer(window, cellBA, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 });
   // The second pointerdown promotes the lightweight <td> to an <input>;
   // re-query to get the live element in the DOM.
-  const cellBAInput = document.querySelector('tr[data-r="b"] [data-c="a"]');
+  const cellBAInput = document.querySelector('tr[data-r="b"] td[data-c="a"] input.matrix-input');
   assert.ok(cellBAInput, 'the empty cell was promoted to an input');
   changeValue(window, cellBAInput, '5');
   await nextFrame(window); await settle(window, 40);

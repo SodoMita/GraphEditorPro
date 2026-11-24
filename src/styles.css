@@ -428,7 +428,20 @@
     .matrix-node-controls .btn.small.icon{width:22px; min-width:22px; height:22px; min-height:22px; padding:0; display:grid; place-items:center; border-radius:0}
     .matrix-node-controls .btn.small.icon .ui-icon{width:12px;height:12px}
     .matrix-node-controls .btn[disabled]{opacity:.35; pointer-events:none}
-    .matrix-order-badge{font-size:0.625rem; color:var(--muted); background:rgba(2,6,23,.4); border:1px solid var(--line); border-radius:0; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
+    /* The matrix and the edge list ARE grids — the 1px cell borders already
+       separate every value, so the widgets inside them need no boxes of their
+       own (the locked label inputs have always been transparent for the same
+       reason). At rest they sit borderless on the grid; hover hints at them
+       and focus draws the accent ring. The borders stay 1px, only transparent,
+       so unboxing shifts nothing. */
+    #matrixHost .matrix-node-controls .btn.small.icon,
+    #edgeListHost .btn.small.icon{background:transparent; border-color:transparent}
+    #matrixHost .matrix-node-controls .btn.small.icon:hover,
+    #edgeListHost .btn.small.icon:hover{background:rgba(2,6,23,.55); border-color:var(--control-border)}
+    #edgeListHost input, #edgeListHost select{background:transparent; border-color:transparent}
+    #edgeListHost input:hover, #edgeListHost select:hover{background:rgba(2,6,23,.45); border-color:var(--control-border)}
+    #edgeListHost input:focus, #edgeListHost select:focus{background:rgba(2,6,23,.55); border-color:var(--accent)}
+    .matrix-order-badge{font-size:0.625rem; color:var(--muted); background:transparent; border:1px solid transparent; border-radius:0; padding:1px 4px; min-width:18px; text-align:center; font-family:var(--mono); line-height:1.4}
     .clipboard-controls .btn.small{flex:0 0 auto}
     .field.checkbox{display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--muted)}
     .field.checkbox input[type="checkbox"]{width:14px; height:14px}
@@ -437,17 +450,31 @@
     table{border-collapse:separate; border-spacing:0; width:100%; font-size:0.75rem; color:#dbeafe}
     #matrixHost table{width:max-content; min-width:100%}
     th,td{border:1px solid rgba(51,65,85,.55); padding:5px 7px; background:rgba(2,6,23,.3); white-space:nowrap; text-align:center}
-    /* Column headers: sticky at top only */
-    thead th{background:rgba(15,23,42,.96); color:#bfdbfe; position:sticky; top:0; z-index:2}
+    /* Column headers: sticky at top only. Every frozen surface (headers,
+       row heads, corner) is FULLY OPAQUE: a translucent background lets the
+       cells sliding underneath bleed through the frozen frame while
+       scrolling, which reads as the top-left corner "not covering" content. */
+    thead th{background:rgb(15,23,42); color:#bfdbfe; position:sticky; top:0; z-index:2}
     /* Row headers: sticky at left only — they must NOT also be sticky-top or
        they collapse to the top of the scroll container and row labels detach
        from their rows. */
-    .row-head{position:sticky; left:0; z-index:3; text-align:left; background:rgba(15,23,42,.96)}
-    /* Frozen corner cell: sticky in both directions (like Excel) */
-    .matrix-corner{position:sticky; top:0; left:0; z-index:5; background:rgba(15,23,42,.96)}
+    .row-head{position:sticky; left:0; z-index:3; text-align:left; background:rgb(15,23,42)}
+    /* Frozen corner cell: sticky in both directions (like Excel). Opaque and
+       above both header axes so nothing ever shows through or over it. */
+    .matrix-corner{position:sticky; top:0; left:0; z-index:5; background:rgb(15,23,42)}
+    /* The editing input is taken out of flow and stretched over its cell:
+       an in-flow input contributes its own intrinsic width to the column
+       and would reflow the whole table (the edited cell jumping sideways).
+       Opaque background so the hidden width placeholder under it never
+       ghosts through. */
+    td.mc > input.matrix-input{position:absolute; inset:0; width:auto; height:auto; min-width:0; min-height:0; box-sizing:border-box; margin:0; text-align:center; background:rgb(2,6,23)}
+    /* Width placeholder left behind by promoteCellToInput: laid out (keeps
+       the column width identical to the plain-text cell) but invisible. */
+    td.mc > span.mc-ghost{visibility:hidden}
     .table-scroll{overflow:auto; max-height:none; border-radius:0; contain:layout; -webkit-overflow-scrolling:touch}
-    /* Lightweight empty matrix cells — no input, just a clickable <td> */
-    td.mc{cursor:pointer; min-width:44px; max-width:120px; padding:5px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+    /* Lightweight empty matrix cells — no input, just a clickable <td>.
+       position:relative is the containing block for the editing input. */
+    td.mc{cursor:pointer; min-width:44px; max-width:120px; padding:5px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; position:relative}
     td.mc.matrix-selected{outline:2px solid var(--accent); outline-offset:-2px}
     /* Placeholder "0" shown via CSS when the cell has no text content —
        keeps the actual textContent empty so promoteCellToInput can distinguish
@@ -521,13 +548,19 @@
     }
     .app-dialog-title{margin:0; font-size:0.9375rem; font-weight:800; color:#e2e8f0}
     .app-dialog-message{margin:0; font-size:0.78125rem; color:#cbd5e1; line-height:1.45; white-space:pre-wrap}
-    .app-dialog-field{margin:0}
+    .app-dialog-field{margin:0; order:2}
     .app-dialog-input{
       width:100%; background:#020617; border:1px solid var(--control-border); color:#e2e8f0;
       border-radius:8px; padding:9px 10px; font-size:1rem; min-height:40px;
     }
     .app-dialog-input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
-    .app-dialog-actions{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap}
+    /* Prompt layout: Cancel/OK sit ABOVE the text field, next to the title and
+       message, while the field — the thing being edited — comes last. Done with
+       grid `order` (not DOM order) so Tab and screen-reader flow stay the
+       conventional field → Cancel → OK; reordering the DOM instead made the
+       native modal's Tab drop a dead stop on <body> before wrapping. A confirm
+       dialog has no field, so its buttons still end up last. */
+    .app-dialog-actions{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; order:1}
 
     /* ---------- Presets overlay (app-wide) ---------- */
     .presets-overlay{

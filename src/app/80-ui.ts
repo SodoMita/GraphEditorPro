@@ -488,44 +488,144 @@
         if(t.matches('.edge-color')){ e.color = t.value; queueRender(false); saveLiveDocumentEdit(); }
       });
     }
+    // Open the editor for one matrix weight cell: promote the <td> to an
+    // <input> when it is still a lightweight cell, unlock it and focus it.
+    // Shared by the second press of the select-then-edit gesture and by the
+    // dblclick fallback below, so a double-click always opens the editor
+    // even when a matrix re-render between the two presses rebuilt the <td>
+    // and dropped the promoted input.
+    // Deferred matrix commits. The change/focusout handlers defer their work to
+    // a microtask — that is how a real commit is told apart from the `change`
+    // Chromium fires when a rebuild REMOVES a focused field. But one gesture can
+    // open another editor for the same data in the same task (clicking a node's
+    // column label while its row label blurs), and that editor would be
+    // pre-filled from a model the deferred commit has not applied yet. Label
+    // commits therefore register here so the gesture can flush them first; the
+    // microtask then finds nothing left to do. Weight-cell commits stay purely
+    // deferred: they end by demoting the field, and demoting inside the
+    // pointerdown task is what the deferral was added to avoid.
+    let pendingMatrixCommits: Array<() => void> = [];
+    function deferMatrixCommit(run: () => void){
+      pendingMatrixCommits.push(run);
+      queueMicrotask(() => {
+        const i = pendingMatrixCommits.indexOf(run);
+        if(i === -1) return; // already flushed by the gesture that caused the blur
+        pendingMatrixCommits.splice(i, 1);
+        run();
+      });
+    }
+    function flushMatrixCommits(){
+      if(!pendingMatrixCommits.length) return;
+      const queued = pendingMatrixCommits;
+      pendingMatrixCommits = [];
+      // Each queued commit is now detached from its own microtask (which no-ops
+      // once the array is drained), so one that throws must not swallow the
+      // rest: run them all, then re-raise the first failure.
+      let failed = false;
+      let failure: unknown = null;
+      for(const run of queued){
+        try{ run(); }
+        catch(err){ if(!failed){ failed = true; failure = err; } }
+      }
+      if(failed) throw failure;
+    }
+    function beginCellEdit(cell: Element, from: string, to: string){
+      let input = cell.querySelector('input.matrix-input') as HTMLInputElement | null;
+      if(!input) input = promoteCellToInput(cell as HTMLElement);
+      // Pre-fill from the MODEL, not from the cell's text: a commit that landed
+      // a moment ago — this gesture's own blur, or an edit to the mirror cell of
+      // an undirected edge — is still up to 60 ms away from re-rendering the
+      // grid. Opening on the stale text made it the base of the next keystroke,
+      // and the resulting draft then overwrote the commit.
+      const model = currentMatrixCellText(from, to);
+      if(input.value !== model){
+        input.value = model;
+        // The width placeholder has to keep mirroring what the cell displays.
+        const ghost = cell.querySelector('span.mc-ghost');
+        if(ghost) ghost.textContent = model === '' ? '0' : model;
+      }
+      input.readOnly = false;
+      // preventScroll: the pressed cell is already in view; letting focus()
+      // scroll the grid would move the table under the pointer mid-gesture.
+      input.focus({ preventScroll: true });
+      matrixEditCell = {type:'cell', from, to};
+      clearMatrixFieldDirty(input); // a fresh session has no draft yet
+      return input;
+    }
+    // Open the editor for one node-label field (row/column header input).
+    function beginLabelEdit(el: HTMLElement, id: string){
+      // Apply the commit this gesture's blur deferred BEFORE reading the model,
+      // then pre-fill from the model for the same reason as beginCellEdit: a
+      // keystroke typed before the rebuild used to anchor the pre-commit label
+      // as a draft that later overwrote the commit (Alpha + "X" became "XA").
+      flushMatrixCommits();
+      const node = nodeById(id);
+      if(node) (el as HTMLInputElement).value = node.label || node.id;
+      unlockMatrixInput(el);
+      el.focus({ preventScroll: true });
+      // Which of the node's TWO label instances is open has to be part of the
+      // armed state: a commit from the other instance (the row label blurred by
+      // clicking the column label) must not disarm this one.
+      matrixEditCell = {type:'label', id, row: !!el.closest('th.row-head')};
+      clearMatrixFieldDirty(el); // a fresh session has no draft yet
+    }
+    // Real user edits (keystrokes, paste, cut, IME) in an open matrix field.
+    // Programmatic assignment — the session restore after a rebuild, or an
+    // Undo re-render — never fires `input`, which is exactly the distinction
+    // the blur fallback needs to tell "text the user typed but the browser
+    // will not report" from "stale text the graph has already moved past".
+    $('#matrixHost').addEventListener('input', ev => {
+      const t = ev.target as HTMLInputElement;
+      if(t.matches && t.matches('input') && !t.readOnly) markMatrixFieldDirty(t);
+    });
     $('#matrixHost').addEventListener('pointerdown', ev => {
       const t = ev.target;
+      // A press INSIDE the field that is already open for editing belongs to
+      // the text editor, not to the select-then-edit state machine: the
+      // browser must run its native pointer behaviour so a click repositions
+      // the caret and a drag selects text. preventDefault() here (or blurring
+      // the field) froze the caret at its old position and killed drag
+      // selection. A press anywhere else in the matrix first closes the open
+      // field: blurring it fires `change` (commit) and the focusout demotion,
+      // so exactly one matrix field is ever open and the grid cannot keep a
+      // stale unlocked input from an earlier edit session.
+      const open = document.activeElement as HTMLInputElement | null;
+      const openIsEditor = !!open && !!open.matches && open.matches('#matrixHost input') && !open.readOnly;
+      if(openIsEditor){
+        // The open weight editor's own <td> counts as "inside" it (the input
+        // covers the cell's padding box; only its 1px border is the <td>).
+        const box = (open as Element).closest('td.mc[data-c]') || (open as Element);
+        if(box === (t as Element) || box.contains(t as Node)) return;
+        open.blur();
+      }
       if(t.matches('[data-node-label]')){
         const id = t.dataset.nodeLabel;
         const isEditing = matrixEditCell?.type === 'label' && matrixEditCell?.id === id;
         lockAllMatrixInputs();
         if(isEditing){
           // Second click on same label — allow editing
-          unlockMatrixInput(t);
-          matrixEditCell = {type:'label', id};
-          // Don't preventDefault — let it focus
+          beginLabelEdit(t as HTMLElement, id);
         } else {
           // First click — select only, block keyboard
           ev.preventDefault();
           selectMatrixNode(id, ev.shiftKey);
-          matrixEditCell = {type:'label', id};
+          matrixEditCell = {type:'label', id, row: !!(t as Element).closest('th.row-head')};
         }
         return;
       }
-      if(t.matches && t.matches('[data-c]')){
-        const {from, to} = cellFromTo(t as Element);
+      // Find the matrix cell <td> — the target may be the <td> itself or
+      // an <input> inside it (after promotion for editing).
+      const cell = (t as Element).closest?.('td.mc[data-c]');
+      if(cell){
+        const {from, to} = cellFromTo(cell);
         const isSameCell = matrixEditCell?.type === 'cell' && matrixEditCell?.from === from && matrixEditCell?.to === to;
         lockAllMatrixInputs();
-        if(t.tagName === 'INPUT'){
-          // Click on a promoted <input> — unlock for editing
-          unlockMatrixInput(t);
-          matrixEditCell = {type:'cell', from, to};
-        } else if(isSameCell){
-          // Second click on the same <td> — promote to <input> and unlock
-          // for editing immediately (2-click edit, matching the main branch
-          // behaviour where the input already existed in the DOM).
+        if(isSameCell){
+          // Second press on the armed cell — open the editor.
           // preventDefault suppresses the compatibility mousedown/mouseup/click
           // that would otherwise race with the focus call in Chromium.
           ev.preventDefault();
-          const input = promoteCellToInput(t as HTMLElement);
-          input.readOnly = false;
-          input.focus();
-          matrixEditCell = {type:'cell', from, to};
+          beginCellEdit(cell, from, to);
         } else {
           // First click on a cell — select only
           ev.preventDefault();
@@ -535,44 +635,209 @@
         return;
       }
     });
+    // A double-click always opens the editor for the cell or label under the
+    // pointer. The two-press state machine alone could miss it: a matrix
+    // re-render between the presses rebuilds the <td> (dropping the promoted
+    // input and the armed-cell match), and before the layout-neutral
+    // promotion the table reflow moved the cell away from the second press,
+    // which left the gesture selecting random neighbours instead of editing.
+    $('#matrixHost').addEventListener('dblclick', ev => {
+      const t = ev.target as HTMLElement;
+      if(t.matches && t.matches('[data-node-label]')){
+        // Already editing this exact field? Leave it — and the browser's native
+        // double-click word selection — alone. Re-opening it looked harmless
+        // but cleared the field's draft mark, and a label editor restored after
+        // a rebuild never fires `change`, so the following blur found no draft
+        // and discarded the typed label (Alpha reverted to A). Same guard the
+        // weight-cell branch below has always had.
+        if(!(t as HTMLInputElement).readOnly && document.activeElement === t) return;
+        ev.preventDefault();
+        lockAllMatrixInputs();
+        beginLabelEdit(t, t.dataset.nodeLabel);
+        return;
+      }
+      const cell = (t as Element).closest?.('td.mc[data-c]');
+      if(!cell) return;
+      const input = cell.querySelector('input.matrix-input') as HTMLInputElement | null;
+      if(input && !input.readOnly && cell.ownerDocument.activeElement === input) return; // already editing
+      ev.preventDefault();
+      lockAllMatrixInputs();
+      const {from, to} = cellFromTo(cell);
+      beginCellEdit(cell, from, to);
+    });
     $('#matrixHost').addEventListener('change', ev => {
       const t = ev.target;
-      if(t.matches('[data-node-label]')) setNodeLabelFromMatrix(t.dataset.nodeLabel, t.value);
-      if(t.matches && t.matches('[data-c]')){
-        const {from, to} = cellFromTo(t as Element);
-        setMatrixCell(from, to, t.value);
+      // The blurring gesture (if any) moves the selection right after this
+      // event, before the deferred commit runs: snapshot it so the commit does
+      // not steal a selection made in between.
+      const selAtChange = selectionStamp();
+      // Chromium fires `change` on a focused text input when a re-render
+      // removes it from the DOM — and while that event is dispatched the
+      // element still reports isConnected, so the check has to be deferred.
+      // Re-check in a microtask: a real commit (blur, Enter) leaves the field
+      // in the document; a removal-commit does not, and the session
+      // capture/restore around the rebuild owns that in-progress text.
+      // Treating a removal-commit as a user commit wrote half-typed text into
+      // the graph, cleared the armed-cell state (defeating the restore) and
+      // queued a second rebuild that destroyed the editor a fast double-click
+      // had just opened somewhere else.
+      // A node-label field and a weight-cell editor are mutually exclusive
+      // (`matrix-label-input` vs `matrix-input`), so the two commits are
+      // deferred separately: the label one goes through the flushable queue,
+      // because the gesture that blurred it can open the SAME node's other
+      // label instance inside this very task and must not read a model this
+      // commit has not applied yet.
+      if(t.matches('[data-node-label]')){
+        deferMatrixCommit(() => {
+          if(!(t as Node).isConnected) return;
+          setNodeLabelFromMatrix(t.dataset.nodeLabel, (t as HTMLInputElement).value);
+          // A label commit closes the edit session exactly like a weight
+          // commit: re-lock every matrix field and drop the armed-cell state.
+          // Without the reset a later SINGLE click on the same label reopened
+          // the editor while a canvas selection made in between stayed in
+          // force, so selection-based actions could hit the wrong node.
+          lockAllMatrixInputsExcept(t as HTMLElement);
+          clearMatrixFieldDirty(t as HTMLInputElement);
+          // Drop the armed state only while it still describes THIS label
+          // INSTANCE: the press that blurred the editor arms the field it
+          // clicked (possibly the same node's other label), and this commit is
+          // deferred until after that press ran.
+          const row = !!(t as Element).closest('th.row-head');
+          if(matrixEditCell?.type === 'label' && matrixEditCell.id === t.dataset.nodeLabel && matrixEditCell.row === row){
+            matrixEditCell = null;
+          }
+        });
+        return;
       }
-      // Re-lock after edit commit — a full matrix re-render (queued by
-      // setMatrixCell) will rebuild all cells as lightweight <td>.
-      t.readOnly = true;
-      matrixEditCell = null;
+      queueMicrotask(() => {
+        if(!(t as Node).isConnected) return;
+        // The <input> is inside a <td> — find the parent cell for from/to.
+        if(t.matches && t.matches('input.matrix-input')){
+          const cell = (t as Element).closest?.('td.mc[data-c]');
+          if(cell){
+            const {from, to} = cellFromTo(cell);
+            setMatrixCell(from, to, (t as HTMLInputElement).value, !selectionStampChanged(selAtChange));
+            // A commit closes the session, so the next single press on this cell
+            // selects instead of reopening the editor — but only THIS cell's
+            // armed state may go. The press that blurred the editor arms the
+            // cell it clicked before this deferred commit runs; clearing
+            // unconditionally made switching cells take a third click (select,
+            // select again, then finally edit).
+            if(matrixEditCell?.type === 'cell' && matrixEditCell.from === from && matrixEditCell.to === to){
+              matrixEditCell = null;
+            }
+          }
+          // Re-lock after edit commit — a full matrix re-render (queued by
+          // setMatrixCell) will rebuild all cells as lightweight <td>.
+          (t as HTMLInputElement).readOnly = true;
+          clearMatrixFieldDirty(t as HTMLInputElement);
+        }
+      });
     });
-    // On focus, set the editing instruction tooltip. The aria-label is
-    // already present in the HTML (compact "from → to" format) so we only
-    // need to add the title explaining the two-click edit interaction.
+    // On focus, set the editing instruction tooltip on the parent <td>.
+    // The aria-label is already present in the HTML (compact "from → to"
+    // format) so we only need to add the title explaining the two-click
+    // edit interaction.
     $('#matrixHost').addEventListener('focusin', ev => {
       const t = ev.target;
-      if(t.matches && t.matches('td.mc[data-c]') && !t.title){
-        t.title = I18N.t('matrix_cell_hint');
-        t.setAttribute('role', 'gridcell');
+      const cell = (t as Element).closest?.('td.mc[data-c]') as HTMLElement | null;
+      if(cell && !cell.title){
+        cell.title = I18N.t('matrix_cell_hint');
       }
     });
     $('#matrixHost').addEventListener('focusout', ev => {
       const t = ev.target;
-      if(t.matches && t.matches('input.matrix-input[data-c]')){
+      const selAtBlur = selectionStamp();
+      // Demote when an <input> inside a matrix cell loses focus.
+      if(t.matches && t.matches('input.matrix-input')){
+        const cell = (t as Element).closest?.('td.mc[data-c]');
+        if(!cell) return; // input not inside a matrix cell
         // Defer demotion to the next microtask. Chromium fires a follow-up
         // mousedown after pointerdown that can move focus away and then back;
         // the synchronous demotion would destroy the input before the browser
-        // finishes its focus chain.  If the input has already been detached
-        // by a queued full re-render the demote is a no-op.
+        // finishes its focus chain.
         const inp = t as HTMLInputElement;
         queueMicrotask(() => {
-          if(!inp.parentNode) return; // re-render already replaced it
+          if(!inp.parentNode) return; // already removed by re-render
           // If focus returned to this input (Chromium mousedown cycle), skip.
           if(inp.ownerDocument.activeElement === inp) return;
+          // Commit text the browser will never report. A session restored
+          // after a rebuild assigns its value programmatically, which clears
+          // the input's dirty flag: blurring it without typing again fires no
+          // `change`, so the matrix kept showing the restored text while the
+          // graph held the old weight (the edit only surfaced as a loss after
+          // a reload). Compare against the live graph values instead; when
+          // `change` does fire it commits first and this becomes a no-op. A
+          // field removed by a rebuild is disconnected here and stays owned
+          // by the session restore.
+          if(inp.isConnected){
+            const {from, to} = cellFromTo(cell);
+            if(isMatrixFieldDirty(inp) && !matrixCellMatchesText(from, to, inp.value)){
+              setMatrixCell(from, to, inp.value, !selectionStampChanged(selAtBlur));
+              lockAllMatrixInputsExcept(inp);
+              // A commit closes the session, exactly like the `change` path
+              // does: leaving the cell armed meant the next single click
+              // reopened the editor instead of selecting. Only drop the armed
+              // state when it still points at THIS cell — the blurring gesture
+              // may have armed the cell it clicked.
+              if(matrixEditCell?.type === 'cell' && matrixEditCell.from === from && matrixEditCell.to === to){
+                matrixEditCell = null;
+              }
+            } else {
+              // Nothing to commit: the session was never typed in, or its text
+              // already describes the live values. The graph may well have
+              // moved underneath the open editor (Undo, an algorithm, an
+              // import) — mirror the model back into the field so the demoted
+              // cell cannot keep displaying a weight the graph does not have.
+              inp.value = currentMatrixCellText(from, to);
+            }
+            clearMatrixFieldDirty(inp); // the session ends with this demotion
+          }
           demoteInputToCell(inp);
         });
       } else if(t.matches && t.matches('input')){
+        // Node-label fields: same unreported-text trap as weight cells — a
+        // label re-opened by the session restore is not dirty, so blur alone
+        // fires no `change` and the typed label would silently vanish.
+        const id = (t as HTMLElement).dataset?.nodeLabel;
+        if(id){
+          const inp = t as HTMLInputElement;
+          // Flushable, like the label `change` commit: clicking this node's
+          // OTHER label instance opens it in the same task that blurred this
+          // one and pre-fills it from the model, so the model must already
+          // include this commit (see deferMatrixCommit). This is the path that
+          // runs when the blurred label held a restored draft and therefore
+          // never fired `change` at all.
+          deferMatrixCommit(() => {
+            if(!inp.isConnected) return; // a rebuild owns this field
+            if(inp.ownerDocument.activeElement === inp) return;
+            const n = nodeById(id);
+            const current = n ? (n.label || n.id) : null;
+            if(current !== null){
+              if(isMatrixFieldDirty(inp) && inp.value !== current){
+                setNodeLabelFromMatrix(id, inp.value);
+                // Keep a DIFFERENT editor the blurring press just open: clicking
+                // this node's other label instance opens it before this
+                // deferred commit runs, and re-locking everything destroyed the
+                // session the user had just started.
+                lockAllMatrixInputsExcept(inp);
+                // Only this label INSTANCE's armed state may go — see the
+                // weight-cell branch: the blurring press arms the field it
+                // clicked, which for labels can be the same node's other one.
+                const row = !!(inp as Element).closest('th.row-head');
+                if(matrixEditCell?.type === 'label' && matrixEditCell.id === id && matrixEditCell.row === row){
+                  matrixEditCell = null;
+                }
+              } else if(inp.value !== current){
+                // The graph moved under an editor nobody typed in (Undo, an
+                // import): show the model instead of writing the stale label
+                // back over it.
+                inp.value = current;
+              }
+              clearMatrixFieldDirty(inp);
+            }
+          });
+        }
         t.readOnly = true;
       }
     });
