@@ -457,6 +457,12 @@
         const t = ev.target;
         if(!t.dataset || !t.dataset.edgeId) return;
         const e = edgeById(t.dataset.edgeId); if(!e) return;
+        // A `change` is the commit, so whatever draft the field was holding is
+        // now in the model and the field is clean again. patchListRow uses this
+        // to tell "the user is mid-typing" from "the model moved underneath a
+        // focused field" (Undo, import, algorithm) and only in the latter case
+        // writes the model back over it.
+        clearMatrixFieldDirty(t as HTMLElement);
         // Edits that DON'T change the matrix stay queueRender(false) — canvas
         // only — so the list isn't re-rendered under the user's finger. Edits
         // that DO change a matrix cell (weight, endpoints) use queueRender(true)
@@ -489,6 +495,11 @@
         const t = ev.target;
         if(!t.dataset || !t.dataset.edgeId) return;
         const e = edgeById(t.dataset.edgeId); if(!e) return;
+        // `input` fires for real user edits only — the same distinction the
+        // matrix host relies on. These six fields defer their commit to
+        // `change`, so mark them as holding a draft; colour, direction and
+        // stroke write the model immediately and never need it.
+        if(t.matches && t.matches('.el-weight, .el-elabel, .el-type, .el-id, .el-from, .el-to')) markMatrixFieldDirty(t as HTMLElement);
         if(t.matches('.edge-color')){ e.color = t.value; queueRender(false); saveLiveDocumentEdit(); }
       });
     }
