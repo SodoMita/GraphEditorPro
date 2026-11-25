@@ -569,6 +569,13 @@
                     <option value="points" data-i18n="dot_export_points">Points + inputscale=72 (neato -n)</option>
                   </select>
                 </label>
+                <label class="field col" for="optMatrixImportMode"><span data-i18n="matrix_import_mode">Matrix CSV import interpretation</span>
+                  <select id="optMatrixImportMode">
+                    <option value="cells" data-i18n="matrix_mode_cells">One edge per cell (mirror cells stay two edges)</option>
+                    <option value="mirror" data-i18n="matrix_mode_mirror">Mirror cells are one undirected edge</option>
+                  </select>
+                </label>
+                <p class="tiny muted" style="margin:2px 0 6px" data-i18n="matrix_csv_note">Our CSV exports can carry the complete graph in extra rows, so an unedited all-sections export/import round-trip is lossless. The export preview has checkboxes for each document section: keep them all for a lossless copy, uncheck them all for a spreadsheet-clean grid, or keep a subset to patch just those parts on import. A hand-written or older CSV is partial: Matrix CSV stores only weights, and mirror cells cannot say whether they were one undirected edge or two directed ones — choose the interpretation for those files.</p>
                 <div class="io-grid">
                   <div class="io-row">
                     <span class="io-format">JSON</span>
@@ -710,6 +717,7 @@
                 <p class="tiny muted"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
+                <p class="tiny muted"><span data-i18n-html="help_matrix_csv"><b>CSV exports are configurable:</b> the export preview starts with every document section checked, so an unedited export restores nodes, edges, direction, styles, ids, custom attributes, settings and title losslessly. Uncheck all sections for a spreadsheet-clean adjacency grid, or keep a subset to patch only those parts on import. A hand-written or older CSV is partial: Matrix CSV holds only weights, and a mirror pair of cells is ambiguous, so pick the interpretation in Data → Import / export for those files.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_copy_paste"><b>Copy / paste selection:</b> Ctrl+C copies the selected nodes with the edges between them, Ctrl+X cuts, Ctrl+D duplicates in place, Ctrl+V pastes with an offset (also across tabs, via the system clipboard). Ctrl+Alt+V (or Ctrl+Shift+V) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.</span></p>
               </div>
             </details>

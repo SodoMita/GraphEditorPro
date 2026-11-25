@@ -934,9 +934,9 @@
     $('#btnImportMatrixCsv').addEventListener('click', () => chooseImport('matrix-csv', '.csv,text/csv,text/plain'));
     $('#btnImportNodesCsv').addEventListener('click', () => chooseImport('nodes-csv', '.csv,text/csv,text/plain'));
     $('#fileImport').addEventListener('change', e => { importFile(e.target.files[0], e.target.dataset.format || 'auto'); e.target.value=''; e.target.dataset.format='auto'; });
-    $('#btnExportEdgesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-edges.csv`, edgeCsv(), 'text/csv;charset=utf-8'); });
-    $('#btnExportMatrixCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-matrix.csv`, matrixCsv(), 'text/csv;charset=utf-8'); });
-    $('#btnExportNodesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-nodes.csv`, nodeCsv(), 'text/csv;charset=utf-8'); });
+    $('#btnExportEdgesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-edges.csv`, edgeCsv(), 'text/csv;charset=utf-8', sections => edgeCsv(sections)); });
+    $('#btnExportMatrixCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-matrix.csv`, matrixCsv(), 'text/csv;charset=utf-8', sections => matrixCsv(sections)); });
+    $('#btnExportNodesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-nodes.csv`, nodeCsv(), 'text/csv;charset=utf-8', sections => nodeCsv(sections)); });
     $('#btnCopyEdgeCsv').addEventListener('click', copyEdgeCsv);
     $('#btnCopyMatrixCsv').addEventListener('click', copyMatrixCsv);
     $('#btnCopyNodesCsv').addEventListener('click', copyNodesCsv);

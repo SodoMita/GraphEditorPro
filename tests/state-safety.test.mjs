@@ -93,7 +93,13 @@ test('matrix values, edge IDs, and sparse CSV stay consistent', () => {
   assert.deepEqual(Array.from(matrix.edgeIds[0][1]), ['directed', 'undirected']);
   assert.deepEqual(Array.from(matrix.values[1][0]), ['3']);
   assert.deepEqual(Array.from(matrix.edgeIds[1][0]), ['undirected']);
-  assert.equal(matrixCsvFor(graph), '\ufeff,A,B\r\nA,,2;3\r\nB,3,\r\n');
+  // The familiar matrix table is byte-for-byte unchanged at the front; the
+  // complete-document appendix follows it so this CSV is lossless too.
+  const csv = matrixCsvFor(graph);
+  assert.ok(csv.startsWith('\ufeff,A,B\r\nA,,2;3\r\nB,3,\r\n'));
+  assert.match(csv, /^#GEP-CSV,2,[^\r\n]+\r\n#GEP-CSV,meta,[^\r\n]+\r$/m);
+  for(const section of ['settings','graphCustom','attributes','nodes','edges'])
+    assert.match(csv, new RegExp(`^#GEP-CSV,${section},[^\\r\\n]+\\r$`, 'm'), `${section} section is present`);
 });
 
 test('sanitizer enforces graph size limits', () => {

@@ -373,6 +373,71 @@ const I18N: I18nService = {
     'copy_nodes': { en: 'Copy Nodes', ru: 'Копировать узлы' },
     'paste_nodes': { en: 'Paste Nodes', ru: 'Вставить узлы' },
     'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Включите «Добавить», чтобы влить импортированные узлы и рёбра в текущий граф без изменения стилей и фона.' },
+    // A partial/legacy Matrix CSV is ambiguous: a symmetric pair of cells is
+    // exactly the same shape for one undirected edge and for two opposing
+    // directed edges. The reader must say which one it means instead of
+    // guessing. Our own exports carry the answer in full-document rows.
+    'matrix_import_mode': { en: 'Matrix CSV import interpretation', ru: 'Интерпретация Matrix CSV при импорте' },
+    'matrix_mode_cells': { en: 'One edge per cell (mirror cells stay two edges)', ru: 'Одно ребро на ячейку (зеркальные ячейки дают два ребра)' },
+    'matrix_mode_mirror': { en: 'Mirror cells are one undirected edge', ru: 'Зеркальные ячейки — одно неориентированное ребро' },
+    'matrix_csv_note': {
+      en: 'Our CSV exports can carry the complete graph in extra rows, so an unedited all-sections export/import round-trip is lossless. The export preview has checkboxes for each document section: keep them all for a lossless copy, uncheck them all for a spreadsheet-clean grid, or keep a subset to patch just those parts on import. A hand-written or older CSV is partial: Matrix CSV stores only weights, and mirror cells cannot say whether they were one undirected edge or two directed ones — choose the interpretation for those files.',
+      ru: 'Экспорт CSV из приложения может содержать полный граф в дополнительных строках, поэтому неизменённый экспорт со всеми разделами и импорт проходят без потерь. В окне экспорта есть флажки для каждого раздела: оставьте все для копии без потерь, снимите все для чистой таблицы или выберите часть, чтобы при импорте обновить только её. CSV, созданный вручную или старой версией, неполон: Matrix CSV хранит только веса, а зеркальные ячейки не позволяют отличить одно неориентированное ребро от двух встречных — выберите интерпретацию для таких файлов.'
+    },
+    'csv_document_note': {
+      en: 'This CSV includes extra rows holding the complete graph in every document section (nodes, edges, direction, styles, ids, custom attributes, settings and title). Importing it restores everything losslessly. Change the checkboxes above to keep a clean grid or only some sections; editing the text itself turns it into a plain CSV and the appendix is ignored.',
+      ru: 'Этот CSV содержит дополнительные строки с полным графом во всех разделах документа (узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок). Импорт восстанавливает всё без потерь. Измените флажки выше, чтобы оставить чистую таблицу или только часть разделов; при правке самого текста дополнение будет отброшено и файл станет обычным CSV.'
+    },
+    'csv_document_edited_note': {
+      en: 'You edited a CSV carrying extra document rows, so those rows will be ignored and the visible table will be imported as a partial CSV. Regenerate with the checkboxes, or keep the text unchanged, for the appendix to apply.',
+      ru: 'Вы изменили CSV с дополнительными строками документа, поэтому они будут проигнорированы, а видимая таблица импортируется как неполный CSV. Создайте файл заново через флажки или оставьте текст без изменений, чтобы дополнение применилось.'
+    },
+    'csv_document_incomplete': {
+      en: 'The CSV appendix is incomplete: no recognizable document sections were found. Nothing was imported; re-export with at least one section.',
+      ru: 'Дополнение CSV неполно: не найдено ни одного распознаваемого раздела. Импорт не выполнен; выполните экспорт хотя бы с одним разделом.'
+    },
+    'csv_grid_only_note': {
+      en: 'This CSV contains only the visible table, so it opens as a clean grid in a spreadsheet and imports as a partial CSV. Keep all sections checked for a lossless app copy.',
+      ru: 'В этом CSV только видимая таблица: в табличном редакторе она откроется чистой сеткой, а при импорте будет считаться неполным CSV. Для копии без потерь оставьте все разделы включёнными.'
+    },
+    'csv_partial_note': {
+      en: 'This CSV keeps only: {sections}. Importing it updates those parts of the current graph and leaves everything else unchanged; Append is ignored for such files.',
+      ru: 'Этот CSV сохраняет только: {sections}. Импорт обновит эти части текущего графа, остальное останется без изменений; режим «Добавить» для таких файлов игнорируется.'
+    },
+    'csv_export_options': { en: 'CSV export contents', ru: 'Состав CSV при экспорте' },
+    'csv_export_visible_table': { en: 'Visible table (always kept)', ru: 'Видимая таблица (сохраняется всегда)' },
+    'csv_export_meta': { en: 'Title, counters & view', ru: 'Заголовок, счётчики и вид' },
+    'csv_export_settings': { en: 'Settings & styles', ru: 'Настройки и стили' },
+    'csv_export_graph_custom': { en: 'Graph custom values', ru: 'Значения атрибутов графа' },
+    'csv_export_attributes': { en: 'Custom attribute definitions', ru: 'Определения пользовательских атрибутов' },
+    'csv_export_nodes': { en: 'Nodes (positions, ids, styles, values)', ru: 'Узлы (позиции, идентификаторы, стили, значения)' },
+    'csv_export_edges': { en: 'Edges (direction, ids, styles, values)', ru: 'Рёбра (направление, идентификаторы, стили, значения)' },
+    'csv_export_options_hint': {
+      en: 'All sections are kept by default for a lossless app copy. Uncheck them all for a spreadsheet-clean grid; a file with only some sections updates just those parts and keeps the rest of the current graph.',
+      ru: 'По умолчанию сохраняются все разделы — получается копия без потерь. Снимите все флажки, чтобы получить чистую таблицу для табличного редактора; файл с частью разделов обновит только их, остальная часть текущего графа сохранится.'
+    },
+    'csv_section_meta': { en: 'title/counters', ru: 'заголовок/счётчики' },
+    'csv_section_settings': { en: 'settings/styles', ru: 'настройки/стили' },
+    'csv_section_graph_custom': { en: 'graph custom values', ru: 'значения атрибутов графа' },
+    'csv_section_attributes': { en: 'attribute definitions', ru: 'определения атрибутов' },
+    'csv_section_nodes': { en: 'nodes', ru: 'узлы' },
+    'csv_section_edges': { en: 'edges', ru: 'рёбра' },
+    'apply_csv_sections': {
+      en: 'Apply the included CSV sections ({sections}) to the current graph? Parts not included are kept; Append is ignored for this file.',
+      ru: 'Применить включённые разделы CSV ({sections}) к текущему графу? Остальные части сохранятся; режим «Добавить» для этого файла игнорируется.'
+    },
+    'matrix_csv_legacy_note': {
+      en: 'This CSV has no full-document rows, so it is partial: Matrix CSV holds only weights and cannot preserve edge direction. Choose the interpretation in Data → Import / export, use the export checkboxes for a clean grid, or use JSON for a lossless copy.',
+      ru: 'В этом CSV нет строк с полным графом, поэтому он неполон: Matrix CSV хранит только веса и не сохраняет направление рёбер. Выберите интерпретацию во вкладке «Данные» → «Импорт / экспорт», настройте флажки экспорта для чистой таблицы или используйте JSON для копии без потерь.'
+    },
+    'import_modal_edges_note': {
+      en: 'A partial Edges CSV (no full-document rows) replaces the current edges; nodes, styles and background are kept.',
+      ru: 'Неполный Edges CSV (без строк полного графа) заменит текущие рёбра; узлы, стили и фон сохранятся.'
+    },
+    'import_modal_nodes_note': {
+      en: 'A partial Nodes CSV (no full-document rows) replaces the current nodes and removes the current edges.',
+      ru: 'Неполный Nodes CSV (без строк полного графа) заменит текущие узлы и удалит текущие рёбра.'
+    },
     'layout_view': { en: 'Layout and view', ru: 'Раскладка и вид' },
     'layout_circle': { en: 'Circle', ru: 'Круг' },
     'grid': { en: 'Grid', ru: 'Сетка' },
@@ -413,6 +478,10 @@ const I18N: I18nService = {
     'help_matrix_editing': { en: '<b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.', ru: '<b>Редактирование матрицы:</b> кликните по ячейке один раз для выбора без вызова клавиатуры; кликните снова для редактирования. Это позволяет выбирать на мобильных без всплывающей клавиатуры.' },
     'help_zoom': { en: '<b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.', ru: '<b>Масштаб:</b> колесо мыши или трекпад над холстом, щипок на мобильных и планшетах. Положение камеры можно задать числами во вкладке «Данные».' },
     'help_exports': { en: '<b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.', ru: '<b>Экспорт:</b> каждый формат (JSON, DOT, GraphML, Рёбра/Матрица/Узлы CSV) поддерживает скачивание файла и копирование в буфер.' },
+    'help_matrix_csv': {
+      en: '<b>CSV exports are configurable:</b> the export preview starts with every document section checked, so an unedited export restores nodes, edges, direction, styles, ids, custom attributes, settings and title losslessly. Uncheck all sections for a spreadsheet-clean adjacency grid, or keep a subset to patch only those parts on import. A hand-written or older CSV is partial: Matrix CSV holds only weights, and a mirror pair of cells is ambiguous, so pick the interpretation in Data → Import / export for those files.',
+      ru: '<b>Экспорт CSV настраивается:</b> в окне экспорта по умолчанию включены все разделы документа, поэтому неизменённый экспорт без потерь восстанавливает узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок. Снимите все флажки, чтобы получить чистую матрицу смежности для табличного редактора, или оставьте часть разделов, чтобы при импорте обновить только их. Созданный вручную или старый CSV неполон: Matrix CSV хранит только веса, а зеркальные ячейки неоднозначны — выберите интерпретацию во вкладке «Данные» → «Импорт / экспорт» для таких файлов.'
+    },
     'help_copy_paste': { en: '<b>Copy / paste selection:</b> <span class="kbd">Ctrl+C</span> copies the selected nodes with the edges between them, <span class="kbd">Ctrl+X</span> cuts, <span class="kbd">Ctrl+D</span> duplicates in place, <span class="kbd">Ctrl+V</span> pastes with an offset (also across tabs, via the system clipboard). <span class="kbd">Ctrl+Alt+V</span> (or <span class="kbd">Ctrl+Shift+V</span>) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.', ru: '<b>Копирование / вставка выделения:</b> <span class="kbd">Ctrl+C</span> копирует выбранные узлы с рёбрами между ними, <span class="kbd">Ctrl+X</span> вырезает, <span class="kbd">Ctrl+D</span> дублирует на месте, <span class="kbd">Ctrl+V</span> вставляет со смещением (также между вкладками, через системный буфер). <span class="kbd">Ctrl+Alt+V (или Ctrl+Shift+V)</span> вставляет <b>на месте</b>: по исходным координатам, используя существующие узлы и рёбра с теми же id и изменяя только перенесённые значения. Рёбра только с одним концом в выделении восстанавливаются при вставке, если второй конец существует — см. «Сохранять висящие рёбра» во вкладке Правка.' },
     'hotkeys': { en: 'Hotkeys', ru: 'Горячие клавиши' },
     'reset_defaults': { en: 'Reset to defaults', ru: 'Сбросить по умолчанию' },
@@ -620,6 +689,36 @@ const I18N: I18nService = {
     'sample_loaded': { en: 'Sample graph loaded', ru: 'Загружен пример графа' },
     'replace_with_sample': { en: 'Replace current graph with a sample?', ru: 'Заменить текущий граф примером?' },
     'replace_with_import': { en: 'Replace current graph with imported file?', ru: 'Заменить текущий граф импортированным файлом?' },
+    // A partial CSV import does not replace the whole graph. Say exactly what
+    // is lost so the generic "Replace current graph" cannot mislead.
+    'replace_edges_with_import': {
+      en: 'Replace the current edges with the imported Edges CSV? Nodes, styles and background are kept.',
+      ru: 'Заменить текущие рёбра импортированными из Edges CSV? Узлы, стили и фон сохранятся.'
+    },
+    'replace_edges_with_matrix': {
+      en: 'Replace the current edges with this partial Matrix CSV? Nodes are kept. Interpretation: {mode}. A matrix without appendix rows cannot store direction — use JSON, or an unedited all-sections app CSV export, for an exact copy.',
+      ru: 'Заменить текущие рёбра этим неполным Matrix CSV? Узлы сохранятся. Интерпретация: {mode}. Матрица без дополнительных строк не хранит направление — для точной копии используйте JSON или неизменённый экспорт CSV со всеми разделами.'
+    },
+    'replace_nodes_with_import': {
+      en: 'Replace the current nodes with the imported Nodes CSV? The current edges will be removed.',
+      ru: 'Заменить текущие узлы импортированными из Nodes CSV? Текущие рёбра будут удалены.'
+    },
+    'replace_with_full_csv': {
+      en: 'Replace the current graph with the imported CSV? This file carries the complete graph in every document section: nodes, edges, direction, styles, ids, custom attributes, settings and title.',
+      ru: 'Заменить текущий граф импортированным CSV? Файл содержит полный граф во всех разделах документа: узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок.'
+    },
+    // FileReader can fail (moved/deleted/locked file, permission error) or be
+    // aborted. Without handlers the import just silently does nothing.
+    'file_read_failed': {
+      en: 'Could not read "{name}": {msg}. Re-select the file (it may have moved, been deleted or be locked), or paste its contents into the export preview and click Import.',
+      ru: 'Не удалось прочитать «{name}»: {msg}. Выберите файл заново (он мог переместиться, быть удалён или занят) либо вставьте содержимое в окно экспорта и нажмите «Импорт».'
+    },
+    'file_read_aborted': {
+      en: 'Reading "{name}" was aborted before it finished. Choose the file again to import it.',
+      ru: 'Чтение «{name}» прервано до завершения. Выберите файл заново для импорта.'
+    },
+    'file_read_unknown': { en: 'unknown read error', ru: 'неизвестная ошибка чтения' },
+    'file_unnamed': { en: 'the selected file', ru: 'выбранный файл' },
     'clear_entire': { en: 'Clear the entire graph?', ru: 'Очистить весь граф?' },
     'clear_matrix_edges': { en: 'Clear all edges in the adjacency matrix?', ru: 'Очистить все рёбра в матрице смежности?' },
     'node_defaults_applied': { en: 'Node defaults applied to all', ru: 'Значения по умолчанию применены ко всем узлам' },
@@ -681,6 +780,16 @@ const I18N: I18nService = {
     'csv_nothing_parsed': { en: 'Nothing could be imported — the document is unchanged', ru: 'Не удалось ничего импортировать — документ не изменён' },
     'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано: {imported}; пропущено записей с неизвестными узлами: {skipped}' },
     'csv_nodes_replaced_edges': { en: 'Imported {n:node}; {e} old edges were dropped together with the replaced graph', ru: 'Импортировано: {n:node}; вместе с заменённым графом удалено старых рёбер: {e}' },
+    // Appended to the single matrix-import toast: the format is ambiguous, so
+    // the user must be told which interpretation was used (and what it cost).
+    'matrix_mirror_applied': {
+      en: '{n} mirror pair(s) became one undirected edge each; use an unedited app CSV export or JSON to keep direction',
+      ru: '{n} зеркальных пар стали неориентированными рёбрами; для сохранения направления используйте неизменённый экспорт CSV из приложения или JSON'
+    },
+    'matrix_pairs_ambiguous': {
+      en: '{n} mirror pair(s) were imported as separate edges — choose the mirror interpretation if they were undirected',
+      ru: '{n} зеркальных пар импортированы как отдельные рёбра — выберите интерпретацию зеркальных пар, если они были неориентированными'
+    },
     'matrix_cap_reached': { en: 'The matrix renders at most {cap}×{cap} nodes; the graph was not enlarged further.', ru: 'Матрица отображает не более {cap}×{cap} узлов; граф дальше не увеличивался.' },
     'matrix_hidden_limit': { en: 'Matrix hidden for performance: {total:node} exceed the limit {limit} (the matrix renders at most {cap}). Raise the limit up to {cap}, or use the edge list / Matrix CSV export.', ru: 'Матрица скрыта для производительности: {total:node} превышают лимит {limit} (матрица отображается максимум для {cap}). Поднимите лимит до {cap} или используйте список рёбер или экспорт «Матрица CSV».' },
     'layout_force_reduced': { en: 'Large graph: force layout ran {iter:pass} instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter:pass} вместо 180, чтобы не подвешивать интерфейс' },
