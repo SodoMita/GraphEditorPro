@@ -64,6 +64,16 @@ function dispatchPointer(window, target, type) {
 const cellOf = (document, from, to) => document.querySelector(`#matrixHost tr[data-r="${from}"] td[data-c="${to}"]`);
 const cellText = (document, from, to) => cellOf(document, from, to).textContent;
 const listWeight = (document, id) => document.querySelector(`#edgeListHost input.el-weight[data-edge-id="${id}"]`);
+// The column <th> carries no id: the badge is identified by the label input
+// that sits beside it in the same header cell.
+function matrixRowButtons(document, id) {
+  const btn = dir => [...document.querySelectorAll(`#matrixHost tbody button[data-node-move="${id}"][data-dir="${dir}"]`)];
+  return { up: btn('-1')[0] || { disabled: null }, down: btn('1')[0] || { disabled: null } };
+}
+function colBadge(document, id) {
+  const input = document.querySelector(`#matrixHost thead input[data-node-label="${id}"]`);
+  return input?.closest('th')?.querySelector('.matrix-order-badge')?.textContent ?? null;
+}
 const listRows = document => document.querySelectorAll('#edgeListHost tbody tr').length;
 
 // Commit a value into a list field the way a user does, then let the debounced
@@ -295,6 +305,7 @@ test('P3: a node added outside the visible range re-enables the reorder buttons'
   await settle(window, 250);
 
   assert.equal(document.querySelectorAll('#matrixHost tbody tr').length, 2, 'two rows are visible');
+  const tableBefore = document.querySelector('#matrixHost table');
   const moveButtons = () => [...document.querySelectorAll('#matrixHost button[data-node-move="b"][data-dir="1"]')];
   assert.ok(moveButtons().length > 0, 'B has move-forward buttons');
   assert.ok(moveButtons().every(b => b.disabled), 'B is last in the graph, so moving forward is disabled');
@@ -307,6 +318,116 @@ test('P3: a node added outside the visible range re-enables the reorder buttons'
   assert.equal(document.querySelectorAll('#matrixHost tbody tr').length, 2, 'the new node is outside the visible range');
   assert.ok(moveButtons().every(b => !b.disabled),
     'B can now move forward, so its buttons must be enabled');
+  // And it must get there by PATCHING: the boundary flags live in B's own row
+  // signature, so no head-level rebuild is needed. Keying the head signature on
+  // graphRev or the global node count also refreshed these buttons, but at the
+  // cost of replacing the whole grid for any indexed mutation.
+  assert.equal(document.querySelector('#matrixHost table'), tableBefore,
+    'the reorder boundary was patched into the existing table, not rebuilt');
+
+  // A real reorder inside the visible range swaps which node sits at which row
+  // index. That is a structural change, so it legitimately rebuilds - what must
+  // NOT happen is stale addressing: every badge, row identity and cell has to
+  // follow the swap now that the head carries no global revision.
+  document.querySelector('#matrixHost button[data-node-move="a"][data-dir="1"]').click();
+  await settle(window, 300);
+  const rowOrder = [...document.querySelectorAll('#matrixHost tbody tr[data-r]')]
+    .map(tr => tr.getAttribute('data-r'));
+  assert.deepEqual(rowOrder, ['b', 'a'], 'A and B swapped places');
+  assert.equal(colBadge(document, 'b'), '0', 'B is now first, and its column badge says so');
+  assert.equal(colBadge(document, 'a'), '1', 'A moved back, and its column badge says so');
+  assert.equal(cellText(document, 'a', 'b'), '3',
+    'the swapped rows still address the right columns');
+  assert.equal(matrixRowButtons(document, 'b').up.disabled, true, 'B is first again');
+  assert.equal(matrixRowButtons(document, 'a').down.disabled, false,
+    'A can still move past C, which sits outside the visible range');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// --- Round two of reconciliation findings ---------------------------------
+test('P2: a reverted keystroke does not poison the row against Undo', async () => {
+  const { dom, errors } = createEditorDom(baseGraph());
+  const { window } = dom; const { document } = window;
+  await settle(window, 200);
+
+  commit(window, listWeight(document, 'e1'), '42');
+  await settle(window, 200);
+  assert.equal(cellText(document, 'a', 'b'), '42', 'the edit committed');
+
+  // Refocus, type a digit, then backspace it. The field is back to the model
+  // text and the browser fires no `change` — the only thing that used to clear
+  // the draft mark — so the mark survived forever and every later render
+  // declined to write into this field.
+  const field = listWeight(document, 'e1');
+  field.focus();
+  field.value = '429';
+  field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  field.value = '42';
+  field.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+  document.querySelector('#btnUndo').click();
+  await settle(window, 250);
+
+  assert.equal(cellText(document, 'a', 'b'), '3', 'the matrix shows the undone weight');
+  assert.equal(listWeight(document, 'e1').value, '3',
+    'the reverted field reconciles with the model instead of keeping 42 forever');
+
+  const after = listWeight(document, 'e1');
+  commit(window, after, after.value + '0');
+  await settle(window, 200);
+  assert.equal(cellText(document, 'a', 'b'), '30', 'typing 0 committed 30, not 420');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('P2: an edit inside an expanded list keeps its rows and the keyboard focus', async () => {
+  const { dom, errors } = createEditorDom(baseGraph({ edgeListPageSize: 2 }));
+  const { window } = dom; const { document } = window;
+  await settle(window, 250);
+
+  document.querySelector('#btnEdgeListMore').click();
+  await settle(window, 200);
+  assert.equal(listRows(document), 4, 'the list is expanded to four rows');
+
+  const third = listWeight(document, 'e3');
+  assert.ok(third, 'row three is on screen');
+  third.focus();
+  assert.equal(document.activeElement, third, 'the field is focused');
+  commit(window, third, '42');
+  await settle(window, 250);
+
+  assert.equal(listRows(document), 4, 'an ordinary edit did not collapse the list back to one page');
+  const focused = document.activeElement;
+  assert.ok(focused && focused.matches && focused.matches('#edgeListHost input'),
+    `keyboard focus stayed in the list, got ${focused === document.body ? 'BODY' : focused.tagName}`);
+  assert.equal(listWeight(document, 'e3').value, '42', 'the edited row still shows the new weight');
+  assert.equal(cellText(document, 'c', 'a'), '42', 'and the matrix agrees');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('P3: an indexed mutation that touches no cell does not rebuild the matrix', async () => {
+  const { dom, errors } = createEditorDom(baseGraph());
+  const { window } = dom; const { document } = window;
+  await settle(window, 200);
+  const tableBefore = document.querySelector('#matrixHost table');
+  assert.ok(tableBefore, 'the matrix rendered');
+
+  // An edge-type edit calls invalidateGraphIndex(), bumping graphRev, but no
+  // matrix cell depends on the type. It renders the canvas and sidebar only...
+  commit(window, document.querySelector('#edgeListHost input.el-type[data-edge-id="e2"]'), 'highway');
+  await settle(window, 200);
+
+  // ...so the NEXT matrix render must still patch instead of replacing all of
+  // it. Keying the head signature on graphRev made it rebuild: on 88 nodes that
+  // was 7,744 cells and 158-259 ms long tasks for an edit that changed nothing.
+  commit(window, listWeight(document, 'e2'), '77');
+  await settle(window, 250);
+
+  assert.equal(document.querySelector('#matrixHost table'), tableBefore,
+    'the table was patched, not replaced, after an unrelated indexed mutation');
+  assert.equal(cellText(document, 'b', 'c'), '77', 'the weight edit landed');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });

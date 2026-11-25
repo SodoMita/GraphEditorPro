@@ -1421,6 +1421,10 @@
       toast(I18N.t('import_failed', { msg: I18N.t('err_empty_graph') }));
       return;
     }
+    // A replacement document starts a fresh edge list: the previous document's
+    // "Show more" expansion must not decide how many rows of the new one get
+    // rendered.
+    if(!append) resetEdgeListPagination();
     const graph = data as AnyRecord;
     if(!append && isRecord(graph)){
       const customAttributes = graph.customAttributes;

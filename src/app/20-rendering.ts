@@ -2431,6 +2431,9 @@
     return dim > 0 ? sorted.slice(0, Math.min(dim, sorted.length)) : sorted.slice(0, MATRIX_MAX_NODES);
   }
   let edgeListRenderLimit = 250;
+  // The page size the current expansion was grown from. -1 so the first render
+  // always adopts the document's own setting instead of the 250 default.
+  let lastEdgeListPageSize = -1;
   function configuredEdgeListPageSize(){
     return positiveInteger(state.settings.edgeListPageSize, 250);
   }
@@ -2453,15 +2456,27 @@
   function matrixHeadSignature(nodes: any[]): string {
     const s = state.settings;
     const vr = s.visibleRange || {start:-1, end:-1};
-    // The GLOBAL node count and graphRev belong in the head signature: the
-    // reorder buttons' disabled state is derived from each node's position in
-    // the whole sorted array, so a node added or reordered OUTSIDE the visible
-    // range leaves every visible row's own signature untouched while its move
-    // buttons go stale (a second node kept a disabled "move right" after a
-    // third node appeared outside the range).
-    return [I18N.current, s.matrixLimit, s.matrixDimension, vr.start, vr.end, nodes.length, state.nodes.length, graphRev].join(SIG_SEP);
+    // Deliberately NOT keyed on graphRev or the global node count. graphRev is
+    // bumped by every indexed mutation — an edge-type edit, an edge rename, a
+    // sort — and none of those change a matrix cell, so putting it here forced
+    // a full table rebuild for edits that should patch (on 88 nodes the render
+    // after a type edit replaced all 7,744 cells with 158-259 ms long tasks).
+    // What the head actually needs to know is which nodes are VISIBLE and how
+    // they are addressed; the reorder boundaries that depend on the global
+    // sorted position live in each row's own signature instead, where a change
+    // patches one row rather than the whole grid.
+    return [I18N.current, s.matrixLimit, s.matrixDimension, vr.start, vr.end, nodes.length].join(SIG_SEP);
   }
-  function matrixRowSignatures(nodes: any[], values: any[][], edgeIds: (any[][] | null)): string[] {
+  // Global order position of every node, plus the index of the last one. The
+  // reorder buttons are disabled at those two boundaries, so a node added,
+  // removed or reordered ANYWHERE in the graph — including outside the visible
+  // range — can change a visible row's buttons without touching its cells.
+  function matrixOrderInfo(){
+    const allSorted = sortedNodesByOrder();
+    const pos = new Map(allSorted.map((nd: any, i: number) => [nd.id, i]));
+    return { pos, last: allSorted.length - 1 };
+  }
+  function matrixRowSignatures(nodes: any[], values: any[][], edgeIds: (any[][] | null), order: {pos: Map<any, any>, last: number}): string[] {
     const rows = new Array(nodes.length);
     for(let i = 0; i < nodes.length; i++){
       const nd = nodes[i];
@@ -2479,7 +2494,11 @@
         for(let k = 0; k < ci.length; k++){ if(k) cs += SIG_JOIN; cs += ci[k] + SIG_KV + (cv[k] ?? ''); }
         cells[j] = cs;
       }
-      rows[i] = [nd.id, nd.label || '', nd.order ?? 0, cells.join(SIG_CELL)].join(SIG_SEP);
+      // The two boundary flags are what the move buttons render from, so a
+      // hidden node changing the global order flips them here and the row gets
+      // patched — no head-signature rebuild needed.
+      const gpos = order.pos.get(nd.id) ?? i;
+      rows[i] = [nd.id, nd.label || '', nd.order ?? 0, gpos === 0 ? 1 : 0, gpos === order.last ? 1 : 0, cells.join(SIG_CELL)].join(SIG_SEP);
     }
     return rows;
   }
@@ -2490,6 +2509,15 @@
   // undone weight stays on screen. Going through one function keeps the cache
   // and the DOM in lockstep no matter who asked for the render.
   function renderEdgeListSection(){
+    // Adopt a CHANGED page size (a settings edit, or a document that carries
+    // its own) but never merely re-adopt the same one: resetting on every
+    // render is what collapsed an expanded list whenever an ordinary edit asked
+    // for a matrix render.
+    const pageSize = configuredEdgeListPageSize();
+    if(pageSize !== lastEdgeListPageSize){
+      edgeListRenderLimit = pageSize;
+      lastEdgeListPageSize = pageSize;
+    }
     const vr = state.settings.visibleRange || {start:-1, end:-1};
     const rangeActive = vr.start >= 0 || vr.end >= 0;
     // Build the visible-id set ONCE per render. It used to be constructed
@@ -2583,7 +2611,18 @@
     td.dataset.e = ids.length ? ids.join(',') : '';
     return true;
   }
-  function patchMatrixRow(idx: number, nodes: any[], values: any[][], edgeIds: (any[][] | null)): boolean {
+  // Move one scope's reorder buttons (a column header or a row head) to the
+  // disabled state adjacencyMatrixHtml() would render: back is disabled at
+  // global position 0, forward at the last position.
+  function syncMoveButtons(scope: HTMLElement | null, first: boolean, last: boolean){
+    if(!scope) return;
+    for(const btn of scope.querySelectorAll('button.matrix-node-move')){
+      const dir = (btn as HTMLElement).dataset.dir;
+      const dis = dir === '-1' ? first : dir === '1' ? last : false;
+      if((btn as HTMLButtonElement).disabled !== dis) (btn as HTMLButtonElement).disabled = dis;
+    }
+  }
+  function patchMatrixRow(idx: number, nodes: any[], values: any[][], edgeIds: (any[][] | null), order: {pos: Map<any, any>, last: number}): boolean {
     const table = $('#matrixHost table'); if(!table) return false;
     const nd = nodes[idx]; if(!nd) return false;
     const id = nd.id, shown = nd.label || nd.id;
@@ -2594,10 +2633,20 @@
     const rowHeadInput = row?.querySelector('th.row-head input[data-node-label]') as HTMLInputElement | null;
     if(!row || row.dataset.r !== id || !headInput || headInput.dataset.nodeLabel !== id ||
        !rowHeadInput || rowHeadInput.dataset.nodeLabel !== id) return false;
-    headInput.value = shown;
-    rowHeadInput.value = shown;
+    if(headInput.value !== shown) headInput.value = shown;
+    if(rowHeadInput.value !== shown) rowHeadInput.value = shown;
+    // The order badge lives in the column header; the move buttons live in BOTH
+    // scopes (left/right in the column header, up/down in the row head). All of
+    // them derive from the node's GLOBAL sorted position, so an order change —
+    // or a node appearing outside the visible range — has to be written here
+    // instead of being left for a rebuild.
+    const orderText = String(nd.order ?? 0);
     const badge = headCell?.querySelector('.matrix-order-badge');
-    if(badge) badge.textContent = String(nd.order ?? 0);
+    if(badge && badge.textContent !== orderText) badge.textContent = orderText;
+    const rowHead = row.querySelector('th.row-head') as HTMLElement | null;
+    const gpos = order.pos.get(id) ?? idx;
+    syncMoveButtons(headCell, gpos === 0, gpos === order.last);
+    syncMoveButtons(rowHead, gpos === 0, gpos === order.last);
     const rowVals = values[idx] || emptyCell;
     const rowIds = (edgeIds && edgeIds[idx]) || emptyCell;
     for(let j = 0; j < nodes.length; j++){
@@ -2685,8 +2734,18 @@
       w.classList.toggle('matrix-selected', selEdges.has(w.getAttribute('data-edge-id') || ''));
     }
   }
-  function renderMatrixAndList(){
+  // Return the edge list to one page. Called when the DOCUMENT is replaced (a
+  // non-append import, Clear, the sample graph) — not on every render. It used
+  // to run at the top of renderMatrixAndList(), which was harmless while no
+  // list edit could reach that function; weight and endpoint edits now request
+  // a matrix render, so an ordinary edit on row 260 of an expanded list
+  // truncated it to one page and destroyed the focused row — focus fell to BODY
+  // and the next Tab restarted from the top of the document.
+  function resetEdgeListPagination(){
     edgeListRenderLimit = configuredEdgeListPageSize();
+    lastEdgeListPageSize = edgeListRenderLimit;
+  }
+  function renderMatrixAndList(){
     const visNodes = matrixNodes();
     const n = visNodes.length, total = state.nodes.length, limit = state.settings.matrixLimit;
     const sizeInput = $('#matrixSize'); if(sizeInput){ sizeInput.value = Math.min(state.settings.matrixDimension || total, MATRIX_MAX_NODES); sizeInput.max = String(MATRIX_MAX_NODES); }
@@ -2711,7 +2770,8 @@
     else {
       const data = adjacencyMatrixData(visNodes);
       const headSig = matrixHeadSignature(visNodes);
-      const rowSigs = matrixRowSignatures(visNodes, data.values, data.edgeIds);
+      const order = matrixOrderInfo();
+      const rowSigs = matrixRowSignatures(visNodes, data.values, data.edgeIds, order);
       // A matrix editor that is OPEN must always go through the full
       // rebuild + capture/restore path: only that reconciles the focused
       // field with the model (an Undo/algorithm/import can move the graph
@@ -2723,7 +2783,7 @@
       const editorOpen = matrixEditorOpen();
       const changed = !editorOpen && headSig === lastMatrixHead ? diffRows(lastMatrixRows, rowSigs) : null;
       let patched = true;
-      if(changed){ for(const i of changed){ if(!patchMatrixRow(i, visNodes, data.values, data.edgeIds)){ patched = false; break; } } }
+      if(changed){ for(const i of changed){ if(!patchMatrixRow(i, visNodes, data.values, data.edgeIds, order)){ patched = false; break; } } }
       if(!changed || !patched){
         // The rebuild replaces #matrixHost: remember an editor the user has
         // open (value and caret) so it can be re-opened on the fresh DOM.
