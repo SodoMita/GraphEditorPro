@@ -1010,7 +1010,7 @@ test('the editor’s own empty matrix export imports in replace mode and clears 
   document.querySelector('#btnExportMatrixCsv').click();
   const exported = document.querySelector('.export-modal textarea').value;
   assert.ok(exported.startsWith(emptyMatrix.replace(/\r\n/g, '\n')), 'the visible matrix table is unchanged');
-  assert.match(exported, /^#GEP-CSV,2$/m, 'the export carries the full-document appendix');
+  assert.match(exported, /^#GEP-CSV,2(?:,[^\r\n,]+)?$/m, 'the export carries the full-document appendix');
   // Importing that export back reproduces the whole document (nodes + zero
   // edges), not just the adjacency grid.
   document.querySelector('#expImportBtn').click();

@@ -1,8 +1,8 @@
-// CSV is the app's own dialect: an unedited export carries the complete
-// document in extra rows/columns/cells, so export -> import is lossless.
-// Files without that appendix (hand-written matrices, older builds) stay
-// partial, and the Matrix CSV interpretation option applies to them.
-// Also covers actionable FileReader failures and scope-specific confirmations.
+// CSV is the app's own dialect: the export preview lets the user keep every
+// document section (a lossless copy), a spreadsheet-clean grid, or a subset
+// that patches only those parts on import. Files without an appendix are
+// partial/foreign, and the Matrix CSV interpretation option applies to them.
+// Also covers legacy markers, FileReader failures and scope-specific confirmations.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -92,12 +92,46 @@ function pickFile(window, document, text, name, forcedFormat) {
   input.dispatchEvent(new window.Event('change', {bubbles: true}));
 }
 
+function csvNonce(csv) {
+  const match = /^#GEP-CSV,2,([^\r\n,]+)\r?$/m.exec(csv);
+  assert.ok(match, 'the export has a nonce-bearing version marker');
+  return match[1];
+}
+
+function setCsvSections(document, window, names) {
+  const wanted = new Set(names);
+  for(const input of document.querySelectorAll('#expCsvContents input[data-csv-section]')){
+    const should = wanted.has(input.dataset.csvSection);
+    if(input.checked !== should){
+      input.checked = should;
+      input.dispatchEvent(new window.Event('change', {bubbles: true}));
+    }
+  }
+}
+
+function exportWithSections(document, window, buttonId, names) {
+  document.querySelector(buttonId).click();
+  setCsvSections(document, window, names);
+  const value = document.querySelector('.export-modal textarea').value;
+  document.querySelector('#expCloseBtn').click();
+  return value;
+}
+
+// Rewrite the current three-cell markers into the two-cell form used by the
+// previous build, to prove saved files remain readable.
+function legacyCsv(csv) {
+  return csv
+    .replace(/^#GEP-CSV,2,[^\r\n,]+(\r?)$/gm, '#GEP-CSV,2$1')
+    .replace(/^#GEP-CSV,([^,\r\n]+),[^\r\n,]+(\r?)$/gm, '#GEP-CSV,$1$2');
+}
+
 // Only the visible table of an app export: everything from the first
 // full-document marker onwards is the lossless appendix.
 function mainTable(csv) {
   // A visible matrix row may itself be `#GEP-CSV,2`: the real appendix is the
-  // marker immediately followed by the `meta` section header.
-  const index = csv.search(/^#GEP-CSV,2\r?\n#GEP-CSV,meta\r?$/m);
+  // version marker immediately followed by a known section marker. Both may
+  // carry a nonce (current exports) or be two-cell rows (older builds).
+  const index = csv.search(/^#GEP-CSV,2(?:,[^\r\n,]*)?\r?\n#GEP-CSV,(?:meta|settings|graphCustom|attributes|nodes|edges)(?:,[^\r\n,]*)?\r?$/m);
   return index < 0 ? csv : csv.slice(0, index);
 }
 
@@ -195,7 +229,7 @@ const CSV_FORMATS = [
 for(const [exportButton, pasteButton] of CSV_FORMATS){
   test(`${exportButton} round-trips the sample losslessly (7 edges, exact directions)`, async () => {
     const {before, after, csv} = await roundTripCsv(exportButton, pasteButton, SAMPLE);
-    assert.match(csv, /^#GEP-CSV,2$/m, 'the file carries the full-document appendix');
+    assert.match(csv, /^#GEP-CSV,2(?:,[^\r\n,]+)?$/m, 'the file carries the full-document appendix');
     assert.equal(after.nodes.length, 7);
     assert.equal(after.edges.length, 7);
     assert.equal(after.edges.filter(e => e.direction === 'undirected').length, 1);
@@ -222,9 +256,12 @@ test('each CSV export keeps its familiar table first, then adds rows/columns/cel
   assert.ok(edgesCsv.replace(/^\ufeff/, '').startsWith('id,source_id,source_label,target_id,target_label,'));
   assert.ok(matrixCsv.replace(/^\ufeff/, '').startsWith(',A,B,C,D,E,F,G'));
   for(const csv of [nodesCsv, edgesCsv, matrixCsv]){
+    assert.match(csv, /^#GEP-CSV,2(?:,[^\r\n,]+)?$/m, 'version marker is present');
     for(const section of ['meta','settings','graphCustom','attributes','nodes','edges'])
-      assert.match(csv, new RegExp(`^#GEP-CSV,${section}$`, 'm'), `${section} section is present`);
-    assert.match(csv, /^#GEP-CSV,nodes\r?\nid,/m, 'nodes section has real columns');
+      assert.match(csv, new RegExp(`^#GEP-CSV,${section}(?:,[^\\r\\n,]+)?$`, 'm'), `${section} section is present`);
+    assert.match(csv, /^#GEP-CSV,nodes(?:,[^\r\n,]+)?\r?\nid,/m, 'nodes section has real columns');
+    const nonces = [...csv.matchAll(/^#GEP-CSV,(?:2|[^,\r\n]+),([^\r\n,]+)\r?$/gm)].map(m => m[1]);
+    assert.equal(new Set(nonces).size, 1, 'version and section markers share one nonce');
   }
   dom.window.close();
 });
@@ -248,7 +285,9 @@ test('marker-like labels and custom keys cannot truncate or split the appendix',
 
   // Even a literal marker-shaped DATA row inside the appendix must not be
   // mistaken for a section boundary and swallow the tables that follow it.
-  const tampered = csv.replace('#GEP-CSV,attributes', '#GEP-CSV,2\n#GEP-CSV,attributes');
+  const nonce = csvNonce(csv);
+  const tampered = csv.replace(`#GEP-CSV,attributes,${nonce}`,
+    `#GEP-CSV,2,${nonce}\n#GEP-CSV,attributes,${nonce}`);
   const host = createEditorDom(SAMPLE);
   await paste(host.dom.window.document, host.dom.window, '#btnPasteMatrixCsv', tampered);
   assert.deepEqual(exportedGraph(host.dom.window.document), before, 'known sections still parse in order');
@@ -266,15 +305,31 @@ test('a quoted newline in a label cannot fake an appendix marker', async () => {
   assert.equal(after.nodes[0].label, multiline);
 });
 
-test('the appendix is required: a truncated file never wipes the document', async () => {
+test('a partial appendix patches only its sections and keeps the rest of the graph', async () => {
   const {dom, errors} = createEditorDom(SAMPLE);
   const {document, window} = dom.window;
-  // A marker and a meta section, but no nodes/edges tables.
-  await paste(document, window, '#btnPasteMatrixCsv', ',A\nA,\n#GEP-CSV,2\n#GEP-CSV,meta\nkey,value\n');
+  // Only the meta section is present: this is a valid patch, not an error.
+  await paste(document, window, '#btnPasteMatrixCsv',
+    ',A\nA,\n#GEP-CSV,2,gep-test\n#GEP-CSV,meta,gep-test\nkey,value\ntitle,"""patched"""\n');
   const graph = exportedGraph(document);
-  assert.equal(graph.nodes.length, 7, 'the host document survives');
+  assert.equal(graph.title, 'patched', 'the included section is applied');
+  assert.equal(graph.nodes.length, 7, 'nodes not included are kept');
+  assert.equal(graph.edges.length, 7, 'edges not included are kept');
+  assert.doesNotMatch(toasts(document), /incomplete/i, 'a partial selection is not an error');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('an appendix with no recognizable sections is reported and changes nothing', async () => {
+  const {dom, errors} = createEditorDom(SAMPLE);
+  const {document, window} = dom.window;
+  await paste(document, window, '#btnPasteMatrixCsv',
+    ',A\nA,\n#GEP-CSV,2,gep-broken\nkey,value\ntitle,"""ignored"""\n');
+  const graph = exportedGraph(document);
+  assert.equal(graph.title, 'sample', 'the host document survives');
+  assert.equal(graph.nodes.length, 7);
   assert.equal(graph.edges.length, 7);
-  assert.match(toasts(document), /incomplete/i, 'a truncated appendix is an error, not a success');
+  assert.match(toasts(document), /incomplete/i, 'a broken appendix is an error');
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
@@ -284,7 +339,7 @@ test('editing the preview text drops the appendix so the edits take effect', asy
   const {document, window} = dom.window;
   document.querySelector('#btnExportNodesCsv').click();
   const ta = document.querySelector('.export-modal textarea');
-  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph/i);
+  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph|every document section/i);
   ta.value = ta.value.replace('-220', '999');
   ta.dispatchEvent(new window.Event('input', {bubbles: true}));
   assert.match(document.querySelector('#expFormatNote').textContent, /ignored|partial/i,
@@ -397,7 +452,7 @@ test('the export preview explains lossless exports and partial files', async () 
   const {dom} = createEditorDom(SAMPLE);
   const {document, window} = dom.window;
   document.querySelector('#btnExportMatrixCsv').click();
-  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph/i);
+  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph|every document section/i);
   assert.match(document.querySelector('#expFormatNote').textContent, /losslessly/i);
   // Pasting a foreign matrix into the same box changes the note live.
   const ta = document.querySelector('.export-modal textarea');
@@ -411,10 +466,10 @@ test('the export preview explains lossless exports and partial files', async () 
   assert.match(document.querySelector('#expFormatNote').textContent, /partial/i);
   document.querySelector('#expCloseBtn').click();
   document.querySelector('#btnExportEdgesCsv').click();
-  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph/i);
+  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph|every document section/i);
   document.querySelector('#expCloseBtn').click();
   document.querySelector('#btnExportNodesCsv').click();
-  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph/i);
+  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph|every document section/i);
   document.querySelector('#expCloseBtn').click();
   dom.window.close();
 });
@@ -524,7 +579,7 @@ test('a lossless CSV file import asks about the whole graph it carries', async (
   await settle(window, 120);
   const dialog = document.querySelector('.app-dialog');
   assert.ok(dialog);
-  assert.match(dialog.querySelector('.app-dialog-message').textContent, /complete graph/i);
+  assert.match(dialog.querySelector('.app-dialog-message').textContent, /complete graph|every document section/i);
   dialog.querySelector('[data-dialog-ok]').click();
   await settle(window, 120);
   const graph = exportedGraph(document);
@@ -571,5 +626,130 @@ test('a synchronous readAsText failure is reported instead of escaping the click
   await settle(window, 80);
   assert.match(toasts(document), /Could not read "locked.csv": readAsText refused/);
   assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+// === Granular export options and patch imports ===
+
+test('the CSV export preview offers granular sections and defaults to a lossless copy', () => {
+  const {dom} = createEditorDom(SAMPLE);
+  const {document} = dom.window;
+  document.querySelector('#btnExportMatrixCsv').click();
+  const fieldset = document.querySelector('#expCsvContents');
+  assert.ok(fieldset, 'CSV exports show a contents fieldset');
+  const inputs = [...fieldset.querySelectorAll('input[data-csv-section]')];
+  assert.deepEqual(inputs.map(input => input.dataset.csvSection),
+    ['meta','settings','graphCustom','attributes','nodes','edges']);
+  assert.ok(inputs.every(input => input.checked), 'all sections are kept by default');
+  assert.ok(fieldset.querySelector('input[disabled]'), 'the visible table is always kept');
+  assert.match(document.querySelector('#expFormatNote').textContent, /complete graph|every document section/i);
+  assert.match(document.querySelector('.export-modal textarea').value, /^#GEP-CSV,2,[^\r\n,]+$/m);
+  dom.window.close();
+});
+
+test('all three CSV exporters can drop every appendix section', () => {
+  for(const [button] of CSV_FORMATS){
+    const {dom} = createEditorDom(SAMPLE);
+    const csv = exportWithSections(dom.window.document, dom.window, button, []);
+    assert.doesNotMatch(csv, /#GEP-CSV/, `${button} can produce a clean visible table`);
+    dom.window.close();
+  }
+});
+
+test('unchecking every section produces a spreadsheet-clean grid that imports as partial CSV', async () => {
+  const {dom} = createEditorDom(SAMPLE);
+  const {document, window} = dom.window;
+  document.querySelector('#btnExportMatrixCsv').click();
+  setCsvSections(document, window, []);
+  const ta = document.querySelector('.export-modal textarea');
+  assert.doesNotMatch(ta.value, /#GEP-CSV/);
+  assert.match(document.querySelector('#expFormatNote').textContent, /spreadsheet/i);
+  document.querySelector('#expImportBtn').click();
+  await settle(window, 60);
+  const graph = exportedGraph(document);
+  assert.equal(graph.nodes.length, 7, 'the legacy matrix reader keeps the host nodes');
+  assert.equal(graph.edges.length, 8, 'the grid-only file is read as a partial matrix');
+  dom.window.close();
+});
+
+test('keeping only meta exports a patch that updates the title and keeps nodes/edges/settings', async () => {
+  const source = createEditorDom(SAMPLE);
+  const csv = exportWithSections(source.dom.window.document, source.dom.window, '#btnExportMatrixCsv', ['meta']);
+  source.dom.window.close();
+  assert.match(csv, /^#GEP-CSV,meta,/m);
+  assert.doesNotMatch(csv, /^#GEP-CSV,nodes,/m);
+
+  const {dom} = createEditorDom(PARTIAL_HOST);
+  const {document, window} = dom.window;
+  const before = exportedGraph(document);
+  await paste(document, window, '#btnPasteMatrixCsv', csv);
+  const after = exportedGraph(document);
+  assert.equal(after.title, 'sample', 'the included meta section is applied');
+  assert.equal(after.nodes.length, before.nodes.length, 'nodes not included are kept');
+  assert.equal(after.edges.length, before.edges.length, 'edges not included are kept');
+  assert.deepEqual(after.settings, before.settings, 'settings not included are kept');
+  dom.window.close();
+});
+
+test('keeping only settings patches styles and keeps the graph and title', async () => {
+  const settingsSource = {
+    ...PARTIAL_HOST,
+    title: 'settings-source',
+    settings: {...PARTIAL_HOST.settings, canvasBgColor: '#123456', snap: true},
+  };
+  const source = createEditorDom(settingsSource);
+  const csv = exportWithSections(source.dom.window.document, source.dom.window, '#btnExportEdgesCsv', ['settings']);
+  source.dom.window.close();
+  assert.match(csv, /^#GEP-CSV,settings,/m);
+  assert.doesNotMatch(csv, /^#GEP-CSV,meta,/m);
+
+  const {dom} = createEditorDom(PARTIAL_HOST);
+  const {document, window} = dom.window;
+  const before = exportedGraph(document);
+  await paste(document, window, '#btnPasteEdgesCsv', csv);
+  const after = exportedGraph(document);
+  assert.equal(after.settings.canvasBgColor, '#123456', 'the included settings are applied');
+  assert.equal(after.title, before.title, 'title not included is kept');
+  assert.equal(after.nodes.length, before.nodes.length);
+  assert.equal(after.edges.length, before.edges.length);
+  dom.window.close();
+});
+
+test('a partial appendix file confirms the included sections even with Append on', async () => {
+  const source = createEditorDom({...SAMPLE, title: 'patch-source'});
+  const csv = exportWithSections(source.dom.window.document, source.dom.window, '#btnExportEdgesCsv', ['meta']);
+  source.dom.window.close();
+
+  const {dom} = createEditorDom(PARTIAL_HOST);
+  const {document, window} = dom.window;
+  document.querySelector('#optImportAppend').checked = true;
+  pickFile(window, document, csv, 'edges.csv', 'edges-csv');
+  await settle(window, 120);
+  const dialog = document.querySelector('.app-dialog');
+  assert.ok(dialog, 'a partial appendix asks before patching');
+  const message = dialog.querySelector('.app-dialog-message').textContent;
+  assert.match(message, /Apply the included CSV sections/i);
+  assert.match(message, /title\/counters|counters/i);
+  dialog.querySelector('[data-dialog-ok]').click();
+  await settle(window, 120);
+  const graph = exportedGraph(document);
+  assert.equal(graph.title, 'patch-source', 'the patch was applied');
+  assert.equal(graph.nodes.length, 2, 'Append was ignored, not used to duplicate host nodes');
+  assert.equal(graph.edges.length, 1);
+  dom.window.close();
+});
+
+test('two-cell appendix markers from the previous build still round-trip losslessly', async () => {
+  const source = createEditorDom(SAMPLE);
+  const before = exportedGraph(source.dom.window.document);
+  const csv = exportVia(source.dom.window.document, '#btnExportEdgesCsv');
+  const legacy = legacyCsv(csv);
+  source.dom.window.close();
+  assert.doesNotMatch(legacy, /gep-/, 'the nonce was removed');
+  assert.match(legacy, /^#GEP-CSV,2$/m);
+
+  const {dom} = createEditorDom();
+  await paste(dom.window.document, dom.window, '#btnPasteEdgesCsv', legacy);
+  assert.deepEqual(exportedGraph(dom.window.document), before);
   dom.window.close();
 });

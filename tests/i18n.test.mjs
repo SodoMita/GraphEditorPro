@@ -408,3 +408,26 @@ test('the type-change toast declines the value count correctly in both languages
     }
   }
 });
+
+test('CSV export option labels and notes are translated when the preview opens in Russian', async () => {
+  const {dom, errors} = createEditorDom(saved);
+  const {window} = dom;
+  const {document} = window;
+  await settle(window);
+  await switchToRussian(document, window);
+
+  document.querySelector('#btnExportMatrixCsv').click();
+  await settle(window);
+  const fieldset = document.querySelector('#expCsvContents');
+  assert.ok(fieldset, 'the export preview shows the CSV contents fieldset');
+  const inputs = [...fieldset.querySelectorAll('input[data-csv-section]')];
+  assert.equal(inputs.length, 6, 'all six document sections are offered');
+  for(const text of latinLeafTexts(fieldset)){
+    assert.ok(isAllowedLatin(text) || !/[A-Za-z]{2,}/.test(text),
+      `untranslated CSV option text: ${text}`);
+  }
+  const note = document.querySelector('#expFormatNote');
+  assert.ok(note && /[А-Яа-яЁё]/.test(note.textContent), 'the CSV note is translated');
+  assert.deepEqual(errors.map(error => error.message), []);
+  dom.window.close();
+});

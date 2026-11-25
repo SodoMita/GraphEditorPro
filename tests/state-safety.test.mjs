@@ -97,9 +97,9 @@ test('matrix values, edge IDs, and sparse CSV stay consistent', () => {
   // complete-document appendix follows it so this CSV is lossless too.
   const csv = matrixCsvFor(graph);
   assert.ok(csv.startsWith('\ufeff,A,B\r\nA,,2;3\r\nB,3,\r\n'));
-  assert.match(csv, /^#GEP-CSV,2\r\n#GEP-CSV,meta\r$/m);
+  assert.match(csv, /^#GEP-CSV,2,[^\r\n]+\r\n#GEP-CSV,meta,[^\r\n]+\r$/m);
   for(const section of ['settings','graphCustom','attributes','nodes','edges'])
-    assert.match(csv, new RegExp(`^#GEP-CSV,${section}\\r$`, 'm'), `${section} section is present`);
+    assert.match(csv, new RegExp(`^#GEP-CSV,${section},[^\\r\\n]+\\r$`, 'm'), `${section} section is present`);
 });
 
 test('sanitizer enforces graph size limits', () => {

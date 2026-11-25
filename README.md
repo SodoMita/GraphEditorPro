@@ -48,31 +48,36 @@ border, and the editing cell editor keeps its opaque background so the hidden wi
 placeholder under it cannot ghost through. The locked node-label inputs were already
 transparent for exactly this reason.
 
-## CSV is a lossless app format
+## CSV is a configurable, lossless app format
 
-CSV has no rigid schema (RFC 4180 is informational), so the app defines its own dialect. **Every one of the three CSV exports is now a complete, self-contained document**: the familiar table comes first — unchanged, so spreadsheets and other readers still see exactly what they always saw — followed by extra **rows, columns and cells** that carry the rest of the graph. An unedited export → import round-trip (file, clipboard copy/paste, or the preview's Import button) is therefore lossless: exporting the sample (7 nodes, 7 edges, one undirected) and importing it back yields **7 edges again**, with direction, labels, weights, styles, ids, custom attributes and values, settings, title and counters intact.
+CSV has no rigid schema (RFC 4180 is informational), so the app defines its own dialect. **The familiar table always comes first and is byte-for-byte unchanged.** That means a full export opens in Excel/LibreOffice with the Nodes, Edges or adjacency-matrix grid displayed correctly. The extra `#GEP-CSV` rows do appear underneath it, though, as more rows/columns — they are ordinary CSV, not a spreadsheet comment — so a full export is not a clean rectangular grid-only file.
 
-The appendix is a set of ordinary CSV sections introduced by two-cell `#GEP-CSV,2` marker rows:
+**Choose what to keep at export time.** Every CSV export preview has a contents fieldset:
 
-| Section | Shape | Carries |
-| --- | --- | --- |
-| `meta` | `key,value` | title, mode, tool settings, counters, recorded graph extent |
-| `settings` | `key,value` | every graph/editor setting, including type styles and pending new-element defaults |
-| `graphCustom` | `key,value` | graph-scope custom-attribute values |
-| `attributes` | one column per definition field | custom attribute definitions (id, scope, type, name, origin, defaults) |
-| `nodes` | one column per node field | all node records, including `custom` value maps |
-| `edges` | one column per edge field | all edge records, including tri-state direction and `custom` value maps |
+| Checkbox | Section written |
+| --- | --- |
+| Visible table (always checked/disabled) | the familiar Nodes / Edges / Matrix CSV table |
+| Title, counters & view | `meta` (`key,value`) |
+| Settings & styles | `settings` (`key,value`), including type styles and pending defaults |
+| Graph custom values | `graphCustom` (`key,value`) |
+| Custom attribute definitions | `attributes` (one column per definition field) |
+| Nodes | `nodes` (one column per node field, including `custom` maps) |
+| Edges | `edges` (one column per edge field, including tri-state direction and `custom` maps) |
 
-Column sets are computed from the union of the record fields, so user-defined and future fields need no format change. Cell values are JSON in CSV cells: that preserves types **and** presence — a stated empty string is `""`, while an empty cell means the field was absent — which plain CSV text cannot express. The familiar table keeps its existing formula guard; appendix cells are quoted JSON and decoded verbatim, so labels like `=1+1` also stay exact. `csvDocumentPayload()` requires both entity tables before treating a file as a complete document; a truncated appendix reports an error and never wipes the graph.
+All six sections are checked by default for Matrix CSV too, so an unedited all-sections export → import round-trip (file, clipboard copy/paste, or the preview's Import button) is lossless: nodes, edges, tri-state direction, labels, weights, styles, ids, custom attribute definitions/values, settings, title and counters all come back intact. Tests compare every CSV round-trip against the native JSON export. Column sets come from the union of record fields, and values are JSON in CSV cells, so types **and** field presence survive (`""` is a stated empty string; an empty cell means the field was absent). The current version and section markers are three-cell rows carrying a per-export `gep-…` nonce, so marker-like labels, weights, custom keys and quoted newlines cannot split the appendix; two-cell marker rows from the previous build remain readable.
 
-**Partial / foreign CSV files.** A file without the appendix (an older build, a hand-written matrix, a spreadsheet export) is a partial file, and the legacy readers still apply:
+**For a spreadsheet-clean adjacency matrix**, uncheck all six sections. The export then contains only the visible table: no marker rows, no extra columns below the grid, no clutter in Excel/LibreOffice. It imports as a partial/legacy CSV. The copy-to-clipboard buttons keep the all-sections default; use the Export preview for the configurable output.
+
+**Keeping only some sections produces a patch.** Importing such a file applies just the included parts to the current graph and leaves everything else unchanged; the global Append setting is ignored for those files because appending the host document back into itself would duplicate it. The normal sanitizer still applies (for example, edges whose endpoint ids disappear after a nodes-only patch are dropped). Use every section for an exact whole-document copy.
+
+**Partial / foreign CSV files without an appendix** still use the legacy readers:
 
 - Nodes CSV replaces the nodes and drops the old edges; Edges CSV replaces only the edges (nodes, styles and background kept); Matrix CSV replaces only the edges (nodes kept). The file-import confirmation names exactly which part is replaced.
 - The **Matrix CSV grid alone** stores only weights between labelled nodes. An undirected or mutual edge is written into **both** mirror cells so the connection reads from either end — the same bytes as two opposing directed edges. No reader can infer which was meant, so Data → Import / export → **Matrix CSV import interpretation** makes the choice explicit for these files:
   - **One edge per cell** (default, historical): every populated cell produces one edge per weight; symmetric pairs stay two edges and the toast warns about the ambiguity.
   - **Mirror cells are one undirected edge**: a symmetric pair with identical weight lists collapses into one undirected edge per weight. Pairs with differing weights, one-sided cells and self-loops keep the literal reading; one-sided cells follow **Style → New edge defaults → Direction**. This reading also merges genuine two-way directed pairs — unavoidable for a file with no direction column.
 
-Editing the export-preview text turns it back into a plain CSV: the appendix is dropped on Import so the user's edits actually take effect (the preview note updates as you type). JSON remains available as a compact, single-format alternative, but it is no longer required for an exact round-trip.
+Editing the export-preview text turns it back into a plain CSV: the appendix is dropped on Import so the user's edits actually take effect, and the note updates as you type or as the checkboxes change. A marker with no recognizable sections reports an error instead of wiping the graph. JSON remains available as a compact single-format alternative, but it is no longer required for an exact round-trip.
 
 A failed or aborted `FileReader` read reports an actionable message (re-select the file, or paste its contents into the export preview) rather than leaving the user with a silent no-op.
 
@@ -165,7 +170,7 @@ The build fails if any of these guarantees are broken:
 - Runtime network APIs such as `fetch`, `XMLHttpRequest`, `WebSocket`, or `EventSource` appear in the output.
 - Static markup contains duplicate element IDs.
 
-Current verification: `npm run check` is typecheck-clean and passes **640/640 tests**; the rebuilt single-file `index.html` is **1,192,421 bytes** and the static-output gate passes. Headless Chromium passes **17/17** browser tests. `tests/camera-render-regressions.test.mjs` has 26 regressions, including the 1422×588 vertical/horizontal extreme Fit cases and original-midpoint label placement for partially clipped edges.
+Current verification: `npm run check` is typecheck-clean and passes **649/649 tests**; the rebuilt single-file `index.html` is **1,204,779 bytes** and the static-output gate passes. Headless Chromium passes **17/17** browser tests. `tests/camera-render-regressions.test.mjs` has 26 regressions, including the 1422×588 vertical/horizontal extreme Fit cases and original-midpoint label placement for partially clipped edges.
 
 Runtime data is also validated before use. Every import path — JSON, GraphML, DOT, edge/nodes/matrix CSV and the clipboard — runs through the same sanitizer, so all of them share the 3000-node / 8000-edge caps, labelled-field bounds, colour/shape/stroke validation and dangling-edge removal (a CSV import that exceeds a cap says so in the toast instead of silently building an oversized document that shrinks on the next reload). IDs are normalized and deduplicated, numeric/style values are clamped, unsafe map keys are isolated in prototype-free records, and required DOM elements fail with a descriptive error instead of causing a later null dereference. DOT parsing strips comments only where DOT defines them (a leading `#` on a line, `//` and `/* */` outside quoted strings), so hex colours and labels such as `C#` survive; the line scanner accepts LF, CRLF and lone-CR endings, and string unescaping is a single pass so `\n` (newline), literal `\n`, quotes and trailing backslashes all survive. DOT export/import round-trips labels, positions, colours, node types, node order, label typography and the six shapes (hexagon as `hexagon`, triangles as `triangle`/`invtriangle`, and QVGE's `triangle2` read as the same inverted triangle); positions are written in inches with the y axis flipped, the unit GraphViz and QVGE both use, so `width`/`height` and `pos` agree, and an incoming `inputscale` is honoured as points; a QVGE `xlabel` is read as the label and `fontcolor`/`fontsize`/`fontname` as its typography, while `label` never silently becomes an edge's weight; quoted strings and HTML-like labels may embed brackets and tags (`label="arr[0]"`) without confusing the attribute-list parser, and stacked attribute lists (`graph [a][b]`) merge on import. CSV export prefixes formula-like cells with an apostrophe and doubles it when the value already starts with one, so imports restore every label byte-for-byte, including text such as `'=1+1`. CSV node rows keep the order column exactly as written — `0` is an order, not a missing value — and fall back to the row position only when the cell is empty. Autosave is flushed on `pagehide`, and a failed write (full or unavailable storage) reports itself instead of failing silently.
 

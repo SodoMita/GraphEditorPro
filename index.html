@@ -1536,7 +1536,7 @@
                     <option value="mirror" data-i18n="matrix_mode_mirror">Mirror cells are one undirected edge</option>
                   </select>
                 </label>
-                <p class="tiny muted" style="margin:2px 0 6px" data-i18n="matrix_csv_note">Our CSV exports carry the complete graph in extra rows, so an unedited export/import round-trip is lossless. A hand-written or older CSV is partial: Matrix CSV stores only weights, and mirror cells cannot say whether they were one undirected edge or two directed ones — choose the interpretation for those files.</p>
+                <p class="tiny muted" style="margin:2px 0 6px" data-i18n="matrix_csv_note">Our CSV exports can carry the complete graph in extra rows, so an unedited all-sections export/import round-trip is lossless. The export preview has checkboxes for each document section: keep them all for a lossless copy, uncheck them all for a spreadsheet-clean grid, or keep a subset to patch just those parts on import. A hand-written or older CSV is partial: Matrix CSV stores only weights, and mirror cells cannot say whether they were one undirected edge or two directed ones — choose the interpretation for those files.</p>
                 <div class="io-grid">
                   <div class="io-row">
                     <span class="io-format">JSON</span>
@@ -1678,7 +1678,7 @@
                 <p class="tiny muted"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
-                <p class="tiny muted"><span data-i18n-html="help_matrix_csv"><b>CSV is lossless for our exports:</b> every CSV file ends with extra rows carrying the whole document (nodes, edges, direction, styles, ids, custom attributes, settings and title), so importing an unedited export restores it exactly. A hand-written or older CSV is partial: Matrix CSV holds only weights, and a mirror pair of cells is ambiguous, so pick the interpretation in Data → Import / export for those files.</span></p>
+                <p class="tiny muted"><span data-i18n-html="help_matrix_csv"><b>CSV exports are configurable:</b> the export preview starts with every document section checked, so an unedited export restores nodes, edges, direction, styles, ids, custom attributes, settings and title losslessly. Uncheck all sections for a spreadsheet-clean adjacency grid, or keep a subset to patch only those parts on import. A hand-written or older CSV is partial: Matrix CSV holds only weights, and a mirror pair of cells is ambiguous, so pick the interpretation in Data → Import / export for those files.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_copy_paste"><b>Copy / paste selection:</b> Ctrl+C copies the selected nodes with the edges between them, Ctrl+X cuts, Ctrl+D duplicates in place, Ctrl+V pastes with an offset (also across tabs, via the system clipboard). Ctrl+Alt+V (or Ctrl+Shift+V) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.</span></p>
               </div>
             </details>
@@ -2862,24 +2862,54 @@ const I18N = {
         'matrix_mode_cells': { en: 'One edge per cell (mirror cells stay two edges)', ru: 'Одно ребро на ячейку (зеркальные ячейки дают два ребра)' },
         'matrix_mode_mirror': { en: 'Mirror cells are one undirected edge', ru: 'Зеркальные ячейки — одно неориентированное ребро' },
         'matrix_csv_note': {
-            en: 'Our CSV exports carry the complete graph in extra rows, so an unedited export/import round-trip is lossless. A hand-written or older CSV is partial: Matrix CSV stores only weights, and mirror cells cannot say whether they were one undirected edge or two directed ones — choose the interpretation for those files.',
-            ru: 'Экспорт CSV из приложения содержит полный граф в дополнительных строках, поэтому неизменённый экспорт и импорт проходят без потерь. CSV, созданный вручную или старой версией, неполон: Matrix CSV хранит только веса, а зеркальные ячейки не позволяют отличить одно неориентированное ребро от двух встречных — выберите интерпретацию для таких файлов.'
+            en: 'Our CSV exports can carry the complete graph in extra rows, so an unedited all-sections export/import round-trip is lossless. The export preview has checkboxes for each document section: keep them all for a lossless copy, uncheck them all for a spreadsheet-clean grid, or keep a subset to patch just those parts on import. A hand-written or older CSV is partial: Matrix CSV stores only weights, and mirror cells cannot say whether they were one undirected edge or two directed ones — choose the interpretation for those files.',
+            ru: 'Экспорт CSV из приложения может содержать полный граф в дополнительных строках, поэтому неизменённый экспорт со всеми разделами и импорт проходят без потерь. В окне экспорта есть флажки для каждого раздела: оставьте все для копии без потерь, снимите все для чистой таблицы или выберите часть, чтобы при импорте обновить только её. CSV, созданный вручную или старой версией, неполон: Matrix CSV хранит только веса, а зеркальные ячейки не позволяют отличить одно неориентированное ребро от двух встречных — выберите интерпретацию для таких файлов.'
         },
         'csv_document_note': {
-            en: 'This CSV includes extra rows holding the complete graph (nodes, edges, direction, styles, ids, custom attributes, settings and title). Importing it restores everything losslessly; editing the text above turns it into a plain CSV and the appendix is ignored.',
-            ru: 'Этот CSV содержит дополнительные строки с полным графом (узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок). Импорт восстанавливает всё без потерь; если изменить текст выше, дополнение будет отброшено и файл станет обычным CSV.'
+            en: 'This CSV includes extra rows holding the complete graph in every document section (nodes, edges, direction, styles, ids, custom attributes, settings and title). Importing it restores everything losslessly. Change the checkboxes above to keep a clean grid or only some sections; editing the text itself turns it into a plain CSV and the appendix is ignored.',
+            ru: 'Этот CSV содержит дополнительные строки с полным графом во всех разделах документа (узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок). Импорт восстанавливает всё без потерь. Измените флажки выше, чтобы оставить чистую таблицу или только часть разделов; при правке самого текста дополнение будет отброшено и файл станет обычным CSV.'
         },
         'csv_document_edited_note': {
-            en: 'You edited a full-document CSV, so the extra rows will be ignored and the visible table will be imported as a partial CSV. Keep the text unchanged to restore the whole graph losslessly.',
-            ru: 'Вы изменили CSV с полным графом, поэтому дополнительные строки будут проигнорированы, а видимая таблица импортируется как неполный CSV. Оставьте текст без изменений, чтобы восстановить весь граф без потерь.'
+            en: 'You edited a CSV carrying extra document rows, so those rows will be ignored and the visible table will be imported as a partial CSV. Regenerate with the checkboxes, or keep the text unchanged, for the appendix to apply.',
+            ru: 'Вы изменили CSV с дополнительными строками документа, поэтому они будут проигнорированы, а видимая таблица импортируется как неполный CSV. Создайте файл заново через флажки или оставьте текст без изменений, чтобы дополнение применилось.'
         },
         'csv_document_incomplete': {
-            en: 'The full-document CSV rows are incomplete. Nothing was imported; use an unedited app CSV export.',
-            ru: 'Строки CSV с полным графом неполны. Импорт не выполнен; используйте неизменённый экспорт CSV из приложения.'
+            en: 'The CSV appendix is incomplete: no recognizable document sections were found. Nothing was imported; re-export with at least one section.',
+            ru: 'Дополнение CSV неполно: не найдено ни одного распознаваемого раздела. Импорт не выполнен; выполните экспорт хотя бы с одним разделом.'
+        },
+        'csv_grid_only_note': {
+            en: 'This CSV contains only the visible table, so it opens as a clean grid in a spreadsheet and imports as a partial CSV. Keep all sections checked for a lossless app copy.',
+            ru: 'В этом CSV только видимая таблица: в табличном редакторе она откроется чистой сеткой, а при импорте будет считаться неполным CSV. Для копии без потерь оставьте все разделы включёнными.'
+        },
+        'csv_partial_note': {
+            en: 'This CSV keeps only: {sections}. Importing it updates those parts of the current graph and leaves everything else unchanged; Append is ignored for such files.',
+            ru: 'Этот CSV сохраняет только: {sections}. Импорт обновит эти части текущего графа, остальное останется без изменений; режим «Добавить» для таких файлов игнорируется.'
+        },
+        'csv_export_options': { en: 'CSV export contents', ru: 'Состав CSV при экспорте' },
+        'csv_export_visible_table': { en: 'Visible table (always kept)', ru: 'Видимая таблица (сохраняется всегда)' },
+        'csv_export_meta': { en: 'Title, counters & view', ru: 'Заголовок, счётчики и вид' },
+        'csv_export_settings': { en: 'Settings & styles', ru: 'Настройки и стили' },
+        'csv_export_graph_custom': { en: 'Graph custom values', ru: 'Значения атрибутов графа' },
+        'csv_export_attributes': { en: 'Custom attribute definitions', ru: 'Определения пользовательских атрибутов' },
+        'csv_export_nodes': { en: 'Nodes (positions, ids, styles, values)', ru: 'Узлы (позиции, идентификаторы, стили, значения)' },
+        'csv_export_edges': { en: 'Edges (direction, ids, styles, values)', ru: 'Рёбра (направление, идентификаторы, стили, значения)' },
+        'csv_export_options_hint': {
+            en: 'All sections are kept by default for a lossless app copy. Uncheck them all for a spreadsheet-clean grid; a file with only some sections updates just those parts and keeps the rest of the current graph.',
+            ru: 'По умолчанию сохраняются все разделы — получается копия без потерь. Снимите все флажки, чтобы получить чистую таблицу для табличного редактора; файл с частью разделов обновит только их, остальная часть текущего графа сохранится.'
+        },
+        'csv_section_meta': { en: 'title/counters', ru: 'заголовок/счётчики' },
+        'csv_section_settings': { en: 'settings/styles', ru: 'настройки/стили' },
+        'csv_section_graph_custom': { en: 'graph custom values', ru: 'значения атрибутов графа' },
+        'csv_section_attributes': { en: 'attribute definitions', ru: 'определения атрибутов' },
+        'csv_section_nodes': { en: 'nodes', ru: 'узлы' },
+        'csv_section_edges': { en: 'edges', ru: 'рёбра' },
+        'apply_csv_sections': {
+            en: 'Apply the included CSV sections ({sections}) to the current graph? Parts not included are kept; Append is ignored for this file.',
+            ru: 'Применить включённые разделы CSV ({sections}) к текущему графу? Остальные части сохранятся; режим «Добавить» для этого файла игнорируется.'
         },
         'matrix_csv_legacy_note': {
-            en: 'This CSV has no full-document rows, so it is partial: Matrix CSV holds only weights and cannot preserve edge direction. Choose the interpretation in Data → Import / export, or use an unedited app CSV export (or JSON) for a lossless copy.',
-            ru: 'В этом CSV нет строк с полным графом, поэтому он неполон: Matrix CSV хранит только веса и не сохраняет направление рёбер. Выберите интерпретацию во вкладке «Данные» → «Импорт / экспорт» или используйте неизменённый экспорт приложения (либо JSON) для копии без потерь.'
+            en: 'This CSV has no full-document rows, so it is partial: Matrix CSV holds only weights and cannot preserve edge direction. Choose the interpretation in Data → Import / export, use the export checkboxes for a clean grid, or use JSON for a lossless copy.',
+            ru: 'В этом CSV нет строк с полным графом, поэтому он неполон: Matrix CSV хранит только веса и не сохраняет направление рёбер. Выберите интерпретацию во вкладке «Данные» → «Импорт / экспорт», настройте флажки экспорта для чистой таблицы или используйте JSON для копии без потерь.'
         },
         'import_modal_edges_note': {
             en: 'A partial Edges CSV (no full-document rows) replaces the current edges; nodes, styles and background are kept.',
@@ -2929,8 +2959,8 @@ const I18N = {
         'help_zoom': { en: '<b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.', ru: '<b>Масштаб:</b> колесо мыши или трекпад над холстом, щипок на мобильных и планшетах. Положение камеры можно задать числами во вкладке «Данные».' },
         'help_exports': { en: '<b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.', ru: '<b>Экспорт:</b> каждый формат (JSON, DOT, GraphML, Рёбра/Матрица/Узлы CSV) поддерживает скачивание файла и копирование в буфер.' },
         'help_matrix_csv': {
-            en: '<b>CSV is lossless for our exports:</b> every CSV file ends with extra rows carrying the whole document (nodes, edges, direction, styles, ids, custom attributes, settings and title), so importing an unedited export restores it exactly. A hand-written or older CSV is partial: Matrix CSV holds only weights, and a mirror pair of cells is ambiguous, so pick the interpretation in Data → Import / export for those files.',
-            ru: '<b>Экспорт CSV сохраняет всё:</b> в конце каждого файла есть дополнительные строки со всем документом (узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок), поэтому импорт неизменённого экспорта восстанавливает его точно. Созданный вручную или старый CSV неполон: Matrix CSV хранит только веса, а зеркальные ячейки неоднозначны — выберите интерпретацию во вкладке «Данные» → «Импорт / экспорт» для таких файлов.'
+            en: '<b>CSV exports are configurable:</b> the export preview starts with every document section checked, so an unedited export restores nodes, edges, direction, styles, ids, custom attributes, settings and title losslessly. Uncheck all sections for a spreadsheet-clean adjacency grid, or keep a subset to patch only those parts on import. A hand-written or older CSV is partial: Matrix CSV holds only weights, and a mirror pair of cells is ambiguous, so pick the interpretation in Data → Import / export for those files.',
+            ru: '<b>Экспорт CSV настраивается:</b> в окне экспорта по умолчанию включены все разделы документа, поэтому неизменённый экспорт без потерь восстанавливает узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок. Снимите все флажки, чтобы получить чистую матрицу смежности для табличного редактора, или оставьте часть разделов, чтобы при импорте обновить только их. Созданный вручную или старый CSV неполон: Matrix CSV хранит только веса, а зеркальные ячейки неоднозначны — выберите интерпретацию во вкладке «Данные» → «Импорт / экспорт» для таких файлов.'
         },
         'help_copy_paste': { en: '<b>Copy / paste selection:</b> <span class="kbd">Ctrl+C</span> copies the selected nodes with the edges between them, <span class="kbd">Ctrl+X</span> cuts, <span class="kbd">Ctrl+D</span> duplicates in place, <span class="kbd">Ctrl+V</span> pastes with an offset (also across tabs, via the system clipboard). <span class="kbd">Ctrl+Alt+V</span> (or <span class="kbd">Ctrl+Shift+V</span>) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.', ru: '<b>Копирование / вставка выделения:</b> <span class="kbd">Ctrl+C</span> копирует выбранные узлы с рёбрами между ними, <span class="kbd">Ctrl+X</span> вырезает, <span class="kbd">Ctrl+D</span> дублирует на месте, <span class="kbd">Ctrl+V</span> вставляет со смещением (также между вкладками, через системный буфер). <span class="kbd">Ctrl+Alt+V (или Ctrl+Shift+V)</span> вставляет <b>на месте</b>: по исходным координатам, используя существующие узлы и рёбра с теми же id и изменяя только перенесённые значения. Рёбра только с одним концом в выделении восстанавливаются при вставке, если второй конец существует — см. «Сохранять висящие рёбра» во вкладке Правка.' },
         'hotkeys': { en: 'Hotkeys', ru: 'Горячие клавиши' },
@@ -3139,16 +3169,16 @@ const I18N = {
             ru: 'Заменить текущие рёбра импортированными из Edges CSV? Узлы, стили и фон сохранятся.'
         },
         'replace_edges_with_matrix': {
-            en: 'Replace the current edges with this partial Matrix CSV? Nodes are kept. Interpretation: {mode}. A matrix without full-document rows cannot store direction — use JSON, or an unedited app CSV export, for an exact copy.',
-            ru: 'Заменить текущие рёбра этим неполным Matrix CSV? Узлы сохранятся. Интерпретация: {mode}. Матрица без строк полного графа не хранит направление — для точной копии используйте JSON или неизменённый экспорт CSV из приложения.'
+            en: 'Replace the current edges with this partial Matrix CSV? Nodes are kept. Interpretation: {mode}. A matrix without appendix rows cannot store direction — use JSON, or an unedited all-sections app CSV export, for an exact copy.',
+            ru: 'Заменить текущие рёбра этим неполным Matrix CSV? Узлы сохранятся. Интерпретация: {mode}. Матрица без дополнительных строк не хранит направление — для точной копии используйте JSON или неизменённый экспорт CSV со всеми разделами.'
         },
         'replace_nodes_with_import': {
             en: 'Replace the current nodes with the imported Nodes CSV? The current edges will be removed.',
             ru: 'Заменить текущие узлы импортированными из Nodes CSV? Текущие рёбра будут удалены.'
         },
         'replace_with_full_csv': {
-            en: 'Replace the current graph with the imported CSV? This file carries the complete graph: nodes, edges, direction, styles, ids, custom attributes, settings and title.',
-            ru: 'Заменить текущий граф импортированным CSV? Файл содержит полный граф: узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок.'
+            en: 'Replace the current graph with the imported CSV? This file carries the complete graph in every document section: nodes, edges, direction, styles, ids, custom attributes, settings and title.',
+            ru: 'Заменить текущий граф импортированным CSV? Файл содержит полный граф во всех разделах документа: узлы, рёбра, направление, стили, идентификаторы, пользовательские атрибуты, настройки и заголовок.'
         },
         // FileReader can fail (moved/deleted/locked file, permission error) or be
         // aborted. Without handlers the import just silently does nothing.
@@ -14895,41 +14925,61 @@ function csvUnescapeCell(v) {
     return v;
 }
 function rowsToCsv(rows) { return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
-// === Lossless CSV document sections =====================================
+// === Configurable CSV document sections ===============================
 //
 // CSV has no rigid schema (RFC 4180 is informational), so the app defines
-// its own dialect: the familiar table comes FIRST, unchanged, and extra
-// rows/columns/cells follow it. The appendix carries every document field as
-// a proper table, so any of the three CSV exports is a complete document and
-// an unedited export/import round-trip is lossless — direction, ids, labels,
-// styles, custom attributes and values, settings, title and counters.
+// its own dialect: the familiar table comes FIRST, unchanged, and optional
+// extra rows/columns/cells follow it. The export preview lets the user keep
+// every section (the default: a complete, lossless document), keep only a
+// spreadsheet-clean grid, or keep an arbitrary subset.
 //
-// Each appendix row is a normal CSV row; each value is JSON in a cell. JSON
-// preserves types AND presence (a stated empty string is `""`, an absent
-// field is an empty cell), which plain CSV text cannot do. Section markers
-// are two-cell rows, so a real data row can never be mistaken for one.
+// Values are JSON in CSV cells, preserving types AND field presence. The
+// version and every section marker share a per-export nonce, so marker-like
+// labels, weights or custom keys cannot split the appendix. Two-cell marker
+// rows written by the previous build remain readable for compatibility.
 //
-// A file WITHOUT the appendix (an older build, a hand-written matrix, a
-// spreadsheet export) stays a partial file: the legacy readers and the
-// Matrix CSV interpretation option still apply. That is the only place the
-// format is lossy — not our own exports.
+// A file WITHOUT an appendix is a partial/foreign CSV and uses the legacy
+// readers. A file WITH only some sections is a patch: importing it restores
+// exactly those parts of the current graph and leaves the rest untouched.
 const CSV_DOC_MARKER = '#GEP-CSV';
 const CSV_DOC_VERSION = '2';
 const CSV_DOC_SECTIONS = ['meta', 'settings', 'graphCustom', 'attributes', 'nodes', 'edges'];
 const CSV_DOC_META_KEYS = ['title', 'mode', 'selectTool', 'selectCombine', 'nextNode', 'nextEdge', 'viewBox'];
+const CSV_EXPORT_LABEL_KEYS = {
+    meta: 'csv_export_meta', settings: 'csv_export_settings',
+    graphCustom: 'csv_export_graph_custom', attributes: 'csv_export_attributes',
+    nodes: 'csv_export_nodes', edges: 'csv_export_edges',
+};
+const CSV_SECTION_LABEL_KEYS = {
+    meta: 'csv_section_meta', settings: 'csv_section_settings',
+    graphCustom: 'csv_section_graph_custom', attributes: 'csv_section_attributes',
+    nodes: 'csv_section_nodes', edges: 'csv_section_edges',
+};
+function csvExportSections() { return new Set(CSV_DOC_SECTIONS); }
+function csvDocNonce() {
+    const c = globalThis.crypto;
+    const token = c && typeof c.randomUUID === 'function'
+        ? c.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    return `gep-${token}`;
+}
 function csvJsonCell(value) {
     return value === undefined ? '' : JSON.stringify(value);
 }
-function csvDocumentRows() {
+function csvDocumentRows(selected) {
+    const names = CSV_DOC_SECTIONS.filter(name => selected.has(name));
+    if (!names.length)
+        return []; // spreadsheet-clean grid only
+    const nonce = csvDocNonce();
     // Same payload as the native JSON export, including graphBounds() for the
     // recorded extent. Camera/selection are UI state (the sanitizer clears
     // them on every import), so they are not part of the document.
     const doc = JSON.parse(snapshot());
     doc.viewBox = graphBounds();
     const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-    const rows = [[CSV_DOC_MARKER, CSV_DOC_VERSION]];
+    const rows = [[CSV_DOC_MARKER, CSV_DOC_VERSION, nonce]];
     const mapSection = (name, source) => {
-        rows.push([CSV_DOC_MARKER, name], ['key', 'value']);
+        rows.push([CSV_DOC_MARKER, name, nonce], ['key', 'value']);
         if (isRecord(source))
             for (const key of Object.keys(source))
                 rows.push([key, csvJsonCell(source[key])]);
@@ -14944,63 +14994,108 @@ function csvDocumentRows() {
         // A section with no records still needs a header row: a zero-cell row
         // would become a blank line and lose the section's place.
         const header = keys.length ? keys : ['_empty'];
-        rows.push([CSV_DOC_MARKER, name], header);
+        rows.push([CSV_DOC_MARKER, name, nonce], header);
         for (const rec of records)
             if (isRecord(rec))
                 rows.push(header.map(key => has(rec, key) ? csvJsonCell(rec[key]) : ''));
     };
-    rows.push([CSV_DOC_MARKER, 'meta'], ['key', 'value']);
-    for (const key of CSV_DOC_META_KEYS)
-        if (has(doc, key))
-            rows.push([key, csvJsonCell(doc[key])]);
-    mapSection('settings', doc.settings);
-    mapSection('graphCustom', doc.graphCustom);
-    tableSection('attributes', Array.isArray(doc.customAttributes) ? doc.customAttributes : []);
-    tableSection('nodes', Array.isArray(doc.nodes) ? doc.nodes : []);
-    tableSection('edges', Array.isArray(doc.edges) ? doc.edges : []);
+    for (const name of names) {
+        if (name === 'meta') {
+            rows.push([CSV_DOC_MARKER, name, nonce], ['key', 'value']);
+            for (const key of CSV_DOC_META_KEYS)
+                if (has(doc, key))
+                    rows.push([key, csvJsonCell(doc[key])]);
+        }
+        else if (name === 'settings')
+            mapSection(name, doc.settings);
+        else if (name === 'graphCustom')
+            mapSection(name, doc.graphCustom);
+        else if (name === 'attributes')
+            tableSection(name, Array.isArray(doc.customAttributes) ? doc.customAttributes : []);
+        else if (name === 'nodes')
+            tableSection(name, Array.isArray(doc.nodes) ? doc.nodes : []);
+        else if (name === 'edges')
+            tableSection(name, Array.isArray(doc.edges) ? doc.edges : []);
+    }
     return rows;
 }
-function csvWithDocument(rows) {
-    return rowsToCsv([...rows, ...csvDocumentRows()]);
+function csvWithDocument(rows, selected = csvExportSections()) {
+    const appendix = csvDocumentRows(selected);
+    return rowsToCsv(appendix.length ? [...rows, ...appendix] : rows);
 }
-// A visible table row can itself be `#GEP-CSV,2` (a one-node matrix with
-// that label and weight), and a map section can contain that key/value.
-// Find the appendix from the END: only a version marker followed by the
-// ordered section markers is the boundary. `complete` additionally requires
-// every section, so a truncated appendix is not advertised as lossless.
-function csvAppendixStart(rows, complete = false) {
-    const isVersion = (row) => row.length === 2 && row[0] === CSV_DOC_MARKER && row[1] === CSV_DOC_VERSION;
-    // Only known section names are markers. A `graphCustom` key literally
-    // named `#GEP-CSV` with JSON value `2` is ordinary section data, not a
-    // second appendix boundary.
-    const isSection = (row) => row.length === 2 && row[0] === CSV_DOC_MARKER && CSV_DOC_SECTIONS.includes(row[1]);
-    let fallback = -1;
-    for (let start = rows.length - 1; start >= 0; start--) {
-        if (!isVersion(rows[start]))
-            continue;
-        if (fallback < 0)
-            fallback = start;
-        const names = [];
-        for (let i = start + 1; i < rows.length; i++)
-            if (isSection(rows[i]))
-                names.push(rows[i][1]);
-        if (names[0] !== 'meta')
-            continue;
-        if (!complete)
-            return start;
-        if (names.length === CSV_DOC_SECTIONS.length && names.every((name, i) => name === CSV_DOC_SECTIONS[i]))
-            return start;
+function csvOrderedSectionNames(names) {
+    let last = -1;
+    for (const name of names) {
+        const index = CSV_DOC_SECTIONS.indexOf(name);
+        if (index <= last)
+            return false; // unknown, duplicate or out of order
+        last = index;
     }
-    // An unparseable/truncated marker is still an attempted appendix: the
-    // importer must reject it, not silently read the visible table as partial.
+    return true;
+}
+// Accept both the current three-cell (nonce) markers and the older two-cell
+// markers, so CSV files saved by the previous build remain lossless.
+function csvVersionRow(row) {
+    if (row[0] !== CSV_DOC_MARKER || row[1] !== CSV_DOC_VERSION)
+        return null;
+    if (row.length === 3 && typeof row[2] === 'string' && row[2].startsWith('gep-'))
+        return { nonce: row[2], legacy: false };
+    if (row.length === 2)
+        return { nonce: '', legacy: true };
+    return null;
+}
+function csvSectionName(row, nonce) {
+    if (row[0] !== CSV_DOC_MARKER || !CSV_DOC_SECTIONS.includes(row[1]))
+        return null;
+    if (nonce ? row.length === 3 && row[2] === nonce : row.length === 2)
+        return row[1];
+    return null;
+}
+// Score candidates instead of taking the first/last marker: an old two-cell
+// file can contain marker-shaped DATA rows, and the real boundary is the one
+// with the most ordered section markers (and a nonce wins over legacy).
+function csvAppendixStart(rows, complete = false) {
+    let best = -1, bestScore = -1, fallback = -1;
+    for (let start = 0; start < rows.length; start++) {
+        const version = csvVersionRow(rows[start]);
+        if (!version)
+            continue;
+        fallback = start; // bottom-most attempted appendix
+        const names = [];
+        for (let i = start + 1; i < rows.length; i++) {
+            const name = csvSectionName(rows[i], version.nonce);
+            if (name)
+                names.push(name);
+        }
+        if (!names.length || !csvOrderedSectionNames(names))
+            continue;
+        if (complete && names.length !== CSV_DOC_SECTIONS.length)
+            continue;
+        const score = (version.nonce ? 1000 : 0) + names.length * 10 + (names.length === CSV_DOC_SECTIONS.length ? 100 : 0);
+        if (score > bestScore) {
+            bestScore = score;
+            best = start;
+        }
+    }
+    if (best >= 0)
+        return best;
     return complete ? -1 : fallback;
 }
-// Cheap prefilter + real CSV parsing, so quoted newlines and marker-like
-// data cells cannot fake an appendix in the dialog or the preview note.
-function looksLikeCsvDocument(text) {
+function csvAppendixInfo(text) {
     if (!/^#GEP-CSV,2(?:,|\r?$)/m.test(text.replace(/^\ufeff/, '')))
-        return false;
-    return csvAppendixStart(parseCsv(text), true) >= 0;
+        return { state: 'none', sections: null, names: [] };
+    const parts = splitCsvDocument(parseCsv(text));
+    if (!parts.sections)
+        return { state: 'none', sections: null, names: [] };
+    const names = CSV_DOC_SECTIONS.filter(name => parts.sections.has(name));
+    if (!names.length)
+        return { state: 'invalid', sections: parts.sections, names };
+    if (names.length === CSV_DOC_SECTIONS.length)
+        return { state: 'complete', sections: parts.sections, names };
+    return { state: 'partial', sections: parts.sections, names };
+}
+function csvSectionLabels(names) {
+    return names.map(name => I18N.t(CSV_SECTION_LABEL_KEYS[name] || name)).join(', ');
 }
 // Editing the preview text means the user is authoring a plain CSV; the
 // appendix would otherwise override their edits, so it is dropped. Slice at
@@ -15013,10 +15108,12 @@ function stripCsvDocument(text) {
     return start < 0 ? text : text.slice(0, starts[start]);
 }
 function splitCsvDocument(rows) {
-    const isMarker = (row) => row.length === 2 && row[0] === CSV_DOC_MARKER && CSV_DOC_SECTIONS.includes(row[1]);
     const start = csvAppendixStart(rows, false);
     if (start < 0)
         return { main: rows, sections: null };
+    const version = csvVersionRow(rows[start]);
+    const nonce = version?.nonce || '';
+    const isMarker = (row) => !!csvSectionName(row, nonce);
     const sections = new Map();
     for (let i = start + 1; i < rows.length;) {
         if (!isMarker(rows[i])) {
@@ -15073,46 +15170,70 @@ function csvSectionMap(sections, name) {
     }
     return out;
 }
-function csvDocumentPayload(sections) {
-    // Both entity tables must be present: a truncated appendix must never be
-    // mistaken for a full document and used to wipe the graph.
-    if (!sections.has('nodes') || !sections.has('edges'))
+// `baseline` is the current document for a partial appendix (patch mode);
+// null means every section is present and the payload is a complete file.
+function csvDocumentPayload(sections, baseline = null) {
+    const names = CSV_DOC_SECTIONS.filter(name => sections.has(name));
+    if (!names.length)
         return null;
+    const payload = baseline ? { ...baseline } : Object.create(null);
+    if (sections.has('nodes'))
+        payload.nodes = csvSectionRecords(sections, 'nodes');
+    if (sections.has('edges'))
+        payload.edges = csvSectionRecords(sections, 'edges');
+    if (sections.has('attributes'))
+        payload.customAttributes = csvSectionRecords(sections, 'attributes');
+    if (sections.has('graphCustom'))
+        payload.graphCustom = csvSectionMap(sections, 'graphCustom');
+    if (sections.has('settings'))
+        payload.settings = csvSectionMap(sections, 'settings');
+    if (!baseline) {
+        payload.nodes ?? (payload.nodes = []);
+        payload.edges ?? (payload.edges = []);
+        payload.customAttributes ?? (payload.customAttributes = []);
+        payload.graphCustom ?? (payload.graphCustom = Object.create(null));
+        payload.settings ?? (payload.settings = Object.create(null));
+    }
     const meta = csvSectionMap(sections, 'meta');
-    const payload = {
-        nodes: csvSectionRecords(sections, 'nodes'),
-        edges: csvSectionRecords(sections, 'edges'),
-        customAttributes: csvSectionRecords(sections, 'attributes'),
-        graphCustom: csvSectionMap(sections, 'graphCustom'),
-        settings: csvSectionMap(sections, 'settings'),
-    };
     for (const key of CSV_DOC_META_KEYS)
         if (Object.prototype.hasOwnProperty.call(meta, key))
             payload[key] = meta[key];
     return payload;
 }
-// An absent marker means a partial/legacy CSV; a present but truncated one
-// is an error. Silently falling through to the visible table there would
-// let a broken full-document file wipe the graph with a misleading success.
+// Absent marker -> legacy partial CSV. Present but empty -> error. Complete
+// -> replace/append as before. Subset -> patch only those sections into the
+// current graph; Append is ignored because it would duplicate the host data.
 function importCsvDocument(sections, append) {
     if (!sections)
         return 'absent';
-    const payload = csvDocumentPayload(sections);
+    const names = CSV_DOC_SECTIONS.filter(name => sections.has(name));
+    if (!names.length) {
+        toast(I18N.t('import_failed', { msg: I18N.t('csv_document_incomplete') }));
+        return 'invalid';
+    }
+    const complete = names.length === CSV_DOC_SECTIONS.length;
+    let baseline = null;
+    let effectiveAppend = append;
+    if (!complete) {
+        baseline = JSON.parse(snapshot());
+        baseline.viewBox = graphBounds();
+        effectiveAppend = false;
+    }
+    const payload = csvDocumentPayload(sections, baseline);
     if (!payload) {
         toast(I18N.t('import_failed', { msg: I18N.t('csv_document_incomplete') }));
         return 'invalid';
     }
     // Internal identities (custom-attribute origins) stay verbatim: this is
-    // our own dialect, not a foreign JSON boundary. `internal` keeps the
-    // usual validation/history path but skips the foreign-definition merge,
-    // which would otherwise mint provenance markers on our own definitions.
-    importGraphData(payload, 'CSV', append, true);
+    // our own dialect, not a foreign JSON boundary. `internal` skips the
+    // foreign-definition merge, which would mint provenance markers.
+    importGraphData(payload, complete ? 'CSV' : 'CSV sections', effectiveAppend, true);
     return 'imported';
 }
 // Style columns come from the resolved visual, like every other exporter: a
 // value the edge leaves unset is inherited from the edge defaults or its type
 // style, and writing the raw field would record a blank and lose it on import.
-function edgeCsv() {
+function edgeCsv(selected = csvExportSections()) {
     const rows = [['id', 'source_id', 'source_label', 'target_id', 'target_label', 'weight', 'directed', 'label', 'type', 'color', 'stroke_size', 'stroke_style', 'arrow_size', 'label_color', 'label_size']];
     for (const e of state.edges) {
         const a = nodeById(e.from), b = nodeById(e.to), v = edgeVisual(e);
@@ -15120,7 +15241,7 @@ function edgeCsv() {
             v.type || '', v.color || '', v.strokeSize ?? '', v.strokeStyle || '', v.arrowSize ?? '',
             v.labelColor || '', v.labelSize ?? '']);
     }
-    return csvWithDocument(rows);
+    return csvWithDocument(rows, selected);
 }
 // A node carries far more than position and fill colour, and a CSV that only
 // wrote those silently reset the rest on re-import. The columns are the same
@@ -15131,23 +15252,23 @@ function edgeCsv() {
 const NODE_CSV_COLUMNS = ['order', 'id', 'label', 'x', 'y', 'shape', 'color', 'type',
     'width', 'height', 'stroke_color', 'stroke_size', 'stroke_style',
     'label_color', 'label_size', 'label_position', 'label_font'];
-function nodeCsv() {
+function nodeCsv(selected = csvExportSections()) {
     const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     return csvWithDocument([NODE_CSV_COLUMNS, ...sorted.map(n => {
             const v = nodeVisual(n);
             return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), v.shape || '', v.color || '', v.type || '',
                 v.width ?? '', v.height ?? '', v.strokeColor || '', v.strokeSize ?? '', v.strokeStyle || '',
                 v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
-        })]);
+        })], selected);
 }
 // The visible grid is an ordinary adjacency matrix: weights only, with an
 // undirected or mutual edge written into BOTH mirror cells so a reader sees
 // it from either end. Spreadsheets stay happy because the first rows never
-// change. The full graph rides in the appended document sections (see
-// csvDocumentRows), so OUR export/import round-trip is lossless; the grid
-// alone remains ambiguous, which is why matrixImportMode() exists for
-// hand-written / third-party matrices.
-function matrixCsv() {
+// change. Optional document sections (see csvDocumentRows) make an
+// all-sections export/import round-trip lossless; unchecked sections leave
+// a clean grid or a patch, and the grid alone remains ambiguous — which is
+// why matrixImportMode() exists for hand-written / third-party matrices.
+function matrixCsv(selected = csvExportSections()) {
     const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const index = new Map(sorted.map((node, position) => [node.id, position]));
     const sparseRows = Array.from({ length: sorted.length }, () => new Map());
@@ -15173,17 +15294,26 @@ function matrixCsv() {
             row[column + 1] = weights.join(';');
         rows.push(row);
     });
-    return csvWithDocument(rows);
+    return csvWithDocument(rows, selected);
 }
-function csvFormatNote(format, fullDoc, edited = false) {
-    if (!['matrix-csv', 'edges-csv', 'nodes-csv'].includes(format))
+function isCsvFormat(format) {
+    return ['matrix-csv', 'edges-csv', 'nodes-csv'].includes(format);
+}
+function csvFormatNote(format, info, edited = false, gridOnly = false) {
+    if (!isCsvFormat(format))
         return '';
-    // Editing a full-document export makes the appendix stale: say so rather
-    // than promising a lossless restore of text the user just changed.
-    if (fullDoc && edited)
+    // Editing any appendix-bearing export makes it stale: the visible table is
+    // what the user just authored, so import it as a plain partial CSV.
+    if (edited && info.state !== 'none')
         return I18N.t('csv_document_edited_note');
-    if (fullDoc)
+    if (info.state === 'complete')
         return I18N.t('csv_document_note');
+    if (info.state === 'partial')
+        return I18N.t('csv_partial_note', { sections: csvSectionLabels(info.names) });
+    if (info.state === 'invalid')
+        return I18N.t('csv_document_incomplete');
+    if (gridOnly)
+        return I18N.t('csv_grid_only_note');
     if (format === 'matrix-csv')
         return I18N.t('matrix_csv_legacy_note');
     if (format === 'edges-csv')
@@ -15205,7 +15335,7 @@ function downloadBlob(name, content, type = 'application/octet-stream') {
         toast(I18N.t('download_hint', { name: name }));
     }, 100);
 }
-function showExportPreview(name, content, type) {
+function showExportPreview(name, content, type, csvBuilder = null) {
     // Show export content in an editable modal textarea.
     // Dual-purpose: export (edit/copy/download) AND import (paste/edit/import).
     // Detect format from filename extension so the Import button knows how to parse.
@@ -15221,14 +15351,23 @@ function showExportPreview(name, content, type) {
         format = 'matrix-csv';
     else if (lowerName.includes('nodes'))
         format = 'nodes-csv';
-    // The preview doubles as an import box. Say whether this CSV carries the
-    // complete graph or is a partial/foreign file, so Import has no surprises.
+    const hasCsvBuilder = isCsvFormat(format) && !!csvBuilder;
     // A <textarea> normalises CRLF to LF, so compare line endings away —
     // otherwise a perfectly unedited export would look "edited" and lose its
     // lossless appendix.
     const normalizeCsv = (s) => s.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n');
-    const csvNote = (text) => csvFormatNote(format, looksLikeCsvDocument(text), normalizeCsv(text) !== normalizeCsv(content));
-    const formatNote = csvNote(content);
+    // Granular CSV export options: the visible table is always kept, and each
+    // document section can be included or left out. No presets — the default
+    // (all checked) is the lossless app copy; unchecking all gives a clean grid.
+    const csvOptionsHtml = hasCsvBuilder ? `
+        <fieldset id="expCsvContents" style="border:1px solid #334155;border-radius:8px;padding:8px;margin:0;display:flex;flex-direction:column;gap:5px">
+          <legend class="tiny muted" style="padding:0 4px">${esc(I18N.t('csv_export_options'))}</legend>
+          <label class="row tiny muted" style="gap:6px;margin:0"><input type="checkbox" checked disabled /> ${esc(I18N.t('csv_export_visible_table'))}</label>
+          <div style="display:flex;flex-wrap:wrap;gap:4px 12px">
+            ${CSV_DOC_SECTIONS.map(section => `<label class="row tiny" style="gap:4px;margin:0"><input type="checkbox" data-csv-section="${section}" checked /> ${esc(I18N.t(CSV_EXPORT_LABEL_KEYS[section]))}</label>`).join('')}
+          </div>
+          <p class="tiny muted" style="margin:2px 0 0">${esc(I18N.t('csv_export_options_hint'))}</p>
+        </fieldset>` : '';
     document.querySelector('.export-modal')?.remove();
     const returnFocus = document.activeElement;
     const modal = document.createElement('div');
@@ -15250,7 +15389,8 @@ function showExportPreview(name, content, type) {
           </div>
         </div>
         <p class="tiny muted" style="margin:0">${esc(I18N.t('export_modal_desc'))}</p>
-        ${formatNote ? `<p class="tiny" id="expFormatNote" role="note" style="margin:0;color:#fbbf24">${esc(formatNote)}</p>` : ''}
+        ${isCsvFormat(format) ? `<p class="tiny" id="expFormatNote" role="note" style="margin:0;color:#fbbf24"></p>` : ''}
+        ${csvOptionsHtml}
         <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid var(--control-border);color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:.6875rem;resize:vertical" spellcheck="false"></textarea>
       </div>`;
     document.body.appendChild(modal);
@@ -15261,16 +15401,31 @@ function showExportPreview(name, content, type) {
     };
     const ta = modal.querySelector('textarea');
     ta.value = content;
+    const noteEl = modal.querySelector('#expFormatNote');
+    const sectionInputs = hasCsvBuilder ? $$('input[data-csv-section]', modal) : [];
+    const selectedSections = () => new Set(sectionInputs.filter(input => input.checked).map(input => input.dataset.csvSection || ''));
+    const csvNote = (text) => csvFormatNote(format, csvAppendixInfo(text), normalizeCsv(text) !== normalizeCsv(content), hasCsvBuilder && selectedSections().size === 0);
+    const refreshNote = (text) => {
+        if (!noteEl)
+            return;
+        const note = csvNote(text);
+        noteEl.textContent = note;
+        noteEl.hidden = !note;
+    };
+    refreshNote(content);
     // Pasting a different CSV into the box changes what Import will do; keep
     // the note honest instead of leaving the exporter's wording on screen.
-    const noteEl = modal.querySelector('#expFormatNote');
-    ta.addEventListener('input', () => {
-        const note = csvNote(ta.value);
-        if (noteEl) {
-            noteEl.textContent = note;
-            noteEl.hidden = !note;
-        }
-    });
+    ta.addEventListener('input', () => refreshNote(ta.value));
+    // Regenerating from the checkboxes resets the "edited" baseline: the new
+    // text IS the export the user chose, not a hand edit of the old one.
+    if (csvBuilder) {
+        for (const input of sectionInputs)
+            input.addEventListener('change', () => {
+                content = csvBuilder(selectedSections());
+                ta.value = content;
+                refreshNote(content);
+            });
+    }
     // Sync the append checkbox with the global one
     const appendChk = modal.querySelector('#expAppendChk');
     const globalAppend = $('#optImportAppend');
@@ -15285,8 +15440,10 @@ function showExportPreview(name, content, type) {
             return;
         }
         // An edited file is a hand-authored CSV: drop the appendix so the edits
-        // in the visible table actually take effect.
-        if (normalizeCsv(text) !== normalizeCsv(content) && looksLikeCsvDocument(text))
+        // in the visible table actually take effect. A regenerated export has
+        // `content` updated above, so its appendix is deliberately kept.
+        const info = csvAppendixInfo(text);
+        if (normalizeCsv(text) !== normalizeCsv(content) && info.state !== 'none')
             text = stripCsvDocument(text);
         try {
             assertImportTextSize(text);
@@ -17952,11 +18109,15 @@ function csvKindFrom(name, text) {
 // Partial CSV imports do not replace the whole graph: Edges/Matrix CSV keep
 // the nodes, Nodes CSV drops the old edges. The generic whole-graph wording
 // used to claim otherwise for every format.
-function importReplacementMessage(format, matrixMode, fullDocument = false) {
-    // An app-exported CSV carries the whole graph; a legacy/foreign CSV is a
-    // partial file and gets the scope-specific warning.
-    if (fullDocument)
+function importReplacementMessage(format, matrixMode, csvInfo) {
+    // A complete appendix replaces the whole graph; a subset patches only the
+    // named parts; no appendix is a legacy/foreign partial CSV.
+    if (csvInfo.state === 'complete')
         return I18N.t('replace_with_full_csv');
+    if (csvInfo.state === 'partial')
+        return I18N.t('apply_csv_sections', { sections: csvSectionLabels(csvInfo.names) });
+    if (csvInfo.state === 'invalid')
+        return I18N.t('csv_document_incomplete');
     if (format === 'edges-csv')
         return I18N.t('replace_edges_with_import');
     if (format === 'matrix-csv')
@@ -18001,8 +18162,12 @@ function importFile(file, forcedFormat = 'auto') {
                 format = csvKindFrom(name, text);
             const append = $('#optImportAppend')?.checked;
             const matrixMode = matrixImportMode();
-            if (!append && (state.nodes.length || state.edges.length)
-                && !await uiConfirm(importReplacementMessage(format, matrixMode, looksLikeCsvDocument(text)), { danger: true, confirmLabel: I18N.t('import_btn') }))
+            const csvInfo = csvAppendixInfo(text);
+            // A partial appendix replaces selected parts even when Append is on:
+            // ask before patching, rather than silently ignoring that checkbox.
+            const needsConfirm = !append || csvInfo.state === 'partial' || csvInfo.state === 'invalid';
+            if (needsConfirm && (state.nodes.length || state.edges.length)
+                && !await uiConfirm(importReplacementMessage(format, matrixMode, csvInfo), { danger: true, confirmLabel: I18N.t('import_btn') }))
                 return;
             if (format === 'edges-csv')
                 importEdgesCsv(text, append);
@@ -21016,9 +21181,9 @@ function wireUi() {
     $('#btnImportMatrixCsv').addEventListener('click', () => chooseImport('matrix-csv', '.csv,text/csv,text/plain'));
     $('#btnImportNodesCsv').addEventListener('click', () => chooseImport('nodes-csv', '.csv,text/csv,text/plain'));
     $('#fileImport').addEventListener('change', e => { importFile(e.target.files[0], e.target.dataset.format || 'auto'); e.target.value = ''; e.target.dataset.format = 'auto'; });
-    $('#btnExportEdgesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-edges.csv`, edgeCsv(), 'text/csv;charset=utf-8'); });
-    $('#btnExportMatrixCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-matrix.csv`, matrixCsv(), 'text/csv;charset=utf-8'); });
-    $('#btnExportNodesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-nodes.csv`, nodeCsv(), 'text/csv;charset=utf-8'); });
+    $('#btnExportEdgesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-edges.csv`, edgeCsv(), 'text/csv;charset=utf-8', sections => edgeCsv(sections)); });
+    $('#btnExportMatrixCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-matrix.csv`, matrixCsv(), 'text/csv;charset=utf-8', sections => matrixCsv(sections)); });
+    $('#btnExportNodesCsv').addEventListener('click', () => { showExportPreview(`${fileBase()}-nodes.csv`, nodeCsv(), 'text/csv;charset=utf-8', sections => nodeCsv(sections)); });
     $('#btnCopyEdgeCsv').addEventListener('click', copyEdgeCsv);
     $('#btnCopyMatrixCsv').addEventListener('click', copyMatrixCsv);
     $('#btnCopyNodesCsv').addEventListener('click', copyNodesCsv);
