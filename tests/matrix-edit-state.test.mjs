@@ -709,3 +709,65 @@ test('a cell editor opened before an Undo rebuild shows the undone value', async
   assert.deepEqual(errors.map(e => e.message), []);
   dom.window.close();
 });
+
+// --- Rebuild avoidance (dense-graph freeze fix) ---------------------------
+// A dense matrix (32 nodes = 992 cells) used to rebuild #matrixHost from a
+// ~1.5 MB innerHTML string on EVERY render — including the selection-only and
+// single-cell-edit renders that fire constantly while editing. That is what
+// froze the tab. The renderer now diffs per-row content signatures and patches
+// only the rows that actually changed, so the <table> and untouched rows stay
+// the same DOM nodes. These tests pin that contract: they fail on a build that
+// still swaps innerHTML wholesale and pass on the patching build.
+test('a committed weight edit patches the matrix in place instead of rebuilding the table', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  const tableBefore = document.querySelector('#matrixHost table');
+  assert.ok(tableBefore, 'the matrix table rendered');
+  const rowBefore = cellOf(document, 'a', 'b').closest('tr');
+  const otherRowBefore = cellOf(document, 'c', 'a').closest('tr');
+
+  const cell = cellOf(document, 'a', 'b');
+  dispatchPointer(window, cell, 'pointerdown');
+  dispatchPointer(window, cell, 'pointerdown');
+  const input = cell.querySelector('input.matrix-input');
+  changeValue(window, input, '9');
+  // A real commit blurs (the user clicks away or tabs out) before the ~60ms
+  // debounced rebuild lands, so no matrix field is focused at render time and
+  // the patch path runs. Leaving focus in the cell would force a full rebuild
+  // (the patcher never touches a focused field), which is the correct but
+  // slower path — not the one this test pins.
+  input.blur();
+  await nextFrame(window); await settle(window, 120);
+
+  const tableAfter = document.querySelector('#matrixHost table');
+  assert.equal(tableAfter, tableBefore, 'the <table> element was patched, not replaced by an innerHTML swap');
+  assert.equal(cellOf(document, 'a', 'b').closest('tr'), rowBefore, 'the edited row node is preserved');
+  assert.equal(cellOf(document, 'c', 'a').closest('tr'), otherRowBefore, 'an untouched row node is preserved');
+  assert.equal(cellOf(document, 'a', 'b').textContent, '9', 'the cell shows the committed weight');
+  assert.equal(cellOf(document, 'a', 'b').querySelector('input'), null, 'the editor demoted back to lightweight text');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});
+
+test('editing a weight in the edge list updates the matrix cell', async () => {
+  const { dom, errors } = createEditorDom(matrixGraph());
+  const { window } = dom; const { document } = window;
+  await nextFrame(window); await settle(window, 90);
+
+  assert.equal(cellOf(document, 'a', 'b').textContent, '2', 'the cell starts at the model weight');
+  const listInput = document.querySelector('#edgeListHost input.el-weight[data-edge-id="e1"]');
+  assert.ok(listInput, 'the edge-list weight input rendered');
+  listInput.value = '11';
+  listInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await nextFrame(window); await settle(window, 120);
+
+  // The list handler used to call queueRender(false) (canvas only), so the
+  // matrix cell kept showing the stale weight after a list edit. It now
+  // re-renders the matrix too, and the patch layer updates just that cell.
+  assert.equal(edgeWeightOf(document, 'e1'), '11', 'the model took the list edit');
+  assert.equal(cellOf(document, 'a', 'b').textContent, '11', 'the matrix cell follows the edge-list weight');
+  assert.deepEqual(errors.map(e => e.message), []);
+  dom.window.close();
+});

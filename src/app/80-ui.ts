@@ -392,7 +392,7 @@
       const card = ev.target.closest('[data-preset-idx]');
       if(card){ applyPresetToSelection(parseInt(card.dataset.presetIdx, 10)); }
     });
-    $('#btnClear').addEventListener('click', async () => { if(!state.nodes.length && !state.edges.length) return; if(await uiConfirm(I18N.t('clear_entire'), {danger: true, confirmLabel: I18N.t('clear')})){ state.nodes=[]; state.edges=[]; state.selected=null; state.selection={nodes: [], edges: []}; state.nextNode=1; state.nextEdge=1; pushHistory('clear'); queueRender(true, true); } });
+    $('#btnClear').addEventListener('click', async () => { if(!state.nodes.length && !state.edges.length) return; if(await uiConfirm(I18N.t('clear_entire'), {danger: true, confirmLabel: I18N.t('clear')})){ state.nodes=[]; state.edges=[]; state.selected=null; state.selection={nodes: [], edges: []}; state.nextNode=1; state.nextEdge=1; resetEdgeListPagination(); pushHistory('clear'); queueRender(true, true); } });
     $('#btnSample').addEventListener('click', () => { closePanels(); addSample(); });
     $('#btnLang').addEventListener('click', () => { I18N.toggle(); toast(I18N.t('language_switched')); });
     $('#btnZoomIn').addEventListener('click', () => { const r=canvasViewportRect(); zoomAt(.82, r.left+r.width/2, r.top+r.height/2); });
@@ -437,6 +437,18 @@
       const el = $('#'+id); if(el){ el.addEventListener('keydown', ev => { if(isCommittedEnter(ev)){ ev.preventDefault(); applyVisibleRange(); } }); }
     });
     // Edge list editing events (delegated)
+    // The model value each list field renders from — the same expressions
+    // patchListRow writes — so "dirty" can mean exactly "the text on screen
+    // differs from the model".
+    function edgeListFieldValue(t: HTMLElement, e: any): string {
+      if(t.matches('.el-weight')) return e.weight ?? '';
+      if(t.matches('.el-elabel')) return e.label ?? '';
+      if(t.matches('.el-type')) return e.type ?? '';
+      if(t.matches('.el-id')) return e.id;
+      if(t.matches('.el-from')){ const a = nodeById(e.from); return a ? (a.label || a.id) : e.from; }
+      if(t.matches('.el-to')){ const b = nodeById(e.to); return b ? (b.label || b.id) : e.to; }
+      return (t as HTMLInputElement).value;
+    }
     const edgeListHost = $('#edgeListHost');
     if(edgeListHost){
       edgeListHost.addEventListener('click', ev => {
@@ -457,9 +469,19 @@
         const t = ev.target;
         if(!t.dataset || !t.dataset.edgeId) return;
         const e = edgeById(t.dataset.edgeId); if(!e) return;
-        // Use queueRender(false) — canvas only — so the edge list inputs aren't rebuilt
-        // (rebuilding would destroy the next input the user taps on mobile)
-        if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(false); saveSoon(); }
+        // A `change` is the commit, so whatever draft the field was holding is
+        // now in the model and the field is clean again. patchListRow uses this
+        // to tell "the user is mid-typing" from "the model moved underneath a
+        // focused field" (Undo, import, algorithm) and only in the latter case
+        // writes the model back over it.
+        clearMatrixFieldDirty(t as HTMLElement);
+        // Edits that DON'T change the matrix stay queueRender(false) — canvas
+        // only — so the list isn't re-rendered under the user's finger. Edits
+        // that DO change a matrix cell (weight, endpoints) use queueRender(true)
+        // so the cell stays in sync; that is safe now because renderMatrixAndList
+        // patches the list row in place and never writes over the focused field
+        // (see patchListRow), instead of rebuilding #edgeListHost wholesale.
+        if(t.matches('.edge-weight')){ const v = t.value.slice(0,50); if(v === '') delete e.weight; else e.weight = v; pushHistory('edit edge weight'); queueRender(true); saveSoon(); } // matrix cell text follows the weight
         else if(t.matches('.edge-elabel')){ e.label = t.value.slice(0,80); pushHistory('edit edge label'); queueRender(false); saveSoon(); }
         else if(t.matches('.edge-type')){ e.type = t.value.slice(0,40); applyTypeStyleToEdge(e); invalidateGraphIndex(); syncEditTypeLists(); pushHistory('edit edge type'); queueRender(false, true); saveSoon(); }
         else if(t.matches('.edge-directed')){ const v = (t as any).value || (t as any).checked; const dir = normalizeDirection(v); (e as any).direction = dir; (e as any).directed = dir !== 'undirected'; pushHistory('edit edge directed'); queueRender(true); saveSoon(); }
@@ -477,7 +499,7 @@
           if(target){
             if(t.matches('.edge-from')) e.from = target.id; else e.to = target.id;
             invalidateGraphIndex();
-            pushHistory('edit edge endpoint'); queueRender(false); saveSoon();
+            pushHistory('edit edge endpoint'); queueRender(true); saveSoon(); // the cell moves in the matrix
           }
         }
       });
@@ -485,6 +507,21 @@
         const t = ev.target;
         if(!t.dataset || !t.dataset.edgeId) return;
         const e = edgeById(t.dataset.edgeId); if(!e) return;
+        // `input` fires for real user edits only — the same distinction the
+        // matrix host relies on. These six fields defer their commit to
+        // `change`, so mark them as holding a draft; colour, direction and
+        // stroke write the model immediately and never need it.
+        if(t.matches && t.matches('.el-weight, .el-elabel, .el-type, .el-id, .el-from, .el-to')){
+          // Mark the draft ONLY while the text actually differs from the model.
+          // A keystroke that is then reverted (type "9", Backspace) leaves the
+          // field equal to the model and fires no `change` — the only thing that
+          // clears the mark — so an unconditional mark here was never cleared:
+          // every later render kept declining to write into the field, and an
+          // Undo left the row showing the pre-Undo weight permanently, through
+          // blur, further renders and even a language switch.
+          if((t as HTMLInputElement).value !== edgeListFieldValue(t, e)) markMatrixFieldDirty(t as HTMLElement);
+          else clearMatrixFieldDirty(t as HTMLElement);
+        }
         if(t.matches('.edge-color')){ e.color = t.value; queueRender(false); saveLiveDocumentEdit(); }
       });
     }

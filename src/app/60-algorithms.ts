@@ -145,7 +145,7 @@
       {id:'e5',from:'n5',to:'n3',weight:'5',label:'',directed:true}, {id:'e6',from:'n6',to:'n1',weight:'2',label:'',directed:true},
       {id:'e7',from:'n3',to:'n7',weight:'3',label:'',directed:true}
     ];
-    state.nextNode = 8; state.nextEdge = 8; state.selected = null; state.selection = {nodes: [], edges: []}; pushHistory('sample'); fitView(); queueRender(true, true); toast(I18N.t('sample_loaded'));
+    state.nextNode = 8; state.nextEdge = 8; state.selected = null; state.selection = {nodes: [], edges: []}; resetEdgeListPagination(); pushHistory('sample'); fitView(); queueRender(true, true); toast(I18N.t('sample_loaded'));
   }
 
   function persistAutosavePreference(enabled: boolean){
