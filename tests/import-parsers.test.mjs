@@ -1004,13 +1004,21 @@ test('the editor’s own empty matrix export imports in replace mode and clears 
   assert.equal(graph.edges.length, 0, 'the empty matrix replace clears the stale edge');
   assert.match(toasts(document), /imported/i);
   assert.deepEqual(errors.map(e => e.message), []);
-  // The freshly edgeless document exports the same file it imported. (The
-  // export modal shows the payload in a <textarea>, whose value normalises
-  // CRLF to LF — compare with line endings normalised too.)
+  // The freshly edgeless document exports the same matrix table first (the
+  // export modal's textarea normalises CRLF to LF), followed by the lossless
+  // document appendix: every CSV export is now a complete document.
   document.querySelector('#btnExportMatrixCsv').click();
   const exported = document.querySelector('.export-modal textarea').value;
-  assert.equal(exported, emptyMatrix.replace(/\r\n/g, '\n'), 'the empty import round-trips through the exporter');
-  document.querySelector('#expCloseBtn').click();
+  assert.ok(exported.startsWith(emptyMatrix.replace(/\r\n/g, '\n')), 'the visible matrix table is unchanged');
+  assert.match(exported, /^#GEP-CSV,2$/m, 'the export carries the full-document appendix');
+  // Importing that export back reproduces the whole document (nodes + zero
+  // edges), not just the adjacency grid.
+  document.querySelector('#expImportBtn').click();
+  await settle(dom.window, 60);
+  const roundTrip = exportedGraph(document);
+  assert.equal(roundTrip.nodes.length, 2);
+  assert.equal(roundTrip.edges.length, 0);
+  document.querySelector('#expCloseBtn')?.click();
   dom.window.close();
 });
 
@@ -5692,9 +5700,19 @@ test('an edge CSV keeps an inherited zero-width stroke at zero', async () => {
   document.querySelector('#expCloseBtn').click();
 
   await paste(document, window, '#btnPasteEdgesCsv', csv);
-  const edge = exportedGraph(document).edges[0];
+  const graph = exportedGraph(document);
+  const edge = graph.edges[0];
   assert.ok(edge, 'the edge came back');
-  assert.equal(edge.strokeSize, 0, 'zero stayed zero instead of becoming 2.4');
+  // The lossless appendix restores the RAW document: the zero stays on the
+  // type style where it was authored instead of being flattened onto the edge.
+  assert.equal(edge.type, 'invis');
+  assert.equal(edge.strokeSize, undefined, 'inheritance is preserved, not flattened');
+  assert.equal(graph.settings.edgeTypeStyles.invis.strokeSize, 0);
+  // The visible table is still denormalised for plain-CSV readers, and a
+  // hand-written CSV with an explicit 0 must not come back as 2.4 (the bug
+  // `parseFloat(cell) || 2.4` used to cause).
+  await paste(document, window, '#btnPasteEdgesCsv', 'id,source_id,target_id,weight,stroke_size\ne2,a,b,1,0');
+  assert.equal(exportedGraph(document).edges[0].strokeSize, 0, 'zero stayed zero instead of becoming 2.4');
   assert.deepEqual(errors.map(error => error.message), []);
   dom.window.close();
 });

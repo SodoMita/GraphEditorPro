@@ -51,6 +51,186 @@
     return v;
   }
   function rowsToCsv(rows){ return '\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; }
+
+  // === Lossless CSV document sections =====================================
+  //
+  // CSV has no rigid schema (RFC 4180 is informational), so the app defines
+  // its own dialect: the familiar table comes FIRST, unchanged, and extra
+  // rows/columns/cells follow it. The appendix carries every document field as
+  // a proper table, so any of the three CSV exports is a complete document and
+  // an unedited export/import round-trip is lossless — direction, ids, labels,
+  // styles, custom attributes and values, settings, title and counters.
+  //
+  // Each appendix row is a normal CSV row; each value is JSON in a cell. JSON
+  // preserves types AND presence (a stated empty string is `""`, an absent
+  // field is an empty cell), which plain CSV text cannot do. Section markers
+  // are two-cell rows, so a real data row can never be mistaken for one.
+  //
+  // A file WITHOUT the appendix (an older build, a hand-written matrix, a
+  // spreadsheet export) stays a partial file: the legacy readers and the
+  // Matrix CSV interpretation option still apply. That is the only place the
+  // format is lossy — not our own exports.
+  const CSV_DOC_MARKER = '#GEP-CSV';
+  const CSV_DOC_VERSION = '2';
+  const CSV_DOC_SECTIONS = ['meta','settings','graphCustom','attributes','nodes','edges'];
+  const CSV_DOC_META_KEYS = ['title','mode','selectTool','selectCombine','nextNode','nextEdge','viewBox'];
+  type CsvSection = { header: string[]; rows: string[][] };
+
+  function csvJsonCell(value: unknown): string {
+    return value === undefined ? '' : JSON.stringify(value);
+  }
+  function csvDocumentRows(): unknown[][] {
+    // Same payload as the native JSON export, including graphBounds() for the
+    // recorded extent. Camera/selection are UI state (the sanitizer clears
+    // them on every import), so they are not part of the document.
+    const doc = JSON.parse(snapshot()) as AnyRecord;
+    doc.viewBox = graphBounds();
+    const has = (o: AnyRecord, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+    const rows: unknown[][] = [[CSV_DOC_MARKER, CSV_DOC_VERSION]];
+    const mapSection = (name: string, source: unknown) => {
+      rows.push([CSV_DOC_MARKER, name], ['key','value']);
+      if(isRecord(source)) for(const key of Object.keys(source)) rows.push([key, csvJsonCell(source[key])]);
+    };
+    const tableSection = (name: string, records: unknown[]) => {
+      const keys: string[] = [];
+      for(const rec of records) if(isRecord(rec)) for(const key of Object.keys(rec)) if(!keys.includes(key)) keys.push(key);
+      // A section with no records still needs a header row: a zero-cell row
+      // would become a blank line and lose the section's place.
+      const header = keys.length ? keys : ['_empty'];
+      rows.push([CSV_DOC_MARKER, name], header);
+      for(const rec of records) if(isRecord(rec))
+        rows.push(header.map(key => has(rec, key) ? csvJsonCell(rec[key]) : ''));
+    };
+    rows.push([CSV_DOC_MARKER, 'meta'], ['key','value']);
+    for(const key of CSV_DOC_META_KEYS) if(has(doc, key)) rows.push([key, csvJsonCell(doc[key])]);
+    mapSection('settings', doc.settings);
+    mapSection('graphCustom', doc.graphCustom);
+    tableSection('attributes', Array.isArray(doc.customAttributes) ? doc.customAttributes : []);
+    tableSection('nodes', Array.isArray(doc.nodes) ? doc.nodes : []);
+    tableSection('edges', Array.isArray(doc.edges) ? doc.edges : []);
+    return rows;
+  }
+  function csvWithDocument(rows: unknown[][]): string {
+    return rowsToCsv([...rows, ...csvDocumentRows()]);
+  }
+  // A visible table row can itself be `#GEP-CSV,2` (a one-node matrix with
+  // that label and weight), and a map section can contain that key/value.
+  // Find the appendix from the END: only a version marker followed by the
+  // ordered section markers is the boundary. `complete` additionally requires
+  // every section, so a truncated appendix is not advertised as lossless.
+  function csvAppendixStart(rows: string[][], complete = false): number {
+    const isVersion = (row: string[]) => row.length === 2 && row[0] === CSV_DOC_MARKER && row[1] === CSV_DOC_VERSION;
+    // Only known section names are markers. A `graphCustom` key literally
+    // named `#GEP-CSV` with JSON value `2` is ordinary section data, not a
+    // second appendix boundary.
+    const isSection = (row: string[]) => row.length === 2 && row[0] === CSV_DOC_MARKER && CSV_DOC_SECTIONS.includes(row[1]);
+    let fallback = -1;
+    for(let start = rows.length - 1; start >= 0; start--){
+      if(!isVersion(rows[start])) continue;
+      if(fallback < 0) fallback = start;
+      const names: string[] = [];
+      for(let i = start + 1; i < rows.length; i++) if(isSection(rows[i])) names.push(rows[i][1]);
+      if(names[0] !== 'meta') continue;
+      if(!complete) return start;
+      if(names.length === CSV_DOC_SECTIONS.length && names.every((name, i) => name === CSV_DOC_SECTIONS[i])) return start;
+    }
+    // An unparseable/truncated marker is still an attempted appendix: the
+    // importer must reject it, not silently read the visible table as partial.
+    return complete ? -1 : fallback;
+  }
+  // Cheap prefilter + real CSV parsing, so quoted newlines and marker-like
+  // data cells cannot fake an appendix in the dialog or the preview note.
+  function looksLikeCsvDocument(text: string): boolean {
+    if(!/^#GEP-CSV,2(?:,|\r?$)/m.test(text.replace(/^\ufeff/, ''))) return false;
+    return csvAppendixStart(parseCsv(text), true) >= 0;
+  }
+  // Editing the preview text means the user is authoring a plain CSV; the
+  // appendix would otherwise override their edits, so it is dropped. Slice at
+  // the parsed row's ORIGINAL text offset, preserving BOM/CRLF and quoted
+  // newlines in the visible table exactly.
+  function stripCsvDocument(text: string): string {
+    const starts: number[] = [];
+    const rows = parseCsv(text, starts);
+    const start = csvAppendixStart(rows, false);
+    return start < 0 ? text : text.slice(0, starts[start]);
+  }
+  function splitCsvDocument(rows: string[][]): { main: string[][]; sections: Map<string, CsvSection> | null } {
+    const isMarker = (row: string[]) => row.length === 2 && row[0] === CSV_DOC_MARKER && CSV_DOC_SECTIONS.includes(row[1]);
+    const start = csvAppendixStart(rows, false);
+    if(start < 0) return { main: rows, sections: null };
+    const sections = new Map<string, CsvSection>();
+    for(let i = start + 1; i < rows.length; ){
+      if(!isMarker(rows[i])){ i++; continue; }
+      const name = rows[i][1]; i++;
+      const header = rows[i] || []; i++;
+      const data: string[][] = [];
+      while(i < rows.length && !isMarker(rows[i])) data.push(rows[i++]);
+      sections.set(name, {header, rows: data});
+    }
+    return { main: rows.slice(0, start), sections };
+  }
+  function csvSectionRecords(sections: Map<string, CsvSection>, name: string): AnyRecord[] {
+    const section = sections.get(name);
+    if(!section || section.header[0] === '_empty') return [];
+    const out: AnyRecord[] = [];
+    for(const cells of section.rows){
+      const rec: AnyRecord = Object.create(null);
+      section.header.forEach((key, i) => {
+        const cell = cells[i] ?? '';
+        if(!cell) return;                       // absent field
+        try { rec[key] = JSON.parse(cell); } catch { /* malformed cell: leave it absent */ }
+      });
+      out.push(rec);
+    }
+    return out;
+  }
+  function csvSectionMap(sections: Map<string, CsvSection>, name: string): AnyRecord {
+    // Map sections use `key,value` rows: the key is plain CSV text (it can be
+    // a user-defined attribute id, so it must not be JSON-parsed) while the
+    // value is JSON. An absent value cell means the key was not stored.
+    const out: AnyRecord = Object.create(null);
+    const section = sections.get(name);
+    if(!section) return out;
+    for(const cells of section.rows){
+      const key = cells[0] ?? '', raw = cells[1] ?? '';
+      if(!key || !raw) continue;
+      try { out[key] = JSON.parse(raw); } catch { /* malformed: leave it absent */ }
+    }
+    return out;
+  }
+  function csvDocumentPayload(sections: Map<string, CsvSection>): AnyRecord | null {
+    // Both entity tables must be present: a truncated appendix must never be
+    // mistaken for a full document and used to wipe the graph.
+    if(!sections.has('nodes') || !sections.has('edges')) return null;
+    const meta = csvSectionMap(sections, 'meta');
+    const payload: AnyRecord = {
+      nodes: csvSectionRecords(sections, 'nodes'),
+      edges: csvSectionRecords(sections, 'edges'),
+      customAttributes: csvSectionRecords(sections, 'attributes'),
+      graphCustom: csvSectionMap(sections, 'graphCustom'),
+      settings: csvSectionMap(sections, 'settings'),
+    };
+    for(const key of CSV_DOC_META_KEYS)
+      if(Object.prototype.hasOwnProperty.call(meta, key)) payload[key] = meta[key];
+    return payload;
+  }
+  // An absent marker means a partial/legacy CSV; a present but truncated one
+  // is an error. Silently falling through to the visible table there would
+  // let a broken full-document file wipe the graph with a misleading success.
+  function importCsvDocument(sections: Map<string, CsvSection> | null, append: boolean): 'absent' | 'invalid' | 'imported' {
+    if(!sections) return 'absent';
+    const payload = csvDocumentPayload(sections);
+    if(!payload){
+      toast(I18N.t('import_failed', {msg: I18N.t('csv_document_incomplete')}));
+      return 'invalid';
+    }
+    // Internal identities (custom-attribute origins) stay verbatim: this is
+    // our own dialect, not a foreign JSON boundary. `internal` keeps the
+    // usual validation/history path but skips the foreign-definition merge,
+    // which would otherwise mint provenance markers on our own definitions.
+    importGraphData(payload, 'CSV', append, true);
+    return 'imported';
+  }
   // Style columns come from the resolved visual, like every other exporter: a
   // value the edge leaves unset is inherited from the edge defaults or its type
   // style, and writing the raw field would record a blank and lose it on import.
@@ -62,7 +242,7 @@
         v.type || '', v.color || '', v.strokeSize ?? '', v.strokeStyle || '', v.arrowSize ?? '',
         v.labelColor || '', v.labelSize ?? '']);
     }
-    return rowsToCsv(rows);
+    return csvWithDocument(rows);
   }
   // A node carries far more than position and fill colour, and a CSV that only
   // wrote those silently reset the rest on re-import. The columns are the same
@@ -75,20 +255,20 @@
     'label_color','label_size','label_position','label_font'];
   function nodeCsv(){
     const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
-    return rowsToCsv([NODE_CSV_COLUMNS, ...sorted.map(n => {
+    return csvWithDocument([NODE_CSV_COLUMNS, ...sorted.map(n => {
       const v = nodeVisual(n);
       return [n.order ?? 0, n.id, n.label, fmtCoord(n.x), fmtCoord(n.y), v.shape || '', v.color || '', v.type || '',
         v.width ?? '', v.height ?? '', v.strokeColor || '', v.strokeSize ?? '', v.strokeStyle || '',
         v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
     })]);
   }
-  // LOSSY ON PURPOSE. The cells hold weights only: no direction, label, style,
-  // type or edge id, and no node geometry/style (those live in Nodes CSV). An
-  // undirected or mutual edge is written into BOTH mirror cells so a reader
-  // that treats the matrix as an adjacency matrix sees it in either direction.
-  // That makes the file indistinguishable from two opposing directed edges with
-  // the same weights — see matrixImportMode() and README "Matrix CSV is lossy".
-  // The format is kept stable for existing files; JSON is the fidelity format.
+  // The visible grid is an ordinary adjacency matrix: weights only, with an
+  // undirected or mutual edge written into BOTH mirror cells so a reader sees
+  // it from either end. Spreadsheets stay happy because the first rows never
+  // change. The full graph rides in the appended document sections (see
+  // csvDocumentRows), so OUR export/import round-trip is lossless; the grid
+  // alone remains ambiguous, which is why matrixImportMode() exists for
+  // hand-written / third-party matrices.
   function matrixCsv(){
     const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     const index = new Map(sorted.map((node, position) => [node.id, position]));
@@ -103,14 +283,24 @@
         sparseRows[to].get(from).push(weight);
       }
     }
-    const lines = [['', ...sorted.map(node => node.label)].map(csvCell).join(',')];
+    const rows: unknown[][] = [['', ...sorted.map(node => node.label)]];
     sorted.forEach((node, rowIndex) => {
       const row = Array.from({length:sorted.length + 1}, () => '');
       row[0] = node.label;
       for(const [column, weights] of sparseRows[rowIndex]) row[column + 1] = weights.join(';');
-      lines.push(row.map(csvCell).join(','));
+      rows.push(row);
     });
-    return '\ufeff' + lines.join('\r\n') + '\r\n';
+    return csvWithDocument(rows);
+  }
+  function csvFormatNote(format: string, fullDoc: boolean, edited = false): string {
+    if(!['matrix-csv','edges-csv','nodes-csv'].includes(format)) return '';
+    // Editing a full-document export makes the appendix stale: say so rather
+    // than promising a lossless restore of text the user just changed.
+    if(fullDoc && edited) return I18N.t('csv_document_edited_note');
+    if(fullDoc) return I18N.t('csv_document_note');
+    if(format === 'matrix-csv') return I18N.t('matrix_csv_legacy_note');
+    if(format === 'edges-csv') return I18N.t('import_modal_edges_note');
+    return I18N.t('import_modal_nodes_note');
   }
   function downloadBlob(name, content, type='application/octet-stream'){
     const blob = new Blob([content], {type}); const url = URL.createObjectURL(blob);
@@ -132,14 +322,15 @@
     else if(lowerName.includes('edges')) format = 'edges-csv';
     else if(lowerName.includes('matrix')) format = 'matrix-csv';
     else if(lowerName.includes('nodes')) format = 'nodes-csv';
-    // The preview doubles as an import box. CSV formats are partial documents,
-    // so say what an Import will replace (and warn that Matrix CSV is lossy)
-    // instead of leaving the shared "Editable" description to imply a full
-    // round-trip.
-    const formatNote = format === 'matrix-csv' ? I18N.t('matrix_csv_modal_note')
-      : format === 'edges-csv' ? I18N.t('import_modal_edges_note')
-      : format === 'nodes-csv' ? I18N.t('import_modal_nodes_note')
-      : '';
+    // The preview doubles as an import box. Say whether this CSV carries the
+    // complete graph or is a partial/foreign file, so Import has no surprises.
+    // A <textarea> normalises CRLF to LF, so compare line endings away —
+    // otherwise a perfectly unedited export would look "edited" and lose its
+    // lossless appendix.
+    const normalizeCsv = (s: string) => s.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n');
+    const csvNote = (text: string) => csvFormatNote(format,
+      looksLikeCsvDocument(text), normalizeCsv(text) !== normalizeCsv(content));
+    const formatNote = csvNote(content);
     document.querySelector('.export-modal')?.remove();
     const returnFocus = document.activeElement as HTMLElement;
     const modal = document.createElement('div');
@@ -171,14 +362,24 @@
     };
     const ta = modal.querySelector<HTMLTextAreaElement>('textarea');
     ta.value = content;
+    // Pasting a different CSV into the box changes what Import will do; keep
+    // the note honest instead of leaving the exporter's wording on screen.
+    const noteEl = modal.querySelector<HTMLElement>('#expFormatNote');
+    ta.addEventListener('input', () => {
+      const note = csvNote(ta.value);
+      if(noteEl){ noteEl.textContent = note; noteEl.hidden = !note; }
+    });
     // Sync the append checkbox with the global one
     const appendChk = modal.querySelector<HTMLInputElement>('#expAppendChk');
     const globalAppend = $('#optImportAppend');
     if(globalAppend) appendChk.checked = globalAppend.checked;
     appendChk.addEventListener('change', () => { if(globalAppend) globalAppend.checked = appendChk.checked; });
     modal.querySelector('#expImportBtn').addEventListener('click', () => {
-      const text = ta.value;
+      let text = ta.value;
       if(!text || !text.trim()){ toast(I18N.t('textarea_empty')); return; }
+      // An edited file is a hand-authored CSV: drop the appendix so the edits
+      // in the visible table actually take effect.
+      if(normalizeCsv(text) !== normalizeCsv(content) && looksLikeCsvDocument(text)) text = stripCsvDocument(text);
       try {
         assertImportTextSize(text);
         if(format === 'json') importGraphData(decodeForeignGraphJson(JSON.parse(text)), 'JSON', appendChk.checked);
@@ -1417,7 +1618,11 @@
     }
     return { defs: kept, skipped, renameByPair, renamed };
   }
-  function importGraphData(data: any, label, append){
+  // `internal` marks a payload written by this same build (the CSV appendix):
+  // its custom-attribute identities are already internal, so the foreign
+  // definition merge/rebind must not run — it would add provenance markers
+  // that were never in the document.
+  function importGraphData(data: any, label, append, internal = false){
     // A blank or non-graph input ({}, an empty <graphml>, bare prose as DOT,
     // a truncated file) must never reach the document: replacing with zero
     // nodes destroys it silently. Fail loudly, change nothing.
@@ -1455,7 +1660,7 @@
       return;
     }
     const graph = data as AnyRecord;
-    if(!append && isRecord(graph)){
+    if(!append && !internal && isRecord(graph)){
       const customAttributes = graph.customAttributes;
       if(Array.isArray(customAttributes)){
         const { defs, skipped, renameByPair, renamed } = capCustomDefinitions(customAttributes, []);
@@ -1505,11 +1710,14 @@
       }
     } catch(err){ toast(I18N.t('paste_failed', {msg: err.message})); }
   }
-  function parseCsv(text){
+  function parseCsv(text, rowStarts: number[] | null = null){
     const rows = [];
     let row = [], field = '', inQuotes = false;
-    text = text.replace(/^\ufeff/, '');
-    for(let i = 0; i < text.length; i++){
+    // Keep the original text: `rowStarts` records each row's offset so the
+    // preview can slice at the appendix without confusing quoted newlines.
+    const offset = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+    let rowStart = offset;
+    for(let i = offset; i < text.length; i++){
       const c = text[i];
       if(inQuotes){
         if(c === '"'){ if(text[i+1] === '"'){ field += '"'; i++; } else inQuotes = false; }
@@ -1518,11 +1726,14 @@
         if(c === '"') inQuotes = true;
         else if(c === ','){ row.push(field); field = ''; }
         else if(c === '\r'){ /* skip */ }
-        else if(c === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
+        else if(c === '\n'){
+          row.push(field); rows.push(row); rowStarts?.push(rowStart);
+          row = []; field = ''; rowStart = i + 1;
+        }
         else field += c;
       }
     }
-    if(field || row.length){ row.push(field); rows.push(row); }
+    if(field || row.length){ row.push(field); rows.push(row); rowStarts?.push(rowStart); }
     return rows.map(cells => cells.map(csvUnescapeCell));
   }
   // Every CSV importer used to write straight into state.nodes/state.edges, so
@@ -1613,7 +1824,12 @@
     };
   }
   function importEdgesCsv(text, append){
-    const rows = parseCsv(text);
+    // An unedited app export is a complete document; its appendix restores
+    // every field. Files without one keep the legacy partial behaviour.
+    const csvParts = splitCsvDocument(parseCsv(text));
+    const docStatus = importCsvDocument(csvParts.sections, append);
+    if(docStatus !== 'absent') return;
+    const rows = csvParts.main;
     if(rows.length < 2){ toast(I18N.t('no_edge_data')); return; }
     const header = rows[0].map(h => h.toLowerCase().trim());
     const idx = name => header.indexOf(name);
@@ -1685,7 +1901,10 @@
   // toast, because two directed edges and one undirected edge are the same
   // bytes in this format — no import can recover which one was exported.
   function importMatrixCsv(text, append, mode: MatrixImportMode = matrixImportMode()){
-    const rows = parseCsv(text);
+    const csvParts = splitCsvDocument(parseCsv(text));
+    const docStatus = importCsvDocument(csvParts.sections, append);
+    if(docStatus !== 'absent') return;
+    const rows = csvParts.main;
     if(rows.length < 2){ toast(I18N.t('no_matrix_data')); return; }
     const labels = rows[0].slice(1);
     const labelToId = new Map(state.nodes.map(n => [n.label, n.id]));
@@ -1802,7 +2021,10 @@
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', 0, note);
   }
   function importNodesCsv(text, append){
-    const rows = parseCsv(text);
+    const csvParts = splitCsvDocument(parseCsv(text));
+    const docStatus = importCsvDocument(csvParts.sections, append);
+    if(docStatus !== 'absent') return;
+    const rows = csvParts.main;
     if(rows.length < 2){ toast(I18N.t('no_node_data')); return; }
     const header = rows[0].map(h => h.toLowerCase().trim());
     const idx = name => header.indexOf(name);
@@ -2568,7 +2790,10 @@
   // Partial CSV imports do not replace the whole graph: Edges/Matrix CSV keep
   // the nodes, Nodes CSV drops the old edges. The generic whole-graph wording
   // used to claim otherwise for every format.
-  function importReplacementMessage(format: string, matrixMode: MatrixImportMode): string {
+  function importReplacementMessage(format: string, matrixMode: MatrixImportMode, fullDocument = false): string {
+    // An app-exported CSV carries the whole graph; a legacy/foreign CSV is a
+    // partial file and gets the scope-specific warning.
+    if(fullDocument) return I18N.t('replace_with_full_csv');
     if(format === 'edges-csv') return I18N.t('replace_edges_with_import');
     if(format === 'matrix-csv') return I18N.t('replace_edges_with_matrix', {mode: matrixModeLabel(matrixMode)});
     if(format === 'nodes-csv') return I18N.t('replace_nodes_with_import');
@@ -2608,7 +2833,7 @@
         const append = $('#optImportAppend')?.checked;
         const matrixMode = matrixImportMode();
         if(!append && (state.nodes.length || state.edges.length)
-          && !await uiConfirm(importReplacementMessage(format, matrixMode), {danger: true, confirmLabel: I18N.t('import_btn')})) return;
+          && !await uiConfirm(importReplacementMessage(format, matrixMode, looksLikeCsvDocument(text)), {danger: true, confirmLabel: I18N.t('import_btn')})) return;
         if(format === 'edges-csv') importEdgesCsv(text, append);
         else if(format === 'matrix-csv') importMatrixCsv(text, append, matrixMode);
         else if(format === 'nodes-csv') importNodesCsv(text, append);
