@@ -82,6 +82,13 @@
         v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
     })]);
   }
+  // LOSSY ON PURPOSE. The cells hold weights only: no direction, label, style,
+  // type or edge id, and no node geometry/style (those live in Nodes CSV). An
+  // undirected or mutual edge is written into BOTH mirror cells so a reader
+  // that treats the matrix as an adjacency matrix sees it in either direction.
+  // That makes the file indistinguishable from two opposing directed edges with
+  // the same weights — see matrixImportMode() and README "Matrix CSV is lossy".
+  // The format is kept stable for existing files; JSON is the fidelity format.
   function matrixCsv(){
     const sorted = state.nodes.toSorted((a,b) => (a.order ?? 0) - (b.order ?? 0));
     const index = new Map(sorted.map((node, position) => [node.id, position]));
@@ -125,6 +132,14 @@
     else if(lowerName.includes('edges')) format = 'edges-csv';
     else if(lowerName.includes('matrix')) format = 'matrix-csv';
     else if(lowerName.includes('nodes')) format = 'nodes-csv';
+    // The preview doubles as an import box. CSV formats are partial documents,
+    // so say what an Import will replace (and warn that Matrix CSV is lossy)
+    // instead of leaving the shared "Editable" description to imply a full
+    // round-trip.
+    const formatNote = format === 'matrix-csv' ? I18N.t('matrix_csv_modal_note')
+      : format === 'edges-csv' ? I18N.t('import_modal_edges_note')
+      : format === 'nodes-csv' ? I18N.t('import_modal_nodes_note')
+      : '';
     document.querySelector('.export-modal')?.remove();
     const returnFocus = document.activeElement as HTMLElement;
     const modal = document.createElement('div');
@@ -146,6 +161,7 @@
           </div>
         </div>
         <p class="tiny muted" style="margin:0">${esc(I18N.t('export_modal_desc'))}</p>
+        ${formatNote ? `<p class="tiny" id="expFormatNote" role="note" style="margin:0;color:#fbbf24">${esc(formatNote)}</p>` : ''}
         <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid var(--control-border);color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:.6875rem;resize:vertical" spellcheck="false"></textarea>
       </div>`;
     document.body.appendChild(modal);
@@ -310,6 +326,23 @@
     const el = document.querySelector('#optDotUnits') as HTMLSelectElement | null;
     const v = el?.value;
     return v === 'inches' || v === 'legacyPixels' ? v : 'auto';
+  }
+  // A matrix cell says "there is a connection with this weight", never which
+  // of two readings is meant. `cells` is the historical, literal reading (each
+  // populated cell is one edge, so the editor's own undirected edge comes back
+  // as two). `mirror` folds a symmetric pair of cells with identical weights
+  // into one undirected edge, which is how an undirected graph round-trips.
+  // Neither reading can recover the original from the file alone: two directed
+  // A→B/B→A edges with the same weights look exactly like one undirected edge.
+  // All matrix import paths (file, clipboard, preview textarea) read this one
+  // explicit choice; JSON remains the only exact round-trip.
+  type MatrixImportMode = 'cells' | 'mirror';
+  function matrixImportMode(): MatrixImportMode {
+    const el = document.querySelector('#optMatrixImportMode') as HTMLSelectElement | null;
+    return el?.value === 'mirror' ? 'mirror' : 'cells';
+  }
+  function matrixModeLabel(mode: MatrixImportMode): string {
+    return I18N.t(mode === 'mirror' ? 'matrix_mode_mirror' : 'matrix_mode_cells');
   }
   function exportDotText(){
     // DOT grammar: the edge operator is fixed by the graph kind — `graph` takes
@@ -1514,10 +1547,12 @@
     pushHistory(label); queueRender(true, true); saveSoon();
     return { droppedNodes, droppedEdges };
   }
-  function csvImportToast(imported: number, dropped: number, skipped: number, limit: number, key: string, renamed = 0) {
-    // One toast, not a stack of four: the import reports itself once, and a
-    // rename note is appended rather than pushed on top of the summary.
-    const suffix = renamed > 0 ? ' · ' + I18N.t('csv_ids_renamed', {n: renamed}) : '';
+  function csvImportToast(imported: number, dropped: number, skipped: number, limit: number, key: string, renamed = 0, note = '') {
+    // One toast, not a stack of four: the import reports itself once, and the
+    // rename / interpretation notes are appended rather than pushed on top of
+    // the summary.
+    const suffix = (renamed > 0 ? ' · ' + I18N.t('csv_ids_renamed', {n: renamed}) : '')
+      + (note ? ' · ' + note : '');
     if(dropped > 0){ toast(I18N.t('csv_import_capped', {imported, dropped, limit}) + suffix); return; }
     if(skipped > 0){ toast(I18N.t('csv_import_skipped', {imported, skipped}) + suffix); return; }
     toast(I18N.t(key, {n: imported}) + suffix);
@@ -1640,7 +1675,16 @@
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', edgeIds.renamed());
   }
-  function importMatrixCsv(text, append){
+  // The reader cannot infer direction from a matrix, so it applies the one
+  // interpretation the user selected (see matrixImportMode). Every populated
+  // cell becomes a list of edges in `cells` mode; in `mirror` mode a pair of
+  // symmetric cells with identical weights becomes ONE undirected edge per
+  // weight. Cells without a matching mirror (different weights, a one-sided
+  // cell, or a self-loop) keep the literal reading and use the graph's default
+  // direction. A symmetric pair that is *not* collapsed is reported in the
+  // toast, because two directed edges and one undirected edge are the same
+  // bytes in this format — no import can recover which one was exported.
+  function importMatrixCsv(text, append, mode: MatrixImportMode = matrixImportMode()){
     const rows = parseCsv(text);
     if(rows.length < 2){ toast(I18N.t('no_matrix_data')); return; }
     const labels = rows[0].slice(1);
@@ -1668,7 +1712,9 @@
     const resolvableColumns = labels.reduce((n, l) => n + (resolveNode(l) != null ? 1 : 0), 0);
     const initialEdges = append ? state.edges.length : 0;
     const edges: GraphEdge[] = append ? state.edges.slice() : [];
-    let parsed = 0, skipped = 0, validRows = 0;
+    type MatrixCell = { from: string; to: string; weights: string[] };
+    const cells: MatrixCell[] = [];
+    let skipped = 0, validRows = 0;
     for(let r = 1; r < rows.length; r++){
       const row = rows[r]; if(!row.length) continue;
       const fromId = resolveNode(row[0]);
@@ -1698,12 +1744,47 @@
           skipped++;
           continue;
         }
-        for(const w of weights){
-          const dir = normalizeDirection((state.settings as any).direction ?? state.settings.directed);
-          edges.push({ id:'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0,50), label:'', directed: (dir !== 'undirected') as any, direction: dir as any, type:'' });
-          parsed++;
-        }
+        cells.push({from: fromId, to: toId, weights});
       }
+    }
+    // Resolve the ambiguity before creating any edge. JSON is the only exact
+    // format; these two readings are both guesses, so the toast says which one
+    // was applied whenever a symmetric pair was involved.
+    const dir = normalizeDirection((state.settings as any).direction ?? state.settings.directed);
+    const keyOf = (from: string, to: string) => JSON.stringify([from, to]);
+    const byKey = new Map<string, number[]>();
+    cells.forEach((cell, i) => {
+      const key = keyOf(cell.from, cell.to);
+      const list = byKey.get(key);
+      if(list) list.push(i); else byKey.set(key, [i]);
+    });
+    const sameWeights = (a: string[], b: string[]) => a.length === b.length && a.every((w, i) => w === b[i]);
+    const consumed = new Set<number>(), symmetricSeen = new Set<number>();
+    let parsed = 0, mirroredPairs = 0, ambiguousPairs = 0;
+    const pushEdge = (from: string, to: string, weight: string, undirected: boolean) => {
+      const d = undirected ? 'undirected' : dir;
+      edges.push({ id:'e' + (state.nextEdge + parsed), from, to, weight: weight.slice(0,50), label:'', directed: (d !== 'undirected') as any, direction: d as any, type:'' });
+      parsed++;
+    };
+    for(let i = 0; i < cells.length; i++){
+      if(consumed.has(i)) continue;
+      const cell = cells[i];
+      // A self-loop has no distinct mirror cell, so it can never be collapsed.
+      const partner = cell.from === cell.to ? undefined
+        : (byKey.get(keyOf(cell.to, cell.from)) || []).find(j =>
+            !consumed.has(j) && j !== i && sameWeights(cells[j].weights, cell.weights));
+      if(partner !== undefined && mode === 'mirror'){
+        consumed.add(i); consumed.add(partner);
+        mirroredPairs++;
+        for(const w of cell.weights) pushEdge(cell.from, cell.to, w, true);
+        continue;
+      }
+      if(partner !== undefined && !symmetricSeen.has(i) && !symmetricSeen.has(partner)){
+        // Literal reading: both cells stay edges, but warn that the same file
+        // could just as well have described one undirected edge.
+        ambiguousPairs++; symmetricSeen.add(i); symmetricSeen.add(partner);
+      }
+      for(const w of cell.weights) pushEdge(cell.from, cell.to, w, false);
     }
     // Commit zero edges only when the file says "empty graph": rows of live
     // nodes over live columns, and no populated byte anywhere that was not
@@ -1716,7 +1797,9 @@
       && validRows > 0 && skipped === 0;
     if(parsed === 0 && !append && !recognizable){ toast(I18N.t('csv_nothing_parsed')); return; }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
-    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
+    const note = mirroredPairs > 0 ? I18N.t('matrix_mirror_applied', {n: mirroredPairs})
+      : ambiguousPairs > 0 ? I18N.t('matrix_pairs_ambiguous', {n: ambiguousPairs}) : '';
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', 0, note);
   }
   function importNodesCsv(text, append){
     const rows = parseCsv(text);
@@ -2469,6 +2552,28 @@
     // changing defaults later affects all nodes with unset properties.
     return {title:'imported-graphml', nodes, edges, customAttributes, graphCustom, settings};
   }
+  // Auto-detection is resolved BEFORE the replace confirmation, so the dialog
+  // can name the operation the chosen format actually performs. An explicit
+  // per-format Import button skips this heuristic: pressing "Import Nodes CSV"
+  // means nodes, whatever the file is called, and the readers validate columns.
+  function csvKindFrom(name: string, text: string): string {
+    if(name.includes('edge')) return 'edges-csv';
+    if(name.includes('matrix')) return 'matrix-csv';
+    if(name.includes('node')) return 'nodes-csv';
+    const firstLine = text.split('\n')[0].toLowerCase();
+    if(firstLine.includes('source_id') || firstLine.includes('from')) return 'edges-csv';
+    if(firstLine.startsWith('id,') || firstLine.includes('label') && !firstLine.includes('source')) return 'nodes-csv';
+    return 'matrix-csv';
+  }
+  // Partial CSV imports do not replace the whole graph: Edges/Matrix CSV keep
+  // the nodes, Nodes CSV drops the old edges. The generic whole-graph wording
+  // used to claim otherwise for every format.
+  function importReplacementMessage(format: string, matrixMode: MatrixImportMode): string {
+    if(format === 'edges-csv') return I18N.t('replace_edges_with_import');
+    if(format === 'matrix-csv') return I18N.t('replace_edges_with_matrix', {mode: matrixModeLabel(matrixMode)});
+    if(format === 'nodes-csv') return I18N.t('replace_nodes_with_import');
+    return I18N.t('replace_with_import');
+  }
   function importFile(file, forcedFormat='auto'){
     if(!file) return;
     if(file.size > MAX_IMPORT_BYTES){
@@ -2476,42 +2581,44 @@
       return;
     }
     const reader = new FileReader();
+    const fileName = file.name || I18N.t('file_unnamed');
+    // FileReader.onload alone left a read failure (moved/deleted/locked file,
+    // permission error) or an abort completely silent: no toast, no dialog,
+    // and the user could not tell whether the import had run. Report each
+    // terminal state once, with something the user can do about it.
+    let readSettled = false;
+    const reportReadProblem = (message: string) => {
+      if(readSettled) return;
+      readSettled = true;
+      toast(message);
+    };
+    reader.onerror = () => {
+      const detail = reader.error?.message || I18N.t('file_read_unknown');
+      reportReadProblem(I18N.t('file_read_failed', {name: fileName, msg: detail}));
+    };
+    reader.onabort = () => reportReadProblem(I18N.t('file_read_aborted', {name: fileName}));
     reader.onload = async () => {
+      readSettled = true;
       try{
         const text = String(reader.result || '');
         assertImportTextSize(text);
         const name = (file.name || '').toLowerCase();
-        const format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
+        let format: string = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
+        if(format === 'csv') format = csvKindFrom(name, text);
         const append = $('#optImportAppend')?.checked;
-        // An explicit CSV kind (chosen with a per-format Import button) skips
-        // the filename/header heuristic below: a user who pressed "Import Nodes
-        // CSV" means nodes, whatever the file is called. The three readers keep
-        // their own column validation, so a mismatched file reports itself.
-        if(format !== 'auto' && format.endsWith('-csv')){
-          if(!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), {danger: true, confirmLabel: I18N.t('import_btn')})) return;
-          if(format === 'edges-csv') importEdgesCsv(text, append);
-          else if(format === 'matrix-csv') importMatrixCsv(text, append);
-          else importNodesCsv(text, append);
-          return;
-        }
-        if(!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), {danger: true, confirmLabel: I18N.t('import_btn')})) return;
-        if(format === 'dot') importGraphData(parseDot(text, { units: dotUnitsChoice() }), 'DOT', append);
+        const matrixMode = matrixImportMode();
+        if(!append && (state.nodes.length || state.edges.length)
+          && !await uiConfirm(importReplacementMessage(format, matrixMode), {danger: true, confirmLabel: I18N.t('import_btn')})) return;
+        if(format === 'edges-csv') importEdgesCsv(text, append);
+        else if(format === 'matrix-csv') importMatrixCsv(text, append, matrixMode);
+        else if(format === 'nodes-csv') importNodesCsv(text, append);
+        else if(format === 'dot') importGraphData(parseDot(text, { units: dotUnitsChoice() }), 'DOT', append);
         else if(format === 'graphml') importGraphData(parseGraphml(text), 'GraphML', append);
-        else if(format === 'csv'){
-          // Auto-detect CSV type from filename or header
-          if(name.includes('edge')) importEdgesCsv(text, append);
-          else if(name.includes('matrix')) importMatrixCsv(text, append);
-          else if(name.includes('node')) importNodesCsv(text, append);
-          else {
-            // Detect by header
-            const firstLine = text.split('\n')[0].toLowerCase();
-            if(firstLine.includes('source_id') || firstLine.includes('from')) importEdgesCsv(text, append);
-            else if(firstLine.startsWith('id,') || firstLine.includes('label') && !firstLine.includes('source')) importNodesCsv(text, append);
-            else importMatrixCsv(text, append);
-          }
-        }
         else { importGraphData(decodeForeignGraphJson(JSON.parse(text)), 'JSON', append); }
       } catch(err){ toast(I18N.t('could_not_import', {msg: err.message})); }
     };
-    reader.readAsText(file);
+    try { reader.readAsText(file); }
+    catch(err){
+      reportReadProblem(I18N.t('file_read_failed', {name: fileName, msg: err.message || I18N.t('file_read_unknown')}));
+    }
   }

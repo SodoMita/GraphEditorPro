@@ -1530,6 +1530,13 @@
                     <option value="points" data-i18n="dot_export_points">Points + inputscale=72 (neato -n)</option>
                   </select>
                 </label>
+                <label class="field col" for="optMatrixImportMode"><span data-i18n="matrix_import_mode">Matrix CSV import interpretation</span>
+                  <select id="optMatrixImportMode">
+                    <option value="cells" data-i18n="matrix_mode_cells">One edge per cell (mirror cells stay two edges)</option>
+                    <option value="mirror" data-i18n="matrix_mode_mirror">Mirror cells are one undirected edge</option>
+                  </select>
+                </label>
+                <p class="tiny muted" style="margin:2px 0 6px" data-i18n="matrix_csv_note">Matrix CSV carries only weights between labelled nodes. Edge direction (directed / mutual / undirected), labels, styles and ids are not stored, and an undirected edge is written in both mirror cells — the same shape as two opposing directed edges. Choose the interpretation when importing; use JSON to preserve the graph exactly.</p>
                 <div class="io-grid">
                   <div class="io-row">
                     <span class="io-format">JSON</span>
@@ -1671,6 +1678,7 @@
                 <p class="tiny muted"><span data-i18n-html="help_matrix_editing"><b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_zoom"><b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_exports"><b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.</span></p>
+                <p class="tiny muted"><span data-i18n-html="help_matrix_csv"><b>Matrix CSV is lossy:</b> it stores only weights between labelled nodes, not edge direction, labels, styles or ids. An undirected (or mutual) edge is written in both mirror cells, just like two opposing directed edges, so exporting and re-importing can change the edge count. Pick the interpretation in Data → Import / export, and use JSON when you need the graph back exactly.</span></p>
                 <p class="tiny muted"><span data-i18n-html="help_copy_paste"><b>Copy / paste selection:</b> Ctrl+C copies the selected nodes with the edges between them, Ctrl+X cuts, Ctrl+D duplicates in place, Ctrl+V pastes with an offset (also across tabs, via the system clipboard). Ctrl+Alt+V (or Ctrl+Shift+V) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.</span></p>
               </div>
             </details>
@@ -2846,6 +2854,28 @@ const I18N = {
         'copy_nodes': { en: 'Copy Nodes', ru: 'Копировать узлы' },
         'paste_nodes': { en: 'Paste Nodes', ru: 'Вставить узлы' },
         'import_export_desc': { en: 'Every format supports export (preview + copy + download), clipboard copy, clipboard paste, and file import. Use "Append" to merge imported nodes/edges into the current graph without changing styles or background.', ru: 'Каждый формат поддерживает экспорт (предпросмотр + копирование + скачивание), копирование в буфер, вставку из буфера и импорт файла. Включите «Добавить», чтобы влить импортированные узлы и рёбра в текущий граф без изменения стилей и фона.' },
+        // Matrix CSV is deliberately lossy: a symmetric pair of cells is exactly
+        // the same shape for one undirected edge and for two opposing directed
+        // edges. The reader must say which one it means instead of guessing.
+        'matrix_import_mode': { en: 'Matrix CSV import interpretation', ru: 'Интерпретация Matrix CSV при импорте' },
+        'matrix_mode_cells': { en: 'One edge per cell (mirror cells stay two edges)', ru: 'Одно ребро на ячейку (зеркальные ячейки дают два ребра)' },
+        'matrix_mode_mirror': { en: 'Mirror cells are one undirected edge', ru: 'Зеркальные ячейки — одно неориентированное ребро' },
+        'matrix_csv_note': {
+            en: 'Matrix CSV carries only weights between labelled nodes. Edge direction (directed / mutual / undirected), labels, styles and ids are not stored, and an undirected edge is written in both mirror cells — the same shape as two opposing directed edges. Choose the interpretation when importing; use JSON to preserve the graph exactly.',
+            ru: 'Matrix CSV содержит только веса между узлами по их меткам. Направление (ориентированное / двунаправленное / неориентированное), подписи, стили и идентификаторы рёбер не сохраняются, а неориентированное ребро записывается в обе зеркальные ячейки — так же, как два встречных ориентированных ребра. Выберите интерпретацию при импорте; для точного сохранения графа используйте JSON.'
+        },
+        'matrix_csv_modal_note': {
+            en: 'Matrix CSV is lossy: it cannot record edge direction, labels or styles, and mirror cells are ambiguous. Set the interpretation in Data → Import / export, or use JSON for an exact round-trip.',
+            ru: 'Matrix CSV теряет данные: направление, подписи и стили рёбер не записываются, а зеркальные ячейки неоднозначны. Задайте интерпретацию во вкладке «Данные» → «Импорт / экспорт» или используйте JSON для точного восстановления.'
+        },
+        'import_modal_edges_note': {
+            en: 'Importing this Edges CSV replaces the current edges; nodes, styles and background are kept.',
+            ru: 'Импорт этих рёбер CSV заменит текущие рёбра; узлы, стили и фон сохранятся.'
+        },
+        'import_modal_nodes_note': {
+            en: 'Importing this Nodes CSV replaces the current nodes and removes the current edges.',
+            ru: 'Импорт этих узлов CSV заменит текущие узлы и удалит текущие рёбра.'
+        },
         'layout_view': { en: 'Layout and view', ru: 'Раскладка и вид' },
         'layout_circle': { en: 'Circle', ru: 'Круг' },
         'grid': { en: 'Grid', ru: 'Сетка' },
@@ -2885,6 +2915,10 @@ const I18N = {
         'help_matrix_editing': { en: '<b>Matrix editing:</b> click a cell once to select it without triggering the keyboard; click again to edit it. This lets you select on mobile without the on-screen keyboard popping up.', ru: '<b>Редактирование матрицы:</b> кликните по ячейке один раз для выбора без вызова клавиатуры; кликните снова для редактирования. Это позволяет выбирать на мобильных без всплывающей клавиатуры.' },
         'help_zoom': { en: '<b>Zoom:</b> mouse wheel / trackpad over the canvas, or pinch on mobile/tablet. Camera position can also be set numerically in the Data tab.', ru: '<b>Масштаб:</b> колесо мыши или трекпад над холстом, щипок на мобильных и планшетах. Положение камеры можно задать числами во вкладке «Данные».' },
         'help_exports': { en: '<b>Exports:</b> every format (JSON, DOT, GraphML, Edges/Matrix/Nodes CSV) supports both file download and copy-to-clipboard.', ru: '<b>Экспорт:</b> каждый формат (JSON, DOT, GraphML, Рёбра/Матрица/Узлы CSV) поддерживает скачивание файла и копирование в буфер.' },
+        'help_matrix_csv': {
+            en: '<b>Matrix CSV is lossy:</b> it stores only weights between labelled nodes, not edge direction, labels, styles or ids. An undirected (or mutual) edge is written in both mirror cells, just like two opposing directed edges, so exporting and re-importing can change the edge count. Pick the interpretation in Data → Import / export, and use JSON when you need the graph back exactly.',
+            ru: '<b>Matrix CSV теряет данные:</b> в нём только веса между узлами по меткам, без направления, подписей, стилей и идентификаторов рёбер. Неориентированное (или двунаправленное) ребро попадает в обе зеркальные ячейки, как и два встречных ориентированных ребра, поэтому число рёбер после повторного импорта может измениться. Выберите интерпретацию во вкладке «Данные» → «Импорт / экспорт», а для точного восстановления используйте JSON.'
+        },
         'help_copy_paste': { en: '<b>Copy / paste selection:</b> <span class="kbd">Ctrl+C</span> copies the selected nodes with the edges between them, <span class="kbd">Ctrl+X</span> cuts, <span class="kbd">Ctrl+D</span> duplicates in place, <span class="kbd">Ctrl+V</span> pastes with an offset (also across tabs, via the system clipboard). <span class="kbd">Ctrl+Alt+V</span> (or <span class="kbd">Ctrl+Shift+V</span>) pastes <b>in place</b>: at the copied coordinates, reusing nodes and edges whose ids already exist and updating only the carried values. Edges with only one endpoint in the selection are restored on paste when the other endpoint still exists — see "Preserve dangling edges" in the Edit tab.', ru: '<b>Копирование / вставка выделения:</b> <span class="kbd">Ctrl+C</span> копирует выбранные узлы с рёбрами между ними, <span class="kbd">Ctrl+X</span> вырезает, <span class="kbd">Ctrl+D</span> дублирует на месте, <span class="kbd">Ctrl+V</span> вставляет со смещением (также между вкладками, через системный буфер). <span class="kbd">Ctrl+Alt+V (или Ctrl+Shift+V)</span> вставляет <b>на месте</b>: по исходным координатам, используя существующие узлы и рёбра с теми же id и изменяя только перенесённые значения. Рёбра только с одним концом в выделении восстанавливаются при вставке, если второй конец существует — см. «Сохранять висящие рёбра» во вкладке Правка.' },
         'hotkeys': { en: 'Hotkeys', ru: 'Горячие клавиши' },
         'reset_defaults': { en: 'Reset to defaults', ru: 'Сбросить по умолчанию' },
@@ -3085,6 +3119,32 @@ const I18N = {
         'sample_loaded': { en: 'Sample graph loaded', ru: 'Загружен пример графа' },
         'replace_with_sample': { en: 'Replace current graph with a sample?', ru: 'Заменить текущий граф примером?' },
         'replace_with_import': { en: 'Replace current graph with imported file?', ru: 'Заменить текущий граф импортированным файлом?' },
+        // A partial CSV import does not replace the whole graph. Say exactly what
+        // is lost so the generic "Replace current graph" cannot mislead.
+        'replace_edges_with_import': {
+            en: 'Replace the current edges with the imported Edges CSV? Nodes, styles and background are kept.',
+            ru: 'Заменить текущие рёбра импортированными из Edges CSV? Узлы, стили и фон сохранятся.'
+        },
+        'replace_edges_with_matrix': {
+            en: 'Replace the current edges with the imported Matrix CSV? Nodes are kept. Interpretation: {mode}. Matrix CSV cannot store edge direction — use JSON for an exact copy.',
+            ru: 'Заменить текущие рёбра импортированными из Matrix CSV? Узлы сохранятся. Интерпретация: {mode}. Matrix CSV не хранит направление рёбер — для точной копии используйте JSON.'
+        },
+        'replace_nodes_with_import': {
+            en: 'Replace the current nodes with the imported Nodes CSV? The current edges will be removed.',
+            ru: 'Заменить текущие узлы импортированными из Nodes CSV? Текущие рёбра будут удалены.'
+        },
+        // FileReader can fail (moved/deleted/locked file, permission error) or be
+        // aborted. Without handlers the import just silently does nothing.
+        'file_read_failed': {
+            en: 'Could not read "{name}": {msg}. Re-select the file (it may have moved, been deleted or be locked), or paste its contents into the export preview and click Import.',
+            ru: 'Не удалось прочитать «{name}»: {msg}. Выберите файл заново (он мог переместиться, быть удалён или занят) либо вставьте содержимое в окно экспорта и нажмите «Импорт».'
+        },
+        'file_read_aborted': {
+            en: 'Reading "{name}" was aborted before it finished. Choose the file again to import it.',
+            ru: 'Чтение «{name}» прервано до завершения. Выберите файл заново для импорта.'
+        },
+        'file_read_unknown': { en: 'unknown read error', ru: 'неизвестная ошибка чтения' },
+        'file_unnamed': { en: 'the selected file', ru: 'выбранный файл' },
         'clear_entire': { en: 'Clear the entire graph?', ru: 'Очистить весь граф?' },
         'clear_matrix_edges': { en: 'Clear all edges in the adjacency matrix?', ru: 'Очистить все рёбра в матрице смежности?' },
         'node_defaults_applied': { en: 'Node defaults applied to all', ru: 'Значения по умолчанию применены ко всем узлам' },
@@ -3146,6 +3206,16 @@ const I18N = {
         'csv_nothing_parsed': { en: 'Nothing could be imported — the document is unchanged', ru: 'Не удалось ничего импортировать — документ не изменён' },
         'csv_import_skipped': { en: 'Imported {imported}; skipped {skipped} entries with unknown nodes', ru: 'Импортировано: {imported}; пропущено записей с неизвестными узлами: {skipped}' },
         'csv_nodes_replaced_edges': { en: 'Imported {n:node}; {e} old edges were dropped together with the replaced graph', ru: 'Импортировано: {n:node}; вместе с заменённым графом удалено старых рёбер: {e}' },
+        // Appended to the single matrix-import toast: the format is ambiguous, so
+        // the user must be told which interpretation was used (and what it cost).
+        'matrix_mirror_applied': {
+            en: '{n} mirror pair(s) became one undirected edge each; use JSON to keep direction',
+            ru: '{n} зеркальных пар стали неориентированными рёбрами; для сохранения направления используйте JSON'
+        },
+        'matrix_pairs_ambiguous': {
+            en: '{n} mirror pair(s) were imported as separate edges — choose the mirror interpretation if they were undirected',
+            ru: '{n} зеркальных пар импортированы как отдельные рёбра — выберите интерпретацию зеркальных пар, если они были неориентированными'
+        },
         'matrix_cap_reached': { en: 'The matrix renders at most {cap}×{cap} nodes; the graph was not enlarged further.', ru: 'Матрица отображает не более {cap}×{cap} узлов; граф дальше не увеличивался.' },
         'matrix_hidden_limit': { en: 'Matrix hidden for performance: {total:node} exceed the limit {limit} (the matrix renders at most {cap}). Raise the limit up to {cap}, or use the edge list / Matrix CSV export.', ru: 'Матрица скрыта для производительности: {total:node} превышают лимит {limit} (матрица отображается максимум для {cap}). Поднимите лимит до {cap} или используйте список рёбер или экспорт «Матрица CSV».' },
         'layout_force_reduced': { en: 'Large graph: force layout ran {iter:pass} instead of 180 to stay responsive', ru: 'Большой граф: раскладка выполнена за {iter:pass} вместо 180, чтобы не подвешивать интерфейс' },
@@ -14839,6 +14909,13 @@ function nodeCsv() {
                 v.labelColor || '', v.labelSize ?? '', v.labelPosition || '', v.labelFont || ''];
         })]);
 }
+// LOSSY ON PURPOSE. The cells hold weights only: no direction, label, style,
+// type or edge id, and no node geometry/style (those live in Nodes CSV). An
+// undirected or mutual edge is written into BOTH mirror cells so a reader
+// that treats the matrix as an adjacency matrix sees it in either direction.
+// That makes the file indistinguishable from two opposing directed edges with
+// the same weights — see matrixImportMode() and README "Matrix CSV is lossy".
+// The format is kept stable for existing files; JSON is the fidelity format.
 function matrixCsv() {
     const sorted = state.nodes.toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const index = new Map(sorted.map((node, position) => [node.id, position]));
@@ -14898,6 +14975,14 @@ function showExportPreview(name, content, type) {
         format = 'matrix-csv';
     else if (lowerName.includes('nodes'))
         format = 'nodes-csv';
+    // The preview doubles as an import box. CSV formats are partial documents,
+    // so say what an Import will replace (and warn that Matrix CSV is lossy)
+    // instead of leaving the shared "Editable" description to imply a full
+    // round-trip.
+    const formatNote = format === 'matrix-csv' ? I18N.t('matrix_csv_modal_note')
+        : format === 'edges-csv' ? I18N.t('import_modal_edges_note')
+            : format === 'nodes-csv' ? I18N.t('import_modal_nodes_note')
+                : '';
     document.querySelector('.export-modal')?.remove();
     const returnFocus = document.activeElement;
     const modal = document.createElement('div');
@@ -14919,6 +15004,7 @@ function showExportPreview(name, content, type) {
           </div>
         </div>
         <p class="tiny muted" style="margin:0">${esc(I18N.t('export_modal_desc'))}</p>
+        ${formatNote ? `<p class="tiny" id="expFormatNote" role="note" style="margin:0;color:#fbbf24">${esc(formatNote)}</p>` : ''}
         <textarea aria-label="${esc(name)}" style="flex:1;min-height:clamp(100px,32vh,240px);width:100%;background:#020617;border:1px solid var(--control-border);color:#dbeafe;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:.6875rem;resize:vertical" spellcheck="false"></textarea>
       </div>`;
     document.body.appendChild(modal);
@@ -15124,6 +15210,13 @@ function dotUnitsChoice() {
     const el = document.querySelector('#optDotUnits');
     const v = el?.value;
     return v === 'inches' || v === 'legacyPixels' ? v : 'auto';
+}
+function matrixImportMode() {
+    const el = document.querySelector('#optMatrixImportMode');
+    return el?.value === 'mirror' ? 'mirror' : 'cells';
+}
+function matrixModeLabel(mode) {
+    return I18N.t(mode === 'mirror' ? 'matrix_mode_mirror' : 'matrix_mode_cells');
 }
 function exportDotText() {
     // DOT grammar: the edge operator is fixed by the graph kind — `graph` takes
@@ -16399,10 +16492,12 @@ function commitCsvGraph(nodes, edges, label) {
     saveSoon();
     return { droppedNodes, droppedEdges };
 }
-function csvImportToast(imported, dropped, skipped, limit, key, renamed = 0) {
-    // One toast, not a stack of four: the import reports itself once, and a
-    // rename note is appended rather than pushed on top of the summary.
-    const suffix = renamed > 0 ? ' · ' + I18N.t('csv_ids_renamed', { n: renamed }) : '';
+function csvImportToast(imported, dropped, skipped, limit, key, renamed = 0, note = '') {
+    // One toast, not a stack of four: the import reports itself once, and the
+    // rename / interpretation notes are appended rather than pushed on top of
+    // the summary.
+    const suffix = (renamed > 0 ? ' · ' + I18N.t('csv_ids_renamed', { n: renamed }) : '')
+        + (note ? ' · ' + note : '');
     if (dropped > 0) {
         toast(I18N.t('csv_import_capped', { imported, dropped, limit }) + suffix);
         return;
@@ -16571,7 +16666,16 @@ function importEdgesCsv(text, append) {
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import edges csv');
     csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', edgeIds.renamed());
 }
-function importMatrixCsv(text, append) {
+// The reader cannot infer direction from a matrix, so it applies the one
+// interpretation the user selected (see matrixImportMode). Every populated
+// cell becomes a list of edges in `cells` mode; in `mirror` mode a pair of
+// symmetric cells with identical weights becomes ONE undirected edge per
+// weight. Cells without a matching mirror (different weights, a one-sided
+// cell, or a self-loop) keep the literal reading and use the graph's default
+// direction. A symmetric pair that is *not* collapsed is reported in the
+// toast, because two directed edges and one undirected edge are the same
+// bytes in this format — no import can recover which one was exported.
+function importMatrixCsv(text, append, mode = matrixImportMode()) {
     const rows = parseCsv(text);
     if (rows.length < 2) {
         toast(I18N.t('no_matrix_data'));
@@ -16605,7 +16709,8 @@ function importMatrixCsv(text, append) {
     const resolvableColumns = labels.reduce((n, l) => n + (resolveNode(l) != null ? 1 : 0), 0);
     const initialEdges = append ? state.edges.length : 0;
     const edges = append ? state.edges.slice() : [];
-    let parsed = 0, skipped = 0, validRows = 0;
+    const cells = [];
+    let skipped = 0, validRows = 0;
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
         if (!row.length)
@@ -16645,12 +16750,55 @@ function importMatrixCsv(text, append) {
                 skipped++;
                 continue;
             }
-            for (const w of weights) {
-                const dir = normalizeDirection(state.settings.direction ?? state.settings.directed);
-                edges.push({ id: 'e' + (state.nextEdge + parsed), from: fromId, to: toId, weight: w.slice(0, 50), label: '', directed: (dir !== 'undirected'), direction: dir, type: '' });
-                parsed++;
-            }
+            cells.push({ from: fromId, to: toId, weights });
         }
+    }
+    // Resolve the ambiguity before creating any edge. JSON is the only exact
+    // format; these two readings are both guesses, so the toast says which one
+    // was applied whenever a symmetric pair was involved.
+    const dir = normalizeDirection(state.settings.direction ?? state.settings.directed);
+    const keyOf = (from, to) => JSON.stringify([from, to]);
+    const byKey = new Map();
+    cells.forEach((cell, i) => {
+        const key = keyOf(cell.from, cell.to);
+        const list = byKey.get(key);
+        if (list)
+            list.push(i);
+        else
+            byKey.set(key, [i]);
+    });
+    const sameWeights = (a, b) => a.length === b.length && a.every((w, i) => w === b[i]);
+    const consumed = new Set(), symmetricSeen = new Set();
+    let parsed = 0, mirroredPairs = 0, ambiguousPairs = 0;
+    const pushEdge = (from, to, weight, undirected) => {
+        const d = undirected ? 'undirected' : dir;
+        edges.push({ id: 'e' + (state.nextEdge + parsed), from, to, weight: weight.slice(0, 50), label: '', directed: (d !== 'undirected'), direction: d, type: '' });
+        parsed++;
+    };
+    for (let i = 0; i < cells.length; i++) {
+        if (consumed.has(i))
+            continue;
+        const cell = cells[i];
+        // A self-loop has no distinct mirror cell, so it can never be collapsed.
+        const partner = cell.from === cell.to ? undefined
+            : (byKey.get(keyOf(cell.to, cell.from)) || []).find(j => !consumed.has(j) && j !== i && sameWeights(cells[j].weights, cell.weights));
+        if (partner !== undefined && mode === 'mirror') {
+            consumed.add(i);
+            consumed.add(partner);
+            mirroredPairs++;
+            for (const w of cell.weights)
+                pushEdge(cell.from, cell.to, w, true);
+            continue;
+        }
+        if (partner !== undefined && !symmetricSeen.has(i) && !symmetricSeen.has(partner)) {
+            // Literal reading: both cells stay edges, but warn that the same file
+            // could just as well have described one undirected edge.
+            ambiguousPairs++;
+            symmetricSeen.add(i);
+            symmetricSeen.add(partner);
+        }
+        for (const w of cell.weights)
+            pushEdge(cell.from, cell.to, w, false);
     }
     // Commit zero edges only when the file says "empty graph": rows of live
     // nodes over live columns, and no populated byte anywhere that was not
@@ -16666,7 +16814,9 @@ function importMatrixCsv(text, append) {
         return;
     }
     const { droppedEdges } = commitCsvGraph(state.nodes, edges, 'import matrix csv');
-    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges');
+    const note = mirroredPairs > 0 ? I18N.t('matrix_mirror_applied', { n: mirroredPairs })
+        : ambiguousPairs > 0 ? I18N.t('matrix_pairs_ambiguous', { n: ambiguousPairs }) : '';
+    csvImportToast(state.edges.length - initialEdges, droppedEdges, skipped, 8000, 'imported_n_edges', 0, note);
 }
 function importNodesCsv(text, append) {
     const rows = parseCsv(text);
@@ -17497,6 +17647,36 @@ function parseGraphml(text) {
     // changing defaults later affects all nodes with unset properties.
     return { title: 'imported-graphml', nodes, edges, customAttributes, graphCustom, settings };
 }
+// Auto-detection is resolved BEFORE the replace confirmation, so the dialog
+// can name the operation the chosen format actually performs. An explicit
+// per-format Import button skips this heuristic: pressing "Import Nodes CSV"
+// means nodes, whatever the file is called, and the readers validate columns.
+function csvKindFrom(name, text) {
+    if (name.includes('edge'))
+        return 'edges-csv';
+    if (name.includes('matrix'))
+        return 'matrix-csv';
+    if (name.includes('node'))
+        return 'nodes-csv';
+    const firstLine = text.split('\n')[0].toLowerCase();
+    if (firstLine.includes('source_id') || firstLine.includes('from'))
+        return 'edges-csv';
+    if (firstLine.startsWith('id,') || firstLine.includes('label') && !firstLine.includes('source'))
+        return 'nodes-csv';
+    return 'matrix-csv';
+}
+// Partial CSV imports do not replace the whole graph: Edges/Matrix CSV keep
+// the nodes, Nodes CSV drops the old edges. The generic whole-graph wording
+// used to claim otherwise for every format.
+function importReplacementMessage(format, matrixMode) {
+    if (format === 'edges-csv')
+        return I18N.t('replace_edges_with_import');
+    if (format === 'matrix-csv')
+        return I18N.t('replace_edges_with_matrix', { mode: matrixModeLabel(matrixMode) });
+    if (format === 'nodes-csv')
+        return I18N.t('replace_nodes_with_import');
+    return I18N.t('replace_with_import');
+}
 function importFile(file, forcedFormat = 'auto') {
     if (!file)
         return;
@@ -17505,53 +17685,47 @@ function importFile(file, forcedFormat = 'auto') {
         return;
     }
     const reader = new FileReader();
+    const fileName = file.name || I18N.t('file_unnamed');
+    // FileReader.onload alone left a read failure (moved/deleted/locked file,
+    // permission error) or an abort completely silent: no toast, no dialog,
+    // and the user could not tell whether the import had run. Report each
+    // terminal state once, with something the user can do about it.
+    let readSettled = false;
+    const reportReadProblem = (message) => {
+        if (readSettled)
+            return;
+        readSettled = true;
+        toast(message);
+    };
+    reader.onerror = () => {
+        const detail = reader.error?.message || I18N.t('file_read_unknown');
+        reportReadProblem(I18N.t('file_read_failed', { name: fileName, msg: detail }));
+    };
+    reader.onabort = () => reportReadProblem(I18N.t('file_read_aborted', { name: fileName }));
     reader.onload = async () => {
+        readSettled = true;
         try {
             const text = String(reader.result || '');
             assertImportTextSize(text);
             const name = (file.name || '').toLowerCase();
-            const format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
+            let format = forcedFormat !== 'auto' ? forcedFormat : name.endsWith('.dot') || name.endsWith('.gv') ? 'dot' : name.endsWith('.graphml') || name.endsWith('.xml') ? 'graphml' : name.endsWith('.csv') ? 'csv' : 'json';
+            if (format === 'csv')
+                format = csvKindFrom(name, text);
             const append = $('#optImportAppend')?.checked;
-            // An explicit CSV kind (chosen with a per-format Import button) skips
-            // the filename/header heuristic below: a user who pressed "Import Nodes
-            // CSV" means nodes, whatever the file is called. The three readers keep
-            // their own column validation, so a mismatched file reports itself.
-            if (format !== 'auto' && format.endsWith('-csv')) {
-                if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
-                    return;
-                if (format === 'edges-csv')
-                    importEdgesCsv(text, append);
-                else if (format === 'matrix-csv')
-                    importMatrixCsv(text, append);
-                else
-                    importNodesCsv(text, append);
+            const matrixMode = matrixImportMode();
+            if (!append && (state.nodes.length || state.edges.length)
+                && !await uiConfirm(importReplacementMessage(format, matrixMode), { danger: true, confirmLabel: I18N.t('import_btn') }))
                 return;
-            }
-            if (!append && (state.nodes.length || state.edges.length) && !await uiConfirm(I18N.t('replace_with_import'), { danger: true, confirmLabel: I18N.t('import_btn') }))
-                return;
-            if (format === 'dot')
+            if (format === 'edges-csv')
+                importEdgesCsv(text, append);
+            else if (format === 'matrix-csv')
+                importMatrixCsv(text, append, matrixMode);
+            else if (format === 'nodes-csv')
+                importNodesCsv(text, append);
+            else if (format === 'dot')
                 importGraphData(parseDot(text, { units: dotUnitsChoice() }), 'DOT', append);
             else if (format === 'graphml')
                 importGraphData(parseGraphml(text), 'GraphML', append);
-            else if (format === 'csv') {
-                // Auto-detect CSV type from filename or header
-                if (name.includes('edge'))
-                    importEdgesCsv(text, append);
-                else if (name.includes('matrix'))
-                    importMatrixCsv(text, append);
-                else if (name.includes('node'))
-                    importNodesCsv(text, append);
-                else {
-                    // Detect by header
-                    const firstLine = text.split('\n')[0].toLowerCase();
-                    if (firstLine.includes('source_id') || firstLine.includes('from'))
-                        importEdgesCsv(text, append);
-                    else if (firstLine.startsWith('id,') || firstLine.includes('label') && !firstLine.includes('source'))
-                        importNodesCsv(text, append);
-                    else
-                        importMatrixCsv(text, append);
-                }
-            }
             else {
                 importGraphData(decodeForeignGraphJson(JSON.parse(text)), 'JSON', append);
             }
@@ -17560,7 +17734,12 @@ function importFile(file, forcedFormat = 'auto') {
             toast(I18N.t('could_not_import', { msg: err.message }));
         }
     };
-    reader.readAsText(file);
+    try {
+        reader.readAsText(file);
+    }
+    catch (err) {
+        reportReadProblem(I18N.t('file_read_failed', { name: fileName, msg: err.message || I18N.t('file_read_unknown') }));
+    }
 }
 function adjacency(directedMode = true) {
     const adj = new Map(state.nodes.map(n => [n.id, []]));
